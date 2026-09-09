@@ -24,8 +24,7 @@ import TensorFlowLite
 /// on the UI thread. `init` is private to make that impossible to do by accident.
 actor MoveNetThunderModel {
     private let interpreter: Interpreter
-    private let inputWidth: Int
-    private let inputHeight: Int
+    private let preprocessor: FramePreprocessor
     private let ciContext = CIContext()
 
     /// Loads the bundled model off the main thread. A `nonisolated async` function runs on the
@@ -48,15 +47,16 @@ actor MoveNetThunderModel {
             throw PoseDiagnosticError.inferenceFailed("Failed to load MoveNet Thunder model: \(error.localizedDescription)")
         }
 
-        // Read the input shape at runtime rather than hardcoding 256x256, so a future
+        // Read the input tensor at runtime rather than hardcoding 256x256 uint8, so a future
         // model swap (e.g. escalating to BlazePose per the design doc) doesn't silently
-        // feed the wrong tensor size.
-        let inputShape = try interpreter.input(at: 0).shape.dimensions
-        guard inputShape.count == 4 else {
-            throw PoseDiagnosticError.inferenceFailed("Unexpected model input shape: \(inputShape)")
+        // feed the wrong tensor size or element type.
+        let inputTensor = try interpreter.input(at: 0)
+        guard inputTensor.dataType == .uInt8 else {
+            throw PoseDiagnosticError.inferenceFailed(
+                "Model input wants \(inputTensor.dataType), the frame packing writes uInt8"
+            )
         }
-        inputHeight = inputShape[1]
-        inputWidth = inputShape[2]
+        preprocessor = try FramePreprocessor(inputShape: inputTensor.shape.dimensions)
     }
 
     func runInference(on pixelBuffer: CVPixelBuffer) throws -> [PoseKeypoint] {
@@ -72,60 +72,23 @@ actor MoveNetThunderModel {
     /// matching MoveNet Thunder's expected [1, height, width, 3] input tensor.
     private func resizedRGBData(from pixelBuffer: CVPixelBuffer) throws -> Data {
         let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let scaleX = CGFloat(inputWidth) / sourceImage.extent.width
-        let scaleY = CGFloat(inputHeight) / sourceImage.extent.height
-        let scaledImage = sourceImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-
-        var resizedBuffer: CVPixelBuffer?
-        let attributes: [CFString: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey: true
-        ]
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault, inputWidth, inputHeight, kCVPixelFormatType_32BGRA,
-            attributes as CFDictionary, &resizedBuffer
-        )
-        guard status == kCVReturnSuccess, let outputBuffer = resizedBuffer else {
-            throw PoseDiagnosticError.inferenceFailed("Failed to allocate resize buffer")
-        }
-
-        ciContext.render(scaledImage, to: outputBuffer)
-
-        CVPixelBufferLockBaseAddress(outputBuffer, .readOnly)
-        defer { CVPixelBufferUnlockBaseAddress(outputBuffer, .readOnly) }
-
-        guard let baseAddress = CVPixelBufferGetBaseAddress(outputBuffer) else {
-            throw PoseDiagnosticError.inferenceFailed("Failed to access resized pixel buffer")
-        }
-
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(outputBuffer)
-        let bgra = baseAddress.assumingMemoryBound(to: UInt8.self)
-
-        var rgb = [UInt8](repeating: 0, count: inputWidth * inputHeight * 3)
-        for row in 0..<inputHeight {
-            let rowStart = row * bytesPerRow
-            for col in 0..<inputWidth {
-                let pixelOffset = rowStart + col * 4
-                let outIndex = (row * inputWidth + col) * 3
-                rgb[outIndex] = bgra[pixelOffset + 2]     // R
-                rgb[outIndex + 1] = bgra[pixelOffset + 1] // G
-                rgb[outIndex + 2] = bgra[pixelOffset]     // B
-            }
-        }
-
-        return Data(rgb)
+        let transform = preprocessor.scaleTransform(forSourceExtent: sourceImage.extent)
+        let outputBuffer = try preprocessor.makeTargetBuffer()
+        ciContext.render(sourceImage.transformed(by: transform), to: outputBuffer)
+        return try preprocessor.packRGB(from: outputBuffer)
     }
 
     /// MoveNet's int8 build emits a quantized uint8 tensor; dequantize using the tensor's own
     /// scale/zero-point rather than assuming float32 output.
     private static func dequantize(_ tensor: Tensor) -> [Float] {
         if tensor.dataType == .uInt8, let quantization = tensor.quantizationParameters {
-            return tensor.data.map { (Float($0) - Float(quantization.zeroPoint)) * quantization.scale }
+            return TensorDequantizer.floats(
+                fromUInt8: tensor.data,
+                scale: quantization.scale,
+                zeroPoint: quantization.zeroPoint
+            )
         }
 
-        let floatCount = tensor.data.count / MemoryLayout<Float32>.size
-        return tensor.data.withUnsafeBytes { rawBuffer in
-            Array(rawBuffer.bindMemory(to: Float32.self).prefix(floatCount))
-        }
+        return TensorDequantizer.floats(fromFloat32: tensor.data)
     }
 }
