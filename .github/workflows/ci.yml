@@ -45,9 +45,9 @@ jobs:
       # Matches the Xcode version CONTRIBUTING.md documents as the dev
       # baseline. XcodeGen's emitted project format tracks its own release,
       # not the selected Xcode, so this must stay new enough to open it —
-      # see https://github.com/yonaskolb/XcodeGen/issues/1578. This only
-      # exercises 26.3; CONTRIBUTING.md's "15+ is the floor" claim isn't
-      # covered by CI and should be read as aspirational, not verified.
+      # see https://github.com/yonaskolb/XcodeGen/issues/1578. 26.3 is the
+      # only version exercised here; README.md and CONTRIBUTING.md name it as
+      # the verified one and mark the older minimum as untested.
       - name: Select Xcode 26.3
         run: sudo xcode-select -s /Applications/Xcode_26.3.app
 

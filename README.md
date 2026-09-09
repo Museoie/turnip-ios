@@ -42,7 +42,9 @@ ML training that will follow the standalone MVP, and
   negligible device-coverage cost)
 - A11 Bionic or later gives Neural Engine acceleration
   (iPhone 8/X and newer — all iOS 16-capable devices qualify)
-- Xcode 15 or later for building from source
+- Xcode 26.3 for building from source — the version CI verifies. Xcode 15
+  is the nominal minimum but is not covered by CI; see
+  [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## Contributing
 

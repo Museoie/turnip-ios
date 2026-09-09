@@ -7,7 +7,12 @@ that names areas most open to new contributors.
 
 ## Development environment
 
-- **Xcode 15 or later** (developed against 26.3; 15+ is the floor)
+- **Xcode 26.3** — the version both CI pipelines build and test against,
+  and the only one verified. Xcode 15 is the nominal minimum, but nothing
+  checks it: XcodeGen's emitted project format tracks its own release
+  rather than the selected Xcode, so an older Xcode may fail to open the
+  generated project. If that happens on a version at or above 15, it's
+  worth an issue
 - **iOS 16** minimum deployment target
 - An A11 Bionic device or later (iPhone 8/X+) if you want to test Neural
   Engine acceleration; the simulator works for everything else
@@ -22,7 +27,39 @@ official Swift Package Manager distribution. Setup, in order:
    This is interactive and requires sudo, so it can't be scripted; do it once, manually,
    before anything else in this list will work.
 2. Install [Homebrew](https://brew.sh) if you don't have it.
-3. `brew install xcodegen`
+3. Install [XcodeGen](https://github.com/yonaskolb/XcodeGen) **2.46.0** — the
+   exact version both CI pipelines pin. `brew install xcodegen` floats to
+   whatever Homebrew has bottled, and since the `.xcodeproj` is generated
+   rather than committed, a mismatched XcodeGen is the difference between the
+   project opening and not:
+
+   ```
+   curl -fsSL -o /tmp/xcodegen.zip \
+     https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
+   unzip -q /tmp/xcodegen.zip -d /tmp/xcodegen-pkg
+   mkdir -p "$HOME/.local"
+   /tmp/xcodegen-pkg/xcodegen/install.sh "$HOME/.local"
+   rm -rf /tmp/xcodegen.zip /tmp/xcodegen-pkg
+   ```
+
+   The `mkdir` is load-bearing. XcodeGen's `install.sh` copies with a bare
+   `cp -r` and never creates the prefix, so when `~/.local` doesn't already
+   exist the first copy *becomes* it and the setting presets land in
+   `~/.local/xcodegen` instead of `~/.local/share/xcodegen`. `xcodegen
+   generate` then still exits 0, printing only `No "base" settings found`,
+   and emits a project missing ~58 build settings — including
+   `BUNDLE_LOADER`, without which the test target won't link.
+
+   Put `$HOME/.local/bin` on your `PATH`, then verify both halves landed —
+   the version alone doesn't tell you the presets are in the right place:
+
+   ```
+   xcodegen --version               # 2.46.0
+   ls "$HOME/.local/share/xcodegen" # SettingPresets
+   ```
+
+   This version is also pinned in `.github/workflows/ci.yml` and
+   `ci_scripts/ci_post_clone.sh`; the three are meant to stay identical
 4. `xcodegen generate`
 5. `bundle install && bundle exec pod install` — CocoaPods is pinned via the committed
    `Gemfile`/`Gemfile.lock` (both CI pipelines resolve pods the same way) rather than
