@@ -22,10 +22,9 @@ step() {
   echo "[ci_post_clone] $label took $((SECONDS - start))s"
 }
 
-# Pinned to the exact versions GitHub Actions CI installs (see
-# .github/workflows/ci.yml) so the two pipelines can't silently drift —
-# Homebrew only bottles the latest formula, so `brew install xcodegen`/
-# `cocoapods` here would float independently of GitHub Actions' pins.
+# Shared with GitHub Actions CI (see .github/workflows/ci.yml) so the two
+# pipelines can't silently drift — Homebrew only bottles the latest formula,
+# so `brew install xcodegen`/`cocoapods` here would float independently.
 # Unconditional, matching ci.yml: Xcode Cloud provisions a fresh VM per
 # build, so there's nothing to skip.
 #
@@ -34,11 +33,7 @@ step() {
 # hangs on a password prompt that can never be answered.
 install_xcodegen() {
   local prefix="$HOME/.local"
-  curl -sL -o xcodegen.zip https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
-  unzip -q xcodegen.zip -d xcodegen-pkg
-  mkdir -p "$prefix"
-  ./xcodegen-pkg/xcodegen/install.sh "$prefix"
-  rm -rf xcodegen.zip xcodegen-pkg
+  ./ci_scripts/install-xcodegen.sh "$prefix"
   export PATH="$prefix/bin:$PATH"
 }
 
@@ -61,7 +56,7 @@ install_ruby() {
   echo "[ci_post_clone] using $(ruby --version), bundler $(bundle --version)"
 }
 
-step "install xcodegen 2.46.0" install_xcodegen
+step "install xcodegen" install_xcodegen
 step "xcodegen generate" xcodegen generate
 step "install ruby (homebrew)" install_ruby
 step "bundle install (cocoapods 1.17.0)" bundle install

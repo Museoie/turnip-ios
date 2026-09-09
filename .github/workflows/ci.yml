@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   # Only cancel superseded PR pushes — cancelling a push-to-main run can
@@ -19,10 +22,10 @@ jobs:
       BUNDLE_PATH: vendor/bundle
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Cache CocoaPods
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             Pods
@@ -32,7 +35,7 @@ jobs:
             pods-${{ runner.os }}-
 
       - name: Cache Bundler gems
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: vendor/bundle
           key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
@@ -50,17 +53,13 @@ jobs:
 
       # Homebrew only bottles the latest formula version, and its default
       # `pod` (via `brew install cocoapods`) drifts independently of
-      # Xcode Cloud's ci_post_clone.sh. Pin both tools explicitly and
-      # identically in both places instead. Installed to a user-writable
-      # prefix (no sudo) so this step matches ci_post_clone.sh exactly —
-      # Xcode Cloud's build environment has no passwordless sudo.
-      - name: Install XcodeGen 2.46.0
+      # Xcode Cloud's ci_post_clone.sh, so both pipelines call the same
+      # pinned installer instead. A user-writable prefix (no sudo) keeps
+      # this identical to ci_post_clone.sh — Xcode Cloud's build
+      # environment has no passwordless sudo.
+      - name: Install XcodeGen
         run: |
-          curl -sL -o xcodegen.zip https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip
-          unzip -q xcodegen.zip -d xcodegen-pkg
-          mkdir -p "$HOME/.local"
-          ./xcodegen-pkg/xcodegen/install.sh "$HOME/.local"
-          rm -rf xcodegen.zip xcodegen-pkg
+          ci_scripts/install-xcodegen.sh "$HOME/.local"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Generate Xcode project
