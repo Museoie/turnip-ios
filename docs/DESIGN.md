@@ -254,7 +254,7 @@ Every repo ships (at repo root, standard OSS conventions):
 - **`.github/`**:
   - `ISSUE_TEMPLATE/bug.md`, `ISSUE_TEMPLATE/feature.md`
   - `PULL_REQUEST_TEMPLATE.md`
-  - `workflows/ci.yml` (lint + test on every PR)
+  - `workflows/ci.yml` (build + test on every PR)
   - `workflows/cd.yml` (deploy on push to main — turnip-farm only)
 - **`SECURITY.md`** — how to responsibly disclose vulnerabilities
 - **`CLA.md`** *(optional, decide upfront)* — do we require contributors to sign a CLA? Apache 2.0's Individual Contributor License Agreement is standard but adds friction; most permissive-license OSS projects skip it.
@@ -289,7 +289,7 @@ R2's $0 egress is what keeps this cheap even as video volume grows. AWS S3 would
   - Backend: TypeScript, Bun, Postgres, Docker
   - ML: Python, TensorFlow, coremltools, model evaluation
 - **PR review flow**: reviewer approval; use a small `.github/CODEOWNERS` to auto-request the right reviewer per subdirectory
-- **CI on PRs**: lint + unit tests. Nothing gates review, but red CI slows merges.
+- **CI on PRs**: build + unit tests. Nothing gates review, but red CI slows merges.
 
 ## Decisions (formerly open questions)
 
