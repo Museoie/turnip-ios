@@ -115,6 +115,8 @@ flowchart TD
 
 ## Out of scope for this doc
 
+- Accessibility acceptance criteria per screen — those live in
+  [`ACCESSIBILITY.md`](ACCESSIBILITY.md) (issue #22) and are checked on each screen's PR.
 - Community upload opt-in, Share Sheet ([#12](https://github.com/hoiekim/turnip-ios/issues/12)),
   OTA model updates ([#13](https://github.com/hoiekim/turnip-ios/issues/13)) —
   all v2, layered onto this flow later (most likely: a Share action added to

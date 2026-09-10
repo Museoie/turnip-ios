@@ -53,6 +53,9 @@ struct VideoTileView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityDescription)
         .accessibilityAddTraits(.isButton)
+        // Stable identifier for a future UI-test target (issue #22). The Photos
+        // `localIdentifier` is stable per asset, so the identifier survives edits.
+        .accessibilityIdentifier("video-tile-\(asset.localIdentifier)")
     }
 
     private var durationBadge: some View {
@@ -60,7 +63,13 @@ struct VideoTileView: View {
             .font(.caption2.weight(.semibold))
             .monospacedDigit()
             .foregroundStyle(.white)
-            .shadow(color: .black.opacity(0.8), radius: 2)
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            // Scrim, not shadow: white text sits on arbitrary video frames, so contrast needs a
+            // guaranteed backdrop rather than a glow that assumes a dark frame. Black at 60% over
+            // a worst-case white frame blends to roughly #666, which against white clears 4.5:1.
+            .background(Capsule().fill(.black.opacity(0.6)))
             .padding(4)
     }
 
@@ -78,14 +87,37 @@ struct VideoTileView: View {
     }
 
     private var accessibilityDescription: String {
-        var parts = ["Video", VideoDurationFormatter.string(from: asset.duration)]
-        if let creationDate = asset.creationDate {
-            parts.append(creationDate.formatted(date: .abbreviated, time: .shortened))
+        Self.accessibilityLabel(
+            spokenDuration: VideoDurationFormatter.accessibilityString(from: asset.duration),
+            creationDate: asset.creationDate,
+            isResolving: isResolving
+        )
+    }
+
+    /// The VoiceOver label for a tile, as one localized string: "Video, 12 seconds,
+    /// Sep 4, 2026 at 3:04 PM", plus ", loading" while the tile's video is resolving.
+    ///
+    /// Static and pure so tests can assert the exact announced wording without constructing a
+    /// `PHAsset`. The label is the accessibility contract, and a wording regression here is
+    /// silent — nothing crashes, VoiceOver just says the wrong thing — so it gets a test like
+    /// any other behavior. One interpolated string (rather than joined parts) so a translator
+    /// can reorder the whole announcement for their language's word order.
+    static func accessibilityLabel(
+        spokenDuration: String,
+        creationDate: Date?,
+        isResolving: Bool
+    ) -> String {
+        if let creationDate {
+            let dateString = creationDate.formatted(date: .abbreviated, time: .shortened)
+            if isResolving {
+                return String(localized: "Video, \(spokenDuration), \(dateString), loading")
+            }
+            return String(localized: "Video, \(spokenDuration), \(dateString)")
         }
         if isResolving {
-            parts.append("loading")
+            return String(localized: "Video, \(spokenDuration), loading")
         }
-        return parts.joined(separator: ", ")
+        return String(localized: "Video, \(spokenDuration)")
     }
 
     // MARK: - Thumbnail loading
