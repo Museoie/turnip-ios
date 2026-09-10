@@ -32,15 +32,18 @@ struct SampledFrame: @unchecked Sendable {
 struct VideoFrameSampler: Sendable {
     private let sampleStride = 3
 
-    /// Decodes `url` and invokes `handler` once per kept frame, sequentially, off the main actor.
+    /// Decodes `asset` and invokes `handler` once per kept frame, sequentially, off the main actor.
+    ///
+    /// Takes the `AVURLAsset` itself, not just its URL: for Photos-library videos the object
+    /// PhotoKit returned is what carries read access to the file, and opening a fresh asset on the
+    /// bare path is not guaranteed to work. `SelectedVideo` hands that object straight through.
     ///
     /// `handler` is `@Sendable` on purpose: a non-`Sendable` closure formed inside a `@MainActor`
     /// context (e.g. `PoseDiagnosticViewModel`) inherits that isolation, and every call to it would
     /// hop back onto the main thread — putting per-frame inference on the UI thread. `@Sendable`
     /// breaks that inheritance so the handler runs on the generic executor alongside decoding, and
     /// callers must hop to `MainActor` explicitly for any UI-bound writes.
-    func sampleFrames(from url: URL, handler: @Sendable (SampledFrame) async throws -> Void) async throws {
-        let asset = AVURLAsset(url: url)
+    func sampleFrames(from asset: AVURLAsset, handler: @Sendable (SampledFrame) async throws -> Void) async throws {
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
         }
@@ -87,6 +90,9 @@ struct VideoFrameSampler: Sendable {
 
         var frameIndex = 0
         while let sampleBuffer = trackOutput.copyNextSampleBuffer() {
+            // Decoding a multi-minute clip outlives the screen that asked for it unless the loop
+            // itself gives up: nothing else here suspends at a cancellation point.
+            try Task.checkCancellation()
             defer { frameIndex += 1 }
             guard frameIndex % sampleStride == 0 else { continue }
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
@@ -99,17 +105,25 @@ struct VideoFrameSampler: Sendable {
         }
     }
 
+    /// The composition's output grid from the track's own timing values. The pure overload below
+    /// carries the logic so the throw branch has a test seam — no `AVAssetWriter` fixture can
+    /// produce a track with neither a usable `minFrameDuration` nor a nonzero `nominalFrameRate`.
+    private static func compositionFrameDuration(of track: AVAssetTrack) async throws -> CMTime {
+        let minFrameDuration = try await track.load(.minFrameDuration)
+        let nominalFrameRate = try await track.load(.nominalFrameRate)
+        return try compositionFrameDuration(minFrameDuration: minFrameDuration, nominalFrameRate: nominalFrameRate)
+    }
+
     /// The composition's output grid. `minFrameDuration` is exact and per-track; `nominalFrameRate`
     /// is the fallback and is `0` whenever the rate cannot be determined. With neither, an
     /// `AVMutableVideoComposition` defaults to one composed frame per second — too few samples for
     /// the peak detection in docs/DESIGN.md step 5 to find anything, and it reports no error, so the
     /// clip reads as trickless rather than unreadable. Fail the load instead.
-    private static func compositionFrameDuration(of track: AVAssetTrack) async throws -> CMTime {
-        let minFrameDuration = try await track.load(.minFrameDuration)
+    static func compositionFrameDuration(minFrameDuration: CMTime, nominalFrameRate: Float) throws -> CMTime {
         if minFrameDuration.isNumeric && minFrameDuration.seconds > 0 {
             return minFrameDuration
         }
-        let roundedFrameRate = try await track.load(.nominalFrameRate).rounded()
+        let roundedFrameRate = nominalFrameRate.rounded()
         guard roundedFrameRate >= 1 else {
             throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
         }

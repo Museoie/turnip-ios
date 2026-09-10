@@ -41,7 +41,7 @@ final class VideoFrameSamplerTests: XCTestCase {
         let observations = FrameObservations()
         let sampler = VideoFrameSampler()
 
-        try await sampler.sampleFrames(from: videoURL) { frame in
+        try await sampler.sampleFrames(from: AVURLAsset(url: videoURL)) { frame in
             // Read the thread *before* any await — an await may resume on a different thread.
             // `pthread_main_np` rather than `Thread.isMainThread`, which is marked unavailable
             // from async contexts (a Swift 6 error).
@@ -63,7 +63,7 @@ final class VideoFrameSamplerTests: XCTestCase {
         let sampler = VideoFrameSampler()
         let timestamps = Timestamps()
 
-        try await sampler.sampleFrames(from: videoURL) { frame in
+        try await sampler.sampleFrames(from: AVURLAsset(url: videoURL)) { frame in
             await timestamps.append(frame.timestamp)
         }
 
@@ -77,17 +77,32 @@ final class VideoFrameSamplerTests: XCTestCase {
 
     func testAppliesPreferredTransform() async throws {
         // A 64x48 landscape-encoded video carrying the 90° preferredTransform an iPhone writes for
-        // a portrait recording — [0, 1, -1, 0, tx: sourceHeight, 0], the rotation plus the
-        // translation that keeps the rotated content at the origin — must decode as 48x64.
-        let sourceHeight = 48
+        // a portrait recording — [0, 1, -1, 0, tx: 48, 0], the rotation plus the translation that
+        // keeps the rotated content at the origin — must decode as 48x64 with the content filling
+        // the render rect.
+        try await assertPreferredTransformApplies(
+            transform: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 48, ty: 0))
+    }
+
+    /// The origin-rotating sibling of `testAppliesPreferredTransform`: a bare 90° rotation with no
+    /// normalizing translation puts the content outside [0, renderSize] before this PR's
+    /// normalization translate, so this fixture covers the branch the iPhone-shaped fixture cannot
+    /// reach. Reverting `renderTransform` to the raw `preferredTransform` leaves the render rect
+    /// pure background and fails this test while the iPhone-shaped one stays green.
+    func testAppliesPreferredTransformWithOriginRotation() async throws {
+        try await assertPreferredTransformApplies(transform: CGAffineTransform(rotationAngle: .pi / 2))
+    }
+
+    /// Writes a 64x48 video carrying `transform` as the track's preferredTransform and asserts the
+    /// sampler decodes 48x64 frames whose render rect is filled with content, not background.
+    private func assertPreferredTransformApplies(transform: CGAffineTransform) async throws {
         let rotatedURL = try await Self.writeTestVideo(
-            frameCount: 6, width: 64, height: sourceHeight, fps: 30,
-            transform: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: CGFloat(sourceHeight), ty: 0))
+            frameCount: 6, width: 64, height: 48, fps: 30, transform: transform)
         defer { try? FileManager.default.removeItem(at: rotatedURL) }
 
         let sampler = VideoFrameSampler()
         let rendered = RenderedFrames()
-        try await sampler.sampleFrames(from: rotatedURL) { frame in
+        try await sampler.sampleFrames(from: AVURLAsset(url: rotatedURL)) { frame in
             await rendered.append(RenderedFrame(
                 frameIndex: frame.frameIndex,
                 size: CGSize(
@@ -125,7 +140,7 @@ final class VideoFrameSamplerTests: XCTestCase {
         let sampler = VideoFrameSampler()
 
         do {
-            try await sampler.sampleFrames(from: audioURL) { frame in
+            try await sampler.sampleFrames(from: AVURLAsset(url: audioURL)) { frame in
                 XCTFail("handler ran for frame \(frame.frameIndex) on an asset with no video track")
             }
             XCTFail("expected sampleFrames to throw for an asset with no video track")
@@ -133,6 +148,34 @@ final class VideoFrameSamplerTests: XCTestCase {
             guard case .videoLoadFailed = error else {
                 return XCTFail("expected videoLoadFailed, got \(error)")
             }
+        }
+    }
+
+    func testCompositionFrameDurationFallsBackAndThrows() throws {
+        // A usable minFrameDuration wins outright.
+        XCTAssertEqual(
+            try VideoFrameSampler.compositionFrameDuration(
+                minFrameDuration: CMTime(value: 1, timescale: 30), nominalFrameRate: 0),
+            CMTime(value: 1, timescale: 30))
+        // Otherwise the nominal rate sets the grid.
+        XCTAssertEqual(
+            try VideoFrameSampler.compositionFrameDuration(
+                minFrameDuration: .invalid, nominalFrameRate: 29.97),
+            CMTime(value: 1, timescale: 30))
+
+        // Neither usable: the loud failure R1's HIGH 1 asked for. No AVAssetWriter fixture can
+        // produce this pair — a writer-written track always carries a frame duration — so this
+        // goes straight at the pure seam.
+        do {
+            _ = try VideoFrameSampler.compositionFrameDuration(
+                minFrameDuration: .invalid, nominalFrameRate: 0)
+            XCTFail("expected compositionFrameDuration to throw when no usable frame rate exists")
+        } catch let error as PoseDiagnosticError {
+            guard case .videoLoadFailed = error else {
+                return XCTFail("expected videoLoadFailed, got \(error)")
+            }
+        } catch {
+            XCTFail("expected PoseDiagnosticError.videoLoadFailed, got \(error)")
         }
     }
 
