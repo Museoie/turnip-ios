@@ -15,9 +15,14 @@ struct SampledFrame: @unchecked Sendable {
     let pixelBuffer: CVPixelBuffer
 }
 
-/// Decodes video frames at native fps via AVAssetReader (not AVAssetImageGenerator, which
-/// reseeks per-frame and is both slower and less frame-accurate during fast motion), keeping
-/// every 3rd frame per docs/DESIGN.md's pipeline step 2.
+/// Decodes video frames via AVAssetReader (not AVAssetImageGenerator, which reseeks per-frame and
+/// is both slower and less frame-accurate during fast motion), keeping every 3rd frame per
+/// docs/DESIGN.md's pipeline step 2.
+///
+/// Frames are composed onto a fixed grid at the track's shortest frame duration so the track's
+/// `preferredTransform` can be applied, so `frameIndex` and `timestamp` are positions on that grid
+/// rather than the source's own presentation timestamps. Variable-frame-rate recordings (an iPhone
+/// lowers the rate in dim light) are resampled onto it.
 ///
 /// A `Sendable` struct rather than a class: it is owned by a `@MainActor` view model but
 /// `sampleFrames` is nonisolated, so every call sends the sampler out of the main actor. With no
@@ -40,23 +45,25 @@ struct VideoFrameSampler: Sendable {
             throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
         }
 
-        // iPhone portrait videos are stored as landscape-encoded buffers with a 90° preferredTransform.
-        // Decoding the raw track would hand every frame to the model rotated 90°. Render through a
-        // video composition that applies the transform, so sampled frames match what the user sees.
+        // iPhone portrait videos are stored as landscape-encoded buffers with a 90° preferredTransform,
+        // so frames have to be rendered through a video composition that applies it.
         let preferredTransform = try await track.load(.preferredTransform)
         let naturalSize = try await track.load(.naturalSize)
         let transformedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
         let renderSize = CGSize(width: abs(transformedRect.width), height: abs(transformedRect.height))
+        // A transform that rotates about the origin puts the content outside [0, renderSize], which
+        // composes correctly sized frames of pure background. Camera-roll assets carry the
+        // normalizing translation already; imported and edited ones need not.
+        let renderTransform = preferredTransform.concatenating(
+            CGAffineTransform(translationX: -transformedRect.minX, y: -transformedRect.minY))
 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
-        let nominalFrameRate = try await track.load(.nominalFrameRate)
-        videoComposition.frameDuration = CMTime(
-            value: 1, timescale: CMTimeScale(max(nominalFrameRate.rounded(), 1)))
+        videoComposition.frameDuration = try await Self.compositionFrameDuration(of: track)
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-        layerInstruction.setTransform(preferredTransform, at: .zero)
+        layerInstruction.setTransform(renderTransform, at: .zero)
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]
 
@@ -90,5 +97,22 @@ struct VideoFrameSampler: Sendable {
         if reader.status == .failed {
             throw PoseDiagnosticError.videoLoadFailed(underlying: reader.error)
         }
+    }
+
+    /// The composition's output grid. `minFrameDuration` is exact and per-track; `nominalFrameRate`
+    /// is the fallback and is `0` whenever the rate cannot be determined. With neither, an
+    /// `AVMutableVideoComposition` defaults to one composed frame per second — too few samples for
+    /// the peak detection in docs/DESIGN.md step 5 to find anything, and it reports no error, so the
+    /// clip reads as trickless rather than unreadable. Fail the load instead.
+    private static func compositionFrameDuration(of track: AVAssetTrack) async throws -> CMTime {
+        let minFrameDuration = try await track.load(.minFrameDuration)
+        if minFrameDuration.isNumeric && minFrameDuration.seconds > 0 {
+            return minFrameDuration
+        }
+        let roundedFrameRate = try await track.load(.nominalFrameRate).rounded()
+        guard roundedFrameRate >= 1 else {
+            throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
+        }
+        return CMTime(value: 1, timescale: CMTimeScale(roundedFrameRate))
     }
 }

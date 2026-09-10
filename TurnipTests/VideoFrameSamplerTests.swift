@@ -76,27 +76,45 @@ final class VideoFrameSamplerTests: XCTestCase {
     }
 
     func testAppliesPreferredTransform() async throws {
-        // A 64x48 landscape-encoded video whose track carries a 90° preferredTransform — the shape
-        // of every iPhone portrait recording — must decode as 48x64, what the user sees.
+        // A 64x48 landscape-encoded video carrying the 90° preferredTransform an iPhone writes for
+        // a portrait recording — [0, 1, -1, 0, tx: sourceHeight, 0], the rotation plus the
+        // translation that keeps the rotated content at the origin — must decode as 48x64.
+        let sourceHeight = 48
         let rotatedURL = try await Self.writeTestVideo(
-            frameCount: 6, width: 64, height: 48, fps: 30,
-            transform: CGAffineTransform(rotationAngle: .pi / 2))
+            frameCount: 6, width: 64, height: sourceHeight, fps: 30,
+            transform: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: CGFloat(sourceHeight), ty: 0))
         defer { try? FileManager.default.removeItem(at: rotatedURL) }
 
         let sampler = VideoFrameSampler()
-        let sizes = FrameSizes()
+        let rendered = RenderedFrames()
         try await sampler.sampleFrames(from: rotatedURL) { frame in
-            await sizes.append(CGSize(
-                width: CVPixelBufferGetWidth(frame.pixelBuffer),
-                height: CVPixelBufferGetHeight(frame.pixelBuffer)))
+            await rendered.append(RenderedFrame(
+                frameIndex: frame.frameIndex,
+                size: CGSize(
+                    width: CVPixelBufferGetWidth(frame.pixelBuffer),
+                    height: CVPixelBufferGetHeight(frame.pixelBuffer)),
+                darkestChannelValue: darkestChannelValue(in: frame.pixelBuffer)))
         }
 
-        let observed = await sizes.values
+        let observed = await rendered.values
         XCTAssertFalse(observed.isEmpty, "expected the sampler to decode frames from the rotated video")
-        for size in observed {
+        for frame in observed {
             XCTAssertEqual(
-                size, CGSize(width: 48, height: 64),
-                "decoded frame is \(size) — the track's preferredTransform was not applied")
+                frame.size, CGSize(width: 48, height: 64),
+                "decoded frame is \(frame.size) — the track's preferredTransform was not applied")
+        }
+
+        // Dimensions alone prove nothing: renderSize is computed from the transformed bounding box
+        // whether or not the layer instruction applies the transform, so a sampler that drops the
+        // rotation still emits 48x64. `writeTestVideo` fills frame N with `N * 20 % 255`, so every
+        // kept frame past the first is a solid mid-gray — any part of the render rect the rotated
+        // content misses stays the instruction's opaque-black background.
+        let litFrames = observed.filter { $0.frameIndex > 0 }
+        XCTAssertFalse(litFrames.isEmpty, "expected a kept frame past frame 0 to check rendered content")
+        for frame in litFrames {
+            XCTAssertGreaterThan(
+                frame.darkestChannelValue, 30,
+                "frame \(frame.frameIndex) has a near-black region — the rotated content did not fill the render rect")
         }
     }
 
@@ -218,10 +236,38 @@ private actor Timestamps {
     }
 }
 
-private actor FrameSizes {
-    private(set) var values: [CGSize] = []
+private struct RenderedFrame {
+    let frameIndex: Int
+    let size: CGSize
+    let darkestChannelValue: UInt8
+}
 
-    func append(_ value: CGSize) {
+private actor RenderedFrames {
+    private(set) var values: [RenderedFrame] = []
+
+    func append(_ value: RenderedFrame) {
         values.append(value)
     }
+}
+
+/// Smallest blue, green or red value anywhere in a BGRA frame, ignoring a 2px border where the
+/// compositor blends the content's edge into the background. Alpha is skipped — the compositor
+/// writes it opaque whatever the source fill was.
+private func darkestChannelValue(in pixelBuffer: CVPixelBuffer) -> UInt8 {
+    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+    guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return 0 }
+
+    let bytes = base.assumingMemoryBound(to: UInt8.self)
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+    let inset = 2
+    var darkest = UInt8.max
+    for y in inset..<(CVPixelBufferGetHeight(pixelBuffer) - inset) {
+        for x in inset..<(CVPixelBufferGetWidth(pixelBuffer) - inset) {
+            for channel in 0..<3 {
+                darkest = min(darkest, bytes[y * bytesPerRow + x * 4 + channel])
+            }
+        }
+    }
+    return darkest
 }
