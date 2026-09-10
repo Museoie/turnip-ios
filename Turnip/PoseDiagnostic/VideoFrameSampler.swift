@@ -25,7 +25,9 @@ struct SampledFrame: @unchecked Sendable {
 /// strict concurrency (Swift 6 would otherwise report "sending 'self.sampler' risks causing data
 /// races").
 struct VideoFrameSampler: Sendable {
-    private let sampleStride = 3
+    /// Frames are kept 1-in-N; the processing pipeline's progress estimate divides the
+    /// track's frame count by this, so the two must stay in sync.
+    static let sampleStride = 3
 
     /// Decodes `url` and invokes `handler` once per kept frame, sequentially, off the main actor.
     ///
@@ -58,8 +60,12 @@ struct VideoFrameSampler: Sendable {
 
         var frameIndex = 0
         while let sampleBuffer = trackOutput.copyNextSampleBuffer() {
+            // Cooperative cancellation: the processing screen (#17) cancels the run's Task,
+            // and the per-frame handler throws too, but the check here stops the decode loop
+            // even between handler calls. Fuller preemption policy lands with #21.
+            try Task.checkCancellation()
             defer { frameIndex += 1 }
-            guard frameIndex % sampleStride == 0 else { continue }
+            guard frameIndex % Self.sampleStride == 0 else { continue }
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
             let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
             try await handler(SampledFrame(frameIndex: frameIndex, timestamp: timestamp, pixelBuffer: pixelBuffer))
