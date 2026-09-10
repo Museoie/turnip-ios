@@ -25,8 +25,10 @@ the pose diagnostic screen will just show a "model not found" error until it's i
    silently producing worse keypoints. If the diagnostic fails with an input-shape or
    output-shape error, the file you downloaded is a different variant (Lightning is 192x192)
    — go back to step 1. If it fails with a data-type error like "Model input wants Float32,
-   the frame packing writes uInt8", you downloaded the fp16 or fp32 Thunder build instead of
-   the int8 one — also go back to step 1.
+   the frame packing writes uInt8", you downloaded the fp32 Thunder build instead of
+   the int8 one — also go back to step 1. (The fp16 build's input tensor is uint8 too, so
+   it does not fail this data-type check; only float-input variants like fp32 are rejected
+   here.)
 
 ## Why there is no checksum here
 
