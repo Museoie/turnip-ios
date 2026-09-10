@@ -46,6 +46,40 @@ final class TrickWindowDetectorTests: XCTestCase {
         assertWindow(windows.first, startsAt: 0.4, endsAt: 3.0)
     }
 
+    /// A one-hip dropout in the middle of the quiet stretch must not merge two tricks: the
+    /// reconstructed anchor keeps the stretch quiet, so the 15-sample run clears the 10-sample
+    /// minimum and both peaks survive.
+    /// Negative control: without reconstruction the dropout frame anchors on the lone hip, so
+    /// the samples on both sides read 0.1 — 0.067 after smoothing, above the 0.05 threshold —
+    /// breaking the quiet run into 7 and 6 and folding both peaks into a single window.
+    /// (The hip half-width here is 0.1 rather than the issue's 0.06: smoothing averages each
+    /// spike with its quiet neighbours, so the narrower spike lands at 0.04 and the negative
+    /// control would not discriminate.)
+    func testOneHipDropoutInsideTheQuietStretchStillSeparatesTwoTricks() {
+        var positions = [Float](repeating: 0.1, count: 20)
+        positions += [0.2, 0.3, 0.4, 0.5]
+        positions += [Float](repeating: 0.5, count: 15)
+        positions += [0.6, 0.7, 0.8, 0.9]
+        positions += [Float](repeating: 0.9, count: 12)
+
+        let dropoutIndex = 20 + 4 + 7
+        let frames = positions.enumerated().map { index, x in
+            if index == dropoutIndex {
+                return PoseFixture.frame(
+                    index: index,
+                    hip: nil,
+                    leftHip: (x: x - 0.1, y: 0.5, confidence: 0.9),
+                    rightHip: (x: x + 0.1, y: 0.5, confidence: 0.1)
+                )
+            }
+            return PoseFixture.frame(index: index, hip: (x: x, y: 0.5))
+        }
+
+        let windows = detector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
+
+        XCTAssertEqual(windows.count, 2, "the dropout's spurious motion merged two tricks into one")
+    }
+
     // MARK: - Peak rules
 
     func testIgnoresABurstShorterThanTheSustainedMinimum() {
