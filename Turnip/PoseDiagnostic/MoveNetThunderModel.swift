@@ -35,6 +35,26 @@ actor MoveNetThunderModel {
         try MoveNetThunderModel()
     }
 
+    /// The input shape the MoveNet Thunder singlepose int8 variant reports, in the tensor's
+    /// `[batch, height, width, channels]` order. A wrong variant — Lightning is 192x192 — still
+    /// loads, allocates tensors, and emits output the keypoint parser accepts, so the only symptom
+    /// of a wrong file would be silently worse keypoints. Reject it here, on the failure path,
+    /// instead of trusting prose in `Turnip/Models/README.md` (#38).
+    static let expectedInputShape = [1, 256, 256, 3]
+
+    /// Throws unless the bundled model's input tensor is exactly the shape the Thunder singlepose
+    /// int8 variant reports. Pure so it can be tested without the gitignored `.tflite` — see
+    /// `MoveNetThunderModelTests`.
+    static func validateInputShape(_ shape: [Int]) throws {
+        guard shape == expectedInputShape else {
+            throw PoseDiagnosticError.inferenceFailed(
+                "Bundled model input is \(shape), expected \(expectedInputShape) for MoveNet Thunder "
+                    + "singlepose int8 — the file is probably the wrong variant. "
+                    + "See Turnip/Models/README.md for how to get the right one."
+            )
+        }
+    }
+
     private init() throws {
         guard let modelPath = Bundle.main.path(forResource: "movenet_thunder_int8", ofType: "tflite") else {
             throw PoseDiagnosticError.modelNotFound
@@ -47,15 +67,17 @@ actor MoveNetThunderModel {
             throw PoseDiagnosticError.inferenceFailed("Failed to load MoveNet Thunder model: \(error.localizedDescription)")
         }
 
-        // Read the input tensor at runtime rather than hardcoding 256x256 uint8, so a future
-        // model swap (e.g. escalating to BlazePose per the design doc) doesn't silently
-        // feed the wrong tensor size or element type.
+        // Read the input tensor at runtime rather than assuming 256x256 uint8, so the check below
+        // runs against the actual bundled file. A future model swap (e.g. escalating to BlazePose
+        // per the design doc) means a new wrapper type with its own expected shape — this type's
+        // contract is specifically the Thunder singlepose int8 variant.
         let inputTensor = try interpreter.input(at: 0)
         guard inputTensor.dataType == .uInt8 else {
             throw PoseDiagnosticError.inferenceFailed(
                 "Model input wants \(inputTensor.dataType), the frame packing writes uInt8"
             )
         }
+        try Self.validateInputShape(inputTensor.shape.dimensions)
         preprocessor = try FramePreprocessor(inputShape: inputTensor.shape.dimensions)
     }
 

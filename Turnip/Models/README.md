@@ -19,12 +19,25 @@ the pose diagnostic screen will just show a "model not found" error until it's i
    Thunder variant under Apache 2.0, per `docs/DESIGN.md`'s licensing claim, before using it.)
 2. Download the int8-quantized singlepose Thunder `.tflite` file.
 3. Rename/place it at `Turnip/Models/movenet_thunder_int8.tflite`.
-4. Record its checksum below so future contributors can verify they have the same bytes:
+4. Confirm you got the right variant: `MoveNetThunderModel` reads the bundled file's input
+   tensor at load and rejects anything that isn't the Thunder singlepose int8 shape —
+   `[1, 256, 256, 3]` input, `[1, 1, 17, 3]` output — with a visible error instead of silently
+   producing worse keypoints. If the diagnostic fails with an input-shape error, the file you
+   downloaded is a different variant (Lightning is 192x192) — go back to step 1.
 
-```
-$ shasum -a 256 Turnip/Models/movenet_thunder_int8.tflite
-b72fed22707cd6fb94b5a248b9bddb9c062b9f445471b4fa263407cf6d222011
-```
+## Why there is no checksum here
+
+A SHA-256 used to be recorded in this file, but it was removed in #38: it was written by the
+scaffolding commit in the same change that disclaimed the source as unverified, and the weights
+are gitignored, so nobody could ever check it against anything in the repo. An unbacked hash
+invites a verification whose result cannot be interpreted — a disagreeing hash tells the
+contributor nothing about whether they grabbed the wrong variant. The load-time shape check in
+step 4 is the checkable anchor instead: it fails on the wrong variant rather than silently
+degrading.
+
+When the Kaggle source is verified (step 1 above), record here: the resolved download URL,
+the date checked, the file size in bytes, and the SHA-256 you computed — and delete the
+"unverified by this scaffolding" parenthetical.
 
 ## Why a folder reference
 
