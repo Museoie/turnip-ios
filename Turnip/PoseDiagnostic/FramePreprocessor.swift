@@ -87,9 +87,18 @@ struct FramePreprocessor {
     /// preserves aspect ratio plus the centering translation that letterboxes the remainder.
     /// Computed in one place so the forward transform and the `LetterboxMapping` that inverts it
     /// can never disagree.
-    func letterboxGeometry(forSourceExtent extent: CGRect) -> (
+    ///
+    /// Throws `PoseDiagnosticError.inferenceFailed` when the source extent is degenerate (zero or
+    /// negative): dividing by a zero extent would produce an infinite scale and silently ship
+    /// bad geometry downstream instead of failing loudly at the misuse.
+    func letterboxGeometry(forSourceExtent extent: CGRect) throws -> (
         transform: CGAffineTransform, mapping: LetterboxMapping
     ) {
+        guard extent.width > 0, extent.height > 0 else {
+            throw PoseDiagnosticError.inferenceFailed(
+                "Source frame has a degenerate extent (\(extent.width)x\(extent.height)); cannot letterbox it"
+            )
+        }
         let scale = min(CGFloat(targetWidth) / extent.width, CGFloat(targetHeight) / extent.height)
         let offsetX = (CGFloat(targetWidth) - extent.width * scale) / 2
         let offsetY = (CGFloat(targetHeight) - extent.height * scale) / 2

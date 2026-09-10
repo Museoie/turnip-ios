@@ -124,7 +124,7 @@ actor MoveNetThunderModel {
         data: Data, mapping: LetterboxMapping
     ) {
         let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let (transform, mapping) = preprocessor.letterboxGeometry(forSourceExtent: sourceImage.extent)
+        let (transform, mapping) = try preprocessor.letterboxGeometry(forSourceExtent: sourceImage.extent)
         let outputBuffer = try preprocessor.makeTargetBuffer()
         ciContext.render(sourceImage.transformed(by: transform), to: outputBuffer)
         return (try preprocessor.packRGB(from: outputBuffer), mapping)

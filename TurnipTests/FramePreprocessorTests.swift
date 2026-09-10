@@ -28,11 +28,11 @@ final class FramePreprocessorTests: XCTestCase {
 
     // MARK: - Geometry
 
-    func testLetterboxMapsASquareSourceOntoTheInputSquare() {
+    func testLetterboxMapsASquareSourceOntoTheInputSquare() throws {
         let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
         let extent = CGRect(x: 0, y: 0, width: 512, height: 512)
 
-        let (transform, mapping) = preprocessor.letterboxGeometry(forSourceExtent: extent)
+        let (transform, mapping) = try preprocessor.letterboxGeometry(forSourceExtent: extent)
 
         XCTAssertEqual(transform.a, 0.5, accuracy: 0.0001)
         XCTAssertEqual(transform.d, 0.5, accuracy: 0.0001)
@@ -44,12 +44,12 @@ final class FramePreprocessorTests: XCTestCase {
 
     /// The letterbox fit: the longer side fills the input, the shorter side is centered with
     /// zeroed padding.
-    func testLetterboxFitsANonSquareSourceInsideTheInputSquare() {
+    func testLetterboxFitsANonSquareSourceInsideTheInputSquare() throws {
         let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
 
         for size in [CGSize(width: 1920, height: 1080), CGSize(width: 1080, height: 1920)] {
             let extent = CGRect(origin: .zero, size: size)
-            let scaled = extent.applying(preprocessor.letterboxGeometry(forSourceExtent: extent).transform)
+            let scaled = extent.applying(try preprocessor.letterboxGeometry(forSourceExtent: extent).transform)
 
             XCTAssertLessThanOrEqual(scaled.width, 256.0001, "\(size) overflows the input square")
             XCTAssertLessThanOrEqual(scaled.height, 256.0001, "\(size) overflows the input square")
@@ -57,12 +57,12 @@ final class FramePreprocessorTests: XCTestCase {
         }
     }
 
-    func testLetterboxCentersLandscapeAndPortraitFrames() {
+    func testLetterboxCentersLandscapeAndPortraitFrames() throws {
         let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
 
         // 1920x1080: uniform scale is 256/1920, so the frame is 256x144 and the 112 leftover
         // pixels split evenly above and below.
-        let landscape = preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        let landscape = try preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1920, height: 1080))
         XCTAssertEqual(landscape.mapping.scale, 256.0 / 1920.0, accuracy: 0.0001)
         XCTAssertEqual(landscape.mapping.offsetX, 0, accuracy: 0.0001)
         XCTAssertEqual(landscape.mapping.offsetY, 56, accuracy: 0.0001)
@@ -73,7 +73,7 @@ final class FramePreprocessorTests: XCTestCase {
         XCTAssertEqual(placedLandscape.height, 144, accuracy: 0.0001)
 
         // 1080x1920: the inverse — padding on the sides instead of top and bottom.
-        let portrait = preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1080, height: 1920))
+        let portrait = try preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1080, height: 1920))
         XCTAssertEqual(portrait.mapping.scale, 256.0 / 1920.0, accuracy: 0.0001)
         XCTAssertEqual(portrait.mapping.offsetX, 56, accuracy: 0.0001)
         XCTAssertEqual(portrait.mapping.offsetY, 0, accuracy: 0.0001)
@@ -81,9 +81,9 @@ final class FramePreprocessorTests: XCTestCase {
 
     /// Keypoints come back in normalized input coordinates; the recorded (scale, offsetX, offsetY)
     /// must invert them exactly, since the crop-rect and empirical-baseline work depends on it.
-    func testLetterboxMappingInvertsNormalizedKeypoints() {
+    func testLetterboxMappingInvertsNormalizedKeypoints() throws {
         let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
-        let mapping = preprocessor.letterboxGeometry(
+        let mapping = try preprocessor.letterboxGeometry(
             forSourceExtent: CGRect(x: 0, y: 0, width: 1920, height: 1080)
         ).mapping
 
@@ -100,6 +100,17 @@ final class FramePreprocessorTests: XCTestCase {
         let bottomRight = mapping.sourcePoint(normalizedX: 1, normalizedY: 200.0 / 256.0)
         XCTAssertEqual(bottomRight.x, 1920, accuracy: 0.0001)
         XCTAssertEqual(bottomRight.y, 1080, accuracy: 0.0001)
+    }
+
+    /// A zero-extent source would divide by zero and produce an infinite scale that silently
+    /// emits nothing downstream, so the geometry refuses it up front instead of shipping
+    /// bad geometry.
+    func testLetterboxRejectsADegenerateExtent() {
+        let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
+
+        XCTAssertThrowsError(try preprocessor.letterboxGeometry(forSourceExtent: .zero))
+        XCTAssertThrowsError(try preprocessor.letterboxGeometry(
+            forSourceExtent: CGRect(x: 0, y: 0, width: 640, height: 0)))
     }
 
     /// `frameNormalized(keypoints:sourceSize:)` must restore the frame fractions the
@@ -144,7 +155,7 @@ final class FramePreprocessorTests: XCTestCase {
         // 64x36 landscape: uniform scale 4, placed 256x144, 56 pad rows top and bottom.
         let source = CIImage(color: CIColor(red: 1, green: 1, blue: 1))
             .cropped(to: CGRect(x: 0, y: 0, width: 64, height: 36))
-        let (transform, mapping) = preprocessor.letterboxGeometry(forSourceExtent: source.extent)
+        let (transform, mapping) = try preprocessor.letterboxGeometry(forSourceExtent: source.extent)
         XCTAssertEqual(mapping.offsetY, 56, accuracy: 0.0001)
 
         let buffer = try preprocessor.makeTargetBuffer()
