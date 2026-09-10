@@ -1,0 +1,37 @@
+# SwiftLint configuration. CI runs `swiftlint lint --strict` (see
+# .github/workflows/ci.yml and ci_scripts/ci_post_clone.sh), so every rule
+# below is a hard gate, not a suggestion.
+#
+# This starts from the default rule set. The opt-outs below each record why
+# they exist; add a reason when you add one. CONTRIBUTING.md names the pinned
+# tool version and how to run the gate locally.
+
+# Generated or vendored code is never ours to style.
+excluded:
+  - Pods
+  - Turnip.xcodeproj
+  - Turnip.xcworkspace
+
+disabled_rules:
+  # SwiftUI view bodies compose dozens of tiny subviews; the limit punishes
+  # normal view decomposition rather than god-objects. Views stay small by
+  # extracting subviews instead of by staying under a line count.
+  - type_body_length
+  # SwiftUI view files grow declaratively (modifiers, previews), not from
+  # complexity. The rule offers no per-file opt-out, so disabling outright is
+  # the only way to keep it from fighting views.
+  - file_length
+
+identifier_name:
+  excluded:
+    # `^id$` is the rule's own default exception, kept: `id` is idiomatic
+    # (Identifiable, keyed collections) and banning it buys nothing.
+    - ^id$
+    # Geometry vocabulary, anchored so the exception can't leak into longer
+    # names. MoveNet's output order is (y, x, score) — documented in
+    # PoseKeypoint.swift — and dx/dy are deltas throughout the motion
+    # pipeline. Spelling these out (xCoordinate) adds noise without meaning.
+    - ^x$
+    - ^y$
+    - ^dx$
+    - ^dy$

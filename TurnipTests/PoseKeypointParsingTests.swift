@@ -25,13 +25,13 @@ final class PoseKeypointParsingTests: XCTestCase {
         }
     }
 
-    func testUsableKeypointCountExcludesLowConfidence() {
+    func testUsableKeypointCountExcludesLowConfidence() throws {
         var values = [Float](repeating: 0, count: 51)
         // Keypoint 0: confidence above threshold. Keypoint 1: below threshold.
         values[2] = 0.9
         values[5] = 0.1
 
-        let keypoints = try! PoseKeypoint.parse(from: values)
+        let keypoints = try PoseKeypoint.parse(from: values)
         let result = PoseFrameResult(frameIndex: 0, timestamp: 0, keypoints: keypoints)
 
         XCTAssertEqual(result.usableKeypointCount, 1)

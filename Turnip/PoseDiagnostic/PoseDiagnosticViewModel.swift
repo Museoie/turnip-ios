@@ -41,7 +41,11 @@ final class PoseDiagnosticViewModel: ObservableObject {
                 let model = try await MoveNetThunderModel.load()
                 try await sampler.sampleFrames(from: videoURL) { frame in
                     let keypoints = try await model.runInference(on: frame.pixelBuffer)
-                    let result = PoseFrameResult(frameIndex: frame.frameIndex, timestamp: frame.timestamp, keypoints: keypoints)
+                    let result = PoseFrameResult(
+                        frameIndex: frame.frameIndex,
+                        timestamp: frame.timestamp,
+                        keypoints: keypoints
+                    )
                     PoseResultLogger.log(result)
                     await MainActor.run {
                         self.results.append(result)

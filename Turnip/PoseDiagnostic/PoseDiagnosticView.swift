@@ -32,7 +32,7 @@ struct PoseDiagnosticView: View {
                 VStack(alignment: .leading) {
                     Text("Frame \(result.frameIndex) · t=\(String(format: "%.2f", result.timestamp))s")
                         .font(.headline)
-                    Text("avg confidence \(String(format: "%.2f", result.averageConfidence)) · usable \(result.usableKeypointCount)/17")
+                    Text(Self.summary(for: result))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -40,6 +40,13 @@ struct PoseDiagnosticView: View {
             .listStyle(.plain)
         }
         .padding()
+    }
+
+    /// One-line summary per frame. Kept out of `body`: the format string alone
+    /// pushes the `Text` line past the line_length limit the CI lint step enforces.
+    private static func summary(for result: PoseFrameResult) -> String {
+        let confidence = String(format: "%.2f", result.averageConfidence)
+        return "avg confidence \(confidence) · usable \(result.usableKeypointCount)/17"
     }
 }
 

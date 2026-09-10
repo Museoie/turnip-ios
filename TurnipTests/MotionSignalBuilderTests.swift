@@ -9,8 +9,8 @@ final class MotionSignalBuilderTests: XCTestCase {
         let frame = PoseFixture.frame(
             index: 0,
             hip: nil,
-            leftHip: (x: 0.4, y: 0.5, confidence: 0.9),
-            rightHip: (x: 0.6, y: 0.7, confidence: 0.9)
+            leftHip: KeypointSeed(x: 0.4, y: 0.5, confidence: 0.9),
+            rightHip: KeypointSeed(x: 0.6, y: 0.7, confidence: 0.9)
         )
 
         let anchor = try XCTUnwrap(MotionSignalBuilder.anchors(for: [frame])[0])
@@ -24,8 +24,8 @@ final class MotionSignalBuilderTests: XCTestCase {
         let frame = PoseFixture.frame(
             index: 0,
             hip: nil,
-            leftHip: (x: 0.4, y: 0.5, confidence: 0.9),
-            rightHip: (x: 0.9, y: 0.9, confidence: 0.1)
+            leftHip: KeypointSeed(x: 0.4, y: 0.5, confidence: 0.9),
+            rightHip: KeypointSeed(x: 0.9, y: 0.9, confidence: 0.1)
         )
 
         let anchor = try XCTUnwrap(MotionSignalBuilder.anchors(for: [frame])[0])
