@@ -34,8 +34,12 @@ struct LetterboxMapping: Sendable, Equatable {
     /// coordinates differ by the (scale, offset) map recorded here; inverting the pixel
     /// position and dividing by the source extent restores the frame fractions the consumers
     /// assume.
+    ///
+    /// The source extent must be non-degenerate: dividing by a zero extent would otherwise
+    /// leave the keypoints in input-normalized coordinates and silently ship bad geometry
+    /// downstream, so a degenerate extent traps as a programming error instead.
     func frameNormalized(keypoints: [PoseKeypoint], sourceSize: CGSize) -> [PoseKeypoint] {
-        guard sourceSize.width > 0, sourceSize.height > 0 else { return keypoints }
+        precondition(sourceSize.width > 0 && sourceSize.height > 0)
         return keypoints.map { keypoint in
             let point = sourcePoint(normalizedX: CGFloat(keypoint.x), normalizedY: CGFloat(keypoint.y))
             return PoseKeypoint(
