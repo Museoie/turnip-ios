@@ -83,8 +83,10 @@ actor MoveNetThunderModel {
         return try preprocessor.packRGB(from: outputBuffer)
     }
 
-    /// MoveNet's int8 build emits a quantized uint8 tensor; dequantize using the tensor's own
-    /// scale/zero-point rather than assuming float32 output.
+    /// The int8 build quantizes the weights and the input, but its output tensor is
+    /// float32 ([1, 1, 17, 3]) — verified against the real artifact (hash recorded in
+    /// `Turnip/Models/README.md`). The uint8 branch is a defensive path for a future
+    /// model whose output tensor is quantized, not the path the bundled model takes.
     private static func dequantize(_ tensor: Tensor) -> [Float] {
         if tensor.dataType == .uInt8, let quantization = tensor.quantizationParameters {
             return TensorDequantizer.floats(
