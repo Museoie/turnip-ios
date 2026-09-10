@@ -100,6 +100,24 @@ final class VideoFrameSamplerTests: XCTestCase {
         }
     }
 
+    func testThrowsWhenTheAssetHasNoVideoTrack() async throws {
+        let audioURL = try Self.writeAudioOnlyFile()
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        let sampler = VideoFrameSampler()
+
+        do {
+            try await sampler.sampleFrames(from: audioURL) { frame in
+                XCTFail("handler ran for frame \(frame.frameIndex) on an asset with no video track")
+            }
+            XCTFail("expected sampleFrames to throw for an asset with no video track")
+        } catch let error as PoseDiagnosticError {
+            guard case .videoLoadFailed = error else {
+                return XCTFail("expected videoLoadFailed, got \(error)")
+            }
+        }
+    }
+
     // MARK: - Fixture
 
     /// Writes a tiny H.264 movie with `frameCount` solid-color frames so the sampler has something
@@ -173,6 +191,21 @@ final class VideoFrameSamplerTests: XCTestCase {
         guard writer.status == .completed else {
             throw writer.error ?? PoseDiagnosticError.videoLoadFailed(underlying: nil)
         }
+        return url
+    }
+
+    /// Writes a short silent CAF so the asset has an audio track and no video track.
+    private static func writeAudioOnlyFile() throws -> URL {
+        let url = URL.temporaryDirectory.appending(path: "VideoFrameSamplerTests-audio-\(UUID().uuidString).caf")
+
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4410) else {
+            throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
+        }
+        buffer.frameLength = buffer.frameCapacity
+
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
         return url
     }
 }
