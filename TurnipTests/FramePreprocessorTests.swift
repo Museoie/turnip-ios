@@ -113,21 +113,22 @@ final class FramePreprocessorTests: XCTestCase {
             forSourceExtent: CGRect(x: 0, y: 0, width: 640, height: 0)))
     }
 
-    /// `frameNormalized(keypoints:sourceSize:)` must restore the frame fractions the
-    /// downstream consumers read: on a 1080x1920 portrait source in a 256x256 input the padded
-    /// x axis reports `0.5625 f + 0.21875`, but `CropRectCalculator` and `MotionSignalBuilder`
-    /// assume frame fractions — so the mapping is inverted and divided by the source extent
-    /// before keypoints enter `PoseFrameResult`.
+    /// `frameNormalized(keypoints:)` must restore the frame fractions the downstream
+    /// consumers read: on a 1080x1920 portrait source in a 256x256 input the padded x axis
+    /// reports `0.5625 f + 0.21875`, but `CropRectCalculator` and `MotionSignalBuilder` assume
+    /// frame fractions — so the mapping is inverted and divided by the recorded source extent
+    /// before keypoints enter `PoseFrameResult`. The extent rides on the mapping rather than
+    /// arriving as a second parameter, so no caller can invert against a size the geometry
+    /// was not computed from.
     func testFrameNormalizedKeypointsInvertTheLetterbox() {
         let mapping = LetterboxMapping(
             scale: 256.0 / 1920.0, offsetX: 56, offsetY: 0,
-            inputSize: CGSize(width: 256, height: 256))
-        let sourceSize = CGSize(width: 1080, height: 1920)
+            inputSize: CGSize(width: 256, height: 256),
+            sourceExtent: CGRect(x: 0, y: 0, width: 1080, height: 1920))
 
         // The input square's center is the source frame's center.
         let center = mapping.frameNormalized(
-            keypoints: [PoseKeypoint(name: "nose", y: 0.5, x: 0.5, confidence: 0.9)],
-            sourceSize: sourceSize)
+            keypoints: [PoseKeypoint(name: "nose", y: 0.5, x: 0.5, confidence: 0.9)])
         XCTAssertEqual(center.count, 1)
         XCTAssertEqual(center[0].x, 0.5, accuracy: 0.0001)
         XCTAssertEqual(center[0].y, 0.5, accuracy: 0.0001)
@@ -138,10 +139,21 @@ final class FramePreprocessorTests: XCTestCase {
         let inputX = Float((270.0 * (256.0 / 1920.0) + 56.0) / 256.0)
         let inputY = Float((960.0 * (256.0 / 1920.0)) / 256.0)
         let roundTripped = mapping.frameNormalized(
-            keypoints: [PoseKeypoint(name: "nose", y: inputY, x: inputX, confidence: 0.9)],
-            sourceSize: sourceSize)
+            keypoints: [PoseKeypoint(name: "nose", y: inputY, x: inputX, confidence: 0.9)])
         XCTAssertEqual(roundTripped[0].x, 0.25, accuracy: 0.0001)
         XCTAssertEqual(roundTripped[0].y, 0.5, accuracy: 0.0001)
+
+        // A keypoint the model places in the letterbox pad maps outside [0, 1] — off-frame is
+        // reported honestly rather than clamped. x = 0.10 sits in the 56-pixel left pad and
+        // reads -0.2111 of the 1080-wide frame; x = 0.95 sits in the right pad and reads 1.30.
+        let padLeft = mapping.frameNormalized(
+            keypoints: [PoseKeypoint(name: "nose", y: 0.5, x: 0.10, confidence: 0.9)])
+        XCTAssertEqual(padLeft[0].x, -0.2111, accuracy: 0.0001)
+        XCTAssertEqual(padLeft[0].y, 0.5, accuracy: 0.0001)
+        let padRight = mapping.frameNormalized(
+            keypoints: [PoseKeypoint(name: "nose", y: 0.5, x: 0.95, confidence: 0.9)])
+        XCTAssertEqual(padRight[0].x, 1.30, accuracy: 0.0001)
+        XCTAssertEqual(padRight[0].y, 0.5, accuracy: 0.0001)
     }
 
     // MARK: - Render
