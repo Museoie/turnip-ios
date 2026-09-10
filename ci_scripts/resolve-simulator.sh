@@ -20,7 +20,11 @@ set -eu
 # uses the generic simulator destination instead, since building needs no
 # device at all.
 
-json=$(xcrun simctl list devices available --json)
+# `|| json='{}'`: if simctl itself errors out (sick runner, daemon hiccup),
+# `set -e` would abort here and the runner-image message below would never
+# print — the one infrastructure failure this script's header promises to
+# label. An empty devices object trips the explicit no-device path instead.
+json=$(xcrun simctl list devices available --json) || json='{}'
 
 # `|| true`: a python exit of 1 means "no device found", which the explicit
 # check below reports. Without it, `set -e` would abort the script here and
