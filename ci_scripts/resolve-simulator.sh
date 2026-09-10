@@ -34,8 +34,19 @@ import json, sys
 
 data = json.loads(sys.stdin.read())
 devices = data.get("devices", {})
+
+# Version-tuple ordering, not lexicographic: "iOS-9-0" sorts above "iOS-18-4"
+# as a plain string ("9" > "1"), so sorting the raw keys would pick the wrong
+# "newest" runtime the day a single-digit runtime key appears. Parse the
+# numeric components out of com.apple.CoreSimulator.SimRuntime.iOS-<major>-<minor>
+# instead, so the "newest runtime" claim in this script'"'"'s header stays true.
+def runtime_version(runtime):
+    version = runtime.rsplit("iOS-", 1)[1]
+    return tuple(map(int, version.split("-")))
+
 runtimes = sorted(
     (r for r in devices if r.startswith("com.apple.CoreSimulator.SimRuntime.iOS-")),
+    key=runtime_version,
     reverse=True,
 )
 for runtime in runtimes:
