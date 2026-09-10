@@ -53,10 +53,16 @@ actor MoveNetThunderModel {
             throw PoseDiagnosticError.inferenceFailed("Failed to load MoveNet Thunder model: \(error.localizedDescription)")
         }
 
-        // Read the input shape at runtime rather than hardcoding 256x256, so a future
-        // model swap (e.g. escalating to BlazePose per the design doc) doesn't silently
-        // feed the wrong tensor size.
-        let inputShape = try interpreter.input(at: 0).shape.dimensions
+        // Read the input shape and data type at runtime rather than hardcoding 256x256/uint8,
+        // so a future model swap (e.g. escalating to BlazePose per the design doc) doesn't
+        // silently feed the wrong tensor size or element type.
+        let inputTensor = try interpreter.input(at: 0)
+        guard inputTensor.dataType == .uInt8 else {
+            throw PoseDiagnosticError.inferenceFailed(
+                "Model input wants \(inputTensor.dataType), the frame packing writes uInt8"
+            )
+        }
+        let inputShape = inputTensor.shape.dimensions
         guard inputShape.count == 4 else {
             throw PoseDiagnosticError.inferenceFailed("Unexpected model input shape: \(inputShape)")
         }
