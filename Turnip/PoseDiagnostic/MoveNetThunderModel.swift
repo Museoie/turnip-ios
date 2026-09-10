@@ -77,12 +77,6 @@ actor MoveNetThunderModel {
     /// matching MoveNet Thunder's expected [1, height, width, 3] input tensor.
     private func resizedRGBData(from pixelBuffer: CVPixelBuffer) throws -> Data {
         let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
-        // A zero-area source would divide by zero in the scale transform below, producing an
-        // infinite transform that silently corrupts the resize. Fail loudly instead: a
-        // CVPixelBuffer-backed image should never have an empty extent.
-        guard sourceImage.extent.width > 0, sourceImage.extent.height > 0 else {
-            throw PoseDiagnosticError.inferenceFailed("Cannot resize a zero-area source frame")
-        }
         let transform = preprocessor.scaleTransform(forSourceExtent: sourceImage.extent)
         let outputBuffer = try preprocessor.makeTargetBuffer()
         ciContext.render(sourceImage.transformed(by: transform), to: outputBuffer)
