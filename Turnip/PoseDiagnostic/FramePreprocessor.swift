@@ -3,14 +3,12 @@ import CoreVideo
 import Foundation
 
 /// Records how a source frame was placed into the model's square input, so downstream work can
-/// invert the mapping: MoveNet returns keypoints in normalized input coordinates, and once the
-/// frame is letterboxed instead of stretched those coordinates no longer invert with a plain
-/// per-axis scale. The inverse is `sourceX = (x * inputWidth - offsetX) / scale`, and likewise
-/// for y — see `sourcePoint(normalizedX:normalizedY:)`.
+/// invert the mapping: MoveNet returns keypoints in normalized input coordinates. The inverse is
+/// `sourceX = (x * inputWidth - offsetX) / scale`, and likewise for y — see
+/// `sourcePoint(normalizedX:normalizedY:)`.
 struct LetterboxMapping: Sendable, Equatable {
-    /// The single uniform scale applied to both axes, so the longer side exactly fills the input.
-    /// Uniform because the pose model was trained on naturally-proportioned people — stretching
-    /// the frame would feed it limb-length ratios it never saw in training.
+    /// The single uniform scale applied to both axes, so the longer side exactly fills the input —
+    /// uniform because the pose model was trained on naturally-proportioned people.
     let scale: CGFloat
     /// Centering offsets, in input-tensor pixels. The scaled frame occupies
     /// `(offsetX, offsetY)..(offsetX + sourceWidth * scale, offsetY + sourceHeight * scale)`,
@@ -28,6 +26,25 @@ struct LetterboxMapping: Sendable, Equatable {
             x: (x * inputSize.width - offsetX) / scale,
             y: (y * inputSize.height - offsetY) / scale
         )
+    }
+
+    /// Maps keypoints from the model's normalized input coordinates back to frame-normalized
+    /// 0–1 coordinates — the space `CropRectCalculator` and `MotionSignalBuilder` read
+    /// `PoseKeypoint.x/y` in. Letterboxing makes input-normalized and frame-normalized
+    /// coordinates differ by the (scale, offset) map recorded here; inverting the pixel
+    /// position and dividing by the source extent restores the frame fractions the consumers
+    /// assume.
+    func frameNormalized(keypoints: [PoseKeypoint], sourceSize: CGSize) -> [PoseKeypoint] {
+        guard sourceSize.width > 0, sourceSize.height > 0 else { return keypoints }
+        return keypoints.map { keypoint in
+            let point = sourcePoint(normalizedX: CGFloat(keypoint.x), normalizedY: CGFloat(keypoint.y))
+            return PoseKeypoint(
+                name: keypoint.name,
+                y: Float(point.y / sourceSize.height),
+                x: Float(point.x / sourceSize.width),
+                confidence: keypoint.confidence
+            )
+        }
     }
 }
 
@@ -67,10 +84,9 @@ struct FramePreprocessor {
     }
 
     /// The geometry that maps a source frame into the model's square input: a uniform scale that
-    /// preserves aspect ratio plus the centering translation that letterboxes the remainder —
-    /// every iPhone recording is non-square, so an independent per-axis scale would stretch the
-    /// subject on the only path there is. Computed in one place so the forward transform and the
-    /// `LetterboxMapping` that inverts it can never disagree.
+    /// preserves aspect ratio plus the centering translation that letterboxes the remainder.
+    /// Computed in one place so the forward transform and the `LetterboxMapping` that inverts it
+    /// can never disagree.
     func letterboxGeometry(forSourceExtent extent: CGRect) -> (
         transform: CGAffineTransform, mapping: LetterboxMapping
     ) {
@@ -107,9 +123,8 @@ struct FramePreprocessor {
         return buffer
     }
 
-    /// Zeroes every byte of `pixelBuffer`. A separate static so tests can exercise the clear
-    /// directly — a fresh `CVPixelBufferCreate` allocation reads as zeros either way, which makes
-    /// `makeTargetBuffer`'s clearing invisible to a test that only reads the returned buffer.
+    /// Zeroes every byte of `pixelBuffer`: `CVPixelBufferCreate` does not zero its allocation,
+    /// so the letterbox pad is cleared explicitly before the buffer is handed to the render.
     static func zeroFill(_ pixelBuffer: CVPixelBuffer) {
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }

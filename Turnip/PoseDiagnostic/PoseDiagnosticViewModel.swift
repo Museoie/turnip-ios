@@ -33,7 +33,17 @@ final class PoseDiagnosticViewModel: ObservableObject {
             do {
                 let model = try await MoveNetThunderModel.load()
                 try await sampler.sampleFrames(from: asset) { frame in
-                    let keypoints = try await model.runInference(on: frame.pixelBuffer).keypoints
+                    let inference = try await model.runInference(on: frame.pixelBuffer)
+                    // `runInference` emits keypoints in the model's normalized input coordinates,
+                    // but `PoseFrameResult`'s consumers read them as frame-normalized 0-1
+                    // coordinates — so the per-frame letterbox mapping is inverted here, before
+                    // the keypoints enter the result. The source extent is the frame the
+                    // inference letterboxed.
+                    let sourceSize = CGSize(
+                        width: CVPixelBufferGetWidth(frame.pixelBuffer),
+                        height: CVPixelBufferGetHeight(frame.pixelBuffer))
+                    let keypoints = inference.letterbox.frameNormalized(
+                        keypoints: inference.keypoints, sourceSize: sourceSize)
                     let result = PoseFrameResult(frameIndex: frame.frameIndex, timestamp: frame.timestamp, keypoints: keypoints)
                     PoseResultLogger.log(result)
                     await MainActor.run {

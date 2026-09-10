@@ -1,3 +1,4 @@
+import CoreImage
 import CoreVideo
 import XCTest
 @testable import Turnip
@@ -42,8 +43,7 @@ final class FramePreprocessorTests: XCTestCase {
     }
 
     /// The letterbox fit: the longer side fills the input, the shorter side is centered with
-    /// zeroed padding — never an independent per-axis stretch, which is what fed MoveNet
-    /// subjects squashed to 56% width (or stretched 1.78x) on every non-square frame.
+    /// zeroed padding.
     func testLetterboxFitsANonSquareSourceInsideTheInputSquare() {
         let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
 
@@ -72,8 +72,7 @@ final class FramePreprocessorTests: XCTestCase {
         XCTAssertEqual(placedLandscape.width, 256, accuracy: 0.0001)
         XCTAssertEqual(placedLandscape.height, 144, accuracy: 0.0001)
 
-        // 1080x1920 (what portrait frames become once the preferredTransform fix lands): the
-        // inverse — padding on the sides instead of top and bottom.
+        // 1080x1920: the inverse — padding on the sides instead of top and bottom.
         let portrait = preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1080, height: 1920))
         XCTAssertEqual(portrait.mapping.scale, 256.0 / 1920.0, accuracy: 0.0001)
         XCTAssertEqual(portrait.mapping.offsetX, 56, accuracy: 0.0001)
@@ -101,6 +100,87 @@ final class FramePreprocessorTests: XCTestCase {
         let bottomRight = mapping.sourcePoint(normalizedX: 1, normalizedY: 200.0 / 256.0)
         XCTAssertEqual(bottomRight.x, 1920, accuracy: 0.0001)
         XCTAssertEqual(bottomRight.y, 1080, accuracy: 0.0001)
+    }
+
+    /// `frameNormalized(keypoints:sourceSize:)` must restore the frame fractions the
+    /// downstream consumers read: on a 1080x1920 portrait source in a 256x256 input the padded
+    /// x axis reports `0.5625 f + 0.21875`, but `CropRectCalculator` and `MotionSignalBuilder`
+    /// assume frame fractions — so the mapping is inverted and divided by the source extent
+    /// before keypoints enter `PoseFrameResult`.
+    func testFrameNormalizedKeypointsInvertTheLetterbox() {
+        let mapping = LetterboxMapping(
+            scale: 256.0 / 1920.0, offsetX: 56, offsetY: 0,
+            inputSize: CGSize(width: 256, height: 256))
+        let sourceSize = CGSize(width: 1080, height: 1920)
+
+        // The input square's center is the source frame's center.
+        let center = mapping.frameNormalized(
+            keypoints: [PoseKeypoint(name: "nose", y: 0.5, x: 0.5, confidence: 0.9)],
+            sourceSize: sourceSize)
+        XCTAssertEqual(center.count, 1)
+        XCTAssertEqual(center[0].x, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(center[0].y, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(center[0].name, "nose")
+        XCTAssertEqual(center[0].confidence, 0.9, accuracy: 0.0001)
+
+        // A frame fraction round-trips through the forward and inverse maps.
+        let inputX = Float((270.0 * (256.0 / 1920.0) + 56.0) / 256.0)
+        let inputY = Float((960.0 * (256.0 / 1920.0)) / 256.0)
+        let roundTripped = mapping.frameNormalized(
+            keypoints: [PoseKeypoint(name: "nose", y: inputY, x: inputX, confidence: 0.9)],
+            sourceSize: sourceSize)
+        XCTAssertEqual(roundTripped[0].x, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(roundTripped[0].y, 0.5, accuracy: 0.0001)
+    }
+
+    // MARK: - Render
+
+    /// The render must leave the letterbox pad a known constant: a non-square source rendered
+    /// through the real path (`makeTargetBuffer` + `CIContext.render` + `packRGB`) keeps the
+    /// zeroed pad the buffer was allocated with. The fixture is a solid fill, so any painted
+    /// pixel reads non-zero and the assertion distinguishes written from allocated memory.
+    func testLetterboxPadIsZeroAfterRender() throws {
+        let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
+        // 64x36 landscape: uniform scale 4, placed 256x144, 56 pad rows top and bottom.
+        let source = CIImage(color: CIColor(red: 1, green: 1, blue: 1))
+            .cropped(to: CGRect(x: 0, y: 0, width: 64, height: 36))
+        let (transform, mapping) = preprocessor.letterboxGeometry(forSourceExtent: source.extent)
+        XCTAssertEqual(mapping.offsetY, 56, accuracy: 0.0001)
+
+        let buffer = try preprocessor.makeTargetBuffer()
+        CIContext().render(source.transformed(by: transform), to: buffer)
+        let rgb = Array(try preprocessor.packRGB(from: buffer))
+
+        func triplet(atRow row: Int, col: Int) -> (UInt8, UInt8, UInt8) {
+            let base = (row * 256 + col) * 3
+            return (rgb[base], rgb[base + 1], rgb[base + 2])
+        }
+
+        // Rows above and below the placed frame are the zeroed pad.
+        let padRows = Int(mapping.offsetY)
+        for row in 0..<padRows {
+            for col in 0..<256 {
+                XCTAssertEqual(
+                    triplet(atRow: row, col: col), (0, 0, 0),
+                    "pad pixel at row \(row) col \(col) is not zero")
+            }
+        }
+        for row in (256 - padRows)..<256 {
+            for col in 0..<256 {
+                XCTAssertEqual(
+                    triplet(atRow: row, col: col), (0, 0, 0),
+                    "pad pixel at row \(row) col \(col) is not zero")
+            }
+        }
+
+        // The placed frame itself rendered — the buffer is not just a zeroed allocation.
+        var painted = 0
+        for row in padRows..<(256 - padRows) {
+            for col in 0..<256 where triplet(atRow: row, col: col) != (0, 0, 0) {
+                painted += 1
+            }
+        }
+        XCTAssertGreaterThan(painted, 0, "no rendered content found inside the placed rect")
     }
 
     func testZeroFillClearsEveryByteIncludingRowPadding() throws {

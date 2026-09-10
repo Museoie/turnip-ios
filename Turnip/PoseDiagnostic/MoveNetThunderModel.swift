@@ -116,10 +116,10 @@ actor MoveNetThunderModel {
         )
     }
 
-    /// Letterboxes the source frame into the model's input size (uniform scale, centered — never
-    /// stretched) and packs it as interleaved RGB uint8, matching MoveNet Thunder's expected
-    /// [1, height, width, 3] input tensor. Returns the packing together with the geometry that
-    /// placed it, so keypoints can be mapped back to the source frame.
+    /// Letterboxes the source frame into the model's input size (uniform scale, centered) and
+    /// packs it as interleaved RGB uint8, matching MoveNet Thunder's expected [1, height, width, 3]
+    /// input tensor. Returns the packing together with the geometry that placed it, so keypoints
+    /// can be mapped back to the source frame.
     private func resizedRGBData(from pixelBuffer: CVPixelBuffer) throws -> (
         data: Data, mapping: LetterboxMapping
     ) {
