@@ -32,7 +32,7 @@ the pose diagnostic screen will just show a "model not found" error until it's i
 
 ## Why there is no checksum here
 
-A SHA-256 used to be recorded in this file, but it was removed in #38: it was written by the
+A SHA-256 used to be recorded in this file, but it was removed here per #38's fallback decision: it was written by the
 scaffolding commit in the same change that disclaimed the source as unverified, and the weights
 are gitignored, so nobody could ever check it against anything in the repo. An unbacked hash
 invites a verification whose result cannot be interpreted — a disagreeing hash tells the
