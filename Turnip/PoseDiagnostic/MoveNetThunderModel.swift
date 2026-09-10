@@ -36,7 +36,12 @@ actor MoveNetThunderModel {
     }
 
     private init() throws {
-        guard let modelPath = Bundle.main.path(forResource: "movenet_thunder_int8", ofType: "tflite") else {
+        // The .tflite is copied into a "Models/" subfolder of the bundle because project.yml
+        // references Turnip/Models as a folder reference, not a group — so look it up there,
+        // not at the bundle root.
+        guard let modelPath = Bundle.main.path(
+            forResource: "movenet_thunder_int8", ofType: "tflite", inDirectory: "Models"
+        ) else {
             throw PoseDiagnosticError.modelNotFound
         }
 
