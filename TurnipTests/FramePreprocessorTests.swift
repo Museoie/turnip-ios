@@ -27,30 +27,115 @@ final class FramePreprocessorTests: XCTestCase {
 
     // MARK: - Geometry
 
-    func testScaleTransformMapsASquareSourceOntoTheInputSquare() {
+    func testLetterboxMapsASquareSourceOntoTheInputSquare() {
         let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
         let extent = CGRect(x: 0, y: 0, width: 512, height: 512)
 
-        let transform = preprocessor.scaleTransform(forSourceExtent: extent)
+        let (transform, mapping) = preprocessor.letterboxGeometry(forSourceExtent: extent)
 
         XCTAssertEqual(transform.a, 0.5, accuracy: 0.0001)
         XCTAssertEqual(transform.d, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(mapping.offsetX, 0, accuracy: 0.0001)
+        XCTAssertEqual(mapping.offsetY, 0, accuracy: 0.0001)
         XCTAssertEqual(extent.applying(transform).width, 256, accuracy: 0.0001)
         XCTAssertEqual(extent.applying(transform).height, 256, accuracy: 0.0001)
     }
 
-    /// Asserted as a bound plus "touches one edge" rather than exact per-axis sizes, so the
-    /// assertion stays meaningful whether the two axes are scaled independently or uniformly.
-    func testScaleTransformFitsANonSquareSourceInsideTheInputSquare() {
+    /// The letterbox fit: the longer side fills the input, the shorter side is centered with
+    /// zeroed padding — never an independent per-axis stretch, which is what fed MoveNet
+    /// subjects squashed to 56% width (or stretched 1.78x) on every non-square frame.
+    func testLetterboxFitsANonSquareSourceInsideTheInputSquare() {
         let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
 
         for size in [CGSize(width: 1920, height: 1080), CGSize(width: 1080, height: 1920)] {
             let extent = CGRect(origin: .zero, size: size)
-            let scaled = extent.applying(preprocessor.scaleTransform(forSourceExtent: extent))
+            let scaled = extent.applying(preprocessor.letterboxGeometry(forSourceExtent: extent).transform)
 
             XCTAssertLessThanOrEqual(scaled.width, 256.0001, "\(size) overflows the input square")
             XCTAssertLessThanOrEqual(scaled.height, 256.0001, "\(size) overflows the input square")
             XCTAssertEqual(max(scaled.width, scaled.height), 256, accuracy: 0.0001, "\(size) underfills it")
+        }
+    }
+
+    func testLetterboxCentersLandscapeAndPortraitFrames() {
+        let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
+
+        // 1920x1080: uniform scale is 256/1920, so the frame is 256x144 and the 112 leftover
+        // pixels split evenly above and below.
+        let landscape = preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        XCTAssertEqual(landscape.mapping.scale, 256.0 / 1920.0, accuracy: 0.0001)
+        XCTAssertEqual(landscape.mapping.offsetX, 0, accuracy: 0.0001)
+        XCTAssertEqual(landscape.mapping.offsetY, 56, accuracy: 0.0001)
+        let placedLandscape = CGRect(x: 0, y: 0, width: 1920, height: 1080).applying(landscape.transform)
+        XCTAssertEqual(placedLandscape.origin.x, 0, accuracy: 0.0001)
+        XCTAssertEqual(placedLandscape.origin.y, 56, accuracy: 0.0001)
+        XCTAssertEqual(placedLandscape.width, 256, accuracy: 0.0001)
+        XCTAssertEqual(placedLandscape.height, 144, accuracy: 0.0001)
+
+        // 1080x1920 (what portrait frames become once the preferredTransform fix lands): the
+        // inverse — padding on the sides instead of top and bottom.
+        let portrait = preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1080, height: 1920))
+        XCTAssertEqual(portrait.mapping.scale, 256.0 / 1920.0, accuracy: 0.0001)
+        XCTAssertEqual(portrait.mapping.offsetX, 56, accuracy: 0.0001)
+        XCTAssertEqual(portrait.mapping.offsetY, 0, accuracy: 0.0001)
+    }
+
+    /// Keypoints come back in normalized input coordinates; the recorded (scale, offsetX, offsetY)
+    /// must invert them exactly, since the crop-rect and empirical-baseline work depends on it.
+    func testLetterboxMappingInvertsNormalizedKeypoints() {
+        let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
+        let mapping = preprocessor.letterboxGeometry(
+            forSourceExtent: CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        ).mapping
+
+        // Center of the input square is the center of the source frame.
+        let center = mapping.sourcePoint(normalizedX: 0.5, normalizedY: 0.5)
+        XCTAssertEqual(center.x, 960, accuracy: 0.0001)
+        XCTAssertEqual(center.y, 540, accuracy: 0.0001)
+
+        // The scaled frame occupies x in [0, 256], y in [56, 200] — the pad boundary maps back
+        // to the frame edges, not into the padding.
+        let topLeft = mapping.sourcePoint(normalizedX: 0, normalizedY: 56.0 / 256.0)
+        XCTAssertEqual(topLeft.x, 0, accuracy: 0.0001)
+        XCTAssertEqual(topLeft.y, 0, accuracy: 0.0001)
+        let bottomRight = mapping.sourcePoint(normalizedX: 1, normalizedY: 200.0 / 256.0)
+        XCTAssertEqual(bottomRight.x, 1920, accuracy: 0.0001)
+        XCTAssertEqual(bottomRight.y, 1080, accuracy: 0.0001)
+    }
+
+    func testZeroFillClearsEveryByteIncludingRowPadding() throws {
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault, 250, 8, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferCGImageCompatibilityKey: true] as CFDictionary, &buffer
+        )
+        guard status == kCVReturnSuccess, let buffer else {
+            throw FixtureFailure(message: "could not allocate a 250x8 buffer: \(status)")
+        }
+
+        CVPixelBufferLockBaseAddress(buffer, [])
+        if let baseAddress = CVPixelBufferGetBaseAddress(buffer) {
+            memset(
+                baseAddress, 0xA5,
+                CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
+            )
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+
+        FramePreprocessor.zeroFill(buffer)
+
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
+            throw FixtureFailure(message: "could not read back the zeroed buffer")
+        }
+        let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+        for row in 0..<height {
+            for col in 0..<bytesPerRow {
+                XCTAssertEqual(bytes[row * bytesPerRow + col], 0, "byte \(col) of row \(row) not cleared")
+            }
         }
     }
 

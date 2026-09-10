@@ -3,6 +3,15 @@ import CoreVideo
 import Foundation
 import TensorFlowLite
 
+/// What one inference pass produces: the keypoints in the model's normalized input coordinates,
+/// plus the `LetterboxMapping` that inverts those coordinates back to source-frame pixels. The
+/// mapping rides along because it is per-frame (it depends on the source size) — consumers that
+/// draw or crop from keypoints need it, and it cannot be reconstructed after the fact.
+struct InferenceResult: Sendable {
+    let keypoints: [PoseKeypoint]
+    let letterbox: LetterboxMapping
+}
+
 /// Wraps a TensorFlowLiteSwift Interpreter for MoveNet Thunder (singlepose, int8).
 /// See Turnip/Models/README.md for how to obtain the bundled model file.
 ///
@@ -95,23 +104,30 @@ actor MoveNetThunderModel {
         preprocessor = try FramePreprocessor(inputShape: inputTensor.shape.dimensions)
     }
 
-    func runInference(on pixelBuffer: CVPixelBuffer) throws -> [PoseKeypoint] {
-        let inputData = try resizedRGBData(from: pixelBuffer)
+    func runInference(on pixelBuffer: CVPixelBuffer) throws -> InferenceResult {
+        let (inputData, mapping) = try resizedRGBData(from: pixelBuffer)
         try interpreter.copy(inputData, toInputAt: 0)
         try interpreter.invoke()
         let outputTensor = try interpreter.output(at: 0)
         let values = Self.dequantize(outputTensor)
-        return try PoseKeypoint.parse(from: values)
+        return InferenceResult(
+            keypoints: try PoseKeypoint.parse(from: values),
+            letterbox: mapping
+        )
     }
 
-    /// Resizes the source frame to the model's input size and packs it as interleaved RGB uint8,
-    /// matching MoveNet Thunder's expected [1, height, width, 3] input tensor.
-    private func resizedRGBData(from pixelBuffer: CVPixelBuffer) throws -> Data {
+    /// Letterboxes the source frame into the model's input size (uniform scale, centered — never
+    /// stretched) and packs it as interleaved RGB uint8, matching MoveNet Thunder's expected
+    /// [1, height, width, 3] input tensor. Returns the packing together with the geometry that
+    /// placed it, so keypoints can be mapped back to the source frame.
+    private func resizedRGBData(from pixelBuffer: CVPixelBuffer) throws -> (
+        data: Data, mapping: LetterboxMapping
+    ) {
         let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let transform = preprocessor.scaleTransform(forSourceExtent: sourceImage.extent)
+        let (transform, mapping) = preprocessor.letterboxGeometry(forSourceExtent: sourceImage.extent)
         let outputBuffer = try preprocessor.makeTargetBuffer()
         ciContext.render(sourceImage.transformed(by: transform), to: outputBuffer)
-        return try preprocessor.packRGB(from: outputBuffer)
+        return (try preprocessor.packRGB(from: outputBuffer), mapping)
     }
 
     /// The int8 build quantizes the weights and the input, but its output tensor is

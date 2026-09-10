@@ -2,6 +2,35 @@ import CoreGraphics
 import CoreVideo
 import Foundation
 
+/// Records how a source frame was placed into the model's square input, so downstream work can
+/// invert the mapping: MoveNet returns keypoints in normalized input coordinates, and once the
+/// frame is letterboxed instead of stretched those coordinates no longer invert with a plain
+/// per-axis scale. The inverse is `sourceX = (x * inputWidth - offsetX) / scale`, and likewise
+/// for y — see `sourcePoint(normalizedX:normalizedY:)`.
+struct LetterboxMapping: Sendable, Equatable {
+    /// The single uniform scale applied to both axes, so the longer side exactly fills the input.
+    /// Uniform because the pose model was trained on naturally-proportioned people — stretching
+    /// the frame would feed it limb-length ratios it never saw in training.
+    let scale: CGFloat
+    /// Centering offsets, in input-tensor pixels. The scaled frame occupies
+    /// `(offsetX, offsetY)..(offsetX + sourceWidth * scale, offsetY + sourceHeight * scale)`,
+    /// and everything outside that rect is the zeroed pad region.
+    let offsetX: CGFloat
+    let offsetY: CGFloat
+    /// The model's input size in pixels, needed to invert normalized keypoint coordinates.
+    let inputSize: CGSize
+
+    /// Maps a normalized keypoint coordinate (0–1 in the model's input space) back to the source
+    /// frame's pixel coordinates. Pass `keypoint.x` as `normalizedX` and `keypoint.y` as
+    /// `normalizedY` — MoveNet emits y before x, so the call site keeps the order explicit.
+    func sourcePoint(normalizedX x: CGFloat, normalizedY y: CGFloat) -> CGPoint {
+        CGPoint(
+            x: (x * inputSize.width - offsetX) / scale,
+            y: (y * inputSize.height - offsetY) / scale
+        )
+    }
+}
+
 /// Scales a decoded frame to the model's input size and packs it as the interleaved RGB uint8
 /// buffer MoveNet's `[1, height, width, 3]` input tensor expects.
 ///
@@ -37,14 +66,30 @@ struct FramePreprocessor {
         self.init(targetWidth: inputShape[2], targetHeight: inputShape[1])
     }
 
-    func scaleTransform(forSourceExtent extent: CGRect) -> CGAffineTransform {
-        CGAffineTransform(
-            scaleX: CGFloat(targetWidth) / extent.width,
-            y: CGFloat(targetHeight) / extent.height
+    /// The geometry that maps a source frame into the model's square input: a uniform scale that
+    /// preserves aspect ratio plus the centering translation that letterboxes the remainder —
+    /// every iPhone recording is non-square, so an independent per-axis scale would stretch the
+    /// subject on the only path there is. Computed in one place so the forward transform and the
+    /// `LetterboxMapping` that inverts it can never disagree.
+    func letterboxGeometry(forSourceExtent extent: CGRect) -> (
+        transform: CGAffineTransform, mapping: LetterboxMapping
+    ) {
+        let scale = min(CGFloat(targetWidth) / extent.width, CGFloat(targetHeight) / extent.height)
+        let offsetX = (CGFloat(targetWidth) - extent.width * scale) / 2
+        let offsetY = (CGFloat(targetHeight) - extent.height * scale) / 2
+        let transform = CGAffineTransform(scaleX: scale, y: scale)
+            .concatenating(CGAffineTransform(translationX: offsetX, y: offsetY))
+        let mapping = LetterboxMapping(
+            scale: scale, offsetX: offsetX, offsetY: offsetY,
+            inputSize: CGSize(width: targetWidth, height: targetHeight)
         )
+        return (transform, mapping)
     }
 
     /// Allocates the destination the scaled frame is rendered into, at the model's input size.
+    /// The buffer is zero-filled before it is handed back: `CVPixelBufferCreate` does not zero
+    /// the allocation, and the letterbox pad region is never written by the render — without the
+    /// clear, uninitialized memory would reach the model as image data.
     func makeTargetBuffer() throws -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
         let attributes: [CFString: Any] = [
@@ -58,7 +103,21 @@ struct FramePreprocessor {
         guard status == kCVReturnSuccess, let buffer else {
             throw PoseDiagnosticError.inferenceFailed("Failed to allocate resize buffer")
         }
+        Self.zeroFill(buffer)
         return buffer
+    }
+
+    /// Zeroes every byte of `pixelBuffer`. A separate static so tests can exercise the clear
+    /// directly — a fresh `CVPixelBufferCreate` allocation reads as zeros either way, which makes
+    /// `makeTargetBuffer`'s clearing invisible to a test that only reads the returned buffer.
+    static func zeroFill(_ pixelBuffer: CVPixelBuffer) {
+        CVPixelBufferLockBaseAddress(pixelBuffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return }
+        memset(
+            baseAddress, 0,
+            CVPixelBufferGetBytesPerRow(pixelBuffer) * CVPixelBufferGetHeight(pixelBuffer)
+        )
     }
 
     /// Reads a BGRA frame already at the model's input size and returns interleaved RGB bytes.
