@@ -1,6 +1,6 @@
 import Foundation
 
-struct PoseKeypoint: Identifiable {
+struct PoseKeypoint: Identifiable, Sendable {
     let id = UUID()
     let name: String
     /// Normalized 0-1. MoveNet's output order is (y, x, score) — y before x.
@@ -33,7 +33,7 @@ struct PoseKeypoint: Identifiable {
     }
 }
 
-struct PoseFrameResult: Identifiable {
+struct PoseFrameResult: Identifiable, Sendable {
     let id = UUID()
     let frameIndex: Int
     let timestamp: TimeInterval
