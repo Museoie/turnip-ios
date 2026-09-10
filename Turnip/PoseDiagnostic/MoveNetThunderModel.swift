@@ -117,20 +117,32 @@ actor MoveNetThunderModel {
 
         let bytesPerRow = CVPixelBufferGetBytesPerRow(outputBuffer)
         let bgra = baseAddress.assumingMemoryBound(to: UInt8.self)
-
-        var rgb = [UInt8](repeating: 0, count: inputWidth * inputHeight * 3)
-        for row in 0..<inputHeight {
-            let rowStart = row * bytesPerRow
-            for col in 0..<inputWidth {
-                let pixelOffset = rowStart + col * 4
-                let outIndex = (row * inputWidth + col) * 3
-                rgb[outIndex] = bgra[pixelOffset + 2]     // R
-                rgb[outIndex + 1] = bgra[pixelOffset + 1] // G
-                rgb[outIndex + 2] = bgra[pixelOffset]     // B
-            }
-        }
+        let rgb = Self.rgb(from: bgra, rowBytes: bytesPerRow, width: inputWidth, height: inputHeight)
 
         return Data(rgb)
+    }
+
+    /// Reorders interleaved BGRA bytes into interleaved RGB, matching MoveNet Thunder's uint8
+    /// `[1, height, width, 3]` input. A separate static so tests can exercise the byte layout
+    /// directly: two things fail silently if done wrong — the rows must be stepped by `rowBytes`,
+    /// not `width * 4` (the allocator pads rows to its own alignment, so the two differ for most
+    /// widths and the offset drifts as the walk descends the frame), and the red and blue
+    /// channels must be swapped (32BGRA stores blue first, the model expects RGB order).
+    static func rgb(from bgraBytes: UnsafePointer<UInt8>, rowBytes: Int, width: Int, height: Int)
+        -> [UInt8]
+    {
+        var rgb = [UInt8](repeating: 0, count: width * height * 3)
+        for row in 0..<height {
+            let rowStart = row * rowBytes
+            for col in 0..<width {
+                let pixelOffset = rowStart + col * 4
+                let outIndex = (row * width + col) * 3
+                rgb[outIndex] = bgraBytes[pixelOffset + 2]     // R
+                rgb[outIndex + 1] = bgraBytes[pixelOffset + 1] // G
+                rgb[outIndex + 2] = bgraBytes[pixelOffset]     // B
+            }
+        }
+        return rgb
     }
 
     /// MoveNet's int8 build emits a quantized uint8 tensor; dequantize using the tensor's own
