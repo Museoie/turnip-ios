@@ -20,10 +20,13 @@ the pose diagnostic screen will just show a "model not found" error until it's i
 2. Download the int8-quantized singlepose Thunder `.tflite` file.
 3. Rename/place it at `Turnip/Models/movenet_thunder_int8.tflite`.
 4. Confirm you got the right variant: `MoveNetThunderModel` reads the bundled file's input
-   tensor at load and rejects anything that isn't the Thunder singlepose int8 shape —
-   `[1, 256, 256, 3]` input, `[1, 1, 17, 3]` output — with a visible error instead of silently
-   producing worse keypoints. If the diagnostic fails with an input-shape error, the file you
-   downloaded is a different variant (Lightning is 192x192) — go back to step 1.
+   and output tensors at load and rejects anything that isn't the Thunder singlepose int8
+   shape — `[1, 256, 256, 3]` input, `[1, 1, 17, 3]` output — with a visible error instead of
+   silently producing worse keypoints. If the diagnostic fails with an input-shape or
+   output-shape error, the file you downloaded is a different variant (Lightning is 192x192)
+   — go back to step 1. If it fails with a data-type error like "Model input wants Float32,
+   the frame packing writes uInt8", you downloaded the fp16 or fp32 Thunder build instead of
+   the int8 one — also go back to step 1.
 
 ## Why there is no checksum here
 

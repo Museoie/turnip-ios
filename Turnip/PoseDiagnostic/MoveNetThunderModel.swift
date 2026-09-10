@@ -38,9 +38,14 @@ actor MoveNetThunderModel {
     /// The input shape the MoveNet Thunder singlepose int8 variant reports, in the tensor's
     /// `[batch, height, width, channels]` order. A wrong variant — Lightning is 192x192 — still
     /// loads, allocates tensors, and emits output the keypoint parser accepts, so the only symptom
-    /// of a wrong file would be silently worse keypoints. Reject it here, on the failure path,
-    /// instead of trusting prose in `Turnip/Models/README.md` (#38).
+    /// of a wrong file would be silently worse keypoints. Reject it here, on the failure path.
     static let expectedInputShape = [1, 256, 256, 3]
+
+    /// The output shape the MoveNet Thunder singlepose int8 variant reports, in the tensor's
+    /// `[batch, persons, keypoints, coords]` order. Checked for the same reason as the input
+    /// shape: a wrong variant's output is still parseable (the parser only counts 51 floats), so
+    /// without this a wrong file would again surface only as silently worse keypoints.
+    static let expectedOutputShape = [1, 1, 17, 3]
 
     /// Throws unless the bundled model's input tensor is exactly the shape the Thunder singlepose
     /// int8 variant reports. Pure so it can be tested without the gitignored `.tflite` — see
@@ -49,6 +54,19 @@ actor MoveNetThunderModel {
         guard shape == expectedInputShape else {
             throw PoseDiagnosticError.inferenceFailed(
                 "Bundled model input is \(shape), expected \(expectedInputShape) for MoveNet Thunder "
+                    + "singlepose int8 — the file is probably the wrong variant. "
+                    + "See Turnip/Models/README.md for how to get the right one."
+            )
+        }
+    }
+
+    /// Throws unless the bundled model's output tensor is exactly the shape the Thunder singlepose
+    /// int8 variant reports. Pure so it can be tested without the gitignored `.tflite` — see
+    /// `MoveNetThunderModelTests`.
+    static func validateOutputShape(_ shape: [Int]) throws {
+        guard shape == expectedOutputShape else {
+            throw PoseDiagnosticError.inferenceFailed(
+                "Bundled model output is \(shape), expected \(expectedOutputShape) for MoveNet Thunder "
                     + "singlepose int8 — the file is probably the wrong variant. "
                     + "See Turnip/Models/README.md for how to get the right one."
             )
@@ -67,8 +85,8 @@ actor MoveNetThunderModel {
             throw PoseDiagnosticError.inferenceFailed("Failed to load MoveNet Thunder model: \(error.localizedDescription)")
         }
 
-        // Read the input tensor at runtime rather than assuming 256x256 uint8, so the check below
-        // runs against the actual bundled file. A future model swap (e.g. escalating to BlazePose
+        // Read the tensors at runtime rather than assuming 256x256 uint8, so the checks below
+        // run against the actual bundled file. A future model swap (e.g. escalating to BlazePose
         // per the design doc) means a new wrapper type with its own expected shape — this type's
         // contract is specifically the Thunder singlepose int8 variant.
         let inputTensor = try interpreter.input(at: 0)
@@ -78,6 +96,8 @@ actor MoveNetThunderModel {
             )
         }
         try Self.validateInputShape(inputTensor.shape.dimensions)
+        let outputTensor = try interpreter.output(at: 0)
+        try Self.validateOutputShape(outputTensor.shape.dimensions)
         preprocessor = try FramePreprocessor(inputShape: inputTensor.shape.dimensions)
     }
 
