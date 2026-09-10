@@ -40,11 +40,33 @@ struct VideoFrameSampler: Sendable {
             throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
         }
 
+        // iPhone portrait videos are stored as landscape-encoded buffers with a 90° preferredTransform.
+        // Decoding the raw track would hand every frame to the model rotated 90°. Render through a
+        // video composition that applies the transform, so sampled frames match what the user sees.
+        let preferredTransform = try await track.load(.preferredTransform)
+        let naturalSize = try await track.load(.naturalSize)
+        let transformedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
+        let renderSize = CGSize(width: abs(transformedRect.width), height: abs(transformedRect.height))
+
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = renderSize
+        let nominalFrameRate = try await track.load(.nominalFrameRate)
+        videoComposition.frameDuration = CMTime(
+            value: 1, timescale: CMTimeScale(max(nominalFrameRate.rounded(), 1)))
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        layerInstruction.setTransform(preferredTransform, at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        videoComposition.instructions = [instruction]
+
         let reader = try AVAssetReader(asset: asset)
         let outputSettings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
-        let trackOutput = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
+        let trackOutput = AVAssetReaderVideoCompositionOutput(
+            videoTracks: [track], videoSettings: outputSettings)
+        trackOutput.videoComposition = videoComposition
         trackOutput.alwaysCopiesSampleData = false
 
         guard reader.canAdd(trackOutput) else {

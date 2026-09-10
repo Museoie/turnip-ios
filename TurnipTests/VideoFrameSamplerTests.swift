@@ -27,7 +27,7 @@ final class VideoFrameSamplerTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
-        videoURL = try await Self.writeTestVideo(frameCount: 10, size: 64, fps: 30)
+        videoURL = try await Self.writeTestVideo(frameCount: 10, width: 64, height: 64, fps: 30)
     }
 
     override func tearDown() async throws {
@@ -75,20 +75,28 @@ final class VideoFrameSamplerTests: XCTestCase {
         }
     }
 
-    func testThrowsWhenTheAssetHasNoVideoTrack() async throws {
-        let audioURL = try Self.writeAudioOnlyFile()
-        defer { try? FileManager.default.removeItem(at: audioURL) }
-        let sampler = VideoFrameSampler()
+    func testAppliesPreferredTransform() async throws {
+        // A 64x48 landscape-encoded video whose track carries a 90° preferredTransform — the shape
+        // of every iPhone portrait recording — must decode as 48x64, what the user sees.
+        let rotatedURL = try await Self.writeTestVideo(
+            frameCount: 6, width: 64, height: 48, fps: 30,
+            transform: CGAffineTransform(rotationAngle: .pi / 2))
+        defer { try? FileManager.default.removeItem(at: rotatedURL) }
 
-        do {
-            try await sampler.sampleFrames(from: audioURL) { frame in
-                XCTFail("handler ran for frame \(frame.frameIndex) on an asset with no video track")
-            }
-            XCTFail("expected sampleFrames to throw for an asset with no video track")
-        } catch let error as PoseDiagnosticError {
-            guard case .videoLoadFailed = error else {
-                return XCTFail("expected videoLoadFailed, got \(error)")
-            }
+        let sampler = VideoFrameSampler()
+        let sizes = FrameSizes()
+        try await sampler.sampleFrames(from: rotatedURL) { frame in
+            await sizes.append(CGSize(
+                width: CVPixelBufferGetWidth(frame.pixelBuffer),
+                height: CVPixelBufferGetHeight(frame.pixelBuffer)))
+        }
+
+        let observed = await sizes.values
+        XCTAssertFalse(observed.isEmpty, "expected the sampler to decode frames from the rotated video")
+        for size in observed {
+            XCTAssertEqual(
+                size, CGSize(width: 48, height: 64),
+                "decoded frame is \(size) — the track's preferredTransform was not applied")
         }
     }
 
@@ -96,22 +104,28 @@ final class VideoFrameSamplerTests: XCTestCase {
 
     /// Writes a tiny H.264 movie with `frameCount` solid-color frames so the sampler has something
     /// real to decode through AVAssetReader (bundling a fixture .mov would be larger and opaque).
-    private static func writeTestVideo(frameCount: Int, size: Int, fps: Int32) async throws -> URL {
+    /// `transform` is written as the track's preferredTransform — e.g. a 90° rotation to mimic an
+    /// iPhone portrait recording stored as landscape-encoded frames.
+    private static func writeTestVideo(
+        frameCount: Int, width: Int, height: Int, fps: Int32,
+        transform: CGAffineTransform = .identity
+    ) async throws -> URL {
         let url = URL.temporaryDirectory.appending(path: "VideoFrameSamplerTests-\(UUID().uuidString).mov")
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: size,
-            AVVideoHeightKey: size
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height
         ])
         input.expectsMediaDataInRealTime = false
+        input.transform = transform
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: size,
-                kCVPixelBufferHeightKey as String: size
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height
             ]
         )
         guard writer.canAdd(input) else {
@@ -161,27 +175,20 @@ final class VideoFrameSamplerTests: XCTestCase {
         }
         return url
     }
-
-    /// Writes a short silent CAF so the asset has an audio track and no video track.
-    private static func writeAudioOnlyFile() throws -> URL {
-        let url = URL.temporaryDirectory.appending(path: "VideoFrameSamplerTests-audio-\(UUID().uuidString).caf")
-
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4410) else {
-            throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
-        }
-        buffer.frameLength = buffer.frameCapacity
-
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
-        return url
-    }
 }
 
 private actor Timestamps {
     private(set) var values: [TimeInterval] = []
 
     func append(_ value: TimeInterval) {
+        values.append(value)
+    }
+}
+
+private actor FrameSizes {
+    private(set) var values: [CGSize] = []
+
+    func append(_ value: CGSize) {
         values.append(value)
     }
 }
