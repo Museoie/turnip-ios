@@ -151,9 +151,9 @@ final class FramePreprocessorTests: XCTestCase {
         CIContext().render(source.transformed(by: transform), to: buffer)
         let rgb = Array(try preprocessor.packRGB(from: buffer))
 
-        func triplet(atRow row: Int, col: Int) -> (UInt8, UInt8, UInt8) {
+        func triplet(atRow row: Int, col: Int) -> [UInt8] {
             let base = (row * 256 + col) * 3
-            return (rgb[base], rgb[base + 1], rgb[base + 2])
+            return [rgb[base], rgb[base + 1], rgb[base + 2]]
         }
 
         // Rows above and below the placed frame are the zeroed pad.
@@ -161,14 +161,14 @@ final class FramePreprocessorTests: XCTestCase {
         for row in 0..<padRows {
             for col in 0..<256 {
                 XCTAssertEqual(
-                    triplet(atRow: row, col: col), (0, 0, 0),
+                    triplet(atRow: row, col: col), [0, 0, 0],
                     "pad pixel at row \(row) col \(col) is not zero")
             }
         }
         for row in (256 - padRows)..<256 {
             for col in 0..<256 {
                 XCTAssertEqual(
-                    triplet(atRow: row, col: col), (0, 0, 0),
+                    triplet(atRow: row, col: col), [0, 0, 0],
                     "pad pixel at row \(row) col \(col) is not zero")
             }
         }
@@ -176,7 +176,7 @@ final class FramePreprocessorTests: XCTestCase {
         // The placed frame itself rendered — the buffer is not just a zeroed allocation.
         var painted = 0
         for row in padRows..<(256 - padRows) {
-            for col in 0..<256 where triplet(atRow: row, col: col) != (0, 0, 0) {
+            for col in 0..<256 where triplet(atRow: row, col: col) != [UInt8](repeating: 0, count: 3) {
                 painted += 1
             }
         }
