@@ -79,9 +79,11 @@ extension VideoFrameSampler: FrameSampling {}
 /// The seam the processing view model runs against: the real `ProcessingPipeline` in the app,
 /// scripted fakes in tests.
 protocol ProcessingRunning: Sendable {
+    /// `onProgress` escapes: it is captured by the iCloud download's progress handler and
+    /// by a `Task` inside `requestFileBackedAsset`, so the closure must be `@escaping`.
     func run(
         input: ProcessingInput,
-        onProgress: @Sendable (ProcessingProgress) async -> Void
+        onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult
 }
 
@@ -127,7 +129,7 @@ struct ProcessingPipeline: Sendable {
 
     func run(
         input: ProcessingInput,
-        onProgress: @Sendable (ProcessingProgress) async -> Void
+        onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         let (asset, fileURL) = try await Self.resolveAsset(from: input, onProgress: onProgress)
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
@@ -177,7 +179,7 @@ struct ProcessingPipeline: Sendable {
 
     private static func resolveAsset(
         from input: ProcessingInput,
-        onProgress: @Sendable (ProcessingProgress) async -> Void
+        onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> (asset: AVAsset, fileURL: URL) {
         switch input.source {
         case .fileURL(let url):
@@ -193,9 +195,11 @@ struct ProcessingPipeline: Sendable {
     /// observe it — which the issue accepts as the stub until #21 lands.
     private static func requestFileBackedAsset(
         for photoAsset: PHAsset,
-        onProgress: @Sendable (ProcessingProgress) async -> Void
+        onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> (asset: AVAsset, fileURL: URL) {
-        try await withCheckedThrowingContinuation { continuation in
+        // Explicit continuation type: the labelled tuple is ambiguous to the compiler
+        // without it (the resumed tuple carries an `AVURLAsset` where `AVAsset` is wanted).
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(asset: AVAsset, fileURL: URL), Error>) in
             let options = PHVideoRequestOptions()
             options.isNetworkAccessAllowed = true
             options.deliveryMode = .highQualityFormat

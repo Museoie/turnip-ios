@@ -260,7 +260,7 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
 
     func run(
         input: ProcessingInput,
-        onProgress: @Sendable (ProcessingProgress) async -> Void
+        onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         switch behavior {
         case .succeed(let clips):
