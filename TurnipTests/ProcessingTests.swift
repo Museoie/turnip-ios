@@ -196,6 +196,29 @@ final class ProcessingViewModelTests: XCTestCase {
         XCTAssertTrue(await flag.observed, "the first run was replaced instead of kept")
     }
 
+    /// Regression test for the teardown race: cancelling a run and immediately starting a
+    /// new one must not orphan the new run — the old run's trailing teardown must not clear
+    /// the new run's handle, or the final `cancel()` would silently stop working.
+    func testCancelThenStartKeepsNewRunCancellable() async {
+        let flag = CancelFlag()
+        let runner = ScriptedRunner(behavior: .reportThenHang(flag))
+        let viewModel = ProcessingViewModel(runner: runner)
+
+        viewModel.start(input: Self.input)
+        viewModel.cancel() // the old run's trailing teardown is still draining here
+        viewModel.start(input: Self.input) // must not be orphaned by that teardown
+
+        viewModel.cancel()
+        for _ in 0..<200 {
+            if await flag.observed { break }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertTrue(
+            await flag.observed,
+            "the new run was orphaned by the old run's teardown and could not be cancelled"
+        )
+    }
+
     private static func waitUntilNotRunning(_ viewModel: ProcessingViewModel) async {
         for _ in 0..<200 where viewModel.isRunning {
             try? await Task.sleep(nanoseconds: 5_000_000)

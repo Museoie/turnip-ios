@@ -33,6 +33,12 @@ final class ProcessingViewModel: ObservableObject {
 
     private let runner: any ProcessingRunning
     private var runTask: Task<Void, Never>?
+    /// Guards `runTask` against a scheduling race: the run task's trailing teardown hops to
+    /// the main actor *after* `finish`/`fail` have run, so a new run started in that gap would
+    /// have its handle cleared by the old run's teardown (orphaning it — `cancel()` would no
+    /// longer stop it). Each lifecycle transition bumps the generation, and the teardown only
+    /// clears the task when its captured generation still matches.
+    private var runGeneration = 0
 
     init(runner: any ProcessingRunning = ProcessingPipeline()) {
         self.runner = runner
@@ -41,6 +47,8 @@ final class ProcessingViewModel: ObservableObject {
     /// Starts the pipeline. Ignored while a run is in flight — the screen shows one run.
     func start(input: ProcessingInput) {
         guard runTask == nil else { return }
+        runGeneration += 1
+        let generation = runGeneration
         let runner = self.runner
         // Weak capture: the task must not keep the view model (and its screen) alive.
         runTask = Task { [weak self] in
@@ -56,13 +64,20 @@ final class ProcessingViewModel: ObservableObject {
                     ?? error.localizedDescription
                 await MainActor.run { [weak self] in self?.fail(with: message) }
             }
-            await MainActor.run { [weak self] in self?.runTask = nil }
+            await MainActor.run { [weak self] in
+                if self?.runGeneration == generation {
+                    self?.runTask = nil
+                }
+            }
         }
     }
 
     func cancel() {
         runTask?.cancel()
         runTask = nil
+        // Invalidate any trailing teardown still draining from the cancelled run, so it
+        // cannot clear a newer run's handle.
+        runGeneration += 1
     }
 
     /// Restarts after a failure. Ignored while a run is in flight.
