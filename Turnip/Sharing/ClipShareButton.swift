@@ -1,27 +1,23 @@
 import SwiftUI
 
-/// The v2 Share Sheet action for one exported clip (issue #12;
-/// `docs/DESIGN.md` § "Publishing to social media (iOS Share Sheet)").
+/// The v2 Share Sheet action for one exported clip
+/// (`docs/DESIGN.md` § "Publishing to social media (iOS Share Sheet)").
 ///
 /// A thin wrapper around SwiftUI's `ShareLink` (iOS 16+, the repo's deployment floor):
 /// Turnip hands the exported clip's file URL to the system share sheet, iOS enumerates
 /// every installed app that accepts a video — Instagram, TikTok, YouTube Shorts,
 /// Messages, Photos, AirDrop — and the target app owns the compose step. Zero server
-/// involvement, per the design doc. `UIActivityViewController` was the issue's fallback
-/// if `ShareLink` proved too limited; it isn't — this flow needs no excluded activity
-/// types, no custom UI, and no completion callback, so a `UIViewControllerRepresentable`
-/// wrapper would buy nothing.
+/// involvement, per the design doc.
 ///
-/// Built only on Foundation/SwiftUI types so it compiles standalone on `main`, following
-/// the same standalone-contract convention as the #17/#18/#19 screens: the Export
-/// Confirmation screen's saved-clip rows (PR #65) and/or Clip Detail (PR #64) adopt this
-/// once those merge.
+/// Built only on Foundation/SwiftUI types so it compiles standalone on `main` (the
+/// standalone-contract convention): no Turnip module imports, so whichever screen
+/// adopts this doesn't pull the pose pipeline along with it.
 ///
 /// The caller owns the file's lifetime: the URL must keep pointing at an existing file
 /// from when this view appears until the share sheet dismisses. In particular, the
-/// Export Confirmation screen's run-end scratch-directory cleanup (see issue #23) has to
-/// move to screen dismissal before this button is wired in there — otherwise the sheet
-/// offers a file that is already gone.
+/// adopting screen's run-end scratch-directory cleanup has to move to screen dismissal
+/// before this button is wired in there — otherwise the sheet offers a file that is
+/// already gone.
 struct ClipShareButton: View {
     /// The exported clip's file URL. Must be a `file://` URL: a remote URL would share a
     /// link rather than the video, which defeats the design doc's whole point — the OS
@@ -35,8 +31,12 @@ struct ClipShareButton: View {
         ShareLink(item: fileURL, subject: Text(clipTitle)) {
             Label("Share", systemImage: "square.and.arrow.up")
         }
-        // A share sheet for a missing file fails at every destination with no useful
-        // error, so the button refuses to present one instead of offering it.
+        // Render-time snapshot only: this view holds no @State or filesystem
+        // observation, so the check does not re-run while the row is on screen. A
+        // file deleted after this renders still opens a sheet over a missing file —
+        // the caller owns the lifetime (see the type doc comment). All this guard
+        // buys is refusing to offer a sheet for a file that is already gone at
+        // render time, which would fail at every destination with no useful error.
         .disabled(!Self.isShareable(fileURL: fileURL))
     }
 

@@ -1,7 +1,7 @@
 import XCTest
 @testable import Turnip
 
-/// Guards for `ClipShareButton.isShareable` (issue #12): the share sheet must never be
+/// Guards for `ClipShareButton.isShareable`: the share sheet must never be
 /// offered for a URL it can't hand off. Each test discriminates one half of the guard —
 /// dropping the existence check fails `testNotShareableWhenFileIsMissing`, dropping the
 /// file-URL check fails `testNotShareableWhenURLIsNotAFileURL`.
