@@ -18,8 +18,9 @@ disabled_rules:
   # extracting subviews instead of by staying under a line count.
   - type_body_length
   # SwiftUI view files grow declaratively (modifiers, previews), not from
-  # complexity. The rule offers no per-file opt-out, so disabling outright is
-  # the only way to keep it from fighting views.
+  # complexity. Per-file `// swiftlint:disable` comments would scatter the
+  # opt-out across views, so disabling the rule outright keeps it documented
+  # in one place.
   - file_length
 
 identifier_name:
