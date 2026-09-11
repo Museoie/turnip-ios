@@ -95,6 +95,9 @@ struct VideoTileView: View {
     /// The invariant is that the appearance path stays open until a final delivery for the current
     /// revision has landed — an image left over from an earlier revision looks indistinguishable
     /// from a finished one, and nothing else would ever replace it.
+    // Every parameter is one piece of tile state the decision reads; grouping them behind a struct
+    // would move the same six values without reducing what a caller supplies.
+    // swiftlint:disable:next function_parameter_count
     static func shouldRequestImage(
         hasImage: Bool,
         imageIsDegraded: Bool,
