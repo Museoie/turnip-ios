@@ -72,9 +72,7 @@ jobs:
         run: bundle exec pod install
 
       # Building needs no device at all, so the generic simulator platform is
-      # enough — this drops the hardcoded device name (issue #44), which made
-      # a runner with no simulators fail the Build step as if the code were
-      # broken. Only the Test step below resolves a concrete device.
+      # enough. Only the Test step below resolves a concrete device.
       - name: Build
         run: |
           xcodebuild build \
@@ -82,18 +80,15 @@ jobs:
             -scheme Turnip \
             -destination "generic/platform=iOS Simulator"
 
-      # Resolves the UDID of an available simulator at run time instead of
-      # naming a device (`name=iPhone 17`): the name silently pins CI to the
-      # runner image's current default and fails on runners whose simulator
-      # runtime is absent or not yet registered. The script exits with an
-      # infrastructure-flavored message when no device exists, so that
-      # failure is not indistinguishable from a code failure.
+      # Resolve a simulator device at run time (ci_scripts/resolve-simulator.sh);
+      # the script labels a missing runtime as an infrastructure failure, not a
+      # code failure.
       - name: Resolve simulator for tests
-        run: sh ci_scripts/resolve-simulator.sh
+        run: ci_scripts/resolve-simulator.sh
 
       - name: Test
         run: |
           xcodebuild test \
             -workspace Turnip.xcworkspace \
             -scheme Turnip \
-            -destination "id=${{ env.SIMULATOR_UDID }}"
+            -destination "id=$SIMULATOR_UDID"

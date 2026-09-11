@@ -1,16 +1,10 @@
 #!/bin/sh
 set -eu
 
-# Usage: sh ci_scripts/resolve-simulator.sh
+# Usage: ci_scripts/resolve-simulator.sh
 #
 # Picks the UDID of the first available iOS simulator device and writes it to
 # the CI environment, so the workflow never hardcodes a device name.
-#
-# Naming a concrete device (`-destination "name=iPhone 17"`) silently pins
-# the CI config to the runner image's current default: it fails on a runner
-# whose simulator runtime is missing or not yet registered, and it will
-# start failing on *every* runner the day the image ships a newer default
-# device. Resolving at run time removes both.
 #
 # Prints the chosen device to the log, and exits with a message naming the
 # runner image when none is available — an infrastructure failure should not
@@ -29,17 +23,16 @@ json=$(xcrun simctl list devices available --json) || json='{}'
 # `|| true`: a python exit of 1 means "no device found", which the explicit
 # check below reports. Without it, `set -e` would abort the script here and
 # the loud infrastructure-failure message would never print.
-udid=$(printf '%s' "$json" | python3 -c '
+resolved=$(printf '%s' "$json" | python3 -c '
 import json, sys
 
 data = json.loads(sys.stdin.read())
 devices = data.get("devices", {})
 
 # Version-tuple ordering, not lexicographic: "iOS-9-0" sorts above "iOS-18-4"
-# as a plain string ("9" > "1"), so sorting the raw keys would pick the wrong
-# "newest" runtime the day a single-digit runtime key appears. Parse the
-# numeric components out of com.apple.CoreSimulator.SimRuntime.iOS-<major>-<minor>
-# instead, so the "newest runtime" claim in this script'"'"'s header stays true.
+# as a plain string ("9" > "1"), so sorting the raw keys could pick the wrong
+# newest runtime. Parse the numeric components out of
+# com.apple.CoreSimulator.SimRuntime.iOS-<major>-<minor> instead.
 def runtime_version(runtime):
     version = runtime.rsplit("iOS-", 1)[1]
     return tuple(map(int, version.split("-")))
@@ -51,11 +44,17 @@ runtimes = sorted(
 )
 for runtime in runtimes:
     for device in devices[runtime]:
-        if device.get("isAvailable"):
+        # The app targets iPhone only (project.yml pins TARGETED_DEVICE_FAMILY
+        # to iPhone), so skip the iPad entries simctl lists alongside them.
+        if device.get("isAvailable") and "iPhone" in device.get("deviceTypeIdentifier", ""):
             print(device["udid"])
+            print(device.get("name", "?"))
             raise SystemExit(0)
 raise SystemExit(1)
 ' || true)
+
+udid=$(printf '%s\n' "$resolved" | sed -n '1p')
+name=$(printf '%s\n' "$resolved" | sed -n '2p')
 
 if [ -z "$udid" ]; then
   echo "::error::No available iOS simulator device on this runner." >&2
@@ -66,16 +65,6 @@ if [ -z "$udid" ]; then
   xcrun simctl list devices available || true
   exit 1
 fi
-
-name=$(printf '%s' "$json" | python3 -c "
-import json, sys
-data = json.loads(sys.stdin.read())
-for runtime in data.get('devices', {}).values():
-    for device in runtime:
-        if device.get('udid') == '$udid':
-            print(device.get('name', '?'))
-            raise SystemExit(0)
-")
 
 echo "Resolved simulator device: $name ($udid)"
 
