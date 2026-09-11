@@ -4,9 +4,8 @@ import Foundation
 
 /// Records how a source frame was placed into the model's square input, so downstream work can
 /// invert the mapping: MoveNet returns keypoints in normalized input coordinates. The inverse is
-/// `sourceX = (x * inputWidth - offsetX) / scale - sourceExtent.origin.x`, and likewise for y —
-/// the point is measured from the extent's origin, so fractions stay correct for non-zero-origin
-/// extents — see `sourcePoint(normalizedX:normalizedY:)`.
+/// `sourceX = (x * inputWidth - offsetX) / scale`, and likewise for y — see
+/// `sourcePoint(normalizedX:normalizedY:)`.
 struct LetterboxMapping: Sendable, Equatable {
     /// The single uniform scale applied to both axes, so the longer side exactly fills the input —
     /// uniform because the pose model was trained on naturally-proportioned people.
@@ -25,16 +24,12 @@ struct LetterboxMapping: Sendable, Equatable {
     let sourceExtent: CGRect
 
     /// Maps a normalized keypoint coordinate (0–1 in the model's input space) back to the source
-    /// frame's pixel coordinates, measured from the source extent's origin. Pass `keypoint.x` as
-    /// `normalizedX` and `keypoint.y` as `normalizedY` — MoveNet emits y before x, so the call
-    /// site keeps the order explicit. Subtracting the origin is a no-op for the origin-zero
-    /// extents the pipeline uses today, but keeps the mapping correct if a cropped source with a
-    /// non-zero origin ever reaches it: without this, keypoints would silently shift by
-    /// `origin / extent` instead of landing in the extent's own pixel space.
+    /// frame's pixel coordinates. Pass `keypoint.x` as `normalizedX` and `keypoint.y` as
+    /// `normalizedY` — MoveNet emits y before x, so the call site keeps the order explicit.
     func sourcePoint(normalizedX x: CGFloat, normalizedY y: CGFloat) -> CGPoint {
         CGPoint(
-            x: (x * inputSize.width - offsetX) / scale - sourceExtent.origin.x,
-            y: (y * inputSize.height - offsetY) / scale - sourceExtent.origin.y
+            x: (x * inputSize.width - offsetX) / scale,
+            y: (y * inputSize.height - offsetY) / scale
         )
     }
 

@@ -3,16 +3,6 @@ import CoreVideo
 import Foundation
 import TensorFlowLite
 
-/// What one inference pass produces: the keypoints in frame-normalized coordinates (nominally
-/// 0-1 relative to the source frame; pad-region keypoints honestly fall outside [0, 1] — see
-/// `PoseKeypoint`), plus the `LetterboxMapping` that placed them. The mapping rides along because
-/// it is per-frame (it depends on the source size) — consumers that draw or crop from keypoints
-/// need it, and it cannot be reconstructed after the fact.
-struct InferenceResult: Sendable {
-    let keypoints: [PoseKeypoint]
-    let letterbox: LetterboxMapping
-}
-
 /// Wraps a TensorFlowLiteSwift Interpreter for MoveNet Thunder (singlepose, int8).
 /// See Turnip/Models/README.md for how to obtain the bundled model file.
 ///
@@ -105,16 +95,16 @@ actor MoveNetThunderModel {
         preprocessor = try FramePreprocessor(inputShape: inputTensor.shape.dimensions)
     }
 
-    func runInference(on pixelBuffer: CVPixelBuffer) throws -> InferenceResult {
+    /// The keypoints come back frame-normalized: the letterbox inversion happens here, at the
+    /// producer, because every consumer reads `PoseKeypoint.x/y` as frame fractions and nothing
+    /// in the type system distinguishes converted keypoints from unconverted ones.
+    func runInference(on pixelBuffer: CVPixelBuffer) throws -> [PoseKeypoint] {
         let (inputData, mapping) = try resizedRGBData(from: pixelBuffer)
         try interpreter.copy(inputData, toInputAt: 0)
         try interpreter.invoke()
         let outputTensor = try interpreter.output(at: 0)
         let values = Self.dequantize(outputTensor)
-        return InferenceResult(
-            keypoints: mapping.frameNormalized(keypoints: try PoseKeypoint.parse(from: values)),
-            letterbox: mapping
-        )
+        return mapping.frameNormalized(keypoints: try PoseKeypoint.parse(from: values))
     }
 
     /// Letterboxes the source frame into the model's input size (uniform scale, centered) and
