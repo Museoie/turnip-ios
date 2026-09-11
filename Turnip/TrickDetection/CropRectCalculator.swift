@@ -5,8 +5,7 @@ import Foundation
 /// built from: both axes run 0-1 across the frame and `y` is measured down from the top edge.
 ///
 /// Frames come out of `VideoFrameSampler` in display orientation, so pass `SampledFrame.renderSize`
-/// — not the track's `naturalSize`, which is transposed on portrait clips — as the pixel size for
-/// `cropRect(for:sourcePixelSize:)` and `denormalized(in:)`.
+/// as the pixel size for `cropRect(for:renderedPixelSize:)` and `denormalized(in:)`.
 struct NormalizedRect: Equatable, Sendable {
     let minX: Float
     let maxX: Float
@@ -35,7 +34,7 @@ struct NormalizedRect: Equatable, Sendable {
 /// let calculator = CropRectCalculator()
 /// // `frame` is the `SampledFrame` the keypoints were measured against. The sampler renders in
 /// // display orientation, so this is the transpose of `track.naturalSize` on portrait clips.
-/// let rect = calculator.cropRect(for: framesInWindow, sourcePixelSize: frame.renderSize)
+/// let rect = calculator.cropRect(for: framesInWindow, renderedPixelSize: frame.renderSize)
 /// let pixels = rect?.denormalized(in: frame.renderSize)
 /// ```
 struct CropRectCalculator: Sendable {
@@ -54,12 +53,12 @@ struct CropRectCalculator: Sendable {
 
     /// `nil` when the window holds no keypoint above the confidence threshold, or when the
     /// rendered-frame dimensions are unknown — in either case the athlete cannot be located in pixels.
-    func cropRect(for frames: [PoseFrameResult], sourcePixelSize: CGSize) -> NormalizedRect? {
-        guard sourcePixelSize.width > 0, sourcePixelSize.height > 0,
+    func cropRect(for frames: [PoseFrameResult], renderedPixelSize: CGSize) -> NormalizedRect? {
+        guard renderedPixelSize.width > 0, renderedPixelSize.height > 0,
               let athlete = boundingBox(across: frames) else { return nil }
 
         let paddedBox = padded(athlete)
-        return fittedInFrame(snappedToTargetRatio(paddedBox, sourcePixelSize: sourcePixelSize))
+        return fittedInFrame(snappedToTargetRatio(paddedBox, renderedPixelSize: renderedPixelSize))
     }
 
     private func boundingBox(across frames: [PoseFrameResult]) -> NormalizedRect? {
@@ -93,17 +92,17 @@ struct CropRectCalculator: Sendable {
     /// the target. The ratio only means anything in pixels: a normalized unit is a fraction of
     /// its own axis, so on a 1080x1920 source a normalized square is already 9:16, and a
     /// normalized 9:16 rect comes out square on 1920x1080 and 9:16 twice over on 1080x1920.
-    private func snappedToTargetRatio(_ box: NormalizedRect, sourcePixelSize: CGSize) -> NormalizedRect {
-        let sourceWidth = Float(sourcePixelSize.width)
-        let sourceHeight = Float(sourcePixelSize.height)
-        let pixelWidth = box.width * sourceWidth
-        let pixelHeight = box.height * sourceHeight
+    private func snappedToTargetRatio(_ box: NormalizedRect, renderedPixelSize: CGSize) -> NormalizedRect {
+        let renderedWidth = Float(renderedPixelSize.width)
+        let renderedHeight = Float(renderedPixelSize.height)
+        let pixelWidth = box.width * renderedWidth
+        let pixelHeight = box.height * renderedHeight
         let widthAtTargetRatio = pixelHeight * targetAspectRatio
 
         if pixelWidth < widthAtTargetRatio {
-            return box.resizedHorizontally(to: widthAtTargetRatio / sourceWidth)
+            return box.resizedHorizontally(to: widthAtTargetRatio / renderedWidth)
         }
-        return box.resizedVertically(to: pixelWidth / targetAspectRatio / sourceHeight)
+        return box.resizedVertically(to: pixelWidth / targetAspectRatio / renderedHeight)
     }
 
     /// Slides the rect back inside the frame, which preserves the ratio just snapped. An axis

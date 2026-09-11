@@ -26,11 +26,15 @@ struct SampledFrame: @unchecked Sendable {
 /// docs/DESIGN.md's pipeline step 2.
 ///
 /// Frames are rendered through an `AVMutableVideoComposition` that applies the track's
-/// `preferredTransform`. The composition output's `frameDuration` acts as a ceiling on the output
-/// rate, not a resampling grid, so each emitted frame keeps the source track's own presentation
-/// timestamps: `frameIndex` and `timestamp` are positions in the source's own time, and
-/// variable-frame-rate recordings (an iPhone lowers the rate in dim light) keep their rate
-/// discontinuities instead of being resampled onto a uniform grid.
+/// `preferredTransform`. The composition output's `frameDuration` defines a uniform output grid:
+/// one frame is emitted per source sample, at the first grid position at or after that sample's
+/// own presentation time. With `frameDuration = minFrameDuration` no frame is dropped, but
+/// per-frame Δt is quantized to the grid — a source timestamp that is not a multiple of it is
+/// reported late, and a steady variable-frame-rate stretch (an iPhone lowers the rate in dim
+/// light) can read back as an alternating stutter. So `frameIndex` counts source samples in
+/// emission order, but `timestamp` is a grid position rather than the track's own presentation
+/// timestamp, and any future consumer that divides displacement by Δt must tolerate up to one
+/// frame duration of lateness.
 ///
 /// A `Sendable` struct rather than a class: it is owned by a `@MainActor` view model but
 /// `sampleFrames` is nonisolated, so every call sends the sampler out of the main actor. With no
@@ -124,10 +128,12 @@ struct VideoFrameSampler: Sendable {
     }
 
     /// The composition's output grid. `minFrameDuration` is exact and per-track; `nominalFrameRate`
-    /// is the fallback and is `0` whenever the rate cannot be determined. With neither, an
-    /// `AVMutableVideoComposition` defaults to one composed frame per second — too few samples for
-    /// the peak detection in docs/DESIGN.md step 5 to find anything, and it reports no error, so the
-    /// clip reads as trickless rather than unreadable. Fail the load instead.
+    /// is the fallback and is `0` whenever the rate cannot be determined. With neither there is no
+    /// valid grid: an `AVMutableVideoComposition` defaults to a non-numeric `frameDuration`
+    /// (`CMTime(value: 0, timescale: 0)`), and assigning it one raises `NSInvalidArgumentException`
+    /// ("video composition must have a positive frameDuration") where the composition is attached
+    /// to the reader output — uncatchable from Swift, so the process dies instead of failing the
+    /// load. Throw `videoLoadFailed` instead, which the app can surface.
     static func compositionFrameDuration(minFrameDuration: CMTime, nominalFrameRate: Float) throws -> CMTime {
         if minFrameDuration.isNumeric && minFrameDuration.seconds > 0 {
             return minFrameDuration
