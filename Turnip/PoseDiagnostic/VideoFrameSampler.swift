@@ -61,8 +61,9 @@ struct VideoFrameSampler: Sendable {
         var frameIndex = 0
         while let sampleBuffer = trackOutput.copyNextSampleBuffer() {
             // Cooperative cancellation: the processing screen (#17) cancels the run's Task,
-            // and the per-frame handler throws too, but the check here stops the decode loop
-            // even between handler calls. Fuller preemption policy lands with #21.
+            // and this check is what stops the decode loop between frames. The per-frame
+            // handler may surface cancellation for its own work, but it is not a reliable
+            // second source. Fuller preemption policy lands with #21.
             try Task.checkCancellation()
             defer { frameIndex += 1 }
             guard frameIndex % Self.sampleStride == 0 else { continue }
