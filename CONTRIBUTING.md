@@ -140,11 +140,14 @@ SwiftLint runs in CI on every PR (`lint + build + test` — see
 - **Config lives in `.swiftlint.yml`** at the repo root — the default rule set
   plus a few documented opt-outs (rules that fight SwiftUI views, and short
   geometry names like `x`/`y`/`dx`/`dy`). Each opt-out records why it exists;
-  add a reason when you add one.
+  add a reason when you add one. When a rule is right for the codebase but
+  wrong at one site, use a scoped `// swiftlint:disable`/`enable` pair with a
+  reason instead of a config entry; when the rule is wrong for this codebase,
+  disable it in `.swiftlint.yml`.
 - **Run it locally** before pushing:
 
   ```
-  sh ci_scripts/install-swiftlint.sh "$HOME/.local"
+  ci_scripts/install-swiftlint.sh "$HOME/.local"
   export PATH="$HOME/.local/bin:$PATH"
   swiftlint lint --strict
   ```
