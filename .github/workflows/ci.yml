@@ -68,15 +68,9 @@ jobs:
       # would make the CI result depend on the runner image's package index.
       - name: Install SwiftLint
         run: |
-          sh ci_scripts/install-swiftlint.sh "$HOME/.local"
+          ci_scripts/install-swiftlint.sh "$HOME/.local"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      # --strict turns every warning into a failure: warnings-only is visible
-      # but doesn't hold the line. The config (.swiftlint.yml) and every
-      # violation it flagged on the existing tree landed together in the PR
-      # that added this step, so the gate starts green. Runs before Build so
-      # style failures fail fast; the github-actions-logging reporter turns
-      # each violation into an inline PR annotation.
       - name: Lint
         run: swiftlint lint --strict --reporter github-actions-logging
 

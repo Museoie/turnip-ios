@@ -2,9 +2,8 @@ import Foundation
 @testable import Turnip
 
 /// A positioned keypoint seed for fixture builders: where the keypoint sits plus the
-/// confidence the fixture should carry. Fixtures used a 3-tuple for this; SwiftLint's
-/// large_tuple asks for a named type past two members, so the seed is shared by the
-/// crop-rect and motion-signal fixtures in this target.
+/// confidence the fixture should carry. The seed is shared by the crop-rect and
+/// motion-signal fixtures in this target.
 struct KeypointSeed {
     var x: Float
     var y: Float

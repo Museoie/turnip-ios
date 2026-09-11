@@ -39,12 +39,10 @@ install_xcodegen() {
 
 # Pinned the same way as XcodeGen (see .github/workflows/ci.yml): a floating
 # `brew install swiftlint` would let Xcode Cloud's formula index drift away
-# from what Actions runs. `sh` rather than executing directly: the script is
-# committed without the executable bit (GitHub API blob upload), matching how
-# ci.yml invokes it.
+# from what Actions runs.
 install_swiftlint() {
   local prefix="$HOME/.local"
-  sh ./ci_scripts/install-swiftlint.sh "$prefix"
+  ./ci_scripts/install-swiftlint.sh "$prefix"
   export PATH="$prefix/bin:$PATH"
 }
 

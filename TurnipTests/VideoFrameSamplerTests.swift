@@ -140,9 +140,6 @@ final class VideoFrameSamplerTests: XCTestCase {
         return url
     }
 
-    /// Appends `frameCount` solid-color frames to a started writer. Split out of
-    /// `writeTestVideo`: the whole fixture in one function exceeds the
-    /// function_body_length limit the CI lint step enforces.
     private static func appendFrames(
         frameCount: Int,
         fps: Int32,

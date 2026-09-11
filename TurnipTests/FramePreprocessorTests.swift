@@ -6,9 +6,8 @@ private struct FixtureFailure: Error {
     let message: String
 }
 
-/// One BGRA pixel's channels. The fill closures used a 3-tuple; SwiftLint's
-/// large_tuple asks for a named type past two members. Field names spell the
-/// channels out: single-letter `b`/`g`/`r` would trip identifier_name.
+/// One BGRA pixel's channels. Field names spell the channels out: single-letter
+/// `b`/`g`/`r` would trip identifier_name.
 private struct Pixel {
     var blue: UInt8
     var green: UInt8
