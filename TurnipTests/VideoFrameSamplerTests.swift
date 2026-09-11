@@ -131,6 +131,42 @@ final class VideoFrameSamplerTests: XCTestCase {
                 frame.darkestChannelValue, 30,
                 "frame \(frame.frameIndex) has a near-black region — the rotated content did not fill the render rect")
         }
+
+    func testCancellingTheRunStopsDecodingBeforeTheNextFrame() async throws {
+        let observations = FrameObservations()
+        let handshake = FrameHandshake()
+        let sampler = VideoFrameSampler()
+        let asset = AVURLAsset(url: videoURL)
+
+        let run = Task {
+            try await sampler.sampleFrames(from: asset) { frame in
+                await observations.record(.init(frameIndex: frame.frameIndex, onMainThread: pthread_main_np() != 0))
+                // Park the decode loop so the cancellation lands at a known frame rather than
+                // racing a 10-frame clip that decodes in microseconds.
+                await handshake.arrive()
+                await handshake.waitForRelease()
+            }
+        }
+
+        // If the sampler fails before ever calling the handler, its completion is what unblocks the
+        // wait below — otherwise the test would hang instead of failing.
+        _ = Task { _ = await run.result; await handshake.arrive() }
+        await handshake.waitForArrival()
+        run.cancel()
+        await handshake.release()
+
+        switch await run.result {
+        case .success:
+            XCTFail("sampler ran to completion after its task was cancelled")
+        case .failure(let error):
+            XCTAssertTrue(error is CancellationError, "expected CancellationError, got \(error)")
+        }
+        let entries = await observations.entries
+        XCTAssertEqual(
+            entries.map(\.frameIndex),
+            [0],
+            "decoding continued past cancellation — an abandoned run keeps inferring on every frame"
+        )
     }
 
     func testThrowsWhenTheAssetHasNoVideoTrack() async throws {
@@ -313,4 +349,35 @@ private func darkestChannelValue(in pixelBuffer: CVPixelBuffer) -> UInt8 {
         }
     }
     return darkest
+}
+
+/// Lets a test pause the sampler's decode loop at the first kept frame and resume it after
+/// cancelling, so the assertion is about the loop's cancellation check rather than about timing.
+private actor FrameHandshake {
+    private var arrivalWaiter: CheckedContinuation<Void, Never>?
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+    private var hasArrived = false
+    private var isReleased = false
+
+    func arrive() {
+        hasArrived = true
+        arrivalWaiter?.resume()
+        arrivalWaiter = nil
+    }
+
+    func waitForArrival() async {
+        guard !hasArrived else { return }
+        await withCheckedContinuation { arrivalWaiter = $0 }
+    }
+
+    func release() {
+        isReleased = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+
+    func waitForRelease() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { releaseWaiter = $0 }
+    }
 }

@@ -25,14 +25,16 @@ All on-device. No server, no data upload for the core auto-edit path.
 
 ## Status
 
-Very early. As of 2026-09-02 the repo has initial app scaffolding: a
-SwiftUI shell and a pose-detection diagnostic screen (pick a video from
-Photos, run MoveNet Thunder on it, log per-frame confidence + keypoint
-count) — this is the design doc's "empirical test" first work item, not
-the auto-edit pipeline itself. See [`docs/DESIGN.md`](docs/DESIGN.md) for
-the full architecture plan including the community labeling + continuous
-ML training that will follow the standalone MVP, and
-[`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup.
+Very early. As of 2026-09-06 the repo has initial app scaffolding: the
+Home screen (a grid of every video in your Photos library — the first of
+the v1 screens in [`docs/UIUX.md`](docs/UIUX.md)) and a pose-detection
+diagnostic screen (tap a video, run MoveNet Thunder on it, log per-frame
+confidence + keypoint count) — the latter is the design doc's "empirical
+test" first work item, not the auto-edit pipeline itself. See
+[`docs/DESIGN.md`](docs/DESIGN.md) for the full architecture plan
+including the community labeling + continuous ML training that will
+follow the standalone MVP, and [`CONTRIBUTING.md`](CONTRIBUTING.md) for
+dev setup.
 
 ## Requirements
 
