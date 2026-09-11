@@ -90,14 +90,14 @@ struct VideoTileView: View {
 
     // MARK: - Thumbnail loading
 
+    // Every parameter is one piece of tile state the decision reads; grouping them behind a struct
+    // would move the same six values without reducing what a caller supplies.
+    // swiftlint:disable function_parameter_count
     /// Whether a request should be issued for a tile in this state.
     ///
     /// The invariant is that the appearance path stays open until a final delivery for the current
     /// revision has landed — an image left over from an earlier revision looks indistinguishable
     /// from a finished one, and nothing else would ever replace it.
-    // Every parameter is one piece of tile state the decision reads; grouping them behind a struct
-    // would move the same six values without reducing what a caller supplies.
-    // swiftlint:disable:next function_parameter_count
     static func shouldRequestImage(
         hasImage: Bool,
         imageIsDegraded: Bool,
@@ -114,6 +114,7 @@ struct VideoTileView: View {
         }
         return !hasImage || imageIsDegraded || loadedRevision != revision
     }
+    // swiftlint:enable function_parameter_count
 
     /// Whether a delivery puts the requested revision on screen. A final callback that carried no
     /// image — a failed iCloud fetch, say — ends the request without changing what is drawn, so the
