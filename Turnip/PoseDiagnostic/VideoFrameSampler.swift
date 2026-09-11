@@ -131,9 +131,11 @@ struct VideoFrameSampler: Sendable {
             return minFrameDuration
         }
         let roundedFrameRate = nominalFrameRate.rounded()
-        guard roundedFrameRate >= 1 else {
+        // `CMTimeScale` is `Int32`: converting a rate past `Int32.max` traps instead of throwing,
+        // so reject it here the same way the guard rejects a rate below 1.
+        guard roundedFrameRate >= 1, let timescale = CMTimeScale(exactly: roundedFrameRate) else {
             throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
         }
-        return CMTime(value: 1, timescale: CMTimeScale(roundedFrameRate))
+        return CMTime(value: 1, timescale: timescale)
     }
 }

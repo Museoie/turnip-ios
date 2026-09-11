@@ -137,6 +137,7 @@ final class VideoFrameSamplerTests: XCTestCase {
                 frame.darkestChannelValue, 30,
                 "frame \(frame.frameIndex) has a near-black region — the rotated content did not fill the render rect")
         }
+    }
 
     func testCancellingTheRunStopsDecodingBeforeTheNextFrame() async throws {
         let observations = FrameObservations()
@@ -212,6 +213,20 @@ final class VideoFrameSamplerTests: XCTestCase {
             _ = try VideoFrameSampler.compositionFrameDuration(
                 minFrameDuration: .invalid, nominalFrameRate: 0)
             XCTFail("expected compositionFrameDuration to throw when no usable frame rate exists")
+        } catch let error as PoseDiagnosticError {
+            guard case .videoLoadFailed = error else {
+                return XCTFail("expected videoLoadFailed, got \(error)")
+            }
+        } catch {
+            XCTFail("expected PoseDiagnosticError.videoLoadFailed, got \(error)")
+        }
+
+        // An out-of-range rate must throw, not trap: converting 3e9 fps to the Int32 timescale
+        // is a hard crash, not a throw.
+        do {
+            _ = try VideoFrameSampler.compositionFrameDuration(
+                minFrameDuration: .invalid, nominalFrameRate: 3e9)
+            XCTFail("expected compositionFrameDuration to throw for a frame rate past Int32.max")
         } catch let error as PoseDiagnosticError {
             guard case .videoLoadFailed = error else {
                 return XCTFail("expected videoLoadFailed, got \(error)")
