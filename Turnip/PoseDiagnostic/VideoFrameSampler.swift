@@ -25,19 +25,22 @@ struct SampledFrame: @unchecked Sendable {
 /// strict concurrency (Swift 6 would otherwise report "sending 'self.sampler' risks causing data
 /// races").
 struct VideoFrameSampler: Sendable {
-    /// Frames are kept 1-in-N; the processing pipeline's progress estimate divides the
-    /// track's frame count by this, so the two must stay in sync.
+    /// Frames are kept 1-in-N. The processing pipeline divides a track's frame count by this
+    /// to estimate its progress denominator, so the two have to read the same number.
     static let sampleStride = 3
 
-    /// Decodes `url` and invokes `handler` once per kept frame, sequentially, off the main actor.
+    /// Decodes `asset` and invokes `handler` once per kept frame, sequentially, off the main actor.
+    ///
+    /// Takes the `AVURLAsset` itself, not just its URL: for Photos-library videos the object
+    /// PhotoKit returned is what carries read access to the file, and opening a fresh asset on the
+    /// bare path is not guaranteed to work. `SelectedVideo` hands that object straight through.
     ///
     /// `handler` is `@Sendable` on purpose: a non-`Sendable` closure formed inside a `@MainActor`
     /// context (e.g. `PoseDiagnosticViewModel`) inherits that isolation, and every call to it would
     /// hop back onto the main thread — putting per-frame inference on the UI thread. `@Sendable`
     /// breaks that inheritance so the handler runs on the generic executor alongside decoding, and
     /// callers must hop to `MainActor` explicitly for any UI-bound writes.
-    func sampleFrames(from url: URL, handler: @Sendable (SampledFrame) async throws -> Void) async throws {
-        let asset = AVURLAsset(url: url)
+    func sampleFrames(from asset: AVURLAsset, handler: @Sendable (SampledFrame) async throws -> Void) async throws {
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
         }
@@ -60,10 +63,8 @@ struct VideoFrameSampler: Sendable {
 
         var frameIndex = 0
         while let sampleBuffer = trackOutput.copyNextSampleBuffer() {
-            // Cooperative cancellation: the processing screen (#17) cancels the run's Task,
-            // and this check is what stops the decode loop between frames. The per-frame
-            // handler may surface cancellation for its own work, but it is not a reliable
-            // second source. Fuller preemption policy lands with #21.
+            // Decoding a multi-minute clip outlives the screen that asked for it unless the loop
+            // itself gives up: nothing else here suspends at a cancellation point.
             try Task.checkCancellation()
             defer { frameIndex += 1 }
             guard frameIndex % Self.sampleStride == 0 else { continue }

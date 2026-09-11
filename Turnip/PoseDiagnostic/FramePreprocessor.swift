@@ -10,8 +10,9 @@ import Foundation
 /// not in the repository — so as long as the scale computation and the BGRA→RGB walk live on the
 /// actor, nothing can exercise them.
 struct FramePreprocessor {
-    /// Channels the packing writes per pixel. A model whose input tensor disagrees is rejected in
-    /// `init(inputShape:)` rather than fed a buffer of the wrong length.
+    /// Channels the packing writes per pixel. A model whose input tensor disagrees is rejected
+    /// at load in `MoveNetThunderModel.init` before this type is constructed; the rank and
+    /// channel guards in `init(inputShape:)` below are defense-in-depth for direct construction.
     static let channelCount = 3
 
     let targetWidth: Int
