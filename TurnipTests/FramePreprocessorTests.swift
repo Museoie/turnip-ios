@@ -162,6 +162,15 @@ final class FramePreprocessorTests: XCTestCase {
     /// through the real path (`makeTargetBuffer` + `CIContext.render` + `packRGB`) keeps the
     /// zeroed pad the buffer was allocated with. The fixture is a solid fill, so any painted
     /// pixel reads non-zero and the assertion distinguishes written from allocated memory.
+    ///
+    /// Limitation, recorded honestly: this test cannot discriminate removing the
+    /// `Self.zeroFill(buffer)` call from `makeTargetBuffer` — the buffer under test is always
+    /// allocated through the zero-filling path itself, and fresh `CVPixelBufferCreate`
+    /// allocations read back zero on the CI simulators, so the pad assertions pass with or
+    /// without the clear. The clear itself is pinned directly by
+    /// `testZeroFillClearsEveryByteIncludingRowPadding` (which does run `zeroFill` on a dirty
+    /// buffer); what this test pins is the rest of the pipeline — the pad the render leaves
+    /// behind is zero, and the placed frame is actually painted.
     func testLetterboxPadIsZeroAfterRender() throws {
         let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
         // 64x36 landscape: uniform scale 4, placed 256x144, 56 pad rows top and bottom.
@@ -171,6 +180,25 @@ final class FramePreprocessorTests: XCTestCase {
         XCTAssertEqual(mapping.offsetY, 56, accuracy: 0.0001)
 
         let buffer = try preprocessor.makeTargetBuffer()
+
+        // The pad assertions below are only meaningful on a zeroed buffer, so pin the
+        // allocation-time clear up front (honoring row stride): on an allocator that hands back
+        // dirty pages this fails here with a clear message instead of passing silently.
+        // The lock is released before the render below, which needs write access.
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
+            CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
+            throw FixtureFailure(message: "could not read back the freshly allocated buffer")
+        }
+        let byteCount = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
+        let preRenderBytes = UnsafeBufferPointer(
+            start: baseAddress.assumingMemoryBound(to: UInt8.self), count: byteCount)
+        let preRenderIsZeroed = !preRenderBytes.contains(where: { $0 != 0 })
+        CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
+        XCTAssertTrue(
+            preRenderIsZeroed,
+            "makeTargetBuffer must hand back a zeroed buffer — the pad assertions assume it")
+
         CIContext().render(source.transformed(by: transform), to: buffer)
         let rgb = Array(try preprocessor.packRGB(from: buffer))
 
