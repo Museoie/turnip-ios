@@ -58,26 +58,32 @@ final class SampledFrameCountTests: XCTestCase {
 
 final class ProgressReportClockTests: XCTestCase {
     func testFirstReportIsAlwaysAllowed() async {
-        let clock = ProgressReportClock(minimumInterval: 0.1)
-        XCTAssertTrue(await clock.shouldReport(at: 100))
+        let allowed = await Self.decisions(at: [100])
+        XCTAssertEqual(allowed, [true])
     }
 
     func testReportsWithinTheIntervalAreDropped() async {
-        let clock = ProgressReportClock(minimumInterval: 0.1)
-        XCTAssertTrue(await clock.shouldReport(at: 100))
-        XCTAssertFalse(await clock.shouldReport(at: 100.05))
-        XCTAssertFalse(await clock.shouldReport(at: 100.09))
+        let allowed = await Self.decisions(at: [100, 100.05, 100.09])
+        XCTAssertEqual(allowed, [true, false, false])
     }
 
     /// A dropped report must not restart the interval, or a steady stream of frames arriving
     /// faster than the interval would suppress every report after the first.
     func testTheIntervalIsMeasuredFromTheLastReportNotTheLastCall() async {
+        let allowed = await Self.decisions(at: [100, 100.05, 100.1, 100.15, 100.2])
+        XCTAssertEqual(allowed, [true, false, true, false, true])
+    }
+
+    /// Each decision is collected and asserted as a sequence: the interesting property is
+    /// which calls in a run are allowed, and `XCTAssert*` takes an autoclosure that cannot
+    /// carry an `await` anyway.
+    private static func decisions(at times: [TimeInterval]) async -> [Bool] {
         let clock = ProgressReportClock(minimumInterval: 0.1)
-        XCTAssertTrue(await clock.shouldReport(at: 100))
-        XCTAssertFalse(await clock.shouldReport(at: 100.05))
-        XCTAssertTrue(await clock.shouldReport(at: 100.1))
-        XCTAssertFalse(await clock.shouldReport(at: 100.15))
-        XCTAssertTrue(await clock.shouldReport(at: 100.2))
+        var allowed: [Bool] = []
+        for time in times {
+            allowed.append(await clock.shouldReport(at: time))
+        }
+        return allowed
     }
 }
 
@@ -210,7 +216,8 @@ final class ProcessingViewModelTests: XCTestCase {
 
         viewModel.cancel()
         await Self.waitUntil { await flag.observed }
-        XCTAssertTrue(await flag.observed, "cancelling the run did not stop the runner")
+        let observed = await flag.observed
+        XCTAssertTrue(observed, "cancelling the run did not stop the runner")
     }
 
     /// Cancelling mid-run has to leave a screen a user can come back to. The view cancels on
@@ -321,7 +328,8 @@ final class ProcessingViewModelTests: XCTestCase {
         viewModel.cancel()
 
         await Self.waitUntil { await flag.observed }
-        XCTAssertTrue(await flag.observed, "the first run was replaced instead of kept")
+        let observed = await flag.observed
+        XCTAssertTrue(observed, "the first run was replaced instead of kept")
     }
 
     /// The view's `.task` fires on every appear, so navigating back to a finished run must not
