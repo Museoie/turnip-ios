@@ -13,6 +13,12 @@ struct SampledFrame: @unchecked Sendable {
     let frameIndex: Int
     let timestamp: TimeInterval
     let pixelBuffer: CVPixelBuffer
+    /// The composition grid the frame was rendered onto, in display orientation. The sampler
+    /// applies the track's `preferredTransform` when rendering, so on a portrait iPhone clip
+    /// this is the transpose of the track's `naturalSize`. Keypoints measured against the pixel
+    /// buffer live in this space; mapping them back to source-frame coordinates needs this size
+    /// plus the track's `preferredTransform`.
+    let renderSize: CGSize
 }
 
 /// Decodes video frames via AVAssetReader (not AVAssetImageGenerator, which reseeks per-frame and
@@ -97,7 +103,8 @@ struct VideoFrameSampler: Sendable {
             guard frameIndex % sampleStride == 0 else { continue }
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
             let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
-            try await handler(SampledFrame(frameIndex: frameIndex, timestamp: timestamp, pixelBuffer: pixelBuffer))
+            try await handler(SampledFrame(
+                frameIndex: frameIndex, timestamp: timestamp, pixelBuffer: pixelBuffer, renderSize: renderSize))
         }
 
         if reader.status == .failed {

@@ -85,8 +85,8 @@ final class VideoFrameSamplerTests: XCTestCase {
     }
 
     /// The origin-rotating sibling of `testAppliesPreferredTransform`: a bare 90° rotation with no
-    /// normalizing translation puts the content outside [0, renderSize] before this PR's
-    /// normalization translate, so this fixture covers the branch the iPhone-shaped fixture cannot
+    /// normalizing translation puts the content outside [0, renderSize] without the normalizing
+    /// translate, so this fixture covers the branch the iPhone-shaped fixture cannot
     /// reach. Reverting `renderTransform` to the raw `preferredTransform` leaves the render rect
     /// pure background and fails this test while the iPhone-shaped one stays green.
     func testAppliesPreferredTransformWithOriginRotation() async throws {
@@ -108,6 +108,7 @@ final class VideoFrameSamplerTests: XCTestCase {
                 size: CGSize(
                     width: CVPixelBufferGetWidth(frame.pixelBuffer),
                     height: CVPixelBufferGetHeight(frame.pixelBuffer)),
+                renderSize: frame.renderSize,
                 darkestChannelValue: darkestChannelValue(in: frame.pixelBuffer)))
         }
 
@@ -117,6 +118,11 @@ final class VideoFrameSamplerTests: XCTestCase {
             XCTAssertEqual(
                 frame.size, CGSize(width: 48, height: 64),
                 "decoded frame is \(frame.size) — the track's preferredTransform was not applied")
+            // The coordinate space the keypoints are measured in is recorded on the frame, so a
+            // consumer can map them back to source-frame coordinates.
+            XCTAssertEqual(
+                frame.renderSize, CGSize(width: 48, height: 64),
+                "decoded frame's recorded renderSize is \(frame.renderSize) — the render grid was not recorded")
         }
 
         // Dimensions alone prove nothing: renderSize is computed from the transformed bounding box
@@ -199,7 +205,7 @@ final class VideoFrameSamplerTests: XCTestCase {
                 minFrameDuration: .invalid, nominalFrameRate: 29.97),
             CMTime(value: 1, timescale: 30))
 
-        // Neither usable: the loud failure R1's HIGH 1 asked for. No AVAssetWriter fixture can
+        // Neither usable: no AVAssetWriter fixture can
         // produce this pair — a writer-written track always carries a frame duration — so this
         // goes straight at the pure seam.
         do {
@@ -318,6 +324,7 @@ private actor Timestamps {
 private struct RenderedFrame {
     let frameIndex: Int
     let size: CGSize
+    let renderSize: CGSize
     let darkestChannelValue: UInt8
 }
 

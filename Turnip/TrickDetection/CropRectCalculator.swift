@@ -1,8 +1,12 @@
 import CoreGraphics
 import Foundation
 
-/// A rect in the source frame's normalized coordinate space, matching the pose keypoints it is
+/// A rect in the decoded frames' normalized coordinate space, matching the pose keypoints it is
 /// built from: both axes run 0-1 across the frame and `y` is measured down from the top edge.
+///
+/// Frames come out of `VideoFrameSampler` in display orientation, so pass `SampledFrame.renderSize`
+/// — not the track's `naturalSize`, which is transposed on portrait clips — as the pixel size for
+/// `cropRect(for:sourcePixelSize:)` and `denormalized(in:)`.
 struct NormalizedRect: Equatable, Sendable {
     let minX: Float
     let maxX: Float
@@ -12,7 +16,7 @@ struct NormalizedRect: Equatable, Sendable {
     var width: Float { maxX - minX }
     var height: Float { maxY - minY }
 
-    /// Scales to the source video's pixel dimensions. The origin stays top-left, so a consumer
+    /// Scales to the rendered frame's pixel dimensions. The origin stays top-left, so a consumer
     /// that works in a bottom-left space (Core Image, `AVVideoComposition`) flips `y` itself.
     func denormalized(in pixelSize: CGSize) -> CGRect {
         CGRect(
@@ -29,8 +33,10 @@ struct NormalizedRect: Equatable, Sendable {
 ///
 /// ```swift
 /// let calculator = CropRectCalculator()
-/// let rect = calculator.cropRect(for: framesInWindow, sourcePixelSize: track.naturalSize)
-/// let pixels = rect?.denormalized(in: track.naturalSize)
+/// // `frame` is the `SampledFrame` the keypoints were measured against. The sampler renders in
+/// // display orientation, so this is the transpose of `track.naturalSize` on portrait clips.
+/// let rect = calculator.cropRect(for: framesInWindow, sourcePixelSize: frame.renderSize)
+/// let pixels = rect?.denormalized(in: frame.renderSize)
 /// ```
 struct CropRectCalculator: Sendable {
     /// Width over height of the exported clip, in pixels.
@@ -47,7 +53,7 @@ struct CropRectCalculator: Sendable {
     }
 
     /// `nil` when the window holds no keypoint above the confidence threshold, or when the
-    /// source dimensions are unknown — in either case the athlete cannot be located in pixels.
+    /// rendered-frame dimensions are unknown — in either case the athlete cannot be located in pixels.
     func cropRect(for frames: [PoseFrameResult], sourcePixelSize: CGSize) -> NormalizedRect? {
         guard sourcePixelSize.width > 0, sourcePixelSize.height > 0,
               let athlete = boundingBox(across: frames) else { return nil }
