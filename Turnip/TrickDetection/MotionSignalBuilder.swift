@@ -48,8 +48,10 @@ enum MotionSignalBuilder {
     /// How far back a partial-group frame may reach for the most recent full-group frame when
     /// reconstructing its midpoint. The projected body geometry the correction is measured from
     /// — e.g. the hip half-vector — is near-constant over a few frames, but it can rotate fast
-    /// mid-trick, which is exactly where motion blur concentrates; a stale correction would
-    /// fabricate stillness. Past this bound the frame keeps its partial identity and its
+    /// mid-trick, which is exactly where motion blur concentrates. A stale correction is measured
+    /// against geometry that has since rotated, so it can place the reconstructed anchor *further*
+    /// from the true midpoint than the lone point was — fabricating motion, the failure this
+    /// bound exists to prevent. Past this bound the frame keeps its partial identity and its
     /// displacement stays unknown.
     private static let reconstructionLookbackFrames = 3
 
@@ -79,7 +81,7 @@ enum MotionSignalBuilder {
     /// full-group midpoint from the most recent full-group frame when one is close enough —
     /// motion blur drops keypoints exactly during the fast frames the pipeline exists to find,
     /// so degrading to the lone point's position would report a fixed body offset as athlete
-    /// motion (issue #58). With no recent full-group frame the anchor keeps its partial
+    /// motion. With no recent full-group frame the anchor keeps its partial
     /// identity, and the comparability checks below leave its displacement unknown.
     private static func resolveAnchors(
         for frames: [PoseFrameResult],
@@ -140,7 +142,7 @@ enum MotionSignalBuilder {
     /// midpoint and the mean of the *currently usable* members is measured on the most recent
     /// full-group frame — where the projected body geometry is near-constant over a few frames —
     /// and applied to the usable members' mean now, so the anchor stays on the body centerline
-    /// instead of jumping to the lone point. For the hips this is the issue's half-vector
+    /// instead of jumping to the lone point. For the hips this is the half-vector
     /// estimate; the same arithmetic covers asymmetric groups like the upper body.
     private static func reconstructedAnchor(
         usable: [PoseKeypoint],
@@ -209,7 +211,7 @@ enum MotionSignalBuilder {
     private static func distance(from origin: MotionAnchor?, to destination: MotionAnchor?) -> Float? {
         // Identity, not just the group, must match: a two-hip midpoint and a lone left hip both
         // read `.hips`, but differencing across the two reports a half hip-width of fixed offset
-        // as athlete motion (issue #58).
+        // as athlete motion.
         guard let origin, let destination,
               origin.source == destination.source,
               origin.members == destination.members else { return nil }

@@ -52,7 +52,7 @@ final class TrickWindowDetectorTests: XCTestCase {
     /// Negative control: without reconstruction the dropout frame anchors on the lone hip, so
     /// the samples on both sides read 0.1 — 0.067 after smoothing, above the 0.05 threshold —
     /// breaking the quiet run into 7 and 6 and folding both peaks into a single window.
-    /// (The hip half-width here is 0.1 rather than the issue's 0.06: smoothing averages each
+    /// (The hip half-width here is 0.1 rather than 0.06: smoothing averages each
     /// spike with its quiet neighbours, so the narrower spike lands at 0.04 and the negative
     /// control would not discriminate.)
     /// Every frame carries both hips at that half-width, dropout included — the reconstruction

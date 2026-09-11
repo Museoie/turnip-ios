@@ -122,6 +122,7 @@ The pipeline handles this at multiple layers:
 4. **Optical-flow fallback** — `VNGenerateOpticalFlowRequest` returns per-pixel motion magnitude between two frames with no pose needed. On frames where pose fails entirely, substitute optical-flow magnitude for the motion signal.
 5. **3-sample moving average** — a single-frame dropout is 33 ms at 30 fps; surrounding frames still carry the signal.
 6. **Peak-detection sustained-above-threshold logic** — requires ≥ 300 ms of high motion, so a single-frame anomaly can't create a false peak.
+7. **Partial-group anchor reconstruction** — a frame where only part of a keypoint group clears confidence (e.g. one hip lost to blur) reconstructs the full-group midpoint from the most recent full-group frame, at most 3 frames back: the offset between the full midpoint and the usable subset's mean is measured there and applied now, so the anchor stays on the body centerline instead of jumping to the lone point. Past that bound the frame keeps its partial identity and its displacement stays unknown, rather than measuring a fixed body offset as motion.
 
 **Recording-side lever (biggest single improvement)**: default to **240 fps slo-mo mode** on the phone. Exposure is ~4 ms instead of 33 ms → **8× less motion blur per frame**. Pose confidence stays > 0.7 through the aerial phase and mitigations 2-4 rarely need to fire. The app processes at native frame rate (30 or 240) and can export at whichever the user picks. Slo-mo is a shooting-technique change users adopt once and forget, not a per-clip decision.
 

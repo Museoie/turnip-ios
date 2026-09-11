@@ -51,7 +51,7 @@ final class MotionSignalBuilderTests: XCTestCase {
         XCTAssertNil(MotionSignalBuilder.anchors(for: [frame])[0])
     }
 
-    // MARK: - Partial-group anchors (issue #58)
+    // MARK: - Partial-group anchors
 
     /// A one-hip frame between two full-hip frames must not read as motion: the anchor is the
     /// full-group midpoint reconstructed from the neighbouring frame's hip geometry, so a
