@@ -62,7 +62,8 @@ if [ -z "$udid" ]; then
   echo "This is a runner-image problem (missing or unregistered simulator" >&2
   echo "runtime), not a code failure. Runner: ${RUNNER_NAME:-unknown}," >&2
   echo "image: ${ImageOS:-unknown}. Re-running on a healthy runner is the" >&2
-  echo "expected fix; see xcrun simctl list devices above for the full list." >&2
+  echo "expected fix; the full device list follows for diagnosis." >&2
+  xcrun simctl list devices available || true
   exit 1
 fi
 
