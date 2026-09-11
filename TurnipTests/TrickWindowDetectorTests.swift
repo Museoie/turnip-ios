@@ -55,6 +55,8 @@ final class TrickWindowDetectorTests: XCTestCase {
     /// (The hip half-width here is 0.1 rather than the issue's 0.06: smoothing averages each
     /// spike with its quiet neighbours, so the narrower spike lands at 0.04 and the negative
     /// control would not discriminate.)
+    /// Every frame carries both hips at that half-width, dropout included — the reconstruction
+    /// reads the offset off the preceding full-hip frame, so the geometry has to exist there.
     func testOneHipDropoutInsideTheQuietStretchStillSeparatesTwoTricks() {
         var positions = [Float](repeating: 0.1, count: 20)
         positions += [0.2, 0.3, 0.4, 0.5]
@@ -64,15 +66,12 @@ final class TrickWindowDetectorTests: XCTestCase {
 
         let dropoutIndex = 20 + 4 + 7
         let frames = positions.enumerated().map { index, x in
-            if index == dropoutIndex {
-                return PoseFixture.frame(
-                    index: index,
-                    hip: nil,
-                    leftHip: (x: x - 0.1, y: 0.5, confidence: 0.9),
-                    rightHip: (x: x + 0.1, y: 0.5, confidence: 0.1)
-                )
-            }
-            return PoseFixture.frame(index: index, hip: (x: x, y: 0.5))
+            PoseFixture.frame(
+                index: index,
+                hip: nil,
+                leftHip: (x: x - 0.1, y: 0.5, confidence: 0.9),
+                rightHip: (x: x + 0.1, y: 0.5, confidence: index == dropoutIndex ? 0.1 : 0.9)
+            )
         }
 
         let windows = detector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
