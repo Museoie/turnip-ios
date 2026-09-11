@@ -1,18 +1,19 @@
+import AVFoundation
 import SwiftUI
 
-/// The pipeline progress screen (issue #17; `docs/UIUX.md` § "Processing").
+/// The pipeline progress screen (`docs/UIUX.md` § "Processing").
 ///
 /// Pushed onto the flow's shared `NavigationStack` when a video is picked: it starts the
 /// pipeline on appear, shows real per-frame progress ("Analyzing frame 400 of 1,200"), and
 /// on success navigates to `destination` with the detected clips. Empty and error states
-/// stay on this screen with a way back. Like `ClipListView`, it declares no
+/// stay on this screen with a way back. Like the other pushed screens, it declares no
 /// `NavigationStack` of its own.
 ///
-/// The success destination is injected rather than hardcoded to the clip list: #11 is
-/// still an unmerged PR, so this screen can't name its type — Home (#16) wires
-/// `ProcessingView(input:) { result in ClipListView(...) }` when it lands.
+/// The success destination is injected rather than hardcoded to the clip list, whose type
+/// does not exist on `main` yet: Home wires
+/// `ProcessingView(video:) { result in ClipListView(...) }` once it lands.
 struct ProcessingView<Destination: View>: View {
-    let input: ProcessingInput
+    let video: SelectedVideo
     let destination: (ProcessingResult) -> Destination
     /// `false` in previews, which would otherwise kick off a real pipeline run on appear.
     let autostart: Bool
@@ -21,12 +22,12 @@ struct ProcessingView<Destination: View>: View {
     @Environment(\.dismiss) private var dismiss
 
     init(
-        input: ProcessingInput,
+        video: SelectedVideo,
         runner: any ProcessingRunning = ProcessingPipeline(),
         autostart: Bool = true,
         destination: @escaping (ProcessingResult) -> Destination
     ) {
-        self.input = input
+        self.video = video
         self.autostart = autostart
         self.destination = destination
         _viewModel = StateObject(wrappedValue: ProcessingViewModel(runner: runner))
@@ -37,10 +38,8 @@ struct ProcessingView<Destination: View>: View {
             switch viewModel.state {
             case .idle:
                 ProgressView("Preparing…")
-            case .downloading(let fraction):
-                downloadState(fraction: fraction)
-            case .processing(let frame, let totalFrames, let fraction):
-                processingState(frame: frame, totalFrames: totalFrames, fraction: fraction)
+            case .processing(let progress):
+                processingState(progress)
             case .succeeded:
                 // Covered by the pushed destination; only visible when navigating back here.
                 Text("Analysis complete.")
@@ -70,7 +69,7 @@ struct ProcessingView<Destination: View>: View {
         }
         .task {
             if autostart {
-                viewModel.start(input: input)
+                viewModel.start(video: video)
             }
         }
         .onDisappear {
@@ -78,31 +77,16 @@ struct ProcessingView<Destination: View>: View {
         }
     }
 
-    private func downloadState(fraction: Double) -> some View {
+    private func processingState(_ progress: ProcessingProgress) -> some View {
         VStack(spacing: 16) {
-            ProgressView(value: fraction)
-                .accessibilityLabel("iCloud download progress")
-            Text("Downloading from iCloud…")
-                .font(.headline)
-            Text("The full video has to download before analysis can start.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-        }
-        .padding()
-    }
-
-    private func processingState(frame: Int, totalFrames: Int?, fraction: Double?) -> some View {
-        VStack(spacing: 16) {
-            if let fraction {
+            if let fraction = progress.fraction {
                 ProgressView(value: fraction)
                     .accessibilityLabel("Analysis progress")
             } else {
                 ProgressView()
                     .accessibilityLabel("Analyzing video")
             }
-            Text(progressLabel(frame: frame, totalFrames: totalFrames))
+            Text(progress.label)
                 .font(.headline)
             Text("This runs fully on-device and can take a while for long videos.")
                 .font(.caption)
@@ -111,16 +95,6 @@ struct ProcessingView<Destination: View>: View {
                 .padding(.horizontal)
         }
         .padding()
-    }
-
-    /// "Analyzing frame 400 of 1,200" per the design doc; the total is unknown when the
-    /// track reports no frame rate, so the counter stands alone.
-    private func progressLabel(frame: Int, totalFrames: Int?) -> String {
-        if let totalFrames {
-            "Analyzing frame \(frame) of \(totalFrames)"
-        } else {
-            "Analyzing frame \(frame)…"
-        }
     }
 
     private var emptyState: some View {
@@ -153,7 +127,7 @@ struct ProcessingView<Destination: View>: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
-            Button("Retry") { viewModel.retry(input: input) }
+            Button("Retry") { viewModel.retry(video: video) }
                 .buttonStyle(.borderedProminent)
                 .padding(.top, 8)
             Button("Back to Home", role: .cancel) { dismiss() }
@@ -165,7 +139,11 @@ struct ProcessingView<Destination: View>: View {
 #Preview {
     NavigationStack {
         ProcessingView(
-            input: ProcessingInput(source: .fileURL(URL(fileURLWithPath: "/nonexistent.mov"))),
+            video: SelectedVideo(
+                assetIdentifier: "preview",
+                asset: AVURLAsset(url: URL(fileURLWithPath: "/nonexistent.mov")),
+                duration: 12
+            ),
             autostart: false,
             destination: { result in
                 Text("\(result.clips.count) clips")

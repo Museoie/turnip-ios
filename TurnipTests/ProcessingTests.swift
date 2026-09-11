@@ -1,25 +1,83 @@
 import AVFoundation
+import Foundation
 import XCTest
 @testable import Turnip
 
 final class ProcessingProgressTests: XCTestCase {
-    func testDownloadingFractionClampsToUnitRange() {
-        XCTAssertEqual(ProcessingProgress.downloading(0.5).fraction, 0.5)
-        XCTAssertEqual(ProcessingProgress.downloading(1.5).fraction, 1)
-        XCTAssertEqual(ProcessingProgress.downloading(-0.25).fraction, 0)
+    func testFractionDividesProcessedByTotal() {
+        XCTAssertEqual(ProcessingProgress(frame: 300, totalFrames: 1200).fraction, 0.25)
     }
 
-    func testProcessingFractionDividesProcessedByTotal() {
-        XCTAssertEqual(ProcessingProgress.processing(frame: 300, totalFrames: 1200).fraction, 0.25)
+    func testFractionClampsOvershoot() {
+        XCTAssertEqual(ProcessingProgress(frame: 1300, totalFrames: 1200).fraction, 1)
     }
 
-    func testProcessingFractionClampsOvershoot() {
-        XCTAssertEqual(ProcessingProgress.processing(frame: 1300, totalFrames: 1200).fraction, 1)
+    func testFractionIsNilWhenTheTotalIsUnknown() {
+        XCTAssertNil(ProcessingProgress(frame: 300, totalFrames: nil).fraction)
+        XCTAssertNil(ProcessingProgress(frame: 300, totalFrames: 0).fraction)
     }
 
-    func testProcessingFractionIsNilWhenTheTotalIsUnknown() {
-        XCTAssertNil(ProcessingProgress.processing(frame: 300, totalFrames: nil).fraction)
-        XCTAssertNil(ProcessingProgress.processing(frame: 300, totalFrames: 0).fraction)
+    func testLabelCountsAgainstTheTotal() {
+        XCTAssertEqual(
+            ProcessingProgress(frame: 400, totalFrames: 1200).label,
+            "Analyzing frame 400 of 1200"
+        )
+    }
+
+    func testLabelDropsTheTotalWhenItIsUnknown() {
+        XCTAssertEqual(ProcessingProgress(frame: 400, totalFrames: nil).label, "Analyzing frame 400…")
+    }
+
+    /// The denominator is an estimate from an average frame rate, so variable-frame-rate
+    /// capture can overrun it; "frame 412 of 400" must never render.
+    func testLabelDropsTheTotalOnceTheCountOverrunsIt() {
+        XCTAssertEqual(ProcessingProgress(frame: 412, totalFrames: 400).label, "Analyzing frame 412…")
+        XCTAssertEqual(
+            ProcessingProgress(frame: 400, totalFrames: 400).label,
+            "Analyzing frame 400 of 400"
+        )
+    }
+}
+
+final class SampledFrameCountTests: XCTestCase {
+    /// The sampler keeps frame 0 and then every 3rd, so a 10-frame track yields frames
+    /// 0/3/6/9 — four, not three. Integer division would under-count the denominator and the
+    /// counter would run past it.
+    func testCountRoundsUpTheWayTheSamplerDoes() {
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 9), 3)
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 10), 4)
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 11), 4)
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 12), 4)
+    }
+
+    func testCountIsAtLeastOne() {
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 0), 1)
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 1), 1)
+    }
+}
+
+final class ProgressReportClockTests: XCTestCase {
+    func testFirstReportIsAlwaysAllowed() async {
+        let clock = ProgressReportClock(minimumInterval: 0.1)
+        XCTAssertTrue(await clock.shouldReport(at: 100))
+    }
+
+    func testReportsWithinTheIntervalAreDropped() async {
+        let clock = ProgressReportClock(minimumInterval: 0.1)
+        XCTAssertTrue(await clock.shouldReport(at: 100))
+        XCTAssertFalse(await clock.shouldReport(at: 100.05))
+        XCTAssertFalse(await clock.shouldReport(at: 100.09))
+    }
+
+    /// A dropped report must not restart the interval, or a steady stream of frames arriving
+    /// faster than the interval would suppress every report after the first.
+    func testTheIntervalIsMeasuredFromTheLastReportNotTheLastCall() async {
+        let clock = ProgressReportClock(minimumInterval: 0.1)
+        XCTAssertTrue(await clock.shouldReport(at: 100))
+        XCTAssertFalse(await clock.shouldReport(at: 100.05))
+        XCTAssertTrue(await clock.shouldReport(at: 100.1))
+        XCTAssertFalse(await clock.shouldReport(at: 100.15))
+        XCTAssertTrue(await clock.shouldReport(at: 100.2))
     }
 }
 
@@ -80,8 +138,12 @@ final class ProcessingPipelineClipTests: XCTestCase {
 
 @MainActor
 final class ProcessingViewModelTests: XCTestCase {
-    private static var input: ProcessingInput {
-        ProcessingInput(source: .fileURL(URL(fileURLWithPath: "/nonexistent.mov")))
+    private static var video: SelectedVideo {
+        SelectedVideo(
+            assetIdentifier: "test",
+            asset: AVURLAsset(url: URL(fileURLWithPath: "/nonexistent.mov")),
+            duration: 10
+        )
     }
 
     private static var clip: ProcessedClip {
@@ -94,7 +156,7 @@ final class ProcessingViewModelTests: XCTestCase {
     func testFailingRunSurfacesTheErrorMessage() async {
         let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .fail(TestError.boom)))
 
-        viewModel.start(input: Self.input)
+        viewModel.start(video: Self.video)
         await Self.waitUntilNotRunning(viewModel)
 
         guard case .failed(let message) = viewModel.state else {
@@ -107,7 +169,7 @@ final class ProcessingViewModelTests: XCTestCase {
     func testEmptyResultShowsTheEmptyState() async {
         let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .succeed(clips: [])))
 
-        viewModel.start(input: Self.input)
+        viewModel.start(video: Self.video)
         await Self.waitUntilNotRunning(viewModel)
 
         guard case .empty = viewModel.state else {
@@ -121,7 +183,7 @@ final class ProcessingViewModelTests: XCTestCase {
             runner: ScriptedRunner(behavior: .succeed(clips: [Self.clip]))
         )
 
-        viewModel.start(input: Self.input)
+        viewModel.start(video: Self.video)
         await Self.waitUntilNotRunning(viewModel)
 
         guard case .succeeded = viewModel.state else {
@@ -137,40 +199,109 @@ final class ProcessingViewModelTests: XCTestCase {
             runner: ScriptedRunner(behavior: .reportThenHang(flag))
         )
 
-        viewModel.start(input: Self.input)
-        var sawProgress = false
-        for _ in 0..<200 {
-            if case .processing(let frame, let totalFrames, let fraction) = viewModel.state {
-                XCTAssertEqual(frame, 42)
-                XCTAssertEqual(totalFrames, 100)
-                XCTAssertEqual(fraction, 0.42)
-                sawProgress = true
-                break
-            }
-            try? await Task.sleep(nanoseconds: 5_000_000)
+        viewModel.start(video: Self.video)
+        await Self.waitUntilProcessing(viewModel)
+        guard case .processing(let progress) = viewModel.state else {
+            return XCTFail("the progress report never reached the view model")
         }
-        XCTAssertTrue(sawProgress, "the progress report never reached the view model")
+        XCTAssertEqual(progress.frame, 42)
+        XCTAssertEqual(progress.totalFrames, 100)
+        XCTAssertEqual(progress.fraction, 0.42)
 
         viewModel.cancel()
-        for _ in 0..<200 {
-            if await flag.observed { break }
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
+        await Self.waitUntil { await flag.observed }
         XCTAssertTrue(await flag.observed, "cancelling the run did not stop the runner")
+    }
+
+    /// Cancelling mid-run has to leave a screen a user can come back to. The view cancels on
+    /// disappear and starts on appear, so a state left at its last running value would render
+    /// a live progress bar over a view model with no run, and `start` would refuse to restart.
+    func testCancelMidRunReturnsToIdleAndAllowsARestart() async {
+        let first = CancelFlag()
+        let runner = ScriptedRunner(behavior: .reportThenHang(first))
+        let viewModel = ProcessingViewModel(runner: runner)
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntilProcessing(viewModel)
+
+        viewModel.cancel()
+        guard case .idle = viewModel.state else {
+            return XCTFail("expected idle after cancel, got \(viewModel.state)")
+        }
+        XCTAssertNil(viewModel.result)
+        XCTAssertFalse(viewModel.isShowingClips)
+        await Self.waitUntil { await first.observed }
+
+        runner.behavior = .succeed(clips: [Self.clip])
+        viewModel.start(video: Self.video)
+        await Self.waitUntilNotRunning(viewModel)
+
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("the screen did not restart after a cancel, got \(viewModel.state)")
+        }
+    }
+
+    /// A cancelled run keeps decoding its in-flight frame and reports progress afterwards.
+    /// That report must not drive the state machine back to `.processing`, which would strand
+    /// the screen exactly the way leaving the state untouched on cancel does.
+    func testLateProgressFromACancelledRunCannotRepaintTheScreen() async {
+        let cancelled = ProgressRelay()
+        let restarted = ProgressRelay()
+        let runner = ScriptedRunner(behavior: .relayProgress(cancelled))
+        let viewModel = ProcessingViewModel(runner: runner)
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntil { await cancelled.isReady }
+
+        viewModel.cancel()
+        await cancelled.report(ProcessingProgress(frame: 412, totalFrames: 1200))
+        guard case .idle = viewModel.state else {
+            return XCTFail("a cancelled run's late progress repainted the screen: \(viewModel.state)")
+        }
+
+        // And the screen still restarts, with the new run's reports landing.
+        runner.behavior = .relayProgress(restarted)
+        viewModel.start(video: Self.video)
+        await Self.waitUntil { await restarted.isReady }
+        await restarted.report(ProcessingProgress(frame: 7, totalFrames: 100))
+
+        guard case .processing(let progress) = viewModel.state else {
+            return XCTFail("the restarted run never reached the screen: \(viewModel.state)")
+        }
+        XCTAssertEqual(progress.frame, 7)
+        viewModel.cancel()
+    }
+
+    /// Cancel is also what `onDisappear` calls when the success destination is pushed, so it
+    /// must not wipe the result the pushed screen is rendering.
+    func testCancelAfterSuccessKeepsTheResult() async {
+        let viewModel = ProcessingViewModel(
+            runner: ScriptedRunner(behavior: .succeed(clips: [Self.clip]))
+        )
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntilNotRunning(viewModel)
+        viewModel.cancel()
+
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("cancel discarded a finished run, got \(viewModel.state)")
+        }
+        XCTAssertEqual(viewModel.result?.clips, [Self.clip])
+        XCTAssertTrue(viewModel.isShowingClips)
     }
 
     func testRetryAfterFailureRunsAgain() async {
         let runner = ScriptedRunner(behavior: .fail(TestError.boom))
         let viewModel = ProcessingViewModel(runner: runner)
 
-        viewModel.start(input: Self.input)
+        viewModel.start(video: Self.video)
         await Self.waitUntilNotRunning(viewModel)
         guard case .failed = viewModel.state else {
             return XCTFail("expected the failed state, got \(viewModel.state)")
         }
 
         runner.behavior = .succeed(clips: [Self.clip])
-        viewModel.retry(input: Self.input)
+        viewModel.retry(video: Self.video)
         await Self.waitUntilNotRunning(viewModel)
 
         guard case .succeeded = viewModel.state else {
@@ -185,42 +316,50 @@ final class ProcessingViewModelTests: XCTestCase {
             runner: ScriptedRunner(behavior: .reportThenHang(flag))
         )
 
-        viewModel.start(input: Self.input)
-        viewModel.start(input: Self.input) // second start must not replace the in-flight run
+        viewModel.start(video: Self.video)
+        viewModel.start(video: Self.video) // second start must not replace the in-flight run
         viewModel.cancel()
 
-        for _ in 0..<200 {
-            if await flag.observed { break }
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
+        await Self.waitUntil { await flag.observed }
         XCTAssertTrue(await flag.observed, "the first run was replaced instead of kept")
     }
 
-    /// Regression test for the teardown race: cancelling a run and immediately starting a
-    /// new one must not orphan the new run — the old run's trailing teardown must not clear
-    /// the new run's handle, or the final `cancel()` would silently stop working.
-    func testCancelThenStartKeepsNewRunCancellable() async {
-        let flag = CancelFlag()
-        let runner = ScriptedRunner(behavior: .reportThenHang(flag))
+    /// The view's `.task` fires on every appear, so navigating back to a finished run must not
+    /// re-run the pipeline over it.
+    func testStartAfterTerminalStateIsIgnored() async {
+        let runner = ScriptedRunner(behavior: .fail(TestError.boom))
         let viewModel = ProcessingViewModel(runner: runner)
 
-        viewModel.start(input: Self.input)
-        viewModel.cancel() // the old run's trailing teardown is still draining here
-        viewModel.start(input: Self.input) // must not be orphaned by that teardown
-
-        viewModel.cancel()
-        for _ in 0..<200 {
-            if await flag.observed { break }
-            try? await Task.sleep(nanoseconds: 5_000_000)
+        viewModel.start(video: Self.video)
+        await Self.waitUntilNotRunning(viewModel)
+        guard case .failed = viewModel.state else {
+            return XCTFail("expected the failed state, got \(viewModel.state)")
         }
-        XCTAssertTrue(
-            await flag.observed,
-            "the new run was orphaned by the old run's teardown and could not be cancelled"
-        )
+
+        runner.behavior = .succeed(clips: [Self.clip])
+        viewModel.start(video: Self.video)
+        await Self.waitUntilNotRunning(viewModel)
+
+        guard case .failed = viewModel.state else {
+            return XCTFail("re-appearing re-ran a finished run, got \(viewModel.state)")
+        }
+        XCTAssertNil(viewModel.result)
     }
 
     private static func waitUntilNotRunning(_ viewModel: ProcessingViewModel) async {
-        for _ in 0..<200 where viewModel.isRunning {
+        await waitUntil { !viewModel.isRunning }
+    }
+
+    private static func waitUntilProcessing(_ viewModel: ProcessingViewModel) async {
+        await waitUntil {
+            if case .processing = viewModel.state { return true }
+            return false
+        }
+    }
+
+    private static func waitUntil(_ condition: () async -> Bool) async {
+        for _ in 0..<200 {
+            if await condition() { return }
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
     }
@@ -240,6 +379,22 @@ private actor CancelFlag {
     }
 }
 
+/// Hands the run's `onProgress` closure back to the test, so a report can be fired at a
+/// chosen moment — after a cancel, say — instead of racing the runner.
+private actor ProgressRelay {
+    private var onProgress: (@Sendable (ProcessingProgress) async -> Void)?
+
+    var isReady: Bool { onProgress != nil }
+
+    func capture(_ onProgress: @escaping @Sendable (ProcessingProgress) async -> Void) {
+        self.onProgress = onProgress
+    }
+
+    func report(_ progress: ProcessingProgress) async {
+        await onProgress?(progress)
+    }
+}
+
 /// A scripted `ProcessingRunning`: the real pipeline needs a video file and the model, so
 /// the view-model tests drive the state machine with canned behaviors instead.
 private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
@@ -248,34 +403,46 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
         case fail(Error)
         /// Reports one progress update, then sleeps until cancelled and records it on the flag.
         case reportThenHang(CancelFlag)
+        /// Hands `onProgress` to the relay and sleeps, so the test drives the reporting.
+        case relayProgress(ProgressRelay)
     }
 
-    /// Set once before the run in each test (or between runs for the retry test); never
-    /// mutated while a run is in flight.
-    var behavior: Behavior
+    /// Tests swap this between runs, sometimes while the previous run is still draining its
+    /// cancellation, so it is read once per run under a lock rather than left to race.
+    var behavior: Behavior {
+        get { lock.lock(); defer { lock.unlock() }; return storedBehavior }
+        set { lock.lock(); storedBehavior = newValue; lock.unlock() }
+    }
+
+    private let lock = NSLock()
+    private var storedBehavior: Behavior
 
     init(behavior: Behavior) {
-        self.behavior = behavior
+        self.storedBehavior = behavior
     }
 
     func run(
-        input: ProcessingInput,
+        video: SelectedVideo,
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         switch behavior {
         case .succeed(let clips):
-            return ProcessingResult(clips: clips, asset: AVAsset())
+            return ProcessingResult(clips: clips, asset: video.asset)
         case .fail(let error):
             throw error
         case .reportThenHang(let flag):
-            await onProgress(.processing(frame: 42, totalFrames: 100))
+            await onProgress(ProcessingProgress(frame: 42, totalFrames: 100))
             do {
                 try await Task.sleep(nanoseconds: 30_000_000_000)
             } catch {
                 await flag.noteCancelled()
                 throw error
             }
-            return ProcessingResult(clips: [], asset: AVAsset())
+            return ProcessingResult(clips: [], asset: video.asset)
+        case .relayProgress(let relay):
+            await relay.capture(onProgress)
+            try await Task.sleep(nanoseconds: 30_000_000_000)
+            return ProcessingResult(clips: [], asset: video.asset)
         }
     }
 }

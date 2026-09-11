@@ -1,17 +1,18 @@
 import Foundation
 
-/// The processing screen's state machine (issue #17).
+/// The processing screen's state machine.
 ///
-/// Owns the pipeline `Task`: `cancel()` stops it, and the view cancels on disappear, so a
-/// run never outlives its screen. Cancellation is cooperative — the sampler loop checks
-/// between frames — so cancel returns immediately while the in-flight frame finishes; the
-/// `CancellationError` is swallowed because the screen is already gone by then.
+/// Owns the pipeline `Task`: `cancel()` stops it and returns the screen to `.idle`, so a run
+/// never outlives its screen and returning to a cancelled run starts a fresh one rather than
+/// finding a progress bar with nothing behind it. Cancellation is cooperative — the sampler
+/// loop checks between frames — so cancel returns immediately while the in-flight frame
+/// finishes; `runGeneration` is what keeps that frame's trailing progress report from
+/// repainting the screen the user just left.
 @MainActor
 final class ProcessingViewModel: ObservableObject {
     enum State {
         case idle
-        case downloading(fraction: Double)
-        case processing(frame: Int, totalFrames: Int?, fraction: Double?)
+        case processing(ProcessingProgress)
         case succeeded
         case empty
         case failed(message: String)
@@ -24,7 +25,7 @@ final class ProcessingViewModel: ObservableObject {
 
     var isRunning: Bool {
         switch state {
-        case .idle, .downloading, .processing:
+        case .idle, .processing:
             true
         case .succeeded, .empty, .failed:
             false
@@ -33,11 +34,9 @@ final class ProcessingViewModel: ObservableObject {
 
     private let runner: any ProcessingRunning
     private var runTask: Task<Void, Never>?
-    /// Guards `runTask` against a scheduling race: the run task's trailing teardown hops to
-    /// the main actor *after* `finish`/`fail` have run, so a new run started in that gap would
-    /// have its handle cleared by the old run's teardown (orphaning it — `cancel()` would no
-    /// longer stop it). Each lifecycle transition bumps the generation, and the teardown only
-    /// clears the task when its captured generation still matches.
+    /// Identifies the run each callback belongs to. A cancelled run keeps decoding its
+    /// in-flight frame and reports progress afterwards; without this, that report would drive
+    /// the state machine back to `.processing` behind a screen that has no run.
     private var runGeneration = 0
 
     init(runner: any ProcessingRunning = ProcessingPipeline()) {
@@ -46,9 +45,12 @@ final class ProcessingViewModel: ObservableObject {
 
     /// Starts the pipeline. Only a fresh view model starts: ignored unless the state is
     /// `.idle`, so re-appearing the screen (the view's `.task` fires on every appear) never
-    /// re-runs a finished or cancelled run. `retry` resets to `.idle` first, so retries
-    /// still flow through here.
-    func start(input: ProcessingInput) {
+    /// re-runs a finished run. `cancel` and `retry` both reset to `.idle`, so returning to a
+    /// cancelled run and retrying a failed one still flow through here.
+    ///
+    /// The handle is checked too, not just the state: a run that has not yet reported its
+    /// first frame is still `.idle`, and a second `start` in that gap would orphan it.
+    func start(video: SelectedVideo) {
         guard runTask == nil, case .idle = state else { return }
         runGeneration += 1
         let generation = runGeneration
@@ -56,52 +58,53 @@ final class ProcessingViewModel: ObservableObject {
         // Weak capture: the task must not keep the view model (and its screen) alive.
         runTask = Task { [weak self] in
             do {
-                let result = try await runner.run(input: input) { progress in
-                    await MainActor.run { [weak self] in self?.apply(progress) }
+                let result = try await runner.run(video: video) { progress in
+                    await MainActor.run { [weak self] in self?.apply(progress, from: generation) }
                 }
-                await MainActor.run { [weak self] in self?.finish(with: result) }
+                await MainActor.run { [weak self] in self?.finish(with: result, from: generation) }
             } catch is CancellationError {
-                // Cancel dismisses the screen; there is nothing to show.
+                // Cancel already returned the screen to idle; there is nothing to show.
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription
-                await MainActor.run { [weak self] in self?.fail(with: message) }
-            }
-            await MainActor.run { [weak self] in
-                if self?.runGeneration == generation {
-                    self?.runTask = nil
-                }
+                await MainActor.run { [weak self] in self?.fail(with: message, from: generation) }
             }
         }
     }
 
+    /// Stops an in-flight run and returns the screen to `.idle`. A cancel after the run has
+    /// already reached a terminal state is a no-op: the view cancels on disappear, and pushing
+    /// the success destination disappears this screen, so wiping `result` there would pop the
+    /// destination the user is looking at.
     func cancel() {
         runTask?.cancel()
         runTask = nil
-        // Invalidate any trailing teardown still draining from the cancelled run, so it
-        // cannot clear a newer run's handle.
         runGeneration += 1
-    }
-
-    /// Restarts after a failure. Ignored while a run is in flight.
-    func retry(input: ProcessingInput) {
-        guard !isRunning else { return }
+        guard isRunning else { return }
         state = .idle
         result = nil
         isShowingClips = false
-        start(input: input)
     }
 
-    private func apply(_ progress: ProcessingProgress) {
-        switch progress {
-        case .downloading(let fraction):
-            state = .downloading(fraction: fraction)
-        case .processing(let frame, let totalFrames):
-            state = .processing(frame: frame, totalFrames: totalFrames, fraction: progress.fraction)
-        }
+    /// Restarts after a failure or an empty result.
+    func retry(video: SelectedVideo) {
+        guard !isRunning else { return }
+        runTask?.cancel()
+        runTask = nil
+        runGeneration += 1
+        state = .idle
+        result = nil
+        isShowingClips = false
+        start(video: video)
     }
 
-    private func finish(with result: ProcessingResult) {
+    private func apply(_ progress: ProcessingProgress, from generation: Int) {
+        guard generation == runGeneration else { return }
+        state = .processing(progress)
+    }
+
+    private func finish(with result: ProcessingResult, from generation: Int) {
+        guard generation == runGeneration else { return }
         if result.clips.isEmpty {
             state = .empty
         } else {
@@ -111,7 +114,8 @@ final class ProcessingViewModel: ObservableObject {
         }
     }
 
-    private func fail(with message: String) {
+    private func fail(with message: String, from generation: Int) {
+        guard generation == runGeneration else { return }
         state = .failed(message: message)
     }
 }

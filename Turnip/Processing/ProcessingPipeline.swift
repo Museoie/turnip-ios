@@ -1,46 +1,42 @@
 import AVFoundation
 import CoreGraphics
 import Foundation
-import Photos
 
-/// Typed failures of a processing run (issue #17's error state).
+/// Typed failures of a processing run, surfaced by the screen's error state.
 enum ProcessingError: LocalizedError {
     case assetHasNoVideoTrack
-    case photoAssetUnavailable(underlying: Error?)
 
     var errorDescription: String? {
         switch self {
         case .assetHasNoVideoTrack:
             return "The selected video has no video track to analyze."
-        case .photoAssetUnavailable(let underlying):
-            if let underlying {
-                return "The selected photo-library video couldn't be loaded: "
-                    + underlying.localizedDescription
-            }
-            return "The selected photo-library video couldn't be loaded."
         }
     }
 }
 
-/// One progress report from a pipeline run, in run order: an optional iCloud-download phase
-/// first, then per-frame processing progress.
-enum ProcessingProgress: Equatable, Sendable {
-    /// 0...1 fraction of the iCloud download (photo-asset inputs only).
-    case downloading(Double)
-    /// `frame` is the 1-based count of frames run through inference so far; `totalFrames` is
-    /// estimated from duration × frame rate and is nil when the track reports no frame rate.
-    case processing(frame: Int, totalFrames: Int?)
+/// One progress report from a pipeline run.
+struct ProcessingProgress: Equatable, Sendable {
+    /// 1-based count of frames run through inference so far.
+    let frame: Int
+    /// Estimated from the track's duration × frame rate; nil when the track reports no frame rate.
+    let totalFrames: Int?
 
     /// 0...1 for `ProgressView`; nil when the total is unknown, in which case the view shows
     /// an indeterminate spinner next to the frame counter.
     var fraction: Double? {
-        switch self {
-        case .downloading(let fraction):
-            return min(max(fraction, 0), 1)
-        case .processing(let frame, let totalFrames):
-            guard let totalFrames, totalFrames > 0 else { return nil }
-            return min(max(Double(frame) / Double(totalFrames), 0), 1)
+        guard let totalFrames, totalFrames > 0 else { return nil }
+        return min(max(Double(frame) / Double(totalFrames), 0), 1)
+    }
+
+    /// "Analyzing frame 400 of 1,200" per `docs/UIUX.md` § "Processing". The denominator is
+    /// dropped when the track reports no frame rate, and also when the count has overrun it:
+    /// the estimate comes from an average frame rate, which variable-frame-rate capture beats,
+    /// and "frame 412 of 400" reads as a bug where a bare counter reads as an unknown length.
+    var label: String {
+        guard let totalFrames, frame <= totalFrames else {
+            return "Analyzing frame \(frame)…"
         }
+        return "Analyzing frame \(frame) of \(totalFrames)"
     }
 }
 
@@ -48,30 +44,25 @@ enum ProcessingProgress: Equatable, Sendable {
 /// computed from the window's pose keypoints (docs/DESIGN.md steps 5-6).
 ///
 /// This is the processing screen's output contract. It deliberately mirrors — rather than
-/// reuses — `ClipListItem`: the clip list (#11) is still an unmerged PR, so this screen can't
-/// depend on its type; the home flow maps each clip with
-/// `ClipListItem(window: clip.window, cropRect: clip.cropRect)` when it wires the two.
+/// reuses — `ClipListItem`, whose type does not exist on `main` yet; the home flow maps each
+/// clip with `ClipListItem(window: clip.window, cropRect: clip.cropRect)` when it wires the two.
 struct ProcessedClip: Equatable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
 }
 
-/// The pipeline's terminal output: what the success destination (the clip list, #11) needs.
-///
-/// `AVAsset` is not `Sendable`; this is `@unchecked Sendable` because the pipeline only
-/// reads the asset through its async `load(_:)` API, which AVFoundation documents as safe
-/// to call from any thread, and hands it on for main-actor thumbnail loading downstream.
-struct ProcessingResult: @unchecked Sendable {
+/// The pipeline's terminal output: what the success destination needs.
+struct ProcessingResult: Sendable {
     /// One clip per detected trick window, in video order.
     let clips: [ProcessedClip]
-    /// The resolved asset, for thumbnail loading downstream.
-    let asset: AVAsset
+    /// The analyzed asset, for thumbnail loading downstream.
+    let asset: AVURLAsset
 }
 
 /// The seam between the pipeline and frame decoding, so tests can feed canned frames without
 /// a video file.
 protocol FrameSampling: Sendable {
-    func sampleFrames(from url: URL, handler: @Sendable (SampledFrame) async throws -> Void) async throws
+    func sampleFrames(from asset: AVURLAsset, handler: @Sendable (SampledFrame) async throws -> Void) async throws
 }
 
 extension VideoFrameSampler: FrameSampling {}
@@ -79,25 +70,27 @@ extension VideoFrameSampler: FrameSampling {}
 /// The seam the processing view model runs against: the real `ProcessingPipeline` in the app,
 /// scripted fakes in tests.
 protocol ProcessingRunning: Sendable {
-    /// `onProgress` escapes: it is captured by the iCloud download's progress handler and
-    /// by a `Task` inside `requestFileBackedAsset`, so the closure must be `@escaping`.
+    /// `onProgress` escapes: the throttled report is made from inside the sampler's handler,
+    /// which outlives the call that formed the closure.
     func run(
-        input: ProcessingInput,
+        video: SelectedVideo,
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult
 }
 
-/// Runs the full detection pipeline for the processing screen (issue #17): resolve the input
-/// to a file-backed asset (downloading iCloud-only photo assets first), sample frames,
-/// run pose inference per frame, then collapse the pose output into trick windows with crop
-/// rects (docs/DESIGN.md steps 2-6).
+/// Runs the full detection pipeline for the processing screen: sample frames, run pose
+/// inference per frame, then collapse the pose output into trick windows with crop rects
+/// (docs/DESIGN.md steps 2-6).
+///
+/// Takes a `SelectedVideo` rather than a `PHAsset` or a bare URL: Home already resolves the
+/// picked asset — including the iCloud download and the slow-motion composition export — and
+/// hands over the readable `AVURLAsset`, so PhotoKit stays out of the pipeline entirely.
 ///
 /// Progress is per processed frame — `docs/UIUX.md` § "Processing" wants "analyzing frame
 /// 400/1200", not a spinner — with the total estimated from the track's duration × frame
 /// rate. Cancellation is cooperative: the sampler loop checks between frames, so cancelling
-/// the run's `Task` stops the run after the in-flight frame (full preemption hooks land with
-/// #21). A `CancellationError` is never wrapped — the view model must see it unwrapped to
-/// distinguish cancel from failure.
+/// the run's `Task` stops the run after the in-flight frame. A `CancellationError` is never
+/// wrapped — the view model must see it unwrapped to distinguish cancel from failure.
 struct ProcessingPipeline: Sendable {
     /// Builds the per-frame inference function once per run, so the model loads a single time
     /// rather than per frame. The default loads the bundled MoveNet Thunder model; tests
@@ -128,10 +121,10 @@ struct ProcessingPipeline: Sendable {
     }
 
     func run(
-        input: ProcessingInput,
+        video: SelectedVideo,
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
-        let (asset, fileURL) = try await Self.resolveAsset(from: input, onProgress: onProgress)
+        let asset = video.asset
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw ProcessingError.assetHasNoVideoTrack
         }
@@ -142,14 +135,17 @@ struct ProcessingPipeline: Sendable {
 
         let infer = try await makeInference()
         let accumulator = FrameAccumulator()
-        try await sampler.sampleFrames(from: fileURL) { frame in
+        let reportClock = ProgressReportClock()
+        try await sampler.sampleFrames(from: asset) { frame in
             let keypoints = try await infer(frame)
             let processed = await accumulator.append(PoseFrameResult(
                 frameIndex: frame.frameIndex,
                 timestamp: frame.timestamp,
                 keypoints: keypoints
             ))
-            await onProgress(.processing(frame: processed, totalFrames: totalFrames))
+            if await reportClock.shouldReport() {
+                await onProgress(ProcessingProgress(frame: processed, totalFrames: totalFrames))
+            }
         }
 
         let frames = await accumulator.frames
@@ -161,7 +157,7 @@ struct ProcessingPipeline: Sendable {
     /// Pairs each detected window with the sampled frames inside it and computes its crop
     /// rect. A window whose frames carry no usable keypoints still becomes a clip, with a
     /// full-frame rect: the trick was detected from the motion signal, so dropping it would
-    /// hide a real candidate from triage; the editor (#18) can tighten the crop.
+    /// hide a real candidate from triage; the editor can tighten the crop.
     func buildClips(
         windows: [TrickWindow],
         frames: [PoseFrameResult],
@@ -177,53 +173,12 @@ struct ProcessingPipeline: Sendable {
         }
     }
 
-    private static func resolveAsset(
-        from input: ProcessingInput,
-        onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
-    ) async throws -> (asset: AVAsset, fileURL: URL) {
-        switch input.source {
-        case .fileURL(let url):
-            return (AVURLAsset(url: url), url)
-        case .photoAsset(let photoAsset):
-            return try await requestFileBackedAsset(for: photoAsset, onProgress: onProgress)
-        }
-    }
-
-    /// Resolves a photo-library asset to a file-backed `AVURLAsset`, downloading iCloud-only
-    /// originals first and reporting that download as pipeline progress. Cancellation while
-    /// the download is in flight is best-effort — `withCheckedThrowingContinuation` can't
-    /// observe it — which the issue accepts as the stub until #21 lands.
-    private static func requestFileBackedAsset(
-        for photoAsset: PHAsset,
-        onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
-    ) async throws -> (asset: AVAsset, fileURL: URL) {
-        // Explicit continuation type: the labelled tuple is ambiguous to the compiler
-        // without it (the resumed tuple carries an `AVURLAsset` where `AVAsset` is wanted).
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(asset: AVAsset, fileURL: URL), Error>) in
-            let options = PHVideoRequestOptions()
-            options.isNetworkAccessAllowed = true
-            options.deliveryMode = .highQualityFormat
-            options.progressHandler = { fraction, _ in
-                // Arbitrary queue, no shared state — a detached Task is safe here.
-                Task { await onProgress(.downloading(fraction)) }
-            }
-            PHImageManager.default().requestAVAsset(forVideo: photoAsset, options: options) {
-                avAsset, _, info in
-                guard let urlAsset = avAsset as? AVURLAsset else {
-                    continuation.resume(throwing: ProcessingError.photoAssetUnavailable(
-                        underlying: info?[PHImageErrorKey] as? Error
-                    ))
-                    return
-                }
-                continuation.resume(returning: (urlAsset, urlAsset.url))
-            }
-        }
-    }
-
     /// Estimates how many frames the sampler will keep, for the progress denominator: the
-    /// track's frame count divided by the sampler stride. Nil when the track reports no
-    /// usable frame rate — the view then shows an indeterminate spinner with a counter.
-    private static func estimatedSampledFrames(of track: AVAssetTrack) async -> Int? {
+    /// track's frame count divided by the sampler stride, rounded the way the sampler rounds —
+    /// it keeps frame 0, so a 10-frame track at stride 3 yields 4 frames, not 3. Nil when the
+    /// track reports no usable frame rate; the view then shows an indeterminate spinner with a
+    /// counter.
+    static func estimatedSampledFrames(of track: AVAssetTrack) async -> Int? {
         guard
             let timeRange = try? await track.load(.timeRange),
             timeRange.duration.isValid,
@@ -232,7 +187,13 @@ struct ProcessingPipeline: Sendable {
             frameRate > 0
         else { return nil }
         let total = Int((Float(timeRange.duration.seconds) * frameRate).rounded())
-        return max(total / VideoFrameSampler.sampleStride, 1)
+        return sampledFrameCount(trackFrameCount: total)
+    }
+
+    /// `ceil(count / stride)`, floored at 1.
+    static func sampledFrameCount(trackFrameCount: Int) -> Int {
+        let stride = VideoFrameSampler.sampleStride
+        return max((trackFrameCount + stride - 1) / stride, 1)
     }
 }
 
@@ -247,5 +208,27 @@ private actor FrameAccumulator {
     func append(_ frame: PoseFrameResult) -> Int {
         frames.append(frame)
         return frames.count
+    }
+}
+
+/// Rate-limits progress reports. Each report hops to the main actor and republishes the view
+/// model's `@Published` state, which forces a SwiftUI update; a three-minute 30 fps clip
+/// samples ~1,800 frames, so reporting every one of them would serialize decoding against
+/// redraws no one can read.
+actor ProgressReportClock {
+    private let minimumInterval: TimeInterval
+    private var lastReport: TimeInterval?
+
+    init(minimumInterval: TimeInterval = 0.1) {
+        self.minimumInterval = minimumInterval
+    }
+
+    /// True for the first call and thereafter at most once per `minimumInterval`.
+    func shouldReport(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        if let lastReport, now - lastReport < minimumInterval {
+            return false
+        }
+        lastReport = now
+        return true
     }
 }
