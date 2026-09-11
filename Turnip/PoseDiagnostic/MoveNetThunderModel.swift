@@ -47,26 +47,15 @@ actor MoveNetThunderModel {
     /// without this a wrong file would again surface only as silently worse keypoints.
     static let expectedOutputShape = [1, 1, 17, 3]
 
-    /// Throws unless the bundled model's input tensor is exactly the shape the Thunder singlepose
-    /// int8 variant reports. Pure so it can be tested without the gitignored `.tflite` — see
+    /// Throws unless the bundled model's tensor matches `expected`. Checked at load so a
+    /// wrong variant fails with a visible error instead of silently worse keypoints: TFLite
+    /// still loads and allocates a wrong-variant file, and emits output the keypoint parser
+    /// accepts. Pure so it can be tested without the gitignored `.tflite` — see
     /// `MoveNetThunderModelTests`.
-    static func validateInputShape(_ shape: [Int]) throws {
-        guard shape == expectedInputShape else {
+    static func validateShape(_ shape: [Int], expected: [Int], named tensorName: String) throws {
+        guard shape == expected else {
             throw PoseDiagnosticError.inferenceFailed(
-                "Bundled model input is \(shape), expected \(expectedInputShape) for MoveNet Thunder "
-                    + "singlepose int8 — the file is probably the wrong variant. "
-                    + "See Turnip/Models/README.md for how to get the right one."
-            )
-        }
-    }
-
-    /// Throws unless the bundled model's output tensor is exactly the shape the Thunder singlepose
-    /// int8 variant reports. Pure so it can be tested without the gitignored `.tflite` — see
-    /// `MoveNetThunderModelTests`.
-    static func validateOutputShape(_ shape: [Int]) throws {
-        guard shape == expectedOutputShape else {
-            throw PoseDiagnosticError.inferenceFailed(
-                "Bundled model output is \(shape), expected \(expectedOutputShape) for MoveNet Thunder "
+                "Bundled model \(tensorName) is \(shape), expected \(expected) for MoveNet Thunder "
                     + "singlepose int8 — the file is probably the wrong variant. "
                     + "See Turnip/Models/README.md for how to get the right one."
             )
@@ -95,9 +84,9 @@ actor MoveNetThunderModel {
                 "Model input wants \(inputTensor.dataType), the frame packing writes uInt8"
             )
         }
-        try Self.validateInputShape(inputTensor.shape.dimensions)
+        try Self.validateShape(inputTensor.shape.dimensions, expected: Self.expectedInputShape, named: "input")
         let outputTensor = try interpreter.output(at: 0)
-        try Self.validateOutputShape(outputTensor.shape.dimensions)
+        try Self.validateShape(outputTensor.shape.dimensions, expected: Self.expectedOutputShape, named: "output")
         preprocessor = try FramePreprocessor(inputShape: inputTensor.shape.dimensions)
     }
 
