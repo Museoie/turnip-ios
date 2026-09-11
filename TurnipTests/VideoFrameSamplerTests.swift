@@ -41,7 +41,7 @@ final class VideoFrameSamplerTests: XCTestCase {
         let observations = FrameObservations()
         let sampler = VideoFrameSampler()
 
-        try await sampler.sampleFrames(from: videoURL) { frame in
+        try await sampler.sampleFrames(from: AVURLAsset(url: videoURL)) { frame in
             // Read the thread *before* any await — an await may resume on a different thread.
             // `pthread_main_np` rather than `Thread.isMainThread`, which is marked unavailable
             // from async contexts (a Swift 6 error).
@@ -63,7 +63,7 @@ final class VideoFrameSamplerTests: XCTestCase {
         let sampler = VideoFrameSampler()
         let timestamps = Timestamps()
 
-        try await sampler.sampleFrames(from: videoURL) { frame in
+        try await sampler.sampleFrames(from: AVURLAsset(url: videoURL)) { frame in
             await timestamps.append(frame.timestamp)
         }
 
@@ -75,13 +75,50 @@ final class VideoFrameSamplerTests: XCTestCase {
         }
     }
 
+    func testCancellingTheRunStopsDecodingBeforeTheNextFrame() async throws {
+        let observations = FrameObservations()
+        let handshake = FrameHandshake()
+        let sampler = VideoFrameSampler()
+        let asset = AVURLAsset(url: videoURL)
+
+        let run = Task {
+            try await sampler.sampleFrames(from: asset) { frame in
+                await observations.record(.init(frameIndex: frame.frameIndex, onMainThread: pthread_main_np() != 0))
+                // Park the decode loop so the cancellation lands at a known frame rather than
+                // racing a 10-frame clip that decodes in microseconds.
+                await handshake.arrive()
+                await handshake.waitForRelease()
+            }
+        }
+
+        // If the sampler fails before ever calling the handler, its completion is what unblocks the
+        // wait below — otherwise the test would hang instead of failing.
+        _ = Task { _ = await run.result; await handshake.arrive() }
+        await handshake.waitForArrival()
+        run.cancel()
+        await handshake.release()
+
+        switch await run.result {
+        case .success:
+            XCTFail("sampler ran to completion after its task was cancelled")
+        case .failure(let error):
+            XCTAssertTrue(error is CancellationError, "expected CancellationError, got \(error)")
+        }
+        let entries = await observations.entries
+        XCTAssertEqual(
+            entries.map(\.frameIndex),
+            [0],
+            "decoding continued past cancellation — an abandoned run keeps inferring on every frame"
+        )
+    }
+
     func testThrowsWhenTheAssetHasNoVideoTrack() async throws {
         let audioURL = try Self.writeAudioOnlyFile()
         defer { try? FileManager.default.removeItem(at: audioURL) }
         let sampler = VideoFrameSampler()
 
         do {
-            try await sampler.sampleFrames(from: audioURL) { frame in
+            try await sampler.sampleFrames(from: AVURLAsset(url: audioURL)) { frame in
                 XCTFail("handler ran for frame \(frame.frameIndex) on an asset with no video track")
             }
             XCTFail("expected sampleFrames to throw for an asset with no video track")
@@ -199,5 +236,36 @@ private actor Timestamps {
 
     func append(_ value: TimeInterval) {
         values.append(value)
+    }
+}
+
+/// Lets a test pause the sampler's decode loop at the first kept frame and resume it after
+/// cancelling, so the assertion is about the loop's cancellation check rather than about timing.
+private actor FrameHandshake {
+    private var arrivalWaiter: CheckedContinuation<Void, Never>?
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+    private var hasArrived = false
+    private var isReleased = false
+
+    func arrive() {
+        hasArrived = true
+        arrivalWaiter?.resume()
+        arrivalWaiter = nil
+    }
+
+    func waitForArrival() async {
+        guard !hasArrived else { return }
+        await withCheckedContinuation { arrivalWaiter = $0 }
+    }
+
+    func release() {
+        isReleased = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+
+    func waitForRelease() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { releaseWaiter = $0 }
     }
 }

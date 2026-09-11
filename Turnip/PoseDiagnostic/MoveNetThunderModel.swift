@@ -35,8 +35,40 @@ actor MoveNetThunderModel {
         try MoveNetThunderModel()
     }
 
+    /// The input shape the MoveNet Thunder singlepose int8 variant reports, in the tensor's
+    /// `[batch, height, width, channels]` order. A wrong variant — Lightning is 192x192 — still
+    /// loads, allocates tensors, and emits output the keypoint parser accepts, so the only symptom
+    /// of a wrong file would be silently worse keypoints. Reject it here, on the failure path.
+    static let expectedInputShape = [1, 256, 256, 3]
+
+    /// The output shape the MoveNet Thunder singlepose int8 variant reports, in the tensor's
+    /// `[batch, persons, keypoints, coords]` order. Checked for the same reason as the input
+    /// shape: a wrong variant's output is still parseable (the parser only counts 51 floats), so
+    /// without this a wrong file would again surface only as silently worse keypoints.
+    static let expectedOutputShape = [1, 1, 17, 3]
+
+    /// Throws unless the bundled model's tensor matches `expected`. Checked at load so a
+    /// wrong variant fails with a visible error instead of silently worse keypoints: TFLite
+    /// still loads and allocates a wrong-variant file, and emits output the keypoint parser
+    /// accepts. Pure so it can be tested without the gitignored `.tflite` — see
+    /// `MoveNetThunderModelTests`.
+    static func validateShape(_ shape: [Int], expected: [Int], named tensorName: String) throws {
+        guard shape == expected else {
+            throw PoseDiagnosticError.inferenceFailed(
+                "Bundled model \(tensorName) is \(shape), expected \(expected) for MoveNet Thunder "
+                    + "singlepose int8 — the file is probably the wrong variant. "
+                    + "See Turnip/Models/README.md for how to get the right one."
+            )
+        }
+    }
+
     private init() throws {
-        guard let modelPath = Bundle.main.path(forResource: "movenet_thunder_int8", ofType: "tflite") else {
+        // The .tflite is copied into a "Models/" subfolder of the bundle because project.yml
+        // references Turnip/Models as a folder reference, not a group — so look it up there,
+        // not at the bundle root.
+        guard let modelPath = Bundle.main.path(
+            forResource: "movenet_thunder_int8", ofType: "tflite", inDirectory: "Models"
+        ) else {
             throw PoseDiagnosticError.modelNotFound
         }
 
@@ -49,15 +81,19 @@ actor MoveNetThunderModel {
             )
         }
 
-        // Read the input tensor at runtime rather than hardcoding 256x256 uint8, so a future
-        // model swap (e.g. escalating to BlazePose per the design doc) doesn't silently
-        // feed the wrong tensor size or element type.
+        // Read the tensors at runtime rather than assuming 256x256 uint8, so the checks below
+        // run against the actual bundled file. A future model swap (e.g. escalating to BlazePose
+        // per the design doc) means a new wrapper type with its own expected shape — this type's
+        // contract is specifically the Thunder singlepose int8 variant.
         let inputTensor = try interpreter.input(at: 0)
         guard inputTensor.dataType == .uInt8 else {
             throw PoseDiagnosticError.inferenceFailed(
                 "Model input wants \(inputTensor.dataType), the frame packing writes uInt8"
             )
         }
+        try Self.validateShape(inputTensor.shape.dimensions, expected: Self.expectedInputShape, named: "input")
+        let outputTensor = try interpreter.output(at: 0)
+        try Self.validateShape(outputTensor.shape.dimensions, expected: Self.expectedOutputShape, named: "output")
         preprocessor = try FramePreprocessor(inputShape: inputTensor.shape.dimensions)
     }
 
@@ -80,8 +116,10 @@ actor MoveNetThunderModel {
         return try preprocessor.packRGB(from: outputBuffer)
     }
 
-    /// MoveNet's int8 build emits a quantized uint8 tensor; dequantize using the tensor's own
-    /// scale/zero-point rather than assuming float32 output.
+    /// The int8 build quantizes the weights and the input, but its output tensor is
+    /// float32 ([1, 1, 17, 3]) — verified against the real artifact (hash recorded in
+    /// `Turnip/Models/README.md`). The uint8 branch is a defensive path for a future
+    /// model whose output tensor is quantized, not the path the bundled model takes.
     private static func dequantize(_ tensor: Tensor) -> [Float] {
         if tensor.dataType == .uInt8, let quantization = tensor.quantizationParameters {
             return TensorDequantizer.floats(
