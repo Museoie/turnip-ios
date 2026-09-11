@@ -3,10 +3,11 @@ import CoreVideo
 import Foundation
 import TensorFlowLite
 
-/// What one inference pass produces: the keypoints in the model's normalized input coordinates,
-/// plus the `LetterboxMapping` that inverts those coordinates back to source-frame pixels. The
-/// mapping rides along because it is per-frame (it depends on the source size) — consumers that
-/// draw or crop from keypoints need it, and it cannot be reconstructed after the fact.
+/// What one inference pass produces: the keypoints in frame-normalized coordinates (nominally
+/// 0-1 relative to the source frame; pad-region keypoints honestly fall outside [0, 1] — see
+/// `PoseKeypoint`), plus the `LetterboxMapping` that placed them. The mapping rides along because
+/// it is per-frame (it depends on the source size) — consumers that draw or crop from keypoints
+/// need it, and it cannot be reconstructed after the fact.
 struct InferenceResult: Sendable {
     let keypoints: [PoseKeypoint]
     let letterbox: LetterboxMapping
@@ -111,7 +112,7 @@ actor MoveNetThunderModel {
         let outputTensor = try interpreter.output(at: 0)
         let values = Self.dequantize(outputTensor)
         return InferenceResult(
-            keypoints: try PoseKeypoint.parse(from: values),
+            keypoints: mapping.frameNormalized(keypoints: try PoseKeypoint.parse(from: values)),
             letterbox: mapping
         )
     }

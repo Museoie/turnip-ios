@@ -75,7 +75,7 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
 
 ### Interpreting pose output
 
-Pose detection gives us, per processed frame, 17 keypoints — each `{x, y, confidence}` with x/y normalized 0-1. Turning that into concrete clip ranges and crop rects:
+Pose detection gives us, per processed frame, 17 keypoints — each `{x, y, confidence}` with x/y normalized 0-1 relative to the source frame (nominally — a keypoint landing in the letterbox pad region honestly reports a value outside [0, 1] instead of being clamped to the edge). Turning that into concrete clip ranges and crop rects:
 
 **Step 4 (motion signal):** collapse 17 points per frame into one anchor via **hip midpoint** = average of `left_hip` and `right_hip`. Frame-to-frame displacement is `sqrt((hip_x[t] − hip_x[t−1])² + (hip_y[t] − hip_y[t−1])²)`. Smooth with a 3-sample moving average to kill per-frame confidence jitter.
 
