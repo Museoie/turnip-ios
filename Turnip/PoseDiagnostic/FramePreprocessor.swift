@@ -17,6 +17,11 @@ struct LetterboxMapping: Sendable, Equatable {
     let offsetY: CGFloat
     /// The model's input size in pixels, needed to invert normalized keypoint coordinates.
     let inputSize: CGSize
+    /// The source frame's extent, recorded when the geometry was computed — the size
+    /// `frameNormalized(keypoints:)` divides by. `letterboxGeometry(forSourceExtent:)`
+    /// validates it non-degenerate once, so no call site can invert against a size the
+    /// geometry was not computed from.
+    let sourceExtent: CGRect
 
     /// Maps a normalized keypoint coordinate (0–1 in the model's input space) back to the source
     /// frame's pixel coordinates. Pass `keypoint.x` as `normalizedX` and `keypoint.y` as
@@ -32,20 +37,16 @@ struct LetterboxMapping: Sendable, Equatable {
     /// 0–1 coordinates — the space `CropRectCalculator` and `MotionSignalBuilder` read
     /// `PoseKeypoint.x/y` in. Letterboxing makes input-normalized and frame-normalized
     /// coordinates differ by the (scale, offset) map recorded here; inverting the pixel
-    /// position and dividing by the source extent restores the frame fractions the consumers
-    /// assume.
-    ///
-    /// The source extent must be non-degenerate: dividing by a zero extent would otherwise
-    /// leave the keypoints in input-normalized coordinates and silently ship bad geometry
-    /// downstream, so a degenerate extent traps as a programming error instead.
-    func frameNormalized(keypoints: [PoseKeypoint], sourceSize: CGSize) -> [PoseKeypoint] {
-        precondition(sourceSize.width > 0 && sourceSize.height > 0)
-        return keypoints.map { keypoint in
+    /// position and dividing by the recorded source extent restores the frame fractions the
+    /// consumers assume. The extent was validated non-degenerate when the geometry was
+    /// computed, so dividing by it here cannot produce infinite keypoints.
+    func frameNormalized(keypoints: [PoseKeypoint]) -> [PoseKeypoint] {
+        keypoints.map { keypoint in
             let point = sourcePoint(normalizedX: CGFloat(keypoint.x), normalizedY: CGFloat(keypoint.y))
             return PoseKeypoint(
                 name: keypoint.name,
-                y: Float(point.y / sourceSize.height),
-                x: Float(point.x / sourceSize.width),
+                y: Float(point.y / sourceExtent.height),
+                x: Float(point.x / sourceExtent.width),
                 confidence: keypoint.confidence
             )
         }
@@ -110,7 +111,8 @@ struct FramePreprocessor {
             .concatenating(CGAffineTransform(translationX: offsetX, y: offsetY))
         let mapping = LetterboxMapping(
             scale: scale, offsetX: offsetX, offsetY: offsetY,
-            inputSize: CGSize(width: targetWidth, height: targetHeight)
+            inputSize: CGSize(width: targetWidth, height: targetHeight),
+            sourceExtent: extent
         )
         return (transform, mapping)
     }

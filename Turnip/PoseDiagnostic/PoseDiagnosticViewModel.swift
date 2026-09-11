@@ -37,13 +37,9 @@ final class PoseDiagnosticViewModel: ObservableObject {
                     // `runInference` emits keypoints in the model's normalized input coordinates,
                     // but `PoseFrameResult`'s consumers read them as frame-normalized 0-1
                     // coordinates — so the per-frame letterbox mapping is inverted here, before
-                    // the keypoints enter the result. The source extent is the frame the
-                    // inference letterboxed.
-                    let sourceSize = CGSize(
-                        width: CVPixelBufferGetWidth(frame.pixelBuffer),
-                        height: CVPixelBufferGetHeight(frame.pixelBuffer))
-                    let keypoints = inference.letterbox.frameNormalized(
-                        keypoints: inference.keypoints, sourceSize: sourceSize)
+                    // the keypoints enter the result. The mapping records the source extent it
+                    // was computed from, so no caller can invert against a mismatched size.
+                    let keypoints = inference.letterbox.frameNormalized(keypoints: inference.keypoints)
                     let result = PoseFrameResult(frameIndex: frame.frameIndex, timestamp: frame.timestamp, keypoints: keypoints)
                     PoseResultLogger.log(result)
                     await MainActor.run {
