@@ -129,12 +129,14 @@ SwiftLint runs in CI on every PR (`lint + build + test` — see
 `ci_scripts/ci_post_clone.sh`. It is a hard gate: both pipelines run
 `swiftlint lint --strict`, so warnings fail the run too.
 
-- **Pinned to 0.65.1.** Both CI pipelines install it from the versioned
-  `portable_swiftlint.zip` release archive via
-  `ci_scripts/install-swiftlint.sh` (SHA-256-verified, no sudo — the same
-  pattern as the XcodeGen pin). Don't `brew install swiftlint`: Homebrew only
-  bottles the latest formula, so the version you lint with locally would drift
-  from what CI runs.
+- **Pinned — the version lives in `ci_scripts/install-swiftlint.sh` only.**
+  Both CI pipelines install SwiftLint from the versioned
+  `portable_swiftlint.zip` release archive via that script (SHA-256-verified,
+  no sudo — the same pattern as the XcodeGen pin). The script is the single
+  source of truth for both the version and its checksum, so a future bump
+  edits one file and the docs can't drift. Don't `brew install swiftlint`:
+  Homebrew only bottles the latest formula, so the version you lint with
+  locally would drift from what CI runs.
 - **Config lives in `.swiftlint.yml`** at the repo root — the default rule set
   plus a few documented opt-outs (rules that fight SwiftUI views, and short
   geometry names like `x`/`y`/`dx`/`dy`). Each opt-out records why it exists;
