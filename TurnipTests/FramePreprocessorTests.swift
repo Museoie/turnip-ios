@@ -106,9 +106,9 @@ final class FramePreprocessorTests: XCTestCase {
                 for col in 0..<width {
                     let expected = fill(row, col)
                     let index = (row * width + col) * 3
-                    XCTAssertEqual(packed[index], expected.r, "R at row \(row) col \(col)")
-                    XCTAssertEqual(packed[index + 1], expected.g, "G at row \(row) col \(col)")
-                    XCTAssertEqual(packed[index + 2], expected.b, "B at row \(row) col \(col)")
+                    XCTAssertEqual(packed[index], expected.red, "R at row \(row) col \(col)")
+                    XCTAssertEqual(packed[index + 1], expected.green, "G at row \(row) col \(col)")
+                    XCTAssertEqual(packed[index + 2], expected.blue, "B at row \(row) col \(col)")
                 }
             }
         }
