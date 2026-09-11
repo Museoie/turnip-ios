@@ -69,8 +69,13 @@ final class ProgressReportClockTests: XCTestCase {
 
     /// A dropped report must not restart the interval, or a steady stream of frames arriving
     /// faster than the interval would suppress every report after the first.
+    ///
+    /// The allowed times clear the interval by a comfortable margin rather than landing on it:
+    /// `100.1 - 100` is `0.0999…` in binary floating point, so a fixture sitting exactly on the
+    /// boundary tests the representation rather than the rule. Measuring from the last *call*
+    /// instead would drop index 2 as well, which is what makes this sequence discriminate.
     func testTheIntervalIsMeasuredFromTheLastReportNotTheLastCall() async {
-        let allowed = await Self.decisions(at: [100, 100.05, 100.1, 100.15, 100.2])
+        let allowed = await Self.decisions(at: [100, 100.05, 100.12, 100.15, 100.25])
         XCTAssertEqual(allowed, [true, false, true, false, true])
     }
 
