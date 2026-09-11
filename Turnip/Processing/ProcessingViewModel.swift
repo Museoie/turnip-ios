@@ -44,9 +44,12 @@ final class ProcessingViewModel: ObservableObject {
         self.runner = runner
     }
 
-    /// Starts the pipeline. Ignored while a run is in flight — the screen shows one run.
+    /// Starts the pipeline. Only a fresh view model starts: ignored unless the state is
+    /// `.idle`, so re-appearing the screen (the view's `.task` fires on every appear) never
+    /// re-runs a finished or cancelled run. `retry` resets to `.idle` first, so retries
+    /// still flow through here.
     func start(input: ProcessingInput) {
-        guard runTask == nil else { return }
+        guard runTask == nil, case .idle = state else { return }
         runGeneration += 1
         let generation = runGeneration
         let runner = self.runner
