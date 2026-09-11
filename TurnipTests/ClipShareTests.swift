@@ -19,11 +19,15 @@ final class ClipShareTests: XCTestCase {
         XCTAssertFalse(ClipShareButton.isShareable(fileURL: url))
     }
 
-    func testNotShareableWhenURLIsNotAFileURL() {
+    func testNotShareableWhenURLIsNotAFileURL() throws {
         // A remote URL would share a link, not the on-device video — the design doc's
         // whole point is that the OS moves the file, zero server involvement.
-        XCTAssertFalse(
-            ClipShareButton.isShareable(fileURL: URL(string: "https://example.com/clip.mp4")!))
+        // Built over a path that exists on disk, so this test discriminates the
+        // file-URL half of the guard: deleting `isFileURL` would let it pass.
+        let existing = try Self.makeTempFile()
+        defer { try? FileManager.default.removeItem(at: existing) }
+        let remote = URL(string: "https://example.com" + existing.path)!
+        XCTAssertFalse(ClipShareButton.isShareable(fileURL: remote))
     }
 
     private static func makeTempFile() throws -> URL {
