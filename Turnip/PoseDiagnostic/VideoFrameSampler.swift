@@ -25,10 +25,12 @@ struct SampledFrame: @unchecked Sendable {
 /// is both slower and less frame-accurate during fast motion), keeping every 3rd frame per
 /// docs/DESIGN.md's pipeline step 2.
 ///
-/// Frames are composed onto a fixed grid at the track's shortest frame duration so the track's
-/// `preferredTransform` can be applied, so `frameIndex` and `timestamp` are positions on that grid
-/// rather than the source's own presentation timestamps. Variable-frame-rate recordings (an iPhone
-/// lowers the rate in dim light) are resampled onto it.
+/// Frames are rendered through an `AVMutableVideoComposition` that applies the track's
+/// `preferredTransform`. The composition output's `frameDuration` acts as a ceiling on the output
+/// rate, not a resampling grid, so each emitted frame keeps the source track's own presentation
+/// timestamps: `frameIndex` and `timestamp` are positions in the source's own time, and
+/// variable-frame-rate recordings (an iPhone lowers the rate in dim light) keep their rate
+/// discontinuities instead of being resampled onto a uniform grid.
 ///
 /// A `Sendable` struct rather than a class: it is owned by a `@MainActor` view model but
 /// `sampleFrames` is nonisolated, so every call sends the sampler out of the main actor. With no
