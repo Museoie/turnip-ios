@@ -59,9 +59,8 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// A write-through binding to one item, for a destination that edits a clip in place.
-    /// Keyed by id on both ends rather than closing over an index, so a re-run of
-    /// detection reordering the list can't make the binding write to a different clip.
-    /// `nil` when the id is no longer in the list.
+    /// Keyed by id on both ends rather than closing over an index: get and set resolve
+    /// the item from the current list. `nil` when the id is no longer in the list.
     func binding(for id: UUID) -> Binding<ClipListItem>? {
         guard let current = items.first(where: { $0.id == id }) else { return nil }
         return Binding(
@@ -111,9 +110,13 @@ final class ClipListViewModel: ObservableObject {
 
     /// The card thumbnail, loading lazily. Idempotent and safe to call from every card's
     /// `.task`: repeat calls return the cached image, and concurrent calls for the same
-    /// card share one decode instead of seeking the same frame twice. Cancelling the
-    /// caller's task (card scrolled off-screen, view dismissed) cancels the in-flight
-    /// decode too — it is not left running to completion.
+    /// card share one decode instead of seeking the same frame twice. A cancelled caller
+    /// never cancels the shared decode — the decode runs to completion and the result is
+    /// cached, so a card that scrolls off-screen and back within the decode window gets
+    /// its thumbnail from the re-fired `.task` instead of a discarded, already-paid-for
+    /// decode. (Lingering decodes are intentional: `copyCGImage` is not cancellable, so
+    /// cancelling the shared task cannot save the expensive work — it can only throw the
+    /// result away from under another waiter.)
     func thumbnail(for item: ClipListItem) async -> CGImage? {
         if let cached = thumbnails[item.id] {
             return cached
@@ -125,15 +128,7 @@ final class ClipListViewModel: ObservableObject {
             await loader.thumbnail(for: item, in: asset)
         }
         inFlight[item.id] = task
-        // Propagate the card's `.task` cancellation into the decode: when a card
-        // scrolls off-screen or the view is dismissed mid-decode, the seek+decode
-        // stops at the loader's next cancellation checkpoint instead of running to
-        // completion and caching a thumbnail no card will show.
-        let image = await withTaskCancellationHandler {
-            await task.value
-        } onCancel: {
-            task.cancel()
-        }
+        let image = await task.value
         inFlight[item.id] = nil
         if let image = image {
             thumbnails[item.id] = image

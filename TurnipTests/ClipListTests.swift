@@ -77,8 +77,8 @@ final class ClipListTests: XCTestCase {
         }
         binding.wrappedValue.isKept = false
 
-        // The write lands on the target entry, not on whichever index the binding was
-        // created at — the editor destination edits the clip the card tapped.
+        // The binding writes through to the list entry with the same id — the editor
+        // destination edits the clip the card tapped.
         XCTAssertFalse(viewModel.items[1].isKept)
         XCTAssertTrue(viewModel.items[0].isKept)
     }

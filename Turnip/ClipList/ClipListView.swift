@@ -104,8 +104,10 @@ private struct ClipCardView: View {
             .accessibilityLabel(item.isKept ? "Discard clip" : "Keep clip")
         }
         .task {
-            // Fetch the displayed-space placeholder ratio alongside the thumbnail: both
-            // are cached per asset/item, so a `.task` re-fire is cheap.
+            // Fetch the displayed-space placeholder ratio alongside the thumbnail. The
+            // ratio is cached per asset, and the thumbnail shares one in-flight decode
+            // per card — a `.task` re-fire joins the decode already running (or reads
+            // the cached image) instead of seeking the same frame a second time.
             async let ratio = viewModel.placeholderAspectRatio(for: item)
             async let image = viewModel.thumbnail(for: item)
             placeholderRatio = await ratio
