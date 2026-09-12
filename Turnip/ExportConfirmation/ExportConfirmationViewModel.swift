@@ -127,6 +127,11 @@ final class ExportConfirmationViewModel: ObservableObject {
     private let saveToPhotos: SaveOneClipToPhotos
     private let makeDirectory: @Sendable () -> URL
     private var runTask: Task<Void, Never>?
+    /// Monotonic run id. `start()` bumps it and the run's task captures the value; the
+    /// trailing teardown only ends the screen when its captured id still matches.
+    /// `cancel()` nils `runTask` while the cancelled task is still draining, so a newer
+    /// `start()` can already be in flight — the stale teardown must not clear the new
+    /// run's handle or flip `isFinished` under it.
 
     init(
         items: [ExportConfirmationItem],
@@ -150,9 +155,12 @@ final class ExportConfirmationViewModel: ObservableObject {
 
     /// Starts the export run. Ignored while a run is in flight and once a run has
     /// finished — the screen shows one run, and the view's `.task` re-fires on
-    /// re-appear, which must not re-export.
+    /// re-appear, which must not re-export. Bumps the generation so the trailing
+    /// teardown below belongs to exactly this run (see `generation`).
     func start() {
         guard runTask == nil, !isFinished else { return }
+        generation &+= 1
+        let runGeneration = generation
         // Captured up front: the loop below runs off the main actor, and `self` is only
         // ever touched through `MainActor.run`.
         let items = self.items
@@ -214,6 +222,11 @@ final class ExportConfirmationViewModel: ObservableObject {
                 }
             }
             await MainActor.run { [weak self] in
+                // Only the newest run may end the screen. A cancelled run's task can
+                // still be draining when a newer run starts (`cancel()` nils `runTask`
+                // but doesn't stop the task), so a stale teardown must not clear the
+                // new run's handle or flip `isFinished` under it.
+                guard self?.generation == runGeneration else { return }
                 self?.isFinished = true
                 self?.runTask = nil
             }

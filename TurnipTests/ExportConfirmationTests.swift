@@ -289,6 +289,41 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         XCTAssertEqual(calls.count, 1)
         XCTAssertTrue(viewModel.isFinished)
     }
+
+    func testStaleTeardownDoesNotFinishNewerRun() async {
+        let fake = FakeExport(exportResults: Self.exportSuccesses(2))
+        let viewModel = viewModel(items: [item(), item(start: 9, end: 11.5)], fake: fake)
+
+        // Run 1 blocks inside its first export, so cancel() leaves it draining while
+        // runTask is already nil.
+        await fake.setGateNextExport()
+        viewModel.start()
+        await Self.waitForFullExportProgress(viewModel)
+        viewModel.cancel()
+
+        // Run 2 starts while run 1 is still draining. Its export is gated up front so
+        // run 1 is guaranteed to reach its trailing teardown while run 2 is parked.
+        await fake.setGateNextExport()
+        viewModel.start()
+        await fake.openGate()
+        for _ in 0..<200 where !viewModel.wasCancelled {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        // Let run 1's trailing teardown land while run 2 cannot progress.
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // The stale teardown must not end the screen under the newer run: without the
+        // generation guard this flips isFinished and nils the new run's handle here.
+        XCTAssertFalse(viewModel.isFinished)
+        XCTAssertTrue(viewModel.isRunning)
+
+        await fake.openGate()
+        await Self.waitUntilFinished(viewModel)
+
+        XCTAssertEqual(viewModel.clips.map(\.phase), [.saved, .saved])
+        XCTAssertEqual(viewModel.summaryText, "2 of 2 clips saved to Photos")
+        XCTAssertEqual((await fake.exportCalls).count, 3)
+    }
 }
 
 private extension ExportConfirmationViewModelTests.FakeExport {
