@@ -54,7 +54,7 @@ actor MoveNetThunderModel {
     /// `MoveNetThunderModelTests`.
     static func validateShape(_ shape: [Int], expected: [Int], named tensorName: String) throws {
         guard shape == expected else {
-            throw PoseDiagnosticError.inferenceFailed(
+            throw PoseError.inferenceFailed(
                 "Bundled model \(tensorName) is \(shape), expected \(expected) for MoveNet Thunder "
                     + "singlepose int8 — the file is probably the wrong variant. "
                     + "See Turnip/Models/README.md for how to get the right one."
@@ -69,16 +69,14 @@ actor MoveNetThunderModel {
         guard let modelPath = Bundle.main.path(
             forResource: "movenet_thunder_int8", ofType: "tflite", inDirectory: "Models"
         ) else {
-            throw PoseDiagnosticError.modelNotFound
+            throw PoseError.modelNotFound
         }
 
         do {
             interpreter = try Interpreter(modelPath: modelPath)
             try interpreter.allocateTensors()
         } catch {
-            throw PoseDiagnosticError.inferenceFailed(
-                "Failed to load MoveNet Thunder model: \(error.localizedDescription)"
-            )
+            throw PoseError.inferenceFailed("Failed to load MoveNet Thunder model: \(error.localizedDescription)")
         }
 
         // Read the tensors at runtime rather than assuming 256x256 uint8, so the checks below
@@ -87,7 +85,7 @@ actor MoveNetThunderModel {
         // contract is specifically the Thunder singlepose int8 variant.
         let inputTensor = try interpreter.input(at: 0)
         guard inputTensor.dataType == .uInt8 else {
-            throw PoseDiagnosticError.inferenceFailed(
+            throw PoseError.inferenceFailed(
                 "Model input wants \(inputTensor.dataType), the frame packing writes uInt8"
             )
         }

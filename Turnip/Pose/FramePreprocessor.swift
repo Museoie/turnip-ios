@@ -78,10 +78,10 @@ struct FramePreprocessor {
     /// `[batch, height, width, channels]` order.
     init(inputShape: [Int]) throws {
         guard inputShape.count == 4 else {
-            throw PoseDiagnosticError.inferenceFailed("Unexpected model input shape: \(inputShape)")
+            throw PoseError.inferenceFailed("Unexpected model input shape: \(inputShape)")
         }
         guard inputShape[3] == Self.channelCount else {
-            throw PoseDiagnosticError.inferenceFailed(
+            throw PoseError.inferenceFailed(
                 "Model input wants \(inputShape[3]) channels, the frame packing writes \(Self.channelCount)"
             )
         }
@@ -93,14 +93,14 @@ struct FramePreprocessor {
     /// Computed in one place so the forward transform and the `LetterboxMapping` that inverts it
     /// can never disagree.
     ///
-    /// Throws `PoseDiagnosticError.inferenceFailed` when the source extent is degenerate (zero or
+    /// Throws `PoseError.inferenceFailed` when the source extent is degenerate (zero or
     /// negative): dividing by a zero extent would produce an infinite scale and silently ship
     /// bad geometry downstream instead of failing loudly at the misuse.
     func letterboxGeometry(forSourceExtent extent: CGRect) throws -> (
         transform: CGAffineTransform, mapping: LetterboxMapping
     ) {
         guard extent.width > 0, extent.height > 0 else {
-            throw PoseDiagnosticError.inferenceFailed(
+            throw PoseError.inferenceFailed(
                 "Source frame has a degenerate extent (\(extent.width)x\(extent.height)); cannot letterbox it"
             )
         }
@@ -132,7 +132,7 @@ struct FramePreprocessor {
             attributes as CFDictionary, &buffer
         )
         guard status == kCVReturnSuccess, let buffer else {
-            throw PoseDiagnosticError.inferenceFailed("Failed to allocate resize buffer")
+            throw PoseError.inferenceFailed("Failed to allocate resize buffer")
         }
         Self.zeroFill(buffer)
         return buffer
@@ -154,7 +154,7 @@ struct FramePreprocessor {
     func packRGB(from pixelBuffer: CVPixelBuffer) throws -> Data {
         let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
         guard pixelFormat == kCVPixelFormatType_32BGRA else {
-            throw PoseDiagnosticError.inferenceFailed(
+            throw PoseError.inferenceFailed(
                 "Frame packing wants a 32BGRA buffer, got pixel format \(pixelFormat)"
             )
         }
@@ -162,7 +162,7 @@ struct FramePreprocessor {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         guard width == targetWidth, height == targetHeight else {
-            throw PoseDiagnosticError.inferenceFailed(
+            throw PoseError.inferenceFailed(
                 "Frame buffer is \(width)x\(height), model input is \(targetWidth)x\(targetHeight)"
             )
         }
@@ -171,7 +171,7 @@ struct FramePreprocessor {
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
         guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-            throw PoseDiagnosticError.inferenceFailed("Failed to access resized pixel buffer")
+            throw PoseError.inferenceFailed("Failed to access resized pixel buffer")
         }
 
         // Rows are padded to the allocator's alignment, so the walk steps by bytesPerRow rather

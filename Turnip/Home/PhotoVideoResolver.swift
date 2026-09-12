@@ -3,7 +3,7 @@ import Foundation
 import Photos
 
 /// Why a picked video couldn't be turned into a readable asset. Deliberately separate from
-/// `PoseDiagnosticError` (and from whatever the pipeline will throw): a failed iCloud download is a
+/// `PoseError` (and from whatever the pipeline will throw): a failed iCloud download is a
 /// connectivity problem the user can fix, not an analysis failure, and the UI should say so.
 enum VideoResolutionError: LocalizedError {
     /// The asset lives only in iCloud ("Optimize iPhone Storage") and fetching it failed — no

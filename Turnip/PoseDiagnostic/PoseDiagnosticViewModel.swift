@@ -46,7 +46,7 @@ final class PoseDiagnosticViewModel: ObservableObject {
                 }
             } catch is CancellationError {
                 // The screen went away mid-run; there is nobody left to tell.
-            } catch let error as PoseDiagnosticError {
+            } catch let error as PoseError {
                 self?.errorMessage = error.errorDescription
             } catch {
                 self?.errorMessage = error.localizedDescription

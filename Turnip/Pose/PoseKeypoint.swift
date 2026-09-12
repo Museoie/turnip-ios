@@ -25,7 +25,7 @@ struct PoseKeypoint: Identifiable, Sendable {
     /// MoveNet emits y before x per keypoint — a well-known source of integration bugs if swapped.
     static func parse(from values: [Float]) throws -> [PoseKeypoint] {
         guard values.count == names.count * 3 else {
-            throw PoseDiagnosticError.inferenceFailed(
+            throw PoseError.inferenceFailed(
                 "Expected \(names.count * 3) values in model output, got \(values.count)"
             )
         }

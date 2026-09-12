@@ -59,7 +59,7 @@ struct VideoFrameSampler: Sendable {
     /// callers must hop to `MainActor` explicitly for any UI-bound writes.
     func sampleFrames(from asset: AVURLAsset, handler: @Sendable (SampledFrame) async throws -> Void) async throws {
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
-            throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
+            throw PoseError.videoLoadFailed(underlying: nil)
         }
 
         // iPhone portrait videos are stored as landscape-encoded buffers with a 90° preferredTransform,
@@ -94,12 +94,12 @@ struct VideoFrameSampler: Sendable {
         trackOutput.alwaysCopiesSampleData = false
 
         guard reader.canAdd(trackOutput) else {
-            throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
+            throw PoseError.videoLoadFailed(underlying: nil)
         }
         reader.add(trackOutput)
 
         guard reader.startReading() else {
-            throw PoseDiagnosticError.videoLoadFailed(underlying: reader.error)
+            throw PoseError.videoLoadFailed(underlying: reader.error)
         }
 
         var frameIndex = 0
@@ -116,7 +116,7 @@ struct VideoFrameSampler: Sendable {
         }
 
         if reader.status == .failed {
-            throw PoseDiagnosticError.videoLoadFailed(underlying: reader.error)
+            throw PoseError.videoLoadFailed(underlying: reader.error)
         }
     }
 
@@ -144,7 +144,7 @@ struct VideoFrameSampler: Sendable {
         // `CMTimeScale` is `Int32`: converting a rate past `Int32.max` traps instead of throwing,
         // so reject it here the same way the guard rejects a rate below 1.
         guard roundedFrameRate >= 1, let timescale = CMTimeScale(exactly: roundedFrameRate) else {
-            throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
+            throw PoseError.videoLoadFailed(underlying: nil)
         }
         return CMTime(value: 1, timescale: timescale)
     }
