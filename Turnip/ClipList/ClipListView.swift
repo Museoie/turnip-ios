@@ -1,13 +1,14 @@
 import AVFoundation
 import SwiftUI
 
-/// The triage screen (`docs/UIUX.md` § "Clip List (triage)", issue #11): one card per
+/// The triage screen (`docs/UIUX.md` § "Clip List (triage)"): one card per
 /// detected trick window — thumbnail, duration, keep/discard toggle — plus the
 /// "Export N clips" action.
 ///
-/// The processing screen (#17) pushes this with the pipeline's output. Card taps navigate
-/// to the clip editor and the export action to export confirmation; both destinations are
-/// placeholders owned by #18/#19 (see `ClipListPlaceholders.swift`). This view deliberately
+/// The processing screen pushes this with the pipeline's output. Card taps navigate
+/// to the clip editor and the export action to export confirmation; both destinations
+/// are placeholders owned by the follow-up screen PRs (see
+/// `ClipListPlaceholders.swift`). This view deliberately
 /// declares no `NavigationStack` of its own — it lives on the flow's shared stack.
 struct ClipListView: View {
     @StateObject private var viewModel: ClipListViewModel
@@ -37,8 +38,12 @@ struct ClipListView: View {
         .navigationTitle("Clips")
         .navigationDestination(for: ClipListDestination.self) { destination in
             switch destination {
-            case .editor(let item):
-                ClipEditorPlaceholderView(item: item)
+            case .editor(let id):
+                // The editor binds back into the list so keep/discard changes commit
+                // on back-navigation (docs/UIUX.md § "Clip Detail / Editor").
+                if let index = viewModel.items.firstIndex(where: { $0.id == id }) {
+                    ClipEditorPlaceholderView(item: $viewModel.items[index])
+                }
             }
         }
         .navigationDestination(isPresented: $showingExport) {
@@ -55,11 +60,14 @@ struct ClipListView: View {
     }
 }
 
-/// The clip list's value-typed navigation exit: a card tap goes to the editor (#18). The
-/// export action uses `isPresented` instead, so the destination reads the kept clips at
+/// The clip list's navigation exit: a card tap goes to the editor. The destination
+/// carries the item's id rather than the item itself so the editor can bind back into
+/// the view model's list — edits commit to the triage list on back-navigation instead
+/// of dying with a value copy.
+/// The export action uses `isPresented` instead, so the destination reads the kept clips at
 /// navigation time rather than at body-evaluation time.
 private enum ClipListDestination: Hashable {
-    case editor(ClipListItem)
+    case editor(UUID)
 }
 
 /// One triage card: the clip's thumbnail (frame at the window midpoint, cropped to its
@@ -75,7 +83,7 @@ private struct ClipCardView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            NavigationLink(value: ClipListDestination.editor(item)) {
+            NavigationLink(value: ClipListDestination.editor(item.id)) {
                 VStack(alignment: .leading, spacing: 8) {
                     thumbnailView
                     Text(item.durationLabel)
@@ -102,16 +110,27 @@ private struct ClipCardView: View {
     @ViewBuilder
     private var thumbnailView: some View {
         if let image = thumbnail {
-            Image(uiImage: UIImage(cgImage: image))
+            // The generator hands back the displayed (upright) frame, so `.up` is exact —
+            // no UIKit bridge needed.
+            Image(decorative: image, scale: 1.0, orientation: .up)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             RoundedRectangle(cornerRadius: 8)
                 .fill(.quaternary)
-                .aspectRatio(9.0 / 16.0, contentMode: .fit)
+                .aspectRatio(placeholderAspectRatio, contentMode: .fit)
                 .overlay { ProgressView() }
         }
+    }
+
+    /// The placeholder tile's ratio matches the crop the decoded image will be drawn at,
+    /// so cards don't resize and reflow the grid as thumbnails land. Falls back to 9:16
+    /// for a degenerate crop rect.
+    private var placeholderAspectRatio: CGFloat {
+        let width = CGFloat(item.cropRect.width), height = CGFloat(item.cropRect.height)
+        guard width > 0, height > 0 else { return 9.0 / 16.0 }
+        return width / height
     }
 }
 
@@ -129,7 +148,10 @@ private struct ClipCardView: View {
                     isKept: false
                 ),
             ],
-            asset: AVAsset()
+            // AVAsset is abstract and throws at runtime; AVURLAsset is the concrete
+            // subclass. The URL resolves to nothing — the preview shows the
+            // placeholder tiles, which is the honest fallback.
+            asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null"))
         )
     }
 }

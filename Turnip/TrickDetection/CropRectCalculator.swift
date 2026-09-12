@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Frames come out of `VideoFrameSampler` in display orientation, so pass `SampledFrame.renderSize`
 /// as the pixel size for `cropRect(for:renderedPixelSize:)` and `denormalized(in:)`.
-struct NormalizedRect: Equatable, Hashable, Sendable {
+struct NormalizedRect: Hashable, Sendable {
     let minX: Float
     let maxX: Float
     let minY: Float

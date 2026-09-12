@@ -7,7 +7,11 @@ import Foundation
 @MainActor
 final class ClipListViewModel: ObservableObject {
     @Published private(set) var items: [ClipListItem]
-    @Published private(set) var thumbnails: [UUID: CGImage] = [:]
+
+    /// Decoded thumbnails by item id. Plain storage, not `@Published`: no view reads
+    /// this dictionary — each card renders from its own `@State` thumbnail — so
+    /// publishing it would re-evaluate every card's body on every completed decode.
+    private var thumbnails: [UUID: CGImage] = [:]
 
     private let asset: AVAsset
     private let loader: ClipThumbnailLoader
@@ -29,7 +33,7 @@ final class ClipListViewModel: ObservableObject {
         items.filter(\.isKept)
     }
 
-    /// "Export N clips", disabled until at least one clip is kept (issue #11).
+    /// "Export N clips", disabled until at least one clip is kept.
     var exportTitle: String {
         let count = keptItems.count
         return "Export \(count) clip\(count == 1 ? "" : "s")"

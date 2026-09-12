@@ -11,6 +11,13 @@ final class ClipListTests: XCTestCase {
         ClipListItem(window: window, cropRect: fullFrame, isKept: isKept)
     }
 
+    /// `AVAsset` is abstract and throws at runtime, so the view-model tests use the
+    /// concrete `AVURLAsset` subclass. The URL resolves to nothing — these tests never
+    /// decode, they only exercise the keep/discard and export-title logic.
+    private func dummyAsset() -> AVURLAsset {
+        AVURLAsset(url: URL(fileURLWithPath: "/dev/null"))
+    }
+
     /// A 90°-rotated track's preferredTransform: landscape-encoded portrait video.
     /// Encoded (0,0) is the displayed top-right, so it discriminates transforms that mix up
     /// encoded and displayed space.
@@ -19,7 +26,7 @@ final class ClipListTests: XCTestCase {
     // MARK: - ClipListItem
 
     func testNewItemsStartKept() {
-        // docs/UIUX.md's resolved open question #2: every clip starts kept.
+        // The resolved bulk keep/discard decision in docs/UIUX.md: every clip starts kept.
         XCTAssertTrue(makeItem().isKept)
     }
 
@@ -38,7 +45,7 @@ final class ClipListTests: XCTestCase {
     @MainActor
     func testToggleKeepFlipsOnlyTheTappedCard() {
         let first = makeItem(), second = makeItem()
-        let viewModel = ClipListViewModel(items: [first, second], asset: AVAsset())
+        let viewModel = ClipListViewModel(items: [first, second], asset: dummyAsset())
 
         viewModel.toggleKeep(first)
 
@@ -51,7 +58,7 @@ final class ClipListTests: XCTestCase {
 
     @MainActor
     func testToggleKeepIgnoresUnknownItems() {
-        let viewModel = ClipListViewModel(items: [makeItem()], asset: AVAsset())
+        let viewModel = ClipListViewModel(items: [makeItem()], asset: dummyAsset())
 
         viewModel.toggleKeep(makeItem())
 
@@ -61,7 +68,7 @@ final class ClipListTests: XCTestCase {
     @MainActor
     func testExportTitleCountsKeptClips() {
         let viewModel = ClipListViewModel(
-            items: [makeItem(), makeItem(isKept: false)], asset: AVAsset())
+            items: [makeItem(), makeItem(isKept: false)], asset: dummyAsset())
 
         XCTAssertEqual(viewModel.exportTitle, "Export 1 clip")
         XCTAssertTrue(viewModel.canExport)
@@ -70,7 +77,7 @@ final class ClipListTests: XCTestCase {
 
     @MainActor
     func testExportDisabledWhenEveryClipIsDiscarded() {
-        let viewModel = ClipListViewModel(items: [makeItem(isKept: false)], asset: AVAsset())
+        let viewModel = ClipListViewModel(items: [makeItem(isKept: false)], asset: dummyAsset())
 
         XCTAssertEqual(viewModel.exportTitle, "Export 0 clips")
         XCTAssertFalse(viewModel.canExport)
@@ -132,13 +139,21 @@ final class ClipListTests: XCTestCase {
         // image and return nil instead of a 2x2 thumbnail.
         let image = try XCTUnwrap(Self.testImage(width: 4, height: 2))
 
-        let cropped = ClipThumbnailLoader.croppedThumbnail(
+        let cropped = try XCTUnwrap(ClipThumbnailLoader.croppedThumbnail(
             image,
             to: CGRect(x: 4, y: 0, width: 4, height: 4),
-            in: CGSize(width: 8, height: 4))
+            in: CGSize(width: 8, height: 4)))
 
-        XCTAssertEqual(cropped?.width, 2)
-        XCTAssertEqual(cropped?.height, 2)
+        XCTAssertEqual(cropped.width, 2)
+        XCTAssertEqual(cropped.height, 2)
+
+        // The crop is the right half of the displayed frame. Reading a pixel proves the
+        // *region* was extracted, not just the size: an implementation that dropped the
+        // crop's minX/minY and always cropped from the origin would read the red left
+        // half here instead of the green right half.
+        let pixel = try XCTUnwrap(Self.pixel(atX: 0, y: 0, in: cropped))
+        XCTAssertLessThan(pixel.red, 0.5)
+        XCTAssertGreaterThan(pixel.green, 0.5)
     }
 
     func testCroppedThumbnailReturnsNilWhenNothingSurvivesTheClamp() throws {
@@ -158,29 +173,82 @@ final class ClipListTests: XCTestCase {
 
     // MARK: - ClipThumbnailLoader.thumbnail
 
-    func testThumbnailReturnsNilWhenTheAssetHasNoVideoTrack() async {
+    func testThumbnailReturnsNilWhenTheAssetHasNoVideoTrack() async throws {
         let loader = ClipThumbnailLoader()
 
-        let result = await loader.thumbnail(for: makeItem(), in: AVAsset())
+        // A real audio-only file: track loading succeeds but finds no video track, so
+        // the nil comes from the loader's no-video-track guard — not from a decode
+        // throw. The card falls back to its placeholder tile; a throw must never reach
+        // the view.
+        let result = await loader.thumbnail(
+            for: makeItem(), in: AVURLAsset(url: try Self.audioOnlyFileURL()))
 
-        // The card falls back to its placeholder tile; a throw must never reach the view.
         XCTAssertNil(result)
     }
 
     // MARK: - Helpers
 
+    /// A minimal but structurally valid WAV (44-byte header, zero samples): AVFoundation
+    /// parses it as an audio asset, so video-track loading succeeds with no video track.
+    private static func audioOnlyFileURL() throws -> URL {
+        var header = Data()
+        func append(_ string: String) { header.append(contentsOf: string.utf8) }
+        func appendLE<T: FixedWidthInteger>(_ value: T) {
+            withUnsafeBytes(of: value.littleEndian) { header.append(contentsOf: $0) }
+        }
+        append("RIFF"); appendLE(UInt32(36)); append("WAVE")
+        append("fmt "); appendLE(UInt32(16))
+        appendLE(UInt16(1)) // PCM
+        appendLE(UInt16(1)) // mono
+        appendLE(UInt32(44_100))
+        appendLE(UInt32(88_200)) // byte rate
+        appendLE(UInt16(2)) // block align
+        appendLE(UInt16(16)) // bits per sample
+        append("data"); appendLE(UInt32(0)) // zero samples
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("wav")
+        try header.write(to: url)
+        return url
+    }
+
+    /// Test image split into two distinguishable halves — left red, right green — so a
+    /// crop test can prove *which* region was extracted, not just its size. Colors are
+    /// built in the same device-RGB space the context uses, so the halves read back as
+    /// pure primaries.
     private static func testImage(width: Int, height: Int) -> CGImage? {
+        let space = CGColorSpaceCreateDeviceRGB()
         guard let context = CGContext(
             data: nil,
             width: width,
             height: height,
             bitsPerComponent: 8,
             bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
+            space: space,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
             return nil
         }
+        let halfWidth = width / 2
+        context.setFillColor(CGColor(colorSpace: space, components: [1, 0, 0, 1])!)
+        context.fill(CGRect(x: 0, y: 0, width: halfWidth, height: height))
+        context.setFillColor(CGColor(colorSpace: space, components: [0, 1, 0, 1])!)
+        context.fill(CGRect(x: halfWidth, y: 0, width: width - halfWidth, height: height))
         return context.makeImage()
+    }
+
+    /// The RGBA bytes of one pixel, read in data order (top row first). The vertical
+    /// orientation doesn't matter for the left/right-half assertions below.
+    private static func pixel(atX x: Int, y: Int, in image: CGImage) -> (red: CGFloat, green: CGFloat, blue: CGFloat)? {
+        guard image.bitsPerPixel == 32,
+              let data = image.dataProvider?.data as Data?
+        else { return nil }
+        let offset = y * image.bytesPerRow + x * 4
+        guard offset + 4 <= data.count else { return nil }
+        return (
+            red: CGFloat(data[offset]) / 255,
+            green: CGFloat(data[offset + 1]) / 255,
+            blue: CGFloat(data[offset + 2]) / 255
+        )
     }
 }
