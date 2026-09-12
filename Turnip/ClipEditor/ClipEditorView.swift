@@ -61,6 +61,7 @@ struct ClipEditorView: View {
                     }
                 }
                 .aspectRatio(overlay.videoSize, contentMode: .fit)
+                .accessibilityLabel("Clip preview with crop area")
             } else if viewModel.failedToLoad {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
@@ -82,7 +83,6 @@ struct ClipEditorView: View {
                     .overlay { ProgressView() }
             }
         }
-        .accessibilityLabel("Clip preview with crop area")
     }
 
     private var keepToggle: some View {
