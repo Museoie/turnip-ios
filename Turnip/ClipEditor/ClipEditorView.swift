@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import SwiftUI
 
 /// The per-clip editor (`docs/UIUX.md` § "Clip Detail / Editor", issue #18): full-screen,
