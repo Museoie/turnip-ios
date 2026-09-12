@@ -270,6 +270,32 @@ final class ModelUpdateTests: XCTestCase {
         }
     }
 
+    // MARK: - Store
+
+    /// The store enforces the fileName allowlist itself: staging directly with
+    /// a traversal name must throw `invalidManifest` and stage nothing, even
+    /// without the service's manifest validation in the loop. This test fails
+    /// against the old implementation, which wrote whatever name it was
+    /// handed.
+    func testStoreStageRejectsUnsafeFileName() throws {
+        let store = makeStore()
+        let version = ModelVersion("2026.09.10-1")
+        for fileName in ["../evil.tflite", "sub/evil.tflite", "..", ""] {
+            do {
+                try store.stage(
+                    modelData: Data("fake-model-bytes".utf8),
+                    version: version, fileName: fileName)
+                XCTFail("expected invalidManifest for '\(fileName)'")
+            } catch ModelUpdateError.invalidManifest {
+                // expected
+            } catch {
+                XCTFail("expected invalidManifest, got \(error)")
+            }
+            XCTAssertNil(
+                store.activeVersion(), "nothing staged for '\(fileName)'")
+        }
+    }
+
     // MARK: - Client
 
     /// Model bytes are trust material: the client refuses to fetch or download
