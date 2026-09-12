@@ -144,6 +144,34 @@ final class MotionSignalBuilderTests: XCTestCase {
         XCTAssertNil(samples[0].displacement, "the subset offset was measured as motion")
     }
 
+    /// The reconstruction bound is exactly three frames: a partial frame three frames
+    /// after the last full-group frame reconstructs and carries the full identity, while a
+    /// frame one step further keeps its partial identity and its displacement stays
+    /// unknown. This pins the constant both ways — relaxing it to 1 reconstructs frame 3
+    /// too, widening it to 1000 reconstructs frame 4 too, and either mutation must fail
+    /// here rather than hide inside an invisible boundary.
+    func testReconstructionBoundIsThreeFrames() throws {
+        let frames = (0...4).map { index in
+            PoseFixture.frame(
+                index: index,
+                hip: nil,
+                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: (x: 0.56, y: 0.55, confidence: index == 0 ? 0.9 : 0.1)
+            )
+        }
+
+        let anchors = MotionSignalBuilder.anchors(for: frames)
+        let samples = MotionSignalBuilder.buildSignal(from: frames)
+
+        XCTAssertEqual(samples.count, 4)
+        // Frame 3 is exactly 3 after the full-group frame: reconstructed, full identity.
+        XCTAssertEqual(try XCTUnwrap(anchors[3]).members, MotionSignalBuilder.hipKeypointNames)
+        XCTAssertEqual(try XCTUnwrap(samples[2].displacement), 0, accuracy: 0.0001)
+        // Frame 4 is one step past the bound: partial identity, unknown displacement.
+        XCTAssertEqual(try XCTUnwrap(anchors[4]).members, ["left_hip"])
+        XCTAssertNil(samples[3].displacement, "the identity seam must appear exactly past the bound")
+    }
+
     // MARK: - Gap interpolation
 
     func testInterpolatesASingleFrameAnchorGapFromItsNeighbours() throws {

@@ -79,6 +79,35 @@ final class TrickWindowDetectorTests: XCTestCase {
         XCTAssertEqual(windows.count, 2, "the dropout's spurious motion merged two tricks into one")
     }
 
+    /// A one-hip dropout that outlasts the 3-frame reconstruction bound inserts a lone
+    /// unknown sample where the anchor identity degrades — and that seam must not split the
+    /// burst around it. The burst is 5 motion samples wide with a 6-frame dropout (snapshot
+    /// 4 frames back at the seam), so the signal around it reads M M U M M before and after
+    /// smoothing.
+    /// Negative control: without the seam tolerance the run splits into [5...6] and [8...9],
+    /// each below the 3-sample sustained minimum, and the trick disappears entirely — the
+    /// failure mode the identity guard exists to prevent, reached through `.unknown`
+    /// instead of `.moving`.
+    func testOneHipDropoutLongerThanTheReconstructionBoundStillDetectsTheTrick() {
+        let positions: [Float] = [Float](repeating: 0.5, count: 6)
+            + [0.6, 0.7, 0.8, 0.9, 1.0]
+            + [Float](repeating: 1.0, count: 4)
+
+        let frames = positions.enumerated().map { index, x in
+            PoseFixture.frame(
+                index: index,
+                hip: nil,
+                leftHip: (x: x - 0.1, y: 0.5, confidence: 0.9),
+                rightHip: (x: x + 0.1, y: 0.5, confidence: (5...10).contains(index) ? 0.1 : 0.9)
+            )
+        }
+
+        let windows = detector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
+
+        XCTAssertEqual(windows.count, 1, "the identity seam split the burst below the sustained minimum")
+        assertWindow(windows.first, startsAt: 0, endsAt: 2.0)
+    }
+
     // MARK: - Peak rules
 
     func testIgnoresABurstShorterThanTheSustainedMinimum() {

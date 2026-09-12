@@ -48,8 +48,10 @@ struct TrickWindowDetector: Sendable {
         }
     }
 
-    /// A sample with no displacement is evidence of neither motion nor rest, so it can end a
-    /// run of motion without contributing to the quiet stretch that would split two tricks.
+    /// A sample with no displacement is evidence of neither motion nor rest: it never
+    /// contributes to the quiet stretch that would split two tricks, and a single unknown
+    /// inside a burst does not end the run of motion — only a second consecutive unknown,
+    /// or a quiet sample, does.
     private enum SampleState {
         case moving
         case quiet
@@ -61,20 +63,48 @@ struct TrickWindowDetector: Sendable {
         return displacement > displacementThreshold ? .moving : .quiet
     }
 
+    /// A single unknown sample inside a burst does not terminate the run: it is an
+    /// anchor-identity seam — e.g. a dropout that outlasts the reconstruction bound — one
+    /// frame of missing evidence, not evidence of rest. This is the design doc's layer-5
+    /// reasoning (a 33 ms dropout carries no signal either way) applied to the state machine:
+    /// closing the run at the seam would split a real trick below the sustained minimum and
+    /// drop it entirely. The seam must be isolated: a second consecutive unknown closes the
+    /// run at the last moving sample, so sustained pose loss still ends a trick.
     private func runsOfMotion(in states: [SampleState]) -> [ClosedRange<Int>] {
         var runs: [ClosedRange<Int>] = []
         var start: Int?
+        /// Index of the tolerated unknown inside the open run, if one is being bridged.
+        var openSeam: Int?
+
+        /// The run's last sample when it closes at `index`: the last moving sample when a
+        /// seam is open, so a trailing unknown never extends a window past measured motion.
+        func endOfOpenRun(closingAt index: Int) -> Int {
+            (openSeam ?? (index + 1)) - 1
+        }
 
         for index in states.indices {
-            if case .moving = states[index] {
+            switch states[index] {
+            case .moving:
                 if start == nil { start = index }
-            } else if let begin = start {
-                runs.append(begin...(index - 1))
-                start = nil
+                openSeam = nil
+            case .unknown:
+                if start != nil, openSeam == nil {
+                    openSeam = index
+                } else if let begin = start {
+                    runs.append(begin...endOfOpenRun(closingAt: index))
+                    start = nil
+                    openSeam = nil
+                }
+            case .quiet:
+                if let begin = start {
+                    runs.append(begin...endOfOpenRun(closingAt: index))
+                    start = nil
+                    openSeam = nil
+                }
             }
         }
         if let begin = start {
-            runs.append(begin...(states.count - 1))
+            runs.append(begin...endOfOpenRun(closingAt: states.count - 1))
         }
         return runs
     }
