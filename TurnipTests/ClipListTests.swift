@@ -171,7 +171,7 @@ final class ClipListTests: XCTestCase {
     }
 
     func testDisplayedAspectRatioSwapsOnARotatedTrack() {
-        // Portrait phone video: 9:16 portrait crop in encoded space, 16:9 landscape in
+        // Portrait phone video: 8:9 portrait crop in encoded space, 9:8 landscape in
         // displayed space. The encoded-space ratio (the old placeholder behavior) would
         // be 8/9 — this is the discriminating case for the triage reflow fix.
         let crop = NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0, maxY: 1)
