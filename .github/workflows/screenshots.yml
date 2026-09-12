@@ -129,27 +129,56 @@ jobs:
           # `get`/`export` are deprecated in newer Xcode; --legacy restores the
           # previous interface (without it the step fails with exit code 64).
           TOP_JSON="$(xcrun xcresulttool get --legacy --format json --path screenshots.xcresult)"
-          TESTS_REF="$(echo "$TOP_JSON" | jq -r '
+          # Find all candidate testsRef IDs (there may be multiple actions);
+          # prefer the one whose subtree actually contains attachments.
+          mapfile -t CANDIDATE_REFS < <(echo "$TOP_JSON" | jq -r '
             [.. | objects
              | select(has("testsRef") or has("testSummaryRef"))
              | (.testsRef // .testSummaryRef)
              | (.id._value // ._value // .)]
-            | first // empty')"
+            | unique | .[]' 2>/dev/null || true)
+          echo "Found ${#CANDIDATE_REFS[@]} testsRef candidate(s)."
+          SUMMARY_JSON=""
+          TESTS_REF=""
+          for cand in "${CANDIDATE_REFS[@]}"; do
+            [[ -n "$cand" ]] || continue
+            echo "Trying testsRef: $cand"
+            cand_json="$(xcrun xcresulttool get --legacy --format json --path screenshots.xcresult --id "$cand" 2>/dev/null || true)"
+            cand_count="$(echo "$cand_json" | jq '[.. | objects | select(has("payloadRef"))] | length' 2>/dev/null || echo 0)"
+            echo "  -> $cand_count object(s) with payloadRef"
+            if [[ "$cand_count" -gt 0 ]]; then
+              TESTS_REF="$cand"
+              SUMMARY_JSON="$cand_json"
+              break
+            fi
+            # Keep the first as fallback for diagnostics
+            if [[ -z "$SUMMARY_JSON" ]]; then
+              TESTS_REF="$cand"
+              SUMMARY_JSON="$cand_json"
+            fi
+          done
           if [[ -z "$TESTS_REF" ]]; then
             echo "::error::No testsRef/testSummaryRef in the xcresult bundle. Top-level keys:"
             echo "$TOP_JSON" | jq -c 'keys' || true
+            # Dump the structure around any actionResult for diagnosis
+            echo "$TOP_JSON" | jq -c '[.. | objects | select(has("actionResult")) | keys] | .[0:3]' || true
             exit 1
           fi
-          SUMMARY_JSON="$(xcrun xcresulttool get --legacy --format json --path screenshots.xcresult --id "$TESTS_REF")"
+          echo "Using testsRef: $TESTS_REF"
+          # Diagnostic: what does the summary contain?
+          echo "Summary top-level keys: $(echo "$SUMMARY_JSON" | jq -c 'if type == "object" then keys else type end' 2>/dev/null || echo '?')"
+          echo "Total objects with payloadRef: $(echo "$SUMMARY_JSON" | jq '[.. | objects | select(has("payloadRef"))] | length' 2>/dev/null || echo '?')"
           # Screenshot attachments are the only .png payloads in the bundle
-          # (this run executes TurnipUITests only).
+          # (this run executes TurnipUITests only). Match broadly: .png
+          # filename/name, png UTI, or any attachment under an activity
+          # whose name suggests a screenshot.
           echo "$SUMMARY_JSON" | jq -r '
             [.. | objects
               | select(has("payloadRef"))
               | select(
-                  ((.filename._value // .filename // "") | tostring | endswith(".png"))
-                  or ((.name._value // .name // "") | tostring | endswith(".png"))
-                  or ((.uniformTypeIdentifier._value // .uniformTypeIdentifier // "") | tostring | test("png$")))
+                  ((.filename._value // .filename // "") | tostring | test("(?i)png"))
+                  or ((.name._value // .name // "") | tostring | test("(?i)png|screenshot"))
+                  or ((.uniformTypeIdentifier._value // .uniformTypeIdentifier // "") | tostring | test("(?i)png")))
               | "\((.payloadRef.id._value // .payloadRef._value // ""))\t\((.name._value // .name // .filename._value // .filename // "screenshot"))"
             ] | unique | .[]' |
           while IFS=$'\t' read -r ref raw_name; do
@@ -172,11 +201,13 @@ jobs:
           echo "Extracted $count screenshot(s):"
           ls -la "$OUT"
           if [[ "$count" -eq 0 ]]; then
-            # Log a sample of the attachment nodes so this Xcode's actual JSON
-            # shape is visible in the log and the selector above can be fixed
-            # against it on the next iteration.
-            echo "::error::No screenshot PNGs found in the test summary. Sample attachment nodes:"
-            echo "$SUMMARY_JSON" | jq -c '[.. | objects | select(has("payloadRef")) | {type: (._type._name // "?"), filename: (.filename._value // .filename // ""), name: (.name._value // .name // ""), uti: (.uniformTypeIdentifier._value // .uniformTypeIdentifier // ""), payloadRef: (.payloadRef.id._value // .payloadRef._value // null)}] | .[0:12]' || true
+            # Log the actual JSON shape so the selector can be fixed against
+            # this Xcode's output on the next iteration.
+            echo "::error::No screenshot PNGs found in the test summary."
+            echo "Attachment-like nodes (up to 12):"
+            echo "$SUMMARY_JSON" | jq -c '[.. | objects | select(has("payloadRef") or has("attachment")) | {type: (._type._name // "?"), keys: keys, filename: (.filename._value // .filename // ""), name: (.name._value // .name // ""), uti: (.uniformTypeIdentifier._value // .uniformTypeIdentifier // "")}] | .[0:12]' || true
+            echo "All _type names present (up to 30):"
+            echo "$SUMMARY_JSON" | jq -c '[.. | objects | ._type._name // empty] | unique | .[0:30]' || true
             exit 1
           fi
           echo "dir=$OUT" >> "$GITHUB_OUTPUT"
