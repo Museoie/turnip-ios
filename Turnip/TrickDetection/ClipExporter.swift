@@ -79,9 +79,9 @@ struct ClipExportTransform {
     }
 
     private static func boundingBox(of points: [CGPoint]) -> CGRect {
-        let xs = points.map(\.x), ys = points.map(\.y)
-        guard let minX = xs.min(), let maxX = xs.max(),
-              let minY = ys.min(), let maxY = ys.max()
+        let xValues = points.map(\.x), yValues = points.map(\.y)
+        guard let minX = xValues.min(), let maxX = xValues.max(),
+              let minY = yValues.min(), let maxY = yValues.max()
         else { return .zero }
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
@@ -125,6 +125,19 @@ private final class ExportSessionBox: @unchecked Sendable {
     init(_ session: AVAssetExportSession) { self.session = session }
 }
 
+/// Where one clip's ranges land in the composition: the video range cut from the
+/// trim window, with the audio range subordinate to it (intersected with the video
+/// range and inserted at its offset from the video range's start). A small struct
+/// rather than a tuple so the three members stay named and documented together.
+struct ClipInsertRanges {
+    /// The video track's range in the composition.
+    let video: CMTimeRange
+    /// The audio track's range, already intersected with the video range.
+    let audio: CMTimeRange
+    /// Offset of the audio range's start from the video range's start.
+    let audioOffset: CMTime
+}
+
 /// Exports detected clips: trims the source video to each trick window, crops to its rect,
 /// keeps the source's audio over the same range, and writes an `.mp4` per clip
 /// (docs/DESIGN.md's pipeline step 7).
@@ -166,7 +179,7 @@ actor ClipExporter {
         trim: CMTimeRange,
         videoTrack: CMTimeRange,
         audioTrack: CMTimeRange?
-    ) -> (video: CMTimeRange, audio: CMTimeRange, audioOffset: CMTime)? {
+    ) -> ClipInsertRanges? {
         let video = trim.intersection(videoTrack)
         guard video.duration > .zero else { return nil }
         var audio = CMTimeRange(start: .zero, duration: .zero)
@@ -178,7 +191,7 @@ actor ClipExporter {
                 audioOffset = range.start - video.start
             }
         }
-        return (video: video, audio: audio, audioOffset: audioOffset)
+        return ClipInsertRanges(video: video, audio: audio, audioOffset: audioOffset)
     }
 
     /// Exports one clip. Throws `ClipExportError`, or the underlying AVFoundation
@@ -267,7 +280,7 @@ actor ClipExporter {
     private func makeComposition(
         videoTrack: AVAssetTrack,
         audioTrack: AVAssetTrack?,
-        ranges: (video: CMTimeRange, audio: CMTimeRange, audioOffset: CMTime)
+        ranges: ClipInsertRanges
     ) throws -> AVMutableComposition {
         let composition = AVMutableComposition()
         guard let compositionTrack = composition.addMutableTrack(
