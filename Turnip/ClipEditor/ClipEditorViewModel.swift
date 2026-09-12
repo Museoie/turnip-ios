@@ -44,6 +44,12 @@ final class ClipEditorViewModel: ObservableObject {
     /// True while a handle drag is in flight. The drag's programmatic seek lands exactly on
     /// the moved handle, and without this guard the periodic time observer would read that
     /// jump as the loop point and bounce the preview back to the window start.
+    ///
+    /// Set by `trimStart`/`trimEnd` and normally cleared by `finishTrim`, but `onEnded`
+    /// doesn't fire when a gesture is cancelled (e.g. a system gesture takeover mid-drag),
+    /// so the latch is also cleared defensively whenever the preview loop is (re)armed
+    /// (`prepare`/`startPreview`) or the view goes away (`teardown`): a stranded `true`
+    /// would pause playback forever and let the preview run past the end handle.
     private var isTrimming = false
 
     init(source: ClipEditorSource, calculator: CropRectCalculator = CropRectCalculator()) {
@@ -101,6 +107,10 @@ final class ClipEditorViewModel: ObservableObject {
     /// Loads the asset's duration and frame geometry, then starts the preview loop. Called
     /// from the view's `.task`; safe to call again — re-appearing re-arms the loop.
     func prepare() async {
+        // A cancelled drag never clears the latch (its `onEnded` doesn't fire), so reset
+        // it here: `prepare()` always re-arms the loop on success, and the loop must
+        // resume loop-back behavior rather than inheriting a stale suppression.
+        isTrimming = false
         guard let tracks = try? await source.asset.loadTracks(withMediaType: .video),
               let track = tracks.first,
               let assetDuration = try? await source.asset.load(.duration),
@@ -120,7 +130,10 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     /// Stops playback and drops the time observer. Called when the view disappears.
+    /// Also clears the trim latch: if the disappearing view was mid-drag, the gesture's
+    /// `onEnded` never fired, and re-appearing must re-arm a clean loop via `prepare()`.
     func teardown() {
+        isTrimming = false
         if let timeObserver {
             player.removeTimeObserver(timeObserver)
             self.timeObserver = nil
@@ -231,8 +244,11 @@ final class ClipEditorViewModel: ObservableObject {
         }
     }
 
-    /// (Re)starts the preview loop over the draft window.
+    /// (Re)starts the preview loop over the draft window. Clears the trim latch first:
+    /// the loop-back guard is only meaningful during an active drag, and re-arming the
+    /// loop always starts from a non-dragging state.
     private func startPreview() {
+        isTrimming = false
         if player.currentItem == nil {
             player.replaceCurrentItem(with: AVPlayerItem(asset: source.asset))
         }
