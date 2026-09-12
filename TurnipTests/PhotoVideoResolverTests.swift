@@ -152,30 +152,30 @@ final class PhotoVideoResolverTests: XCTestCase {
     /// The sweep must not race in-flight resolutions: an export this session writes while the
     /// detached sweep is still running is created after the launch timestamp, so it survives.
     func testDeleteOrphanedTemporaryExportsKeepsFilesCreatedAfterLaunch() {
-        let fm = FileManager.default
+        let fileManager = FileManager.default
         let orphan = URL.temporaryDirectory.appending(
             path: "\(PhotoVideoResolver.temporaryExportFilenamePrefix)\(UUID().uuidString).mov")
-        XCTAssertTrue(fm.createFile(atPath: orphan.path, contents: Data("x".utf8)))
+        XCTAssertTrue(fileManager.createFile(atPath: orphan.path, contents: Data("x".utf8)))
         // Pin the orphan to a previous session explicitly; creation-time granularity is not
         // something this test should depend on.
-        try? fm.setAttributes(
+        try? fileManager.setAttributes(
             [.creationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: orphan.path)
         let launchDate = Date()
         let inFlight = URL.temporaryDirectory.appending(
             path: "\(PhotoVideoResolver.temporaryExportFilenamePrefix)\(UUID().uuidString).mov")
-        XCTAssertTrue(fm.createFile(atPath: inFlight.path, contents: Data("x".utf8)))
+        XCTAssertTrue(fileManager.createFile(atPath: inFlight.path, contents: Data("x".utf8)))
         defer {
-            try? fm.removeItem(at: orphan)
-            try? fm.removeItem(at: inFlight)
+            try? fileManager.removeItem(at: orphan)
+            try? fileManager.removeItem(at: inFlight)
         }
 
         PhotoVideoResolver.deleteOrphanedTemporaryExports(olderThan: launchDate)
 
         XCTAssertFalse(
-            fm.fileExists(atPath: orphan.path),
+            fileManager.fileExists(atPath: orphan.path),
             "an export orphaned by a previous session is still swept")
         XCTAssertTrue(
-            fm.fileExists(atPath: inFlight.path),
+            fileManager.fileExists(atPath: inFlight.path),
             "an export written after launch must survive the sweep")
     }
 
