@@ -50,7 +50,11 @@ final class ClipEditorViewModel: ObservableObject {
     /// so the latch is also cleared defensively whenever the preview loop is (re)armed
     /// (`prepare`/`startPreview`) or the view goes away (`teardown`): a stranded `true`
     /// would pause playback forever and let the preview run past the end handle.
-    private var isTrimming = false
+    ///
+    /// `private(set)` rather than `private` so tests can assert the latch transitions
+    /// (`trimEnd` sets it, `finishTrim` clears it) — a mutation probe showed no test
+    /// discriminated this guard while it was unreadable.
+    private(set) var isTrimming = false
 
     init(source: ClipEditorSource, calculator: CropRectCalculator = CropRectCalculator()) {
         self.source = source

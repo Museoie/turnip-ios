@@ -182,6 +182,49 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertFalse(ClipEditorViewModel.shouldLoopBack(at: 5.96, window: window, isTrimming: true))
     }
 
+    @MainActor
+    func testTrimEndSetsTheTrimmingLatch() {
+        let viewModel = makeViewModel()
+        XCTAssertFalse(viewModel.isTrimming)
+
+        // 5.5 is inside [start + 0.5, duration] and differs from the current end (5).
+        viewModel.trimEnd(to: 5.5)
+        XCTAssertTrue(viewModel.isTrimming)
+    }
+
+    @MainActor
+    func testTrimStartSetsTheTrimmingLatch() {
+        let viewModel = makeViewModel()
+        XCTAssertFalse(viewModel.isTrimming)
+
+        viewModel.trimStart(to: 3.0)
+        XCTAssertTrue(viewModel.isTrimming)
+    }
+
+    @MainActor
+    func testFinishTrimClearsTheTrimmingLatch() {
+        let viewModel = makeViewModel()
+
+        viewModel.trimEnd(to: 5.5)
+        XCTAssertTrue(viewModel.isTrimming)
+
+        viewModel.finishTrim()
+        XCTAssertFalse(viewModel.isTrimming)
+    }
+
+    @MainActor
+    func testTeardownClearsTheTrimmingLatch() {
+        // A cancelled drag never fires the gesture's `onEnded`, so `finishTrim` never
+        // runs; the latch must not survive the view going away.
+        let viewModel = makeViewModel()
+
+        viewModel.trimEnd(to: 5.5)
+        XCTAssertTrue(viewModel.isTrimming)
+
+        viewModel.teardown()
+        XCTAssertFalse(viewModel.isTrimming)
+    }
+
     // MARK: - Keep toggle and commit
 
     @MainActor
