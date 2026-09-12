@@ -41,6 +41,15 @@ struct ModelUpdateStore: Sendable {
     /// Atomically replaces the staged model. Bytes land first, metadata
     /// second (see the layout note above).
     func stage(modelData: Data, version: ModelVersion, fileName: String) throws {
+        // Reject hostile file names before touching the filesystem: the name
+        // must be a single path component (no slashes, not empty, not "." or
+        // "..") so a malicious manifest can't stage outside the store dir.
+        guard !fileName.isEmpty,
+              !fileName.contains("/"),
+              fileName != ".",
+              fileName != ".." else {
+            throw ModelUpdateError.invalidManifest
+        }
         try FileManager.default.createDirectory(
             at: baseURL, withIntermediateDirectories: true)
         try modelData.write(
