@@ -73,7 +73,9 @@ func defaultExportDirectory() -> URL {
 /// main actor. Cancellation is cooperative — the in-flight step stops on its own (the
 /// export session cancels via its cancellation handler), the loop checks between clips,
 /// remaining clips stay `.pending`, and the partial summary is honest about what actually
-/// saved.
+/// saved. A start after cancel restarts cleanly: the new run waits for the old one to
+/// drain, resets the cancellation flag and unfinished phases, and skips clips already
+/// saved — the same video is never written to Photos twice.
 @MainActor
 final class ExportConfirmationViewModel: ObservableObject {
     /// One clip's visible state on the confirmation screen.
@@ -127,11 +129,15 @@ final class ExportConfirmationViewModel: ObservableObject {
     private let saveToPhotos: SaveOneClipToPhotos
     private let makeDirectory: @Sendable () -> URL
     private var runTask: Task<Void, Never>?
+    /// Set by `cancel()` and cleared when a run actually ends or a newer run starts:
+    /// distinguishes "a run is in flight" from "a cancelled run is still draining", so
+    /// `start()` ignores the view's `.task` re-fire during a live run but restarts —
+    /// after the drain — once the user cancelled.
+    private var cancelRequested = false
     /// Monotonic run id. `start()` bumps it and the run's task captures the value; the
-    /// trailing teardown only ends the screen when its captured id still matches.
-    /// `cancel()` nils `runTask` while the cancelled task is still draining, so a newer
-    /// `start()` can already be in flight — the stale teardown must not clear the new
-    /// run's handle or flip `isFinished` under it.
+    /// trailing teardown only ends the screen when its captured id still matches, so a
+    /// still-draining older run can't clear a newer run's handle, flip `isFinished`
+    /// under it, or leak its cancellation flag into the new run's summary.
     private var generation: UInt64 = 0
 
     init(
@@ -154,15 +160,32 @@ final class ExportConfirmationViewModel: ObservableObject {
         self.makeDirectory = makeDirectory
     }
 
-    /// Starts the export run. Ignored while a run is in flight and once a run has
-    /// finished — the screen shows one run, and the view's `.task` re-fires on
-    /// re-appear, which must not re-export. Bumps the generation so the trailing
-    /// teardown below belongs to exactly this run (see `generation`).
+    /// Starts the export run. Ignored while a live run is in flight and once a run has
+    /// finished — the screen shows one run. A start after `cancel()` is a genuine
+    /// restart: the new run first waits for the cancelled run to drain, then the
+    /// cancellation flag clears, unfinished clips go back to `.pending`, and clips
+    /// already `.saved` stay saved and are skipped — so the new run never writes the
+    /// same video to Photos twice. Bumps the generation so the trailing teardown below
+    /// belongs to exactly this run (see `generation`).
     func start() {
-        guard runTask == nil, !isFinished else { return }
+        guard !isFinished else { return }
+        // A live run owns the screen: the view's `.task` re-fires on re-appear and
+        // must not disturb it. A cancelled-but-draining run doesn't block a restart —
+        // the new task waits for it below before touching any clip.
+        if runTask != nil, !cancelRequested { return }
         generation &+= 1
         let runGeneration = generation
+        let previousRun = runTask
+        cancelRequested = false
         isRunning = true
+        // A restart is a clean slate, not a continuation: the previous run's
+        // cancellation must not taint this run's summary, and every unfinished clip
+        // goes back to `.pending`. Clips already `.saved` keep their phase and are
+        // skipped by the loop below.
+        wasCancelled = false
+        for index in clips.indices where clips[index].phase != .saved {
+            clips[index].phase = .pending
+        }
         // Captured up front: the loop below runs off the main actor, and `self` is only
         // ever touched through `MainActor.run`.
         let items = self.items
@@ -171,6 +194,11 @@ final class ExportConfirmationViewModel: ObservableObject {
         let saveToPhotos = self.saveToPhotos
         let makeDirectory = self.makeDirectory
         runTask = Task { [weak self] in
+            // Serialize with the previous run: after `cancel()` it can still be
+            // draining cooperatively. Waiting here — before any phase write or side
+            // effect — means two runs never interleave exports or Photos writes, so the
+            // skip-`.saved` check below can't race the old run's in-flight save.
+            await previousRun?.value
             let directory = makeDirectory()
             // The exporter writes into this directory; it must exist before the first
             // export session starts. A failure here surfaces per clip from the export
@@ -184,11 +212,21 @@ final class ExportConfirmationViewModel: ObservableObject {
                 // directory and the sandbox must not accumulate them.
                 try? FileManager.default.removeItem(at: directory)
             }
+            // Cancellation is per-run: only the newest run's teardown publishes the
+            // flag, so a superseded run can't taint the new run's summary.
+            var runWasCancelled = false
             for (index, item) in items.enumerated() {
                 if Task.isCancelled {
-                    await MainActor.run { [weak self] in self?.wasCancelled = true }
+                    runWasCancelled = true
                     break
                 }
+                // A clip the previous run already saved stays saved: re-running the
+                // loop must not write the same video to Photos twice.
+                let alreadySaved = await MainActor.run { [weak self] in
+                    self?.clips.indices.contains(index) == true
+                        && self?.clips[index].phase == .saved
+                }
+                if alreadySaved { continue }
                 await MainActor.run { [weak self] in
                     self?.setPhase(at: index, to: .exporting(fraction: 0))
                 }
@@ -215,7 +253,7 @@ final class ExportConfirmationViewModel: ObservableObject {
                     // `CancellationError`), so the cancelled task — not the error type —
                     // decides: cancelled stops the run, anything else fails the clip.
                     if Task.isCancelled {
-                        await MainActor.run { [weak self] in self?.wasCancelled = true }
+                        runWasCancelled = true
                         break
                     }
                     await MainActor.run { [weak self] in
@@ -225,13 +263,15 @@ final class ExportConfirmationViewModel: ObservableObject {
             }
             await MainActor.run { [weak self] in
                 // Only the newest run may end the screen. A cancelled run's task can
-                // still be draining when a newer run starts (`cancel()` nils `runTask`
-                // but doesn't stop the task), so a stale teardown must not clear the
-                // new run's handle, flip `isFinished` under it, or drop `isRunning`
-                // while the newer run is still going.
+                // still be draining when a newer run starts, so a stale teardown must
+                // not clear the new run's handle, flip `isFinished` under it, drop
+                // `isRunning` while the newer run is still going, or publish its
+                // cancellation flag into the new run's summary.
                 guard self?.generation == runGeneration else { return }
+                self?.wasCancelled = runWasCancelled
                 self?.isFinished = true
                 self?.isRunning = false
+                self?.cancelRequested = false
                 self?.runTask = nil
             }
         }
@@ -239,10 +279,12 @@ final class ExportConfirmationViewModel: ObservableObject {
 
     /// Cancels the run. Cooperative: the in-flight step stops on its own, remaining clips
     /// stay `.pending`, and the scratch directory is still cleaned up by `start()`'s
-    /// `defer`. The view calls this on disappear, so a run never outlives its screen.
+    /// `defer`. The handle is kept rather than nilled so a subsequent `start()` can wait
+    /// for the drain before restarting; the view calls this on disappear, so a run never
+    /// outlives its screen.
     func cancel() {
+        cancelRequested = true
         runTask?.cancel()
-        runTask = nil
     }
 
     /// Applies one export progress tick. Only while the clip is still `.exporting` —

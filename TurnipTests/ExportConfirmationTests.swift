@@ -338,12 +338,14 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isFinished)
     }
 
+    /// A restart after cancel is a genuine restart, not a second concurrent run: run 2
+    /// waits for run 1 to drain, run 1's stale teardown can't end the screen under it,
+    /// and a clip run 1 already saved is skipped rather than written to Photos twice.
     func testStaleTeardownDoesNotFinishNewerRun() async {
         let fake = FakeExport(exportResults: Self.exportSuccesses(2))
         let viewModel = viewModel(items: [item(), item(start: 9, end: 11.5)], fake: fake)
 
-        // Run 1 blocks inside its first export, so cancel() leaves it draining while
-        // runTask is already nil.
+        // Run 1 blocks inside its first export, so cancel() leaves it draining.
         await fake.setGateNextExport()
         viewModel.start()
         await Self.waitForFullExportProgress(viewModel)
@@ -354,24 +356,27 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         await fake.setGateNextExport()
         viewModel.start()
         await fake.openGate()
-        for _ in 0..<200 where !viewModel.wasCancelled {
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-        // Let run 1's trailing teardown land while run 2 cannot progress.
-        try? await Task.sleep(nanoseconds: 100_000_000)
+        // Cancellation is per-run: run 1's stale teardown must not flip wasCancelled
+        // or isFinished under the newer run. Give it a beat to land.
+        try? await Task.sleep(nanoseconds: 200_000_000)
 
         // The stale teardown must not end the screen under the newer run: without the
         // generation guard this flips isFinished and nils the new run's handle here.
         XCTAssertFalse(viewModel.isFinished)
         XCTAssertTrue(viewModel.isRunning)
+        XCTAssertFalse(viewModel.wasCancelled)
 
         await fake.openGate()
         await Self.waitUntilFinished(viewModel)
 
         XCTAssertEqual(viewModel.clips.map(\.phase), [.saved, .saved])
         XCTAssertEqual(viewModel.summaryText, "2 of 2 clips saved to Photos")
+        // Run 1's export ran (call 1) but its save was superseded by the restart, and
+        // run 2 exported both clips — while each clip reached Photos exactly once.
         let exportCallCount = await fake.exportCalls.count
         XCTAssertEqual(exportCallCount, 3)
+        let savedURLs = await fake.savedURLs
+        XCTAssertEqual(savedURLs.count, 2)
     }
 }
 
