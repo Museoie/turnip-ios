@@ -71,6 +71,10 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
 
   See "Interpreting pose output" below for the concrete algorithm turning pose keypoints into `(start_time, end_time)[]` clip ranges and `(min_x, max_x, min_y, max_y)` crop rects.
 
+- **Preview UI**: thumbnail per detected clip, tap-preview, drag-adjust start/end, keep/discard toggles.
+- **Optional upload** (v2): opt-in per clip. "Send this to the community dataset for labeling" toggle. Uploads to `turnip-farm` with the auto-detected labels (window, crop rect) as a first-pass suggestion the community can accept/refine.
+- **OTA model updates**: on launch, poll `GET /api/models/current` for a new Core ML version; download in background, atomic-replace, use next launch.
+
 ### Performance targets
 
 Budgets the v1 pipeline is held to (issue #21). The numbers are initial targets to be validated
@@ -82,9 +86,6 @@ by on-device profiling on the oldest supported hardware (iPhone 8 / A11, iOS 16)
 - **Cancellation**: the sampler loop checks `Task.isCancelled` per decoded frame, and the owning
   view model cancels its run task when the screen goes away, so an abandoned run stops decoding
   instead of burning the device with no consumer.
-- **Preview UI**: thumbnail per detected clip, tap-preview, drag-adjust start/end, keep/discard toggles.
-- **Optional upload** (v2): opt-in per clip. "Send this to the community dataset for labeling" toggle. Uploads to `turnip-farm` with the auto-detected labels (window, crop rect) as a first-pass suggestion the community can accept/refine.
-- **OTA model updates**: on launch, poll `GET /api/models/current` for a new Core ML version; download in background, atomic-replace, use next launch.
 
 ### Interpreting pose output
 
