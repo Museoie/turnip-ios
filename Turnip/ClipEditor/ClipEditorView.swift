@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import CoreVideo
 import SwiftUI
 
 /// The per-clip editor (`docs/UIUX.md` § "Clip Detail / Editor"): full-screen,
@@ -116,8 +117,88 @@ private struct CropOverlayShape: Shape {
                 window: TrickWindow(startTime: 2, endTime: 5),
                 cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.25, maxY: 0.75),
                 isKept: true,
-                asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
+                asset: AVURLAsset(url: makeClipEditorPreviewAsset()),
                 poseFrames: []),
             onCommit: { _ in })
     }
+}
+
+/// Writes a tiny generated sample movie for the `#Preview` above — six seconds of
+/// solid-color H.264 frames — so the canvas renders the editor instead of the
+/// load-failure state. (`/dev/null` isn't media, so `prepare()` took the failing path
+/// and the preview showed "Couldn't load this clip", which reads as a broken screen.)
+///
+/// A bundled fixture .mov would be larger and opaque; generating follows the same
+/// `AVAssetWriter` pattern as the `VideoFrameSamplerTests` video fixture. Synchronous
+/// because `#Preview` bodies can't await: the write is a few hundred local frames, so
+/// the bounded spin below finishes in well under a second. If generation fails on the
+/// preview host, the partial file is deleted and the preview degrades to the
+/// load-failure state instead of crashing.
+private func makeClipEditorPreviewAsset() -> URL {
+    let url = URL.temporaryDirectory.appending(path: "ClipEditorPreview-\(UUID().uuidString).mov")
+    do {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let width = 320
+        let height = 568
+        let fps: Int32 = 30
+        let input = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height,
+            ])
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+            ])
+        guard writer.canAdd(input), writer.startWriting() else { throw PreviewAssetError.setupFailed }
+        writer.add(input)
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<(6 * Int(fps)) {
+            // Bounded on writer status: if the writer fails mid-write,
+            // `isReadyForMoreMediaData` never becomes true, and without the status check
+            // the loop would spin with no cause.
+            var spins = 0
+            while !input.isReadyForMoreMediaData, writer.status == .writing, spins < 500 {
+                Thread.sleep(forTimeInterval: 0.002)
+                spins += 1
+            }
+            guard let pool = adaptor.pixelBufferPool else { throw PreviewAssetError.setupFailed }
+            var pixelBuffer: CVPixelBuffer?
+            let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+            guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
+                throw PreviewAssetError.setupFailed
+            }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let base = CVPixelBufferGetBaseAddress(buffer) {
+                let bytes = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
+                // Vary the fill per frame so the encoder emits real (non-skipped) frames.
+                memset(base, Int32(frame % 255), bytes)
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            let time = CMTime(value: CMTimeValue(frame), timescale: fps)
+            guard adaptor.append(buffer, withPresentationTime: time) else {
+                throw PreviewAssetError.appendFailed
+            }
+        }
+        input.markAsFinished()
+        let finished = DispatchSemaphore(value: 0)
+        // The completion handler runs off the main thread, so waiting here can't deadlock.
+        writer.finishWriting { finished.signal() }
+        finished.wait()
+        guard writer.status == .completed else { throw PreviewAssetError.finishFailed }
+        return url
+    } catch {
+        try? FileManager.default.removeItem(at: url)
+        return URL(fileURLWithPath: "/dev/null")
+    }
+}
+
+private enum PreviewAssetError: Error {
+    case setupFailed, appendFailed, finishFailed
 }
