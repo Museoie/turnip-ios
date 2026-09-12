@@ -216,6 +216,24 @@ final class ModelUpdateTests: XCTestCase {
         XCTAssertNotNil(await service.lastError)
     }
 
+    /// A cancelled check is a deliberate stop, not a failed update: a
+    /// `CancellationError` thrown mid-check must not be recorded on
+    /// `lastError` where it would be misreported as an update failure. This
+    /// test fails against the old single-catch implementation, which boxed
+    /// the cancellation into `.network(underlying:)`.
+    func testCheckForUpdatesIgnoresCancellationError() async throws {
+        let store = makeStore()
+        let client = MockModelUpdateClient()
+        let bytes = Data("fake-model-bytes".utf8)
+        await client.setManifest(makeManifest(version: "2026.09.10-1", bytes: bytes))
+        await client.setManifestError(CancellationError())
+
+        let service = makeService(client: client, store: store)
+        await service.checkForUpdates() // must not throw
+
+        XCTAssertNil(await service.lastError)
+    }
+
     /// No configured endpoint means no network at all — the service is inert
     /// until turnip-farm exists.
     func testCheckForUpdatesIsNoOpWithoutEndpoint() async throws {

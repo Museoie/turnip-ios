@@ -15,7 +15,9 @@ import Foundation
 ///
 /// The service never throws: every failure is recorded on `lastError` and the
 /// previously staged model keeps serving. A failed update must be silent to
-/// the user, never a crash or a half-staged model.
+/// the user, never a crash or a half-staged model. Cancellation is not a
+/// failure: a cancelled check leaves `lastError` nil instead of recording
+/// the cancellation as a failed check.
 ///
 /// Inert by default: a `nil` baseURL (no endpoint configured) makes
 /// `checkForUpdates` a no-op with zero network traffic, keeping the "nothing
@@ -64,6 +66,15 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
             try store.stage(
                 modelData: bytes, version: manifest.version,
                 fileName: manifest.fileName)
+        } catch is CancellationError {
+            // Cancellation is a deliberate stop, not a failed check: the
+            // cancelled task is already winding down, so don't record it on
+            // lastError where it would be misreported as an update failure.
+            // Re-throwing would be the alternative, but the service's
+            // never-throws contract is intentional and tested
+            // ("must not throw" in ModelUpdateTests), so a cancelled check
+            // stays silent rather than throwing.
+            lastError = nil
         } catch {
             // Narrow to the typed failure: typed errors pass through
             // untouched, anything else (disk reads, store writes, foreign
