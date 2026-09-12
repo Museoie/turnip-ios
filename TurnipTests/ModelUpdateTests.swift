@@ -86,6 +86,17 @@ final class ModelUpdateTests: XCTestCase {
         XCTAssertLessThan(ModelVersion("1.2"), ModelVersion("1.2.1"))
     }
 
+    /// The documented build-suffix contract: a same-day hotfix re-release is
+    /// newer than the bare version, and a missing suffix counts as build 0.
+    /// This pins `parse`'s build branch — the subtlest part of `<`.
+    func testVersionBuildSuffixOrdersAfterBareVersion() {
+        XCTAssertLessThan(ModelVersion("2026.09.10"), ModelVersion("2026.09.10-1"))
+        XCTAssertLessThan(ModelVersion("2026.09.10-1"), ModelVersion("2026.09.10-2"))
+        XCTAssertGreaterThan(ModelVersion("2026.09.10-2"), ModelVersion("2026.09.10"))
+        XCTAssertFalse(ModelVersion("2026.09.10") < ModelVersion("2026.09.10-0"))
+        XCTAssertFalse(ModelVersion("2026.09.10-1") < ModelVersion("2026.09.10"))
+    }
+
     // MARK: - Manifest decoding
 
     /// The manifest must decode from the exact JSON shape turnip-farm will
