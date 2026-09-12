@@ -24,6 +24,8 @@
 	<string>Turnip shows the videos in your library so you can pick a recording to trim and crop. Nothing leaves your device.</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
 	<true/>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Turnip saves the clips it creates to your Photos library.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
