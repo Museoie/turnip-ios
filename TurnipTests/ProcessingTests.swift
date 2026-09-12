@@ -106,7 +106,7 @@ final class ProcessingPipelineClipTests: XCTestCase {
         let pipeline = ProcessingPipeline()
         let windows = [
             TrickWindow(startTime: 0.15, endTime: 0.85),
-            TrickWindow(startTime: 1.15, endTime: 1.65),
+            TrickWindow(startTime: 1.15, endTime: 1.65)
         ]
 
         let clips = pipeline.buildClips(windows: windows, frames: frames, naturalSize: size)
@@ -117,8 +117,8 @@ final class ProcessingPipelineClipTests: XCTestCase {
         // window (indices 2...8 and 12...16 at 0.1 s spacing) — this pins the wiring, not
         // the calculator's math, which its own tests own.
         let calculator = CropRectCalculator()
-        let first = calculator.cropRect(for: Array(frames[2...8]), sourcePixelSize: size)
-        let second = calculator.cropRect(for: Array(frames[12...16]), sourcePixelSize: size)
+        let first = calculator.cropRect(for: Array(frames[2...8]), renderedPixelSize: size)
+        let second = calculator.cropRect(for: Array(frames[12...16]), renderedPixelSize: size)
         XCTAssertNotNil(first)
         XCTAssertNotNil(second)
         XCTAssertEqual(clips[0].cropRect, first)

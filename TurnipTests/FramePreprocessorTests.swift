@@ -70,7 +70,8 @@ final class FramePreprocessorTests: XCTestCase {
 
         // 1920x1080: uniform scale is 256/1920, so the frame is 256x144 and the 112 leftover
         // pixels split evenly above and below.
-        let landscape = try preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        let landscape = try preprocessor.letterboxGeometry(
+            forSourceExtent: CGRect(x: 0, y: 0, width: 1920, height: 1080))
         XCTAssertEqual(landscape.mapping.scale, 256.0 / 1920.0, accuracy: 0.0001)
         XCTAssertEqual(landscape.mapping.offsetX, 0, accuracy: 0.0001)
         XCTAssertEqual(landscape.mapping.offsetY, 56, accuracy: 0.0001)
@@ -81,7 +82,8 @@ final class FramePreprocessorTests: XCTestCase {
         XCTAssertEqual(placedLandscape.height, 144, accuracy: 0.0001)
 
         // 1080x1920: the inverse — padding on the sides instead of top and bottom.
-        let portrait = try preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1080, height: 1920))
+        let portrait = try preprocessor.letterboxGeometry(
+            forSourceExtent: CGRect(x: 0, y: 0, width: 1080, height: 1920))
         XCTAssertEqual(portrait.mapping.scale, 256.0 / 1920.0, accuracy: 0.0001)
         XCTAssertEqual(portrait.mapping.offsetX, 56, accuracy: 0.0001)
         XCTAssertEqual(portrait.mapping.offsetY, 0, accuracy: 0.0001)
