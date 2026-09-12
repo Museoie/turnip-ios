@@ -93,7 +93,10 @@ flowchart TD
 
 - The piece missing from #11 as currently scoped. Full-screen, one clip at a
   time:
-  - Video player showing the clip trimmed + cropped as currently configured.
+  - Video player showing the trimmed clip looping, with the live crop rect drawn over
+    the displayed frame: the dimmed surround marks what export cuts away. The preview
+    stays uncropped — the full frame is the better editing affordance, keeping the trim
+    handles' surrounding context visible.
   - Scrub bar with drag handles on start/end (adjusts the trick window from
     issue #8's output; live-updates the crop rect per issue #9 if the window
     changes, since the crop rect is a function of which frames are in play).
