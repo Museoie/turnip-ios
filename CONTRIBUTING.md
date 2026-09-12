@@ -58,8 +58,10 @@ official Swift Package Manager distribution. Setup, in order:
    ls "$HOME/.local/share/xcodegen" # SettingPresets
    ```
 
-   This version is also pinned in `.github/workflows/ci.yml` and
-   `ci_scripts/ci_post_clone.sh`; the three are meant to stay identical
+   Both CI pipelines install this exact version through
+   `ci_scripts/install-xcodegen.sh`, which is where the version and its
+   archive checksum live — see [Dependency updates](#dependency-updates)
+   for how it gets bumped
 4. `xcodegen generate`
 5. `bundle install && bundle exec pod install` — CocoaPods is pinned via the committed
    `Gemfile`/`Gemfile.lock` (both CI pipelines resolve pods the same way) rather than
@@ -81,6 +83,52 @@ official Swift Package Manager distribution. Setup, in order:
 prebuilt xcframework with no official support — worse provenance for a dependency running
 an ML model in a public repo than Google's own CocoaPods podspec. We're sticking with
 CocoaPods.)
+
+## Dependency updates
+
+Everything this project pins has a named updater, so no pin rots unnoticed:
+
+| pin | where | updater |
+| --- | --- | --- |
+| GitHub Actions commit SHAs | `.github/workflows/` | Dependabot (`github-actions`, weekly) |
+| CocoaPods and the gems it resolves | `Gemfile.lock` | Dependabot (`bundler`, weekly) |
+| `TensorFlowLiteSwift` | `Podfile.lock` | `dependency-check.yml` (weekly) |
+| XcodeGen and its archive checksum | `ci_scripts/install-xcodegen.sh` | `dependency-check.yml` (weekly) |
+
+Dependabot has no CocoaPods ecosystem, and no notion of a shell script that
+downloads a release asset, so the last two are watched by
+[`.github/workflows/dependency-check.yml`](.github/workflows/dependency-check.yml)
+instead. It runs `ci_scripts/check-unwatched-pins.sh`, which compares both pins
+against the newest published release and opens a tracking issue when one has
+moved — refreshing that issue's body on later runs, and closing it once both
+pins are current again. The same check runs locally:
+
+```
+ci_scripts/check-unwatched-pins.sh
+```
+
+Every bump arrives as an ordinary reviewable PR; nothing automerges.
+
+### Bumping XcodeGen
+
+`VERSION` and `SHA256` in `ci_scripts/install-xcodegen.sh` are the only copies
+CI reads. Regenerate the checksum from the asset the new release publishes,
+since the version in the URL pins a name and the checksum pins the bytes:
+
+```
+curl -fsSL -o /tmp/xcodegen.zip \
+  https://github.com/yonaskolb/XcodeGen/releases/download/<version>/xcodegen.zip
+shasum -a 256 /tmp/xcodegen.zip
+```
+
+The setup steps above pin the same version for local development; update those
+too, and re-run `xcodegen generate` to confirm the emitted project still opens.
+
+### Bumping TensorFlowLiteSwift
+
+The `Podfile` allows `~> 2.17.0`, so anything past 2.17.x needs that constraint
+widened before `bundle exec pod install` can re-resolve `Podfile.lock`. Both
+files are committed; they change together.
 
 ## Branching workflow
 

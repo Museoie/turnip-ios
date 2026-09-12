@@ -6,3 +6,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+
+  # Gemfile.lock is committed so both pipelines resolve pods with the same
+  # CocoaPods. A lockfile nothing bumps is just an old CocoaPods.
+  - package-ecosystem: bundler
+    directory: /
+    schedule:
+      interval: weekly

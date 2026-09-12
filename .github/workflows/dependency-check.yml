@@ -1,0 +1,59 @@
+name: Dependency check
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  unwatched-pins:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TRACKER_TITLE: Unwatched dependency pins have moved
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Compare pins against the newest published releases
+        id: check
+        run: |
+          set +e
+          ci_scripts/check-unwatched-pins.sh > "$RUNNER_TEMP/pin-report.md"
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/pin-report.md"
+          case "$status" in
+            0) echo "drifted=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "drifted=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$status" ;;
+          esac
+
+      - name: Find the tracking issue
+        id: tracker
+        run: |
+          number=$(gh issue list --state open --limit 200 --json number,title |
+            jq -r --arg t "$TRACKER_TITLE" 'map(select(.title == $t)) | first | .number // ""')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue
+        if: steps.check.outputs.drifted == 'true'
+        env:
+          TRACKER: ${{ steps.tracker.outputs.number }}
+        run: |
+          if [ -n "$TRACKER" ]; then
+            gh issue edit "$TRACKER" --body-file "$RUNNER_TEMP/pin-report.md"
+          else
+            gh issue create --title "$TRACKER_TITLE" --body-file "$RUNNER_TEMP/pin-report.md"
+          fi
+
+      - name: Close the tracking issue
+        if: steps.check.outputs.drifted == 'false' && steps.tracker.outputs.number != ''
+        env:
+          TRACKER: ${{ steps.tracker.outputs.number }}
+        run: gh issue close "$TRACKER" --comment "Both pins are current again."
