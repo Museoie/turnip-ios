@@ -64,7 +64,11 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         var stashedProgressHandlers: [@Sendable (Double) -> Void] = []
         var gateNextExport = false
         var gateNextSave = false
-        private var gate: CheckedContinuation<Void, Never>?
+        /// Parked gates in arrival order. A FIFO, not a single slot: tests park more
+        /// than one export at a time, and a single slot lets the second park
+        /// overwrite the first — deallocating an unresumed continuation is a fatal
+        /// error that crashes the test host.
+        private var gates: [CheckedContinuation<Void, Never>] = []
 
         init(
             exportResults: [Result<URL, Error>] = [],
@@ -94,7 +98,7 @@ final class ExportConfirmationViewModelTests: XCTestCase {
             }
             if gateNextExport {
                 gateNextExport = false
-                await withCheckedContinuation { self.gate = $0 }
+                await withCheckedContinuation { gates.append($0) }
             }
             guard !exportResults.isEmpty else {
                 return URL(fileURLWithPath: "/tmp/fake-export.mp4")
@@ -106,15 +110,17 @@ final class ExportConfirmationViewModelTests: XCTestCase {
             savedURLs.append(url)
             if gateNextSave {
                 gateNextSave = false
-                await withCheckedContinuation { self.gate = $0 }
+                await withCheckedContinuation { gates.append($0) }
             }
             guard !saveResults.isEmpty else { return }
             try saveResults.removeFirst().get()
         }
 
+        /// Resumes the earliest parked export/save. FIFO so the order is
+        /// deterministic no matter which task reaches its gate first.
         func openGate() {
-            gate?.resume()
-            gate = nil
+            guard !gates.isEmpty else { return }
+            gates.removeFirst().resume()
         }
     }
 

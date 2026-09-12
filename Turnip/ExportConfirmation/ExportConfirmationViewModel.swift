@@ -277,6 +277,11 @@ final class ExportConfirmationViewModel: ObservableObject {
     /// helpers); the two should converge once both land.
     private static func durationLabel(for window: TrickWindow) -> String {
         let tenths = ((window.endTime - window.startTime) * 10).rounded() / 10
+        // Whole seconds render as "3s", not "3.0s" — the fractional form reads like
+        // a precision claim next to the "2.4s"-style labels elsewhere.
+        if tenths == tenths.rounded() {
+            return "\(Int(tenths))s"
+        }
         return "\(tenths)s"
     }
 }

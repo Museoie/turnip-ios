@@ -88,7 +88,9 @@ jobs:
           # Screenshot attachments are the only .png payloads in the bundle
           # (this run executes TurnipUITests only). The xcresult JSON wraps
           # scalars in {_value}, so unwrap defensively.
-          xcrun xcresulttool get --format json --path screenshots.xcresult | jq -r '
+          # `get`/`export` are deprecated in newer Xcode; --legacy restores the
+          # previous interface (without it the step fails with exit code 64).
+          xcrun xcresulttool get --legacy --format json --path screenshots.xcresult | jq -r '
             [.. | objects
               | select(
                   ((.filename._value // .filename // "") | tostring | endswith(".png"))
@@ -105,7 +107,7 @@ jobs:
               dest="$OUT/${safe%.png}-$n.png"
               n=$((n + 1))
             done
-            xcrun xcresulttool export \
+            xcrun xcresulttool export --legacy \
               --path screenshots.xcresult \
               --id "$ref" \
               --output-path "$dest" \
