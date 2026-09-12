@@ -26,7 +26,8 @@ final class ClipEditorTests: XCTestCase {
             window: window,
             cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
             isKept: true,
-            asset: AVAsset(),
+            // AVAsset is abstract; these tests inject media info directly and never load it.
+            asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
             poseFrames: frames)
     }
 

@@ -104,7 +104,7 @@ private struct CropOverlayShape: Shape {
                 window: TrickWindow(startTime: 2, endTime: 5),
                 cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.25, maxY: 0.75),
                 isKept: true,
-                asset: AVAsset(),
+                asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
                 poseFrames: []),
             onCommit: { _ in })
     }
