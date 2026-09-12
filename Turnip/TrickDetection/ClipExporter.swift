@@ -26,7 +26,7 @@ enum ClipExportError: Error, Equatable {
 }
 
 /// The render geometry for one exported clip, computed from pure inputs — no AVFoundation
-/// session required, so it is unit-testable (per the testability note on the issue).
+/// session required, so it is unit-testable.
 struct ClipExportTransform {
     /// Output frame size in pixels.
     let renderSize: CGSize
@@ -38,10 +38,14 @@ struct ClipExportTransform {
     /// `cropRect` lives in the encoded frame's pixel space (top-left origin) — the same space
     /// as the pose keypoints it is computed from, since the frame sampler does not apply the
     /// track's `preferredTransform`. The layer transform therefore starts from
-    /// `preferredTransform` (so the export comes out upright), translates the crop's
-    /// displayed top-left corner to the origin, and finally flips Y into the video
-    /// compositor's bottom-left render space. The crop is never scaled: the output frame is
-    /// exactly the crop rect's size, per the design doc's "crop, not scale-and-letterbox".
+    /// `preferredTransform` (so the export comes out upright) and translates the crop's
+    /// displayed top-left corner to the origin. There is no Y-flip: an
+    /// `AVMutableVideoCompositionLayerInstruction` transform maps into a top-left-origin
+    /// render space, the same space `preferredTransform` already targets — the bottom-left
+    /// convention belongs to Core Image and to `AVVideoCompositionCoreAnimationTool`
+    /// overlay layers, neither of which is in play here. The crop is never scaled: the
+    /// output frame is exactly the crop rect's size, rounded up to even H.264 dimensions,
+    /// per the design doc's "crop, not scale-and-letterbox".
     ///
     /// `nil` when the source dimensions are unknown or the crop rect is degenerate — in
     /// either case there is no frame to render into.
@@ -62,9 +66,16 @@ struct ClipExportTransform {
 
         let layerTransform = preferredTransform
             .concatenating(CGAffineTransform(translationX: -displayed.minX, y: -displayed.minY))
-            .concatenating(CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: displayed.height))
 
-        return ClipExportTransform(renderSize: displayed.size, layerTransform: layerTransform)
+        // H.264 requires integral, even width and height, and the crop math above is
+        // float — round here. The layer transform already pins the crop's displayed
+        // top-left to the render origin, so widening the frame only pads the
+        // right/bottom edges; the translation stays consistent with the rounded size.
+        let renderSize = CGSize(
+            width: displayed.width.roundedToEvenDimensions,
+            height: displayed.height.roundedToEvenDimensions)
+
+        return ClipExportTransform(renderSize: renderSize, layerTransform: layerTransform)
     }
 
     private static func boundingBox(of points: [CGPoint]) -> CGRect {
@@ -82,6 +93,14 @@ private extension CGRect {
          CGPoint(x: maxX, y: minY),
          CGPoint(x: minX, y: maxY),
          CGPoint(x: maxX, y: maxY)]
+    }
+}
+
+private extension CGFloat {
+    /// Nearest even integer, at least 2 — H.264 requires even frame dimensions, and a
+    /// sub-two-pixel frame has nothing to encode.
+    var roundedToEvenDimensions: CGFloat {
+        max(2, (self / 2).rounded() * 2)
     }
 }
 
@@ -103,7 +122,8 @@ private final class ExportSessionBox: @unchecked Sendable {
 }
 
 /// Exports detected clips: trims the source video to each trick window, crops to its rect,
-/// and writes an `.mp4` per clip (docs/DESIGN.md's pipeline step 7).
+/// keeps the source's audio over the same range, and writes an `.mp4` per clip
+/// (docs/DESIGN.md's pipeline step 7).
 ///
 /// An actor so the `AVAssetExportSession` — which is not `Sendable` — stays confined off the
 /// main thread while exports run; per-frame decoding and encoding never touch the main
@@ -125,8 +145,12 @@ actor ClipExporter {
     }
 
     /// Exports one clip. Throws `ClipExportError`, or the underlying AVFoundation
-    /// error from asset loading; the output file is left in place on failure for
-    /// debugging and the caller decides whether to delete it.
+    /// error from asset loading; a stale file at the output URL is removed before the
+    /// export starts (a failed or cancelled attempt leaves its partial file behind, and
+    /// the session refuses to overwrite — without this the retry the error type
+    /// advertises as retryable would fail with `AVErrorFileAlreadyExists`), while the
+    /// output file is left in place on failure for debugging and the caller decides
+    /// whether to delete it afterwards.
     func export(
         _ spec: ClipSpec,
         from asset: AVAsset,
@@ -149,7 +173,9 @@ actor ClipExporter {
             throw ClipExportError.invalidCropRect(window: spec.window)
         }
 
-        let composition = try makeComposition(trimming: videoTrack, to: range)
+        let audioTrack = try await asset.loadTracks(withMediaType: .audio).first
+        let composition = try makeComposition(
+            videoTrack: videoTrack, audioTrack: audioTrack, trimmingTo: range)
         let videoComposition = try await makeVideoComposition(
             for: videoTrack, in: composition, transform: transform)
 
@@ -159,8 +185,9 @@ actor ClipExporter {
             throw ClipExportError.exportFailed(reason: "could not create an export session")
         }
         let outputURL = directory
-            .appendingPathComponent(fileName ?? "\(UUID().uuidString)")
+            .appendingPathComponent(fileName ?? UUID().uuidString)
             .appendingPathExtension("mp4")
+        try Self.removeExistingFile(at: outputURL)
         session.outputURL = outputURL
         session.outputFileType = .mp4
         session.videoComposition = videoComposition
@@ -169,10 +196,24 @@ actor ClipExporter {
         return ExportedClip(spec: spec, fileURL: outputURL)
     }
 
-    /// The trimmed timeline: the source video track, cut to `range`.
+    /// Deletes any file already at `url`. Export sessions refuse to write over an
+    /// existing file, and both failure and `cancelExport()` leave the partial file
+    /// behind — without this, the retry the error type advertises as retryable fails
+    /// with `AVErrorFileAlreadyExists`.
+    static func removeExistingFile(at url: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// The trimmed timeline: the source video track, cut to `range`, with the source's
+    /// audio track laid over the same range. Exported clips keep their audio: the design
+    /// doc's share path hands the file to Instagram / TikTok / YouTube Shorts, where a
+    /// silent clip reads as broken. A source with no audio track exports silent.
     private func makeComposition(
-        trimming videoTrack: AVAssetTrack,
-        to range: ClosedRange<TimeInterval>
+        videoTrack: AVAssetTrack,
+        audioTrack: AVAssetTrack?,
+        trimmingTo range: ClosedRange<TimeInterval>
     ) throws -> AVMutableComposition {
         let composition = AVMutableComposition()
         guard let compositionTrack = composition.addMutableTrack(
@@ -184,6 +225,14 @@ actor ClipExporter {
             start: CMTime(seconds: range.lowerBound, preferredTimescale: 600),
             end: CMTime(seconds: range.upperBound, preferredTimescale: 600))
         try compositionTrack.insertTimeRange(timeRange, of: videoTrack, at: .zero)
+        if let audioTrack {
+            guard let compositionAudioTrack = composition.addMutableTrack(
+                withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            else {
+                throw ClipExportError.exportFailed(reason: "could not add an audio track to the composition")
+            }
+            try compositionAudioTrack.insertTimeRange(timeRange, of: audioTrack, at: .zero)
+        }
         return composition
     }
 
@@ -253,7 +302,9 @@ actor ClipExporter {
 
     /// Exports every clip, collecting a per-clip `Result` so one bad window doesn't abort the
     /// rest — multi-trick recordings routinely produce a window the trimmer has to reject.
-    /// Results come back in the same order as `specs`.
+    /// Results come back in the same order as `specs`. If the task is cancelled, the
+    /// in-flight clip records `.cancelled` and the remaining clips are skipped:
+    /// cancellation stops the batch instead of failing every clip after it.
     func export(
         _ specs: [ClipSpec],
         from asset: AVAsset,
@@ -262,6 +313,9 @@ actor ClipExporter {
     ) async -> [Result<ExportedClip, Error>] {
         var results: [Result<ExportedClip, Error>] = []
         for (index, spec) in specs.enumerated() {
+            // Cancellation is not a bad window — stop instead of recording a failure
+            // per remaining clip.
+            guard !Task.isCancelled else { break }
             do {
                 let clip = try await export(spec, from: asset, to: directory) { fraction in
                     progress?(index, fraction)

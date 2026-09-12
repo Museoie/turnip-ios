@@ -52,16 +52,17 @@ final class ClipExporterTests: XCTestCase {
 
     // MARK: - ClipExportTransform
 
-    func testFullFrameCropWithIdentityTransformKeepsSizeAndFlipsY() throws {
+    func testFullFrameCropWithIdentityTransformKeepsSizeAndOrientation() throws {
         let transform = try XCTUnwrap(ClipExportTransform.make(
             cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
             naturalSize: landscape,
             preferredTransform: .identity))
 
         XCTAssertEqual(transform.renderSize, landscape)
-        // Top-left of the source lands at the top-left of the render frame, which is y-up.
-        assertPoint(CGPoint(x: 0, y: 0), mapsTo: CGPoint(x: 0, y: 1080), by: transform.layerTransform)
-        assertPoint(CGPoint(x: 1920, y: 1080), mapsTo: CGPoint(x: 1920, y: 0), by: transform.layerTransform)
+        // Top-left of the source lands at the top-left of the render frame: the
+        // compositor's render space is top-left-origin, so no Y-flip is applied.
+        assertPoint(CGPoint(x: 0, y: 0), mapsTo: CGPoint(x: 0, y: 0), by: transform.layerTransform)
+        assertPoint(CGPoint(x: 1920, y: 1080), mapsTo: CGPoint(x: 1920, y: 1080), by: transform.layerTransform)
         assertPoint(CGPoint(x: 960, y: 540), mapsTo: CGPoint(x: 960, y: 540), by: transform.layerTransform)
     }
 
@@ -73,8 +74,8 @@ final class ClipExporterTests: XCTestCase {
 
         // 960x540 pixels: the crop is not scaled, so the render is exactly the crop's size.
         XCTAssertEqual(transform.renderSize, CGSize(width: 960, height: 540))
-        assertPoint(CGPoint(x: 480, y: 270), mapsTo: CGPoint(x: 0, y: 540), by: transform.layerTransform)
-        assertPoint(CGPoint(x: 1440, y: 810), mapsTo: CGPoint(x: 960, y: 0), by: transform.layerTransform)
+        assertPoint(CGPoint(x: 480, y: 270), mapsTo: CGPoint(x: 0, y: 0), by: transform.layerTransform)
+        assertPoint(CGPoint(x: 1440, y: 810), mapsTo: CGPoint(x: 960, y: 540), by: transform.layerTransform)
     }
 
     func testRotatedTrackExportsUpright() throws {
@@ -85,8 +86,9 @@ final class ClipExporterTests: XCTestCase {
 
         // The 1920x1080 landscape encoding is really a 1080x1920 portrait video.
         XCTAssertEqual(transform.renderSize, CGSize(width: 1080, height: 1920))
-        assertPoint(CGPoint(x: 0, y: 0), mapsTo: CGPoint(x: 1080, y: 1920), by: transform.layerTransform)
-        assertPoint(CGPoint(x: 1920, y: 1080), mapsTo: .zero, by: transform.layerTransform)
+        // Encoded (0,0) is the displayed top-right — no flip on top of the rotation.
+        assertPoint(CGPoint(x: 0, y: 0), mapsTo: CGPoint(x: 1080, y: 0), by: transform.layerTransform)
+        assertPoint(CGPoint(x: 1920, y: 1080), mapsTo: CGPoint(x: 0, y: 1920), by: transform.layerTransform)
     }
 
     func testRotatedTrackSubtractsTheCropOriginInDisplayedSpace() throws {
@@ -99,10 +101,10 @@ final class ClipExporterTests: XCTestCase {
             preferredTransform: rotate90))
 
         XCTAssertEqual(transform.renderSize, CGSize(width: 1080, height: 960))
-        // Encoded crop corners, mapped through the 90° rotation into displayed space, then
-        // translated to the render origin and flipped y-up.
-        assertPoint(CGPoint(x: 960, y: 0), mapsTo: CGPoint(x: 1080, y: 960), by: transform.layerTransform)
-        assertPoint(CGPoint(x: 1920, y: 1080), mapsTo: .zero, by: transform.layerTransform)
+        // Encoded crop corners, mapped through the 90° rotation into displayed space,
+        // then translated to the render origin — top-left stays top-left.
+        assertPoint(CGPoint(x: 960, y: 0), mapsTo: CGPoint(x: 1080, y: 0), by: transform.layerTransform)
+        assertPoint(CGPoint(x: 1920, y: 1080), mapsTo: CGPoint(x: 0, y: 960), by: transform.layerTransform)
         assertPoint(CGPoint(x: 1440, y: 540), mapsTo: CGPoint(x: 540, y: 480), by: transform.layerTransform)
     }
 
@@ -120,5 +122,43 @@ final class ClipExporterTests: XCTestCase {
             cropRect: NormalizedRect(minX: 0.5, maxX: 0.5, minY: 0.2, maxY: 0.8),
             naturalSize: landscape,
             preferredTransform: .identity))
+    }
+
+    func testRenderSizeIsRoundedUpToEvenDimensions() throws {
+        // Float keypoint math denormalizes to fractional pixels (here 839.23 wide);
+        // H.264 needs integral, even dimensions, so the render rounds to 840x1080.
+        // A size that truncates to odd dimensions would fail on this expectation.
+        let transform = try XCTUnwrap(ClipExportTransform.make(
+            cropRect: NormalizedRect(minX: 0, maxX: 0.4371, minY: 0, maxY: 1),
+            naturalSize: landscape,
+            preferredTransform: .identity))
+
+        XCTAssertEqual(transform.renderSize, CGSize(width: 840, height: 1080))
+        // The crop's displayed top-left stays pinned to the render origin — the extra
+        // pixel pads the right edge rather than shifting the picture.
+        assertPoint(CGPoint(x: 0, y: 0), mapsTo: .zero, by: transform.layerTransform)
+    }
+
+    // MARK: - removeExistingFile
+
+    func testRemoveExistingFileDeletesAStaleOutput() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        try Data("partial".utf8).write(to: url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+
+        try ClipExporter.removeExistingFile(at: url)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testRemoveExistingFileToleratesAMissingFile() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+
+        // Must not throw: the first export to a fresh filename hits this path.
+        try ClipExporter.removeExistingFile(at: url)
     }
 }
