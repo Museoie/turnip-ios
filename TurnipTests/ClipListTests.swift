@@ -205,8 +205,12 @@ final class ClipListTests: XCTestCase {
         // the nil comes from the loader's no-video-track guard — not from a decode
         // throw. The card falls back to its placeholder tile; a throw must never reach
         // the view.
+        let audioURL = try Self.audioOnlyFileURL()
+        // The helper writes the WAV into tmp on every run; clean it up so the test
+        // leaves no scratch behind.
+        defer { try? FileManager.default.removeItem(at: audioURL) }
         let result = await loader.thumbnail(
-            for: makeItem(), in: AVURLAsset(url: try Self.audioOnlyFileURL()))
+            for: makeItem(), in: AVURLAsset(url: audioURL))
 
         XCTAssertNil(result)
     }
