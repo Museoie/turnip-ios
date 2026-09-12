@@ -341,6 +341,29 @@ final class VideoFrameSamplerTests: XCTestCase {
         try file.write(from: buffer)
         return url
     }
+
+    // MARK: - Sample stride
+
+    func testStrideSamplesRoughlyTenPerSecondRegardlessOfFrameRate() {
+        // ~10 samples/sec of footage regardless of source fps (docs/DESIGN.md "Performance
+        // targets"); a fixed stride of 3 only matches the design doc at 30 fps.
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 24), 2)
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 30), 3)
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 60), 6)
+        // Non-integral real-world rates discriminate the intended `rounded()` from a
+        // truncation mutation (`Int(fps / 10)`): truncation agrees with every case
+        // above but gives 2/2/1/5 here, while `rounded()` gives 3/3/2/6.
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 29.97), 3)
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 25), 3)
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 15), 2)
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 59.94), 6)
+    }
+
+    func testStrideFallsBackWhenTheTrackDeclaresNoFrameRate() {
+        // nominalFrameRate is 0 when the container doesn't declare one — keep the old 30 fps
+        // behavior rather than sampling every frame or dividing by zero.
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 0), 3)
+    }
 }
 
 private actor Timestamps {

@@ -61,7 +61,8 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
 - **Runtime**: TensorFlow Lite iOS OR Core ML (via coremltools conversion of the TFLite → Core ML). Core ML is preferable for Neural Engine acceleration on A11+ devices.
 - **Pipeline** (per input video):
   1. Decode frames at native fps, applying the track's rotation transform
-  2. Downsample every 3rd frame to 480p (10 samples/sec at 30fps input)
+  2. Sample ~10 frames/sec of footage — stride derived from the track's nominal frame rate
+     (3 at 30 fps, 24 at 240 fps slo-mo) — downsampling each kept frame to 480p
   3. Run pose detection, extract hip-midpoint per frame
   4. Motion signal = frame-to-frame hip displacement, smoothed (3-sample moving average)
   5. Peak detection with sustained-above-threshold logic → list of trick windows
@@ -69,6 +70,18 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
   7. Export N clips per input
 
   See "Interpreting pose output" below for the concrete algorithm turning pose keypoints into `(start_time, end_time)[]` clip ranges and `(min_x, max_x, min_y, max_y)` crop rects.
+
+### Performance targets
+
+Budgets the v1 pipeline is held to (issue #21). The numbers are initial targets to be validated
+by on-device profiling on the oldest supported hardware (iPhone 8 / A11, iOS 16).
+
+- **Sample rate**: ~10 frames/sec of footage regardless of source fps. The decode stride is
+  `round(nominalFrameRate / 10)`, so 240 fps slo-mo (the recommended recording mode) costs the
+  same inferences per second of footage as 30 fps — not 8×.
+- **Cancellation**: the sampler loop checks `Task.isCancelled` per decoded frame, and the owning
+  view model cancels its run task when the screen goes away, so an abandoned run stops decoding
+  instead of burning the device with no consumer.
 - **Preview UI**: thumbnail per detected clip, tap-preview, drag-adjust start/end, keep/discard toggles.
 - **Optional upload** (v2): opt-in per clip. "Send this to the community dataset for labeling" toggle. Uploads to `turnip-farm` with the auto-detected labels (window, crop rect) as a first-pass suggestion the community can accept/refine.
 - **OTA model updates**: on launch, poll `GET /api/models/current` for a new Core ML version; download in background, atomic-replace, use next launch.
