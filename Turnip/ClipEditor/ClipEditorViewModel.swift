@@ -27,6 +27,10 @@ final class ClipEditorViewModel: ObservableObject {
     @Published private(set) var duration: TimeInterval?
     @Published private(set) var playbackTime: TimeInterval = 0
 
+    /// Set when `prepare()` can't load the asset: the view swaps the loading
+    /// spinner for an error message instead of spinning forever.
+    @Published private(set) var failedToLoad = false
+
     /// The player the view renders. Created up front so `VideoPlayer` never sees a nil
     /// player; the item is attached in `prepare()`.
     let player = AVPlayer()
@@ -93,7 +97,10 @@ final class ClipEditorViewModel: ObservableObject {
               let naturalSize = try? await track.load(.naturalSize),
               naturalSize.width > 0, naturalSize.height > 0,
               let preferredTransform = try? await track.load(.preferredTransform)
-        else { return }
+        else {
+            failedToLoad = true
+            return
+        }
         setMediaInfo(
             duration: assetDuration.seconds,
             naturalSize: naturalSize,

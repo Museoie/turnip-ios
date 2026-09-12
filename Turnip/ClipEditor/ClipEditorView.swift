@@ -62,6 +62,20 @@ struct ClipEditorView: View {
                     }
                 }
                 .aspectRatio(overlay.videoSize, contentMode: .fit)
+            } else if viewModel.failedToLoad {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text("Couldn't load this clip")
+                        .font(.headline)
+                    Text("The video file couldn't be read.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Couldn't load this clip. The video file couldn't be read.")
             } else {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(.quaternary)
