@@ -131,7 +131,11 @@ final class ExportConfirmationViewModelTests: XCTestCase {
     ) -> ExportConfirmationViewModel {
         ExportConfirmationViewModel(
             items: items,
-            asset: AVAsset(),
+            // AVURLAsset over /dev/null rather than a bare AVAsset(): the bare
+            // initializer aborts the test host ("freed pointer was not the last
+            // allocation") while the harness's identical AVURLAsset form runs
+            // clean (see ScreenshotHarness). The fakes never read the asset.
+            asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
             exportClip: { window, cropRect, asset, directory, progress in
                 try await fake.export(window, cropRect, asset, directory, progress)
             },
