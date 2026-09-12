@@ -151,6 +151,16 @@ struct PhotoVideoResolver {
         session.outputFileType = .mov
         session.shouldOptimizeForNetworkUse = false
 
+        // A failed or cancelled export leaves a half-written file at outputURL that nobody owns
+        // (no SelectedVideo is ever created on the throw path); remove it here so a failed
+        // export cleans up in-session instead of waiting for the next launch sweep.
+        var exportSucceeded = false
+        defer {
+            if !exportSucceeded {
+                try? FileManager.default.removeItem(at: outputURL)
+            }
+        }
+
         let cancellable = ExportCancellation(session: session)
         await withTaskCancellationHandler {
             await session.export()
@@ -160,6 +170,7 @@ struct PhotoVideoResolver {
 
         switch session.status {
         case .completed:
+            exportSucceeded = true
             return AVURLAsset(url: outputURL)
         case .cancelled:
             throw CancellationError()
