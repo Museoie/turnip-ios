@@ -60,7 +60,7 @@ final class ClipEditorTests: XCTestCase {
         let after = viewModel.cropRect
         guard let expected = CropRectCalculator().cropRect(
             for: frames.filter { $0.timestamp >= 2.0 && $0.timestamp <= 3.9 },
-            sourcePixelSize: naturalSize)
+            renderedPixelSize: naturalSize)
         else {
             return XCTFail("the trimmed window's frames should yield a crop rect")
         }

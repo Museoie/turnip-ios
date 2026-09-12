@@ -243,7 +243,7 @@ final class ClipEditorViewModel: ObservableObject {
         let inWindow = source.poseFrames.filter {
             $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
         }
-        if let rect = calculator.cropRect(for: inWindow, sourcePixelSize: naturalSize) {
+        if let rect = calculator.cropRect(for: inWindow, renderedPixelSize: naturalSize) {
             cropRect = rect
         }
     }
