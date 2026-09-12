@@ -50,6 +50,11 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
             }
             let downloadedURL = try await client.downloadModel(
                 from: manifest.downloadURL)
+            // downloadModel hands us a temp file — delete it once the bytes
+            // are in memory, so each check doesn't leave a model-sized file
+            // behind in tmp/ waiting on the OS to purge it. Runs on every
+            // exit from this block, including the checksum-mismatch throw.
+            defer { try? FileManager.default.removeItem(at: downloadedURL) }
             let bytes = try Data(contentsOf: downloadedURL)
             guard sha256Hex(bytes) == manifest.sha256.lowercased() else {
                 throw ModelUpdateError.checksumMismatch
