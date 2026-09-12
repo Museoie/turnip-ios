@@ -26,7 +26,10 @@ screen's PR rather than retrofitting later.
 - Progress and completion are announced (`AccessibilityNotification.Announcement` /
   `UIAccessibility.post`) — a VoiceOver user must not sit on a silent screen while the
   pipeline runs. Announce phase changes ("Analyzing frame 400 of 1,200") sparingly; the
-  empty and error states must both be announced on arrival.
+  empty and error states must both be announced on arrival. Availability: the SwiftUI
+  `AccessibilityNotification.Announcement` API is iOS 17+ and needs `if #available(iOS 17, *)`
+  gating — on the iOS 16 floor (`IPHONEOS_DEPLOYMENT_TARGET: "16.0"` in `project.yml`), use
+  `UIAccessibility.post(notification: .announcement, argument:)` instead.
 - Cancel action reachable and labeled.
 
 ### Clip List (#11)
@@ -35,7 +38,8 @@ screen's PR rather than retrofitting later.
   state. The keep/discard toggle is reachable as an action, not just a tap target.
 - "Export N clips" action labeled with the live count; disabled state announced.
 - No auto-playing loops when `accessibilityReduceMotion` is on; respect
-  `UIAccessibility.isVideoAutoplayEnabled`.
+  `UIAccessibility.isVideoAutoplayEnabled` (iOS 17+ — gate with `if #available(iOS 17, *)`;
+  on iOS 16 the reduce-motion check alone governs autoplay).
 
 ### Clip Detail / Editor (#18) — verify on device
 
