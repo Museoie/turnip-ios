@@ -1,9 +1,12 @@
 import Foundation
 
-struct PoseKeypoint: Identifiable {
+struct PoseKeypoint: Identifiable, Sendable {
     let id = UUID()
     let name: String
-    /// Normalized 0-1. MoveNet's output order is (y, x, score) — y before x.
+    /// Nominally normalized 0-1 relative to the source frame — but honest about pad-region
+    /// keypoints: a joint landing in the letterbox pad maps outside [0, 1] rather than being
+    /// clamped to the edge, so downstream code must tolerate out-of-range values.
+    /// MoveNet's output order is (y, x, score) — y before x.
     let y: Float
     let x: Float
     let confidence: Float
@@ -33,7 +36,7 @@ struct PoseKeypoint: Identifiable {
     }
 }
 
-struct PoseFrameResult: Identifiable {
+struct PoseFrameResult: Identifiable, Sendable {
     let id = UUID()
     let frameIndex: Int
     let timestamp: TimeInterval

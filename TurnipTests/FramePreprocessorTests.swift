@@ -1,3 +1,4 @@
+import CoreImage
 import CoreVideo
 import XCTest
 @testable import Turnip
@@ -27,30 +28,245 @@ final class FramePreprocessorTests: XCTestCase {
 
     // MARK: - Geometry
 
-    func testScaleTransformMapsASquareSourceOntoTheInputSquare() {
+    func testLetterboxMapsASquareSourceOntoTheInputSquare() throws {
         let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
         let extent = CGRect(x: 0, y: 0, width: 512, height: 512)
 
-        let transform = preprocessor.scaleTransform(forSourceExtent: extent)
+        let (transform, mapping) = try preprocessor.letterboxGeometry(forSourceExtent: extent)
 
         XCTAssertEqual(transform.a, 0.5, accuracy: 0.0001)
         XCTAssertEqual(transform.d, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(mapping.offsetX, 0, accuracy: 0.0001)
+        XCTAssertEqual(mapping.offsetY, 0, accuracy: 0.0001)
         XCTAssertEqual(extent.applying(transform).width, 256, accuracy: 0.0001)
         XCTAssertEqual(extent.applying(transform).height, 256, accuracy: 0.0001)
     }
 
-    /// Asserted as a bound plus "touches one edge" rather than exact per-axis sizes, so the
-    /// assertion stays meaningful whether the two axes are scaled independently or uniformly.
-    func testScaleTransformFitsANonSquareSourceInsideTheInputSquare() {
+    /// The letterbox fit: the longer side fills the input, the shorter side is centered with
+    /// zeroed padding.
+    func testLetterboxFitsANonSquareSourceInsideTheInputSquare() throws {
         let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
 
         for size in [CGSize(width: 1920, height: 1080), CGSize(width: 1080, height: 1920)] {
             let extent = CGRect(origin: .zero, size: size)
-            let scaled = extent.applying(preprocessor.scaleTransform(forSourceExtent: extent))
+            let scaled = extent.applying(try preprocessor.letterboxGeometry(forSourceExtent: extent).transform)
 
             XCTAssertLessThanOrEqual(scaled.width, 256.0001, "\(size) overflows the input square")
             XCTAssertLessThanOrEqual(scaled.height, 256.0001, "\(size) overflows the input square")
             XCTAssertEqual(max(scaled.width, scaled.height), 256, accuracy: 0.0001, "\(size) underfills it")
+        }
+    }
+
+    func testLetterboxCentersLandscapeAndPortraitFrames() throws {
+        let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
+
+        // 1920x1080: uniform scale is 256/1920, so the frame is 256x144 and the 112 leftover
+        // pixels split evenly above and below.
+        let landscape = try preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1920, height: 1080))
+        XCTAssertEqual(landscape.mapping.scale, 256.0 / 1920.0, accuracy: 0.0001)
+        XCTAssertEqual(landscape.mapping.offsetX, 0, accuracy: 0.0001)
+        XCTAssertEqual(landscape.mapping.offsetY, 56, accuracy: 0.0001)
+        let placedLandscape = CGRect(x: 0, y: 0, width: 1920, height: 1080).applying(landscape.transform)
+        XCTAssertEqual(placedLandscape.origin.x, 0, accuracy: 0.0001)
+        XCTAssertEqual(placedLandscape.origin.y, 56, accuracy: 0.0001)
+        XCTAssertEqual(placedLandscape.width, 256, accuracy: 0.0001)
+        XCTAssertEqual(placedLandscape.height, 144, accuracy: 0.0001)
+
+        // 1080x1920: the inverse — padding on the sides instead of top and bottom.
+        let portrait = try preprocessor.letterboxGeometry(forSourceExtent: CGRect(x: 0, y: 0, width: 1080, height: 1920))
+        XCTAssertEqual(portrait.mapping.scale, 256.0 / 1920.0, accuracy: 0.0001)
+        XCTAssertEqual(portrait.mapping.offsetX, 56, accuracy: 0.0001)
+        XCTAssertEqual(portrait.mapping.offsetY, 0, accuracy: 0.0001)
+    }
+
+    /// Keypoints come back in normalized input coordinates; the recorded (scale, offsetX, offsetY)
+    /// must invert them exactly, since the crop-rect and empirical-baseline work depends on it.
+    func testLetterboxMappingInvertsNormalizedKeypoints() throws {
+        let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
+        let mapping = try preprocessor.letterboxGeometry(
+            forSourceExtent: CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        ).mapping
+
+        // Center of the input square is the center of the source frame.
+        let center = mapping.sourcePoint(normalizedX: 0.5, normalizedY: 0.5)
+        XCTAssertEqual(center.x, 960, accuracy: 0.0001)
+        XCTAssertEqual(center.y, 540, accuracy: 0.0001)
+
+        // The scaled frame occupies x in [0, 256], y in [56, 200] — the pad boundary maps back
+        // to the frame edges, not into the padding.
+        let topLeft = mapping.sourcePoint(normalizedX: 0, normalizedY: 56.0 / 256.0)
+        XCTAssertEqual(topLeft.x, 0, accuracy: 0.0001)
+        XCTAssertEqual(topLeft.y, 0, accuracy: 0.0001)
+        let bottomRight = mapping.sourcePoint(normalizedX: 1, normalizedY: 200.0 / 256.0)
+        XCTAssertEqual(bottomRight.x, 1920, accuracy: 0.0001)
+        XCTAssertEqual(bottomRight.y, 1080, accuracy: 0.0001)
+    }
+
+    /// A zero-extent source would divide by zero and produce an infinite scale that silently
+    /// emits nothing downstream, so the geometry refuses it up front instead of shipping
+    /// bad geometry.
+    func testLetterboxRejectsADegenerateExtent() {
+        let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
+
+        XCTAssertThrowsError(try preprocessor.letterboxGeometry(forSourceExtent: .zero))
+        XCTAssertThrowsError(try preprocessor.letterboxGeometry(
+            forSourceExtent: CGRect(x: 0, y: 0, width: 640, height: 0)))
+    }
+
+    /// `frameNormalized(keypoints:)` must restore the frame fractions the downstream
+    /// consumers read: on a 1080x1920 portrait source in a 256x256 input the padded x axis
+    /// reports `0.5625 f + 0.21875`, but `CropRectCalculator` and `MotionSignalBuilder` assume
+    /// frame fractions — so the mapping is inverted and divided by the recorded source extent
+    /// before keypoints enter `PoseFrameResult`. The extent rides on the mapping rather than
+    /// arriving as a second parameter, so no caller can invert against a size the geometry
+    /// was not computed from.
+    func testFrameNormalizedKeypointsInvertTheLetterbox() {
+        let mapping = LetterboxMapping(
+            scale: 256.0 / 1920.0, offsetX: 56, offsetY: 0,
+            inputSize: CGSize(width: 256, height: 256),
+            sourceExtent: CGRect(x: 0, y: 0, width: 1080, height: 1920))
+
+        // The input square's center is the source frame's center.
+        let center = mapping.frameNormalized(
+            keypoints: [PoseKeypoint(name: "nose", y: 0.5, x: 0.5, confidence: 0.9)])
+        XCTAssertEqual(center.count, 1)
+        XCTAssertEqual(center[0].x, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(center[0].y, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(center[0].name, "nose")
+        XCTAssertEqual(center[0].confidence, 0.9, accuracy: 0.0001)
+
+        // A frame fraction round-trips through the forward and inverse maps.
+        let inputX = Float((270.0 * (256.0 / 1920.0) + 56.0) / 256.0)
+        let inputY = Float((960.0 * (256.0 / 1920.0)) / 256.0)
+        let roundTripped = mapping.frameNormalized(
+            keypoints: [PoseKeypoint(name: "nose", y: inputY, x: inputX, confidence: 0.9)])
+        XCTAssertEqual(roundTripped[0].x, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(roundTripped[0].y, 0.5, accuracy: 0.0001)
+
+        // A keypoint the model places in the letterbox pad maps outside [0, 1] — off-frame is
+        // reported honestly rather than clamped. x = 0.10 sits in the 56-pixel left pad and
+        // reads -0.2111 of the 1080-wide frame; x = 0.95 sits in the right pad and reads 1.30.
+        let padLeft = mapping.frameNormalized(
+            keypoints: [PoseKeypoint(name: "nose", y: 0.5, x: 0.10, confidence: 0.9)])
+        XCTAssertEqual(padLeft[0].x, -0.2111, accuracy: 0.0001)
+        XCTAssertEqual(padLeft[0].y, 0.5, accuracy: 0.0001)
+        let padRight = mapping.frameNormalized(
+            keypoints: [PoseKeypoint(name: "nose", y: 0.5, x: 0.95, confidence: 0.9)])
+        XCTAssertEqual(padRight[0].x, 1.30, accuracy: 0.0001)
+        XCTAssertEqual(padRight[0].y, 0.5, accuracy: 0.0001)
+    }
+
+    // MARK: - Render
+
+    /// The render must leave the letterbox pad a known constant: a non-square source rendered
+    /// through the real path (`makeTargetBuffer` + `CIContext.render` + `packRGB`) keeps the
+    /// zeroed pad the buffer was allocated with. The fixture is a solid fill, so any painted
+    /// pixel reads non-zero and the assertion distinguishes written from allocated memory.
+    ///
+    /// Limitation, recorded honestly: this test cannot discriminate removing the
+    /// `Self.zeroFill(buffer)` call from `makeTargetBuffer` — the buffer under test is always
+    /// allocated through the zero-filling path itself, and fresh `CVPixelBufferCreate`
+    /// allocations read back zero on the CI simulators, so the pad assertions pass with or
+    /// without the clear. The clear itself is pinned directly by
+    /// `testZeroFillClearsEveryByteIncludingRowPadding` (which does run `zeroFill` on a dirty
+    /// buffer); what this test pins is the rest of the pipeline — the pad the render leaves
+    /// behind is zero, and the placed frame is actually painted.
+    func testLetterboxPadIsZeroAfterRender() throws {
+        let preprocessor = FramePreprocessor(targetWidth: 256, targetHeight: 256)
+        // 64x36 landscape: uniform scale 4, placed 256x144, 56 pad rows top and bottom.
+        let source = CIImage(color: CIColor(red: 1, green: 1, blue: 1))
+            .cropped(to: CGRect(x: 0, y: 0, width: 64, height: 36))
+        let (transform, mapping) = try preprocessor.letterboxGeometry(forSourceExtent: source.extent)
+        XCTAssertEqual(mapping.offsetY, 56, accuracy: 0.0001)
+
+        let buffer = try preprocessor.makeTargetBuffer()
+
+        // The pad assertions below are only meaningful on a zeroed buffer, so pin the
+        // allocation-time clear up front (honoring row stride): on an allocator that hands back
+        // dirty pages this fails here with a clear message instead of passing silently.
+        // The lock is released before the render below, which needs write access.
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
+            CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
+            throw FixtureFailure(message: "could not read back the freshly allocated buffer")
+        }
+        let byteCount = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
+        let preRenderBytes = UnsafeBufferPointer(
+            start: baseAddress.assumingMemoryBound(to: UInt8.self), count: byteCount)
+        let preRenderIsZeroed = !preRenderBytes.contains(where: { $0 != 0 })
+        CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
+        XCTAssertTrue(
+            preRenderIsZeroed,
+            "makeTargetBuffer must hand back a zeroed buffer — the pad assertions assume it")
+
+        CIContext().render(source.transformed(by: transform), to: buffer)
+        let rgb = Array(try preprocessor.packRGB(from: buffer))
+
+        func triplet(atRow row: Int, col: Int) -> [UInt8] {
+            let base = (row * 256 + col) * 3
+            return [rgb[base], rgb[base + 1], rgb[base + 2]]
+        }
+
+        // Rows above and below the placed frame are the zeroed pad.
+        let padRows = Int(mapping.offsetY)
+        for row in 0..<padRows {
+            for col in 0..<256 {
+                XCTAssertEqual(
+                    triplet(atRow: row, col: col), [0, 0, 0],
+                    "pad pixel at row \(row) col \(col) is not zero")
+            }
+        }
+        for row in (256 - padRows)..<256 {
+            for col in 0..<256 {
+                XCTAssertEqual(
+                    triplet(atRow: row, col: col), [0, 0, 0],
+                    "pad pixel at row \(row) col \(col) is not zero")
+            }
+        }
+
+        // The placed frame itself rendered — the buffer is not just a zeroed allocation.
+        var painted = 0
+        for row in padRows..<(256 - padRows) {
+            for col in 0..<256 where triplet(atRow: row, col: col) != [UInt8](repeating: 0, count: 3) {
+                painted += 1
+            }
+        }
+        XCTAssertGreaterThan(painted, 0, "no rendered content found inside the placed rect")
+    }
+
+    func testZeroFillClearsEveryByteIncludingRowPadding() throws {
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault, 250, 8, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferCGImageCompatibilityKey: true] as CFDictionary, &buffer
+        )
+        guard status == kCVReturnSuccess, let buffer else {
+            throw FixtureFailure(message: "could not allocate a 250x8 buffer: \(status)")
+        }
+
+        CVPixelBufferLockBaseAddress(buffer, [])
+        if let baseAddress = CVPixelBufferGetBaseAddress(buffer) {
+            memset(
+                baseAddress, 0xA5,
+                CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
+            )
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+
+        FramePreprocessor.zeroFill(buffer)
+
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
+            throw FixtureFailure(message: "could not read back the zeroed buffer")
+        }
+        let bytes = baseAddress.assumingMemoryBound(to: UInt8.self)
+        for row in 0..<height {
+            for col in 0..<bytesPerRow {
+                XCTAssertEqual(bytes[row * bytesPerRow + col], 0, "byte \(col) of row \(row) not cleared")
+            }
         }
     }
 

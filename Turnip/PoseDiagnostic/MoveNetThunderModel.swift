@@ -95,23 +95,30 @@ actor MoveNetThunderModel {
         preprocessor = try FramePreprocessor(inputShape: inputTensor.shape.dimensions)
     }
 
+    /// The keypoints come back frame-normalized: the letterbox inversion happens here, at the
+    /// producer, because every consumer reads `PoseKeypoint.x/y` as frame fractions and nothing
+    /// in the type system distinguishes converted keypoints from unconverted ones.
     func runInference(on pixelBuffer: CVPixelBuffer) throws -> [PoseKeypoint] {
-        let inputData = try resizedRGBData(from: pixelBuffer)
+        let (inputData, mapping) = try resizedRGBData(from: pixelBuffer)
         try interpreter.copy(inputData, toInputAt: 0)
         try interpreter.invoke()
         let outputTensor = try interpreter.output(at: 0)
         let values = Self.dequantize(outputTensor)
-        return try PoseKeypoint.parse(from: values)
+        return mapping.frameNormalized(keypoints: try PoseKeypoint.parse(from: values))
     }
 
-    /// Resizes the source frame to the model's input size and packs it as interleaved RGB uint8,
-    /// matching MoveNet Thunder's expected [1, height, width, 3] input tensor.
-    private func resizedRGBData(from pixelBuffer: CVPixelBuffer) throws -> Data {
+    /// Letterboxes the source frame into the model's input size (uniform scale, centered) and
+    /// packs it as interleaved RGB uint8, matching MoveNet Thunder's expected [1, height, width, 3]
+    /// input tensor. Returns the packing together with the geometry that placed it, so keypoints
+    /// can be mapped back to the source frame.
+    private func resizedRGBData(from pixelBuffer: CVPixelBuffer) throws -> (
+        data: Data, mapping: LetterboxMapping
+    ) {
         let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let transform = preprocessor.scaleTransform(forSourceExtent: sourceImage.extent)
+        let (transform, mapping) = try preprocessor.letterboxGeometry(forSourceExtent: sourceImage.extent)
         let outputBuffer = try preprocessor.makeTargetBuffer()
         ciContext.render(sourceImage.transformed(by: transform), to: outputBuffer)
-        return try preprocessor.packRGB(from: outputBuffer)
+        return (try preprocessor.packRGB(from: outputBuffer), mapping)
     }
 
     /// The int8 build quantizes the weights and the input, but its output tensor is
