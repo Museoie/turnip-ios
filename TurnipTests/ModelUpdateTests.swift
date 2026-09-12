@@ -213,7 +213,8 @@ final class ModelUpdateTests: XCTestCase {
         let activeURL = try XCTUnwrap(store.activeModelURL())
         XCTAssertEqual(try Data(contentsOf: activeURL), bytes)
         XCTAssertEqual(store.activeVersion(), ModelVersion("2026.09.10-1"))
-        XCTAssertNotNil(await service.lastError)
+        let lastError = await service.lastError
+        XCTAssertNotNil(lastError)
     }
 
     /// A cancelled check is a deliberate stop, not a failed update: a
@@ -231,7 +232,8 @@ final class ModelUpdateTests: XCTestCase {
         let service = makeService(client: client, store: store)
         await service.checkForUpdates() // must not throw
 
-        XCTAssertNil(await service.lastError)
+        let lastError = await service.lastError
+        XCTAssertNil(lastError)
     }
 
     /// No configured endpoint means no network at all — the service is inert
@@ -243,7 +245,8 @@ final class ModelUpdateTests: XCTestCase {
         await service.checkForUpdates()
         let fetched = await client.fetchedEndpoints
         XCTAssertTrue(fetched.isEmpty)
-        XCTAssertNil(await service.lastError)
+        let lastError = await service.lastError
+        XCTAssertNil(lastError)
     }
 
     /// A manifest whose fileName tries to escape the OTA directory must be
