@@ -41,8 +41,8 @@ struct ClipListView: View {
             case .editor(let id):
                 // The editor binds back into the list so keep/discard changes commit
                 // on back-navigation (docs/UIUX.md § "Clip Detail / Editor").
-                if let index = viewModel.items.firstIndex(where: { $0.id == id }) {
-                    ClipEditorPlaceholderView(item: $viewModel.items[index])
+                if let item = viewModel.binding(for: id) {
+                    ClipEditorPlaceholderView(item: item)
                 }
             }
         }

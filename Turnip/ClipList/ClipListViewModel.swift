@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import CoreGraphics
 import Foundation
+import SwiftUI
 
 /// Backing store for `ClipListView` (`docs/UIUX.md` § "Clip List (triage)").
 @MainActor
@@ -48,6 +49,21 @@ final class ClipListViewModel: ObservableObject {
     func toggleKeep(_ item: ClipListItem) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index].isKept.toggle()
+    }
+
+    /// A write-through binding to one item, for a destination that edits a clip in place.
+    /// Keyed by id on both ends rather than closing over an index, so a re-run of
+    /// detection reordering the list can't make the binding write to a different clip.
+    /// `nil` when the id is no longer in the list.
+    func binding(for id: UUID) -> Binding<ClipListItem>? {
+        guard let current = items.first(where: { $0.id == id }) else { return nil }
+        return Binding(
+            get: { self.items.first(where: { $0.id == id }) ?? current },
+            set: { updated in
+                guard let index = self.items.firstIndex(where: { $0.id == id }) else { return }
+                self.items[index] = updated
+            }
+        )
     }
 
     /// The card thumbnail, loading lazily. Idempotent and safe to call from every card's

@@ -8,7 +8,7 @@ import Foundation
 /// shows everything until the user opts a clip out. `Identifiable` by a stable `id`
 /// (not the window times) so view state survives a re-run of detection producing
 /// slightly different windows.
-struct ClipListItem: Equatable, Hashable, Identifiable, Sendable {
+struct ClipListItem: Hashable, Identifiable, Sendable {
     let id: UUID
     let window: TrickWindow
     let cropRect: NormalizedRect

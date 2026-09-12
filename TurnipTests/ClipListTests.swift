@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreGraphics
+import SwiftUI
 import XCTest
 @testable import Turnip
 
@@ -63,6 +64,30 @@ final class ClipListTests: XCTestCase {
         viewModel.toggleKeep(makeItem())
 
         XCTAssertTrue(viewModel.items[0].isKept)
+    }
+
+    @MainActor
+    func testBindingWritesThroughToTheListEntry() {
+        let target = makeItem()
+        let viewModel = ClipListViewModel(items: [makeItem(), target], asset: dummyAsset())
+
+        guard let binding = viewModel.binding(for: target.id) else {
+            XCTFail("expected a binding for an item that is in the list")
+            return
+        }
+        binding.wrappedValue.isKept = false
+
+        // The write lands on the target entry, not on whichever index the binding was
+        // created at — the editor destination edits the clip the card tapped.
+        XCTAssertFalse(viewModel.items[1].isKept)
+        XCTAssertTrue(viewModel.items[0].isKept)
+    }
+
+    @MainActor
+    func testBindingIsNilForAnItemThatIsNotInTheList() {
+        let viewModel = ClipListViewModel(items: [makeItem()], asset: dummyAsset())
+
+        XCTAssertNil(viewModel.binding(for: makeItem().id))
     }
 
     @MainActor

@@ -16,15 +16,7 @@ actor ClipThumbnailLoader {
     /// The generator returns the displayed (upright) frame, so the crop below is computed
     /// in displayed space too — no second flip. `nil` when the frame can't be decoded or
     /// the crop rect is degenerate; the card falls back to its placeholder tile.
-    ///
-    /// - Parameter maxPixelSize: bounds the decoded frame (card size times screen scale).
-    ///   Without it the generator hands back native-resolution frames and the view model
-    ///   holds ~10 of them resident to render ~10 triage cards.
-    func thumbnail(
-        for item: ClipListItem,
-        in asset: AVAsset,
-        maxPixelSize: CGSize = Self.defaultMaxPixelSize
-    ) async -> CGImage? {
+    func thumbnail(for item: ClipListItem, in asset: AVAsset) async -> CGImage? {
         do {
             // Fail fast on assets with no video track: seeking a frame that can't exist
             // is wasted work, and the placeholder tile is the honest fallback.
@@ -39,7 +31,7 @@ actor ClipThumbnailLoader {
             // rect was derived from the athlete's pose *inside* the window.
             generator.requestedTimeToleranceBefore = .zero
             generator.requestedTimeToleranceAfter = .zero
-            generator.maximumSize = maxPixelSize
+            generator.maximumSize = Self.defaultMaxPixelSize
             let image = try generator.copyCGImage(
                 at: CMTime(seconds: midpoint, preferredTimescale: 600),
                 actualTime: nil
@@ -62,8 +54,10 @@ actor ClipThumbnailLoader {
     }
 
     /// Decoded-frame bound for card thumbnails: the two-column triage grid gives ~170pt
-    /// cards on a ~390pt phone, at 9:16 and @3x. `croppedThumbnail` scales the crop into
-    /// whatever pixel size the generator actually returns, so this only caps memory.
+    /// cards on a ~390pt phone, at 9:16 and @3x. Unbounded, the generator hands back
+    /// native-resolution frames and the view model holds one per visible card resident.
+    /// `croppedThumbnail` scales the crop into whatever pixel size the generator actually
+    /// returns, so this only caps memory.
     static let defaultMaxPixelSize = CGSize(width: 512, height: 912)
 
     /// Maps the crop rect from the encoded frame's pixel space (top-left origin, no
