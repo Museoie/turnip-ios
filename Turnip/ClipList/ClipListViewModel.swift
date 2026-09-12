@@ -18,6 +18,13 @@ final class ClipListViewModel: ObservableObject {
     private let loader: ClipThumbnailLoader
     private var inFlight: [UUID: Task<CGImage?, Never>] = [:]
 
+    /// The video track's geometry, loaded once per asset and shared by every card's
+    /// placeholder-ratio math. `nil` when the asset has no video track or can't be
+    /// read — cards then fall back to the crop rect's own (encoded-space) ratio.
+    private var trackGeometryTask: Task<
+        (naturalSize: CGSize, preferredTransform: CGAffineTransform)?, Never
+    >?
+
     init(
         items: [ClipListItem],
         asset: AVAsset,
@@ -64,6 +71,42 @@ final class ClipListViewModel: ObservableObject {
                 self.items[index] = updated
             }
         )
+    }
+
+    /// The placeholder tile's aspect ratio for `item`, computed in the displayed
+    /// frame's space — the space the decoded thumbnail renders in — so cards don't
+    /// reflow when thumbnails land. Falls back to the crop rect's own ratio
+    /// (encoded space, the previous behavior) when the track geometry can't be
+    /// loaded, and to 9:16 for a degenerate crop rect.
+    func placeholderAspectRatio(for item: ClipListItem) async -> CGFloat {
+        if let (naturalSize, preferredTransform) = await trackGeometry() {
+            return ClipThumbnailLoader.displayedAspectRatio(
+                cropRect: item.cropRect,
+                naturalSize: naturalSize,
+                preferredTransform: preferredTransform)
+        }
+        let width = CGFloat(item.cropRect.width), height = CGFloat(item.cropRect.height)
+        guard width > 0, height > 0 else { return 9.0 / 16.0 }
+        return width / height
+    }
+
+    /// Loads the video track's geometry once per asset; concurrent callers share the
+    /// single in-flight task. `@MainActor`-serialized, so the check-then-set is
+    /// race-free (same pattern as `inFlight` above).
+    private func trackGeometry() async -> (
+        naturalSize: CGSize, preferredTransform: CGAffineTransform
+    )? {
+        if trackGeometryTask == nil {
+            trackGeometryTask = Task { [asset] in
+                guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+                      let naturalSize = try? await track.load(.naturalSize),
+                      let preferredTransform = try? await track.load(.preferredTransform)
+                else { return nil }
+                return (naturalSize, preferredTransform)
+            }
+        }
+        guard let task = trackGeometryTask else { return nil }
+        return await task.value
     }
 
     /// The card thumbnail, loading lazily. Idempotent and safe to call from every card's

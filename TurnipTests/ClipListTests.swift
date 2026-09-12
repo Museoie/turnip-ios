@@ -156,6 +156,63 @@ final class ClipListTests: XCTestCase {
             preferredTransform: .identity))
     }
 
+    // MARK: - ClipThumbnailLoader.displayedAspectRatio
+
+    func testDisplayedAspectRatioWithIdentityTransformMatchesTheCropRect() {
+        // Fractions chosen exactly representable in Float so the assertion is exact.
+        let crop = NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.5, maxY: 0.75)
+
+        XCTAssertEqual(
+            ClipThumbnailLoader.displayedAspectRatio(
+                cropRect: crop,
+                naturalSize: CGSize(width: 200, height: 100),
+                preferredTransform: .identity),
+            4.0) // 100 wide x 25 tall
+    }
+
+    func testDisplayedAspectRatioSwapsOnARotatedTrack() {
+        // Portrait phone video: 9:16 portrait crop in encoded space, 16:9 landscape in
+        // displayed space. The encoded-space ratio (the old placeholder behavior) would
+        // be 8/9 — this is the discriminating case for the triage reflow fix.
+        let crop = NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0, maxY: 1)
+
+        XCTAssertEqual(
+            ClipThumbnailLoader.displayedAspectRatio(
+                cropRect: crop,
+                naturalSize: CGSize(width: 1920, height: 1080),
+                preferredTransform: rotate90),
+            9.0 / 8.0, // 1080 wide x 960 tall displayed
+            accuracy: 1e-6)
+    }
+
+    func testDisplayedAspectRatioFallsBackForDegenerateInputs() {
+        let empty = NormalizedRect(minX: 0.5, maxX: 0.5, minY: 0, maxY: 1)
+
+        XCTAssertEqual(
+            ClipThumbnailLoader.displayedAspectRatio(
+                cropRect: empty,
+                naturalSize: CGSize(width: 100, height: 100),
+                preferredTransform: .identity),
+            9.0 / 16.0)
+        XCTAssertEqual(
+            ClipThumbnailLoader.displayedAspectRatio(
+                cropRect: fullFrame,
+                naturalSize: .zero,
+                preferredTransform: .identity),
+            9.0 / 16.0)
+    }
+
+    @MainActor
+    func testPlaceholderAspectRatioFallsBackToTheCropRectWithoutATrack() async {
+        // The dummy asset resolves to nothing, so the track geometry never loads and
+        // the view model must fall back to the crop rect's own (encoded-space) ratio —
+        // the previous behavior — rather than failing.
+        let viewModel = ClipListViewModel(items: [makeItem()], asset: dummyAsset())
+
+        let ratio = await viewModel.placeholderAspectRatio(for: makeItem())
+        XCTAssertEqual(ratio, 1.0)
+    }
+
     // MARK: - ClipThumbnailLoader.croppedThumbnail
 
     func testCroppedThumbnailExtractsTheDisplayedCropAtPixelScale() throws {

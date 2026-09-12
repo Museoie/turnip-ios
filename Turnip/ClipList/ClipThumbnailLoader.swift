@@ -79,6 +79,26 @@ actor ClipThumbnailLoader {
         return boundingBox(of: encoded.corners.map { $0.applying(preferredTransform) })
     }
 
+    /// The aspect ratio (width / height) of `cropRect` in the displayed frame's
+    /// space — the space the decoded thumbnail renders in. Derived from
+    /// `displayedCropRect`, the same mapping the thumbnail decode uses, so a
+    /// placeholder drawn at this ratio never reflows when the thumbnail lands.
+    /// Falls back to 9:16 for degenerate inputs.
+    static func displayedAspectRatio(
+        cropRect: NormalizedRect,
+        naturalSize: CGSize,
+        preferredTransform: CGAffineTransform
+    ) -> CGFloat {
+        guard let displayed = displayedCropRect(
+            cropRect: cropRect,
+            naturalSize: naturalSize,
+            preferredTransform: preferredTransform
+        ), displayed.height > 0 else {
+            return 9.0 / 16.0
+        }
+        return displayed.width / displayed.height
+    }
+
     /// Crops `image` to `displayedCrop`, scaling from the displayed frame size to the
     /// image's pixel size (the generator may hand back a scaled frame when `maximumSize`
     /// is set). The crop is clamped to the image bounds and `nil` is returned when nothing

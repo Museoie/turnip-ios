@@ -80,6 +80,7 @@ private struct ClipCardView: View {
     let item: ClipListItem
     @ObservedObject var viewModel: ClipListViewModel
     @State private var thumbnail: CGImage?
+    @State private var placeholderRatio: CGFloat?
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -103,7 +104,12 @@ private struct ClipCardView: View {
             .accessibilityLabel(item.isKept ? "Discard clip" : "Keep clip")
         }
         .task {
-            thumbnail = await viewModel.thumbnail(for: item)
+            // Fetch the displayed-space placeholder ratio alongside the thumbnail: both
+            // are cached per asset/item, so a `.task` re-fire is cheap.
+            async let ratio = viewModel.placeholderAspectRatio(for: item)
+            async let image = viewModel.thumbnail(for: item)
+            placeholderRatio = await ratio
+            thumbnail = await image
         }
     }
 
@@ -119,15 +125,16 @@ private struct ClipCardView: View {
         } else {
             RoundedRectangle(cornerRadius: 8)
                 .fill(.quaternary)
-                .aspectRatio(placeholderAspectRatio, contentMode: .fit)
+                .aspectRatio(placeholderRatio ?? encodedSpaceRatio, contentMode: .fit)
                 .overlay { ProgressView() }
         }
     }
 
-    /// The placeholder tile's ratio matches the crop the decoded image will be drawn at,
-    /// so cards don't resize and reflow the grid as thumbnails land. Falls back to 9:16
-    /// for a degenerate crop rect.
-    private var placeholderAspectRatio: CGFloat {
+    /// The crop rect's own ratio (encoded space): the best guess before the track
+    /// geometry loads. The view model replaces it with the displayed-space ratio —
+    /// the space the decoded thumbnail renders in — as soon as the track's
+    /// `preferredTransform` is known, so cards don't reflow when thumbnails land.
+    private var encodedSpaceRatio: CGFloat {
         let width = CGFloat(item.cropRect.width), height = CGFloat(item.cropRect.height)
         guard width > 0, height > 0 else { return 9.0 / 16.0 }
         return width / height
