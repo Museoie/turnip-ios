@@ -36,7 +36,14 @@ enum ExportConfirmationError: Error, Equatable {
 /// A closure rather than a protocol so the screen's only seam is one value: the clip
 /// exporter plugs in here with a small adapter, and tests inject a fake. Throws
 /// `ExportConfirmationError.exportFailed` (not a raw error) so the failure callout
-/// can name the step. `@Sendable` because the exporter runs it off the main actor.
+/// can name the step.
+///
+/// Concurrency contract: this closure is awaited from the run task, which inherits
+/// `@MainActor` isolation, so it starts executing on the main actor's executor —
+/// implementations must not block the calling executor. Do CPU-bound or blocking work
+/// off the main actor internally (e.g. `Task.detached`) and hop back only for the
+/// progress callback. `@Sendable` constrains what the closure captures, not where it
+/// executes.
 typealias ExportOneClip = @Sendable (
     _ window: TrickWindow,
     _ cropRect: NormalizedRect,
@@ -48,6 +55,10 @@ typealias ExportOneClip = @Sendable (
 /// Saves one exported file to the Photos library. `ClipPhotosSaver` plugs in here.
 /// Throws `ExportConfirmationError.photosSaveFailed` so the callout names
 /// the step.
+///
+/// Concurrency contract: awaited from the run task, which inherits `@MainActor`
+/// isolation — implementations must not block the calling executor; hop off the main
+/// actor internally for any blocking work.
 typealias SaveOneClipToPhotos = @Sendable (URL) async throws -> Void
 
 /// The scratch directory for one export run: a fresh UUID-named folder under the app's
@@ -69,8 +80,10 @@ func defaultExportDirectory() -> URL {
 /// not cost the clips around it.
 ///
 /// `@MainActor` throughout: the published phases are read by SwiftUI on the main thread,
-/// and the AVFoundation/Photos work stays inside the injected closures, which run off the
-/// main actor. Cancellation is cooperative — the in-flight step stops on its own (the
+/// and the run task inherits that isolation, so the injected closures start on the main
+/// actor's executor — the AVFoundation/Photos work inside them must hop off the main
+/// actor internally rather than block it (see the typealias contracts). Cancellation is
+/// cooperative — the in-flight step stops on its own (the
 /// export session cancels via its cancellation handler), the loop checks between clips,
 /// remaining clips stay `.pending`, and the partial summary is honest about what actually
 /// saved. A start after cancel restarts cleanly: the new run waits for the old one to
@@ -186,8 +199,10 @@ final class ExportConfirmationViewModel: ObservableObject {
         for index in clips.indices where clips[index].phase != .saved {
             clips[index].phase = .pending
         }
-        // Captured up front: the loop below runs off the main actor, and `self` is only
-        // ever touched through `MainActor.run`.
+        // Captured up front: the run task inherits `@MainActor` isolation, so the loop
+        // below — including the injected closures — starts on the main actor's executor.
+        // The closures must hop off internally rather than block it (see the typealias
+        // contracts).
         let items = self.items
         let asset = self.asset
         let exportClip = self.exportClip
