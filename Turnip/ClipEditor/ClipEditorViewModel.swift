@@ -258,8 +258,7 @@ final class ClipEditorViewModel: ObservableObject {
         }
         if timeObserver == nil {
             let interval = CMTime(seconds: 1.0 / 15.0, preferredTimescale: 600)
-            timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) {
-                [weak self] time in
+            timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
                 Task { @MainActor in
                     self?.tick(at: time.seconds)
                 }
@@ -298,9 +297,9 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     private nonisolated static func boundingBox(of points: [CGPoint]) -> CGRect {
-        let xs = points.map(\.x), ys = points.map(\.y)
-        guard let minX = xs.min(), let maxX = xs.max(),
-              let minY = ys.min(), let maxY = ys.max()
+        let xValues = points.map(\.x), yValues = points.map(\.y)
+        guard let minX = xValues.min(), let maxX = xValues.max(),
+              let minY = yValues.min(), let maxY = yValues.max()
         else { return .zero }
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }

@@ -163,33 +163,7 @@ private func makeClipEditorPreviewAsset() -> URL {
         guard writer.canAdd(input), writer.startWriting() else { throw PreviewAssetError.setupFailed }
         writer.add(input)
         writer.startSession(atSourceTime: .zero)
-        for frame in 0..<(6 * Int(fps)) {
-            // Bounded on writer status: if the writer fails mid-write,
-            // `isReadyForMoreMediaData` never becomes true, and without the status check
-            // the loop would spin with no cause.
-            var spins = 0
-            while !input.isReadyForMoreMediaData, writer.status == .writing, spins < 500 {
-                Thread.sleep(forTimeInterval: 0.002)
-                spins += 1
-            }
-            guard let pool = adaptor.pixelBufferPool else { throw PreviewAssetError.setupFailed }
-            var pixelBuffer: CVPixelBuffer?
-            let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
-            guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-                throw PreviewAssetError.setupFailed
-            }
-            CVPixelBufferLockBaseAddress(buffer, [])
-            if let base = CVPixelBufferGetBaseAddress(buffer) {
-                let bytes = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
-                // Vary the fill per frame so the encoder emits real (non-skipped) frames.
-                memset(base, Int32(frame % 255), bytes)
-            }
-            CVPixelBufferUnlockBaseAddress(buffer, [])
-            let time = CMTime(value: CMTimeValue(frame), timescale: fps)
-            guard adaptor.append(buffer, withPresentationTime: time) else {
-                throw PreviewAssetError.appendFailed
-            }
-        }
+        try writePreviewFrames(writer: writer, input: input, adaptor: adaptor, fps: fps)
         input.markAsFinished()
         let finished = DispatchSemaphore(value: 0)
         // The completion handler runs off the main thread, so waiting here can't deadlock.
@@ -200,6 +174,43 @@ private func makeClipEditorPreviewAsset() -> URL {
     } catch {
         try? FileManager.default.removeItem(at: url)
         return URL(fileURLWithPath: "/dev/null")
+    }
+}
+
+/// Appends six seconds of solid-color frames to the preview asset writer, extracted
+/// from `makeClipEditorPreviewAsset()` so it stays within the function-body length limit.
+private func writePreviewFrames(
+    writer: AVAssetWriter,
+    input: AVAssetWriterInput,
+    adaptor: AVAssetWriterInputPixelBufferAdaptor,
+    fps: Int32
+) throws {
+    for frame in 0..<(6 * Int(fps)) {
+        // Bounded on writer status: if the writer fails mid-write,
+        // `isReadyForMoreMediaData` never becomes true, and without the status check
+        // the loop would spin with no cause.
+        var spins = 0
+        while !input.isReadyForMoreMediaData, writer.status == .writing, spins < 500 {
+            Thread.sleep(forTimeInterval: 0.002)
+            spins += 1
+        }
+        guard let pool = adaptor.pixelBufferPool else { throw PreviewAssetError.setupFailed }
+        var pixelBuffer: CVPixelBuffer?
+        let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
+            throw PreviewAssetError.setupFailed
+        }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        if let base = CVPixelBufferGetBaseAddress(buffer) {
+            let bytes = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
+            // Vary the fill per frame so the encoder emits real (non-skipped) frames.
+            memset(base, Int32(frame % 255), bytes)
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        let time = CMTime(value: CMTimeValue(frame), timescale: fps)
+        guard adaptor.append(buffer, withPresentationTime: time) else {
+            throw PreviewAssetError.appendFailed
+        }
     }
 }
 

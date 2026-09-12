@@ -88,28 +88,7 @@ struct TrimSliderView: View {
             }
             .frame(height: 56)
             .contentShape(Rectangle())
-            .gesture(
-                DragGesture()
-                    .updating($drag) { value, state, _ in
-                        if state == nil {
-                            let touched = self.time(at: value.location.x, in: range, width: width)
-                            state = TimelineDrag(
-                                handle: nearestHandle(to: touched), range: range, width: width)
-                        }
-                    }
-                    .onChanged { value in
-                        guard let drag else { return }
-                        let touched = self.time(
-                            at: value.location.x, in: drag.range, width: drag.width)
-                        switch drag.handle {
-                        case .start: viewModel.trimStart(to: touched)
-                        case .end: viewModel.trimEnd(to: touched)
-                        }
-                    }
-                    .onEnded { _ in
-                        viewModel.finishTrim()
-                    }
-            )
+            .gesture(timelineGesture(range: range, width: width))
         }
         .frame(height: 56)
         .onChange(of: drag != nil) { isDragging in
@@ -123,6 +102,31 @@ struct TrimSliderView: View {
                 viewModel.finishTrim()
             }
         }
+    }
+
+    /// The timeline's drag interaction, extracted from `timeline(range:)` so the view
+    /// builder stays within the function-body length limit.
+    private func timelineGesture(range: ClosedRange<TimeInterval>, width: CGFloat) -> some Gesture {
+        DragGesture()
+            .updating($drag) { value, state, _ in
+                if state == nil {
+                    let touched = self.time(at: value.location.x, in: range, width: width)
+                    state = TimelineDrag(
+                        handle: nearestHandle(to: touched), range: range, width: width)
+                }
+            }
+            .onChanged { value in
+                guard let drag else { return }
+                let touched = self.time(
+                    at: value.location.x, in: drag.range, width: drag.width)
+                switch drag.handle {
+                case .start: viewModel.trimStart(to: touched)
+                case .end: viewModel.trimEnd(to: touched)
+                }
+            }
+            .onEnded { _ in
+                viewModel.finishTrim()
+            }
     }
 
     /// The handle nearer to a touch, so a drag anywhere on the timeline grabs something
