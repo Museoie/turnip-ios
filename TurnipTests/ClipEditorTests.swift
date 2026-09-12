@@ -249,4 +249,20 @@ final class ClipEditorTests: XCTestCase {
             naturalSize: CGSize(width: 100, height: 100),
             preferredTransform: .identity))
     }
+
+    // MARK: - Load failure
+
+    /// `/dev/null` isn't a video, so the track loads fail: `prepare()` must surface
+    /// `failedToLoad` instead of returning silently and leaving the screen on the
+    /// loading placeholder forever.
+    @MainActor
+    func testPrepareSurfacesLoadFailure() async {
+        let viewModel = ClipEditorViewModel(source: makeSource(frames: []))
+        XCTAssertFalse(viewModel.failedToLoad)
+
+        await viewModel.prepare()
+
+        XCTAssertTrue(viewModel.failedToLoad)
+        XCTAssertNil(viewModel.duration)
+    }
 }
