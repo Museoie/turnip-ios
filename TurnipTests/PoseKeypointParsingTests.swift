@@ -41,7 +41,7 @@ final class PoseKeypointParsingTests: XCTestCase {
         let tooShort: [Float] = [0.1, 0.2, 0.3]
 
         XCTAssertThrowsError(try PoseKeypoint.parse(from: tooShort)) { error in
-            XCTAssertTrue(error is PoseDiagnosticError)
+            XCTAssertTrue(error is PoseError)
         }
     }
 }

@@ -65,8 +65,8 @@ final class MoveNetThunderModelTests: XCTestCase {
                 [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape, named: "input"
             )
         ) { error in
-            guard case PoseDiagnosticError.inferenceFailed(let message) = error else {
-                return XCTFail("expected PoseDiagnosticError.inferenceFailed, got \(error)")
+            guard case PoseError.inferenceFailed(let message) = error else {
+                return XCTFail("expected PoseError.inferenceFailed, got \(error)")
             }
             XCTAssertTrue(
                 message.contains("[1, 256, 256, 3]"),

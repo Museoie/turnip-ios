@@ -186,7 +186,7 @@ final class VideoFrameSamplerTests: XCTestCase {
                 XCTFail("handler ran for frame \(frame.frameIndex) on an asset with no video track")
             }
             XCTFail("expected sampleFrames to throw for an asset with no video track")
-        } catch let error as PoseDiagnosticError {
+        } catch let error as PoseError {
             guard case .videoLoadFailed = error else {
                 return XCTFail("expected videoLoadFailed, got \(error)")
             }
@@ -212,12 +212,12 @@ final class VideoFrameSamplerTests: XCTestCase {
             _ = try VideoFrameSampler.compositionFrameDuration(
                 minFrameDuration: .invalid, nominalFrameRate: 0)
             XCTFail("expected compositionFrameDuration to throw when no usable frame rate exists")
-        } catch let error as PoseDiagnosticError {
+        } catch let error as PoseError {
             guard case .videoLoadFailed = error else {
                 return XCTFail("expected videoLoadFailed, got \(error)")
             }
         } catch {
-            XCTFail("expected PoseDiagnosticError.videoLoadFailed, got \(error)")
+            XCTFail("expected PoseError.videoLoadFailed, got \(error)")
         }
 
         // An out-of-range rate must throw, not trap: converting 3e9 fps to the Int32 timescale
@@ -226,12 +226,12 @@ final class VideoFrameSamplerTests: XCTestCase {
             _ = try VideoFrameSampler.compositionFrameDuration(
                 minFrameDuration: .invalid, nominalFrameRate: 3e9)
             XCTFail("expected compositionFrameDuration to throw for a frame rate past Int32.max")
-        } catch let error as PoseDiagnosticError {
+        } catch let error as PoseError {
             guard case .videoLoadFailed = error else {
                 return XCTFail("expected videoLoadFailed, got \(error)")
             }
         } catch {
-            XCTFail("expected PoseDiagnosticError.videoLoadFailed, got \(error)")
+            XCTFail("expected PoseError.videoLoadFailed, got \(error)")
         }
     }
 
@@ -269,7 +269,7 @@ final class VideoFrameSamplerTests: XCTestCase {
         writer.add(input)
 
         guard writer.startWriting() else {
-            throw writer.error ?? PoseDiagnosticError.videoLoadFailed(underlying: nil)
+            throw writer.error ?? PoseError.videoLoadFailed(underlying: nil)
         }
         writer.startSession(atSourceTime: .zero)
 
@@ -284,7 +284,7 @@ final class VideoFrameSamplerTests: XCTestCase {
         input.markAsFinished()
         await writer.finishWriting()
         guard writer.status == .completed else {
-            throw writer.error ?? PoseDiagnosticError.videoLoadFailed(underlying: nil)
+            throw writer.error ?? PoseError.videoLoadFailed(underlying: nil)
         }
         return url
     }
@@ -304,12 +304,12 @@ final class VideoFrameSamplerTests: XCTestCase {
                 try await Task.sleep(nanoseconds: 1_000_000)
             }
             guard let pool = adaptor.pixelBufferPool else {
-                throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
+                throw PoseError.videoLoadFailed(underlying: nil)
             }
             var pixelBuffer: CVPixelBuffer?
             let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
             guard status == kCVReturnSuccess, let pixelBuffer else {
-                throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
+                throw PoseError.videoLoadFailed(underlying: nil)
             }
 
             CVPixelBufferLockBaseAddress(pixelBuffer, [])
@@ -322,7 +322,7 @@ final class VideoFrameSamplerTests: XCTestCase {
 
             let presentationTime = CMTime(value: CMTimeValue(frameIndex), timescale: fps)
             guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
-                throw writer.error ?? PoseDiagnosticError.videoLoadFailed(underlying: nil)
+                throw writer.error ?? PoseError.videoLoadFailed(underlying: nil)
             }
         }
     }
@@ -333,7 +333,7 @@ final class VideoFrameSamplerTests: XCTestCase {
 
         guard let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1),
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4410) else {
-            throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
+            throw PoseError.videoLoadFailed(underlying: nil)
         }
         buffer.frameLength = buffer.frameCapacity
 

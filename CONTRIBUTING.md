@@ -199,6 +199,23 @@ SwiftLint runs in CI on every PR (`lint + build + test` — see
   export PATH="$HOME/.local/bin:$PATH"
   swiftlint lint --strict
   ```
+## Code organization
+
+`Turnip/` is a single Xcode target; its subdirectories are flat, one per
+domain, named for the domain they own (`App`, `Home`, `Models`, `Pose`,
+`PoseDiagnostic`, `Resources`, `TrickDetection`).
+
+- A new screen or feature adds a new top-level directory. A directory named
+  for a screen keeps only that screen's view, view model, and screen-private
+  helpers.
+- Shared pipeline infrastructure lives in its own domain directory — never
+  under a feature screen's directory. The v1 pose pipeline's model types
+  live in `Turnip/Pose/` (not `Turnip/PoseDiagnostic/`, which is the throwaway
+  measurement screen) precisely so deleting the screen never strands
+  load-bearing code.
+- `project.yml` takes `Turnip/` (and `TurnipTests/`) wholesale, so a
+  subdirectory rename is picked up by `xcodegen generate` with no
+  `project.yml` change.
 
 ## Areas of contribution
 
