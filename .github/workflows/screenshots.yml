@@ -1,0 +1,128 @@
+name: Screenshots
+
+# Captures simulator screenshots for UI-change PRs (CONTRIBUTING.md asks for
+# screenshots on UI changes) so nobody needs a local simulator to produce them.
+# Runs the XCUITest screenshot suite, extracts the PNGs from the xcresult, and
+# uploads them as an artifact — attach them to the PR body from there.
+#
+# Scoped by paths to UI-relevant changes: macOS runners bill at 10x Linux
+# minutes, so this stays off PRs that only touch non-UI code.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "Turnip/**"
+      - "TurnipUITests/**"
+      - "project.yml"
+      - ".github/workflows/screenshots.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      BUNDLE_PATH: vendor/bundle
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Cache CocoaPods
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            Pods
+            ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ hashFiles('Podfile.lock') }}
+          restore-keys: |
+            pods-${{ runner.os }}-
+
+      - name: Cache Bundler gems
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: vendor/bundle
+          key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
+          restore-keys: |
+            gems-${{ runner.os }}-
+
+      # Same Xcode baseline CI pins (see ci.yml).
+      - name: Select Xcode 26.3
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Install XcodeGen
+        run: |
+          ci_scripts/install-xcodegen.sh "$HOME/.local"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Install CocoaPods 1.17.0 (via Gemfile)
+        run: bundle install
+
+      - name: Resolve CocoaPods dependencies
+        run: bundle exec pod install
+
+      - name: Run screenshot UI tests
+        run: |
+          xcodebuild test \
+            -workspace Turnip.xcworkspace \
+            -scheme Turnip \
+            -destination "platform=iOS Simulator,name=iPhone 17" \
+            -only-testing:TurnipUITests \
+            -resultBundlePath screenshots.xcresult
+
+      - name: Extract screenshot PNGs from xcresult
+        id: extract
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/screenshots"
+          mkdir -p "$OUT"
+          # Screenshot attachments are the only .png payloads in the bundle
+          # (this run executes TurnipUITests only). The xcresult JSON wraps
+          # scalars in {_value}, so unwrap defensively.
+          xcrun xcresulttool get --format json --path screenshots.xcresult | jq -r '
+            [.. | objects
+              | select(
+                  ((.filename._value // .filename // "") | tostring | endswith(".png"))
+                  and (((.payloadRef._value // .payloadRef.id._value // "") | tostring | length) > 0)
+                )
+              | "\((.payloadRef._value // .payloadRef.id._value))\t\((.name._value // .name // .filename._value // .filename))"
+            ] | unique | .[]' |
+          while IFS=$'\t' read -r ref raw_name; do
+            safe="$(basename "$raw_name" | tr -c 'A-Za-z0-9._-' '_')"
+            [[ "$safe" == *.png ]] || safe="$safe.png"
+            dest="$OUT/$safe"
+            n=2
+            while [[ -e "$dest" ]]; do
+              dest="$OUT/${safe%.png}-$n.png"
+              n=$((n + 1))
+            done
+            xcrun xcresulttool export \
+              --path screenshots.xcresult \
+              --id "$ref" \
+              --output-path "$dest" \
+              --type file
+          done
+          count="$(find "$OUT" -name '*.png' | wc -l | tr -d ' ')"
+          echo "Extracted $count screenshot(s):"
+          ls -la "$OUT"
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::No screenshot PNGs found in screenshots.xcresult"
+            exit 1
+          fi
+          echo "dir=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-screenshots
+          path: ${{ steps.extract.outputs.dir }}
+          retention-days: 14

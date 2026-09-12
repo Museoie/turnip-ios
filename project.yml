@@ -46,6 +46,18 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.hoiekim.turnip.tests
         GENERATE_INFOPLIST_FILE: YES
 
+  TurnipUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: TurnipUITests
+    dependencies:
+      - target: Turnip
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.hoiekim.turnip.uitests
+        GENERATE_INFOPLIST_FILE: YES
+
 schemes:
   Turnip:
     build:
@@ -55,5 +67,6 @@ schemes:
     test:
       targets:
         - TurnipTests
+        - TurnipUITests
     run:
       config: Debug

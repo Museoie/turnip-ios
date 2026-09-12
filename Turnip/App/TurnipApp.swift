@@ -4,7 +4,19 @@ import SwiftUI
 struct TurnipApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            Group {
+                #if DEBUG
+                if CommandLine.arguments.contains("-screenshotExportConfirmationFinished") {
+                    ScreenshotHarness(finishImmediately: true)
+                } else if CommandLine.arguments.contains("-screenshotExportConfirmation") {
+                    ScreenshotHarness(finishImmediately: false)
+                } else {
+                    ContentView()
+                }
+                #else
+                ContentView()
+                #endif
+            }
         }
     }
 }
