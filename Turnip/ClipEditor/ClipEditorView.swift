@@ -2,14 +2,12 @@ import AVFoundation
 import AVKit
 import SwiftUI
 
-/// The per-clip editor (`docs/UIUX.md` § "Clip Detail / Editor", issue #18): full-screen,
+/// The per-clip editor (`docs/UIUX.md` § "Clip Detail / Editor"): full-screen,
 /// one clip at a time — the trimmed clip looping with its live crop rect drawn over it, a
 /// scrub bar with start/end drag handles, and the keep/discard toggle.
 ///
 /// Back-navigation commits the edits: `onCommit` fires with the final state when the view
-/// disappears, and the clip list applies it to its item — no separate save step, per the
-/// design doc. Built on main-branch types only; the clip list (#11) maps its item onto
-/// `ClipEditorSource` when it wires this destination in.
+/// disappears — no separate save step, per the design doc.
 struct ClipEditorView: View {
     @StateObject private var viewModel: ClipEditorViewModel
     let onCommit: (ClipEditorResult) -> Void

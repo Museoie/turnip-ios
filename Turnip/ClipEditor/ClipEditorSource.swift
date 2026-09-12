@@ -1,16 +1,11 @@
 import AVFoundation
 import Foundation
 
-/// What the clip editor opens with (`docs/UIUX.md` § "Clip Detail / Editor", issue #18).
-///
-/// Every type here lives on main, so this screen compiles without the clip list (#11) or
-/// the processing screen (#17): the list maps its item onto this source — window, crop
-/// rect, keep state — and passes the pipeline's sampled pose frames through, when it wires
-/// this destination in.
+/// What the clip editor opens with (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
 /// `poseFrames` carries *every* sampled frame, not just the window's: dragging a handle
-/// outward pulls new frames into play, and #18 requires the crop rect to be re-derived
-/// from whichever frames are in play (#9's algorithm).
+/// outward pulls new frames into play, and the crop rect is re-derived from whichever
+/// frames are in play.
 struct ClipEditorSource {
     let window: TrickWindow
     let cropRect: NormalizedRect

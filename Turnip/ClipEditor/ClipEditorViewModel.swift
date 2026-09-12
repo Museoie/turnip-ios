@@ -2,7 +2,7 @@ import AVFoundation
 import CoreGraphics
 import Foundation
 
-/// The clip editor's state (`docs/UIUX.md` § "Clip Detail / Editor", issue #18).
+/// The clip editor's state (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
 /// Holds the draft trim window, the live crop rect, and the keep/discard decision; the view
 /// commits `result` on back-navigation — no separate save step, per the design doc.
@@ -12,9 +12,9 @@ import Foundation
 /// the frame being trimmed to.
 ///
 /// `@MainActor` throughout: the player, its time observer, and the draft state all live on
-/// the main thread. The recompute filters the sampled frames and runs #9's pure geometry —
-/// sub-millisecond at the pipeline's ~10 kept frames per second of video — so it runs
-/// inline on every drag tick without dropping the gesture.
+/// the main thread. The recompute filters the sampled frames and runs the crop calculator's
+/// pure geometry — sub-millisecond at the pipeline's ~10 kept frames per second of video —
+/// so it runs inline on every drag tick without dropping the gesture.
 @MainActor
 final class ClipEditorViewModel: ObservableObject {
     /// The shortest clip the trim handles can produce. Below this the export would be a
@@ -41,6 +41,11 @@ final class ClipEditorViewModel: ObservableObject {
     private var naturalSize: CGSize?
     private var preferredTransform = CGAffineTransform.identity
 
+    /// True while a handle drag is in flight. The drag's programmatic seek lands exactly on
+    /// the moved handle, and without this guard the periodic time observer would read that
+    /// jump as the loop point and bounce the preview back to the window start.
+    private var isTrimming = false
+
     init(source: ClipEditorSource, calculator: CropRectCalculator = CropRectCalculator()) {
         self.source = source
         self.calculator = calculator
@@ -54,10 +59,16 @@ final class ClipEditorViewModel: ObservableObject {
         ClipEditorResult(window: window, cropRect: cropRect, isKept: isKept)
     }
 
-    /// "2.4s"-style duration of the draft window, built by hand so the decimal separator
-    /// can't follow the device locale (same rationale as the clip list's duration label).
+    /// "2.4s"-style duration of the draft window, via the shared timestamp formatter.
     var durationLabel: String {
-        let tenths = ((window.endTime - window.startTime) * 10).rounded() / 10
+        Self.timeLabel(window.endTime - window.startTime)
+    }
+
+    /// "1.2s"-style timestamp, built by hand so the decimal separator can't follow the
+    /// device locale. Shared by the duration label and the slider's labels so the two
+    /// copies can't drift apart.
+    nonisolated static func timeLabel(_ time: TimeInterval) -> String {
+        let tenths = (time * 10).rounded() / 10
         return "\(tenths)s"
     }
 
@@ -130,6 +141,7 @@ final class ClipEditorViewModel: ObservableObject {
         let latestStart = max(window.endTime - Self.minimumClipDuration, 0)
         let newStart = min(max(time, 0), latestStart)
         guard newStart != window.startTime else { return }
+        isTrimming = true
         player.pause()
         window = TrickWindow(startTime: newStart, endTime: window.endTime)
         seek(to: newStart)
@@ -143,6 +155,7 @@ final class ClipEditorViewModel: ObservableObject {
         let earliestEnd = min(window.startTime + Self.minimumClipDuration, duration)
         let newEnd = max(min(time, duration), earliestEnd)
         guard newEnd != window.endTime else { return }
+        isTrimming = true
         player.pause()
         window = TrickWindow(startTime: window.startTime, endTime: newEnd)
         seek(to: newEnd)
@@ -151,6 +164,7 @@ final class ClipEditorViewModel: ObservableObject {
 
     /// Called when a handle drag ends: resumes the preview loop from the new start.
     func finishTrim() {
+        isTrimming = false
         seek(to: window.startTime)
         player.play()
     }
@@ -176,15 +190,12 @@ final class ClipEditorViewModel: ObservableObject {
         return TrickWindow(startTime: startTime, endTime: endTime)
     }
 
-    /// Maps the crop rect from the encoded frame's pixel space (top-left origin, no
-    /// `preferredTransform` applied — the space `NormalizedRect` and the pose keypoints
-    /// live in) into the displayed frame's space, matching what the player shows. `nil`
-    /// for degenerate inputs.
+    /// Maps the crop rect from `NormalizedRect`'s space contract — the encoded frame's
+    /// pixel space, top-left origin, `preferredTransform` not applied — into the displayed
+    /// frame's space, matching what the player shows. `nil` for degenerate inputs.
     ///
     /// Pure so the geometry is unit-testable; the 90°-rotation case is the discriminating
-    /// one. This mirrors the clip list's thumbnail mapping — duplicated rather than shared
-    /// because that code ships in the unmerged #11 PR; the two should converge once both
-    /// land.
+    /// one.
     nonisolated static func displayedCropRect(
         cropRect: NormalizedRect,
         naturalSize: CGSize,
@@ -206,10 +217,10 @@ final class ClipEditorViewModel: ObservableObject {
         }).size
     }
 
-    /// Re-derives the crop rect from the pose frames inside the draft window (#9's
-    /// algorithm). When the adjusted window holds no usable keypoints the last good rect
-    /// is kept: jumping to the full frame mid-drag would yank the preview while the user
-    /// is still moving the handle through a low-confidence stretch.
+    /// Re-derives the crop rect from the pose frames inside the draft window. When the
+    /// adjusted window holds no usable keypoints the last good rect is kept: jumping to
+    /// the full frame mid-drag would yank the preview while the user is still moving the
+    /// handle through a low-confidence stretch.
     private func recomputeCropRect() {
         guard let naturalSize else { return }
         let inWindow = source.poseFrames.filter {
@@ -238,13 +249,25 @@ final class ClipEditorViewModel: ObservableObject {
         player.play()
     }
 
-    /// One preview tick: follows the playhead and loops the draft window. The epsilon keeps
-    /// the last frame from flashing past the end handle before the loop-back seek lands.
+    /// One preview tick: follows the playhead and loops the draft window. The loop-back
+    /// is suppressed while a handle drag is in flight — the drag's seek lands exactly on
+    /// the moved handle, which would otherwise read as the loop point and bounce the
+    /// preview back to the window start.
     private func tick(at time: TimeInterval) {
         playbackTime = time
-        if time >= window.endTime - 0.05 {
+        if Self.shouldLoopBack(at: time, window: window, isTrimming: isTrimming) {
             seek(to: window.startTime)
         }
+    }
+
+    /// The preview loop's decision, extracted so the drag interaction is unit-testable: a
+    /// tick at (or epsilon-past) the window end loops back to the start, unless a handle
+    /// drag is in flight. The epsilon keeps the last frame from flashing past the end
+    /// handle before the loop-back seek lands.
+    nonisolated static func shouldLoopBack(
+        at time: TimeInterval, window: TrickWindow, isTrimming: Bool
+    ) -> Bool {
+        !isTrimming && time >= window.endTime - 0.05
     }
 
     private func seek(to time: TimeInterval) {

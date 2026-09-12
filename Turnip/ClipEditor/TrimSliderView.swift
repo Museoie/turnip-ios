@@ -27,21 +27,26 @@ struct TrimSliderView: View {
 
     var body: some View {
         if let range = viewModel.visibleRange {
+            // Frozen for the gesture's duration: the drag's time mapping is captured once in
+            // `TimelineDrag`, so the drawing must use that same range — the live range
+            // tracks the growing window and would let the handles drift out from under the
+            // finger mid-drag.
+            let drawRange = drag?.range ?? range
             VStack(spacing: 4) {
-                timeline(range: range)
+                timeline(range: drawRange)
                 HStack {
-                    Text(timeLabel(viewModel.window.startTime))
+                    Text(ClipEditorViewModel.timeLabel(viewModel.window.startTime))
                     Spacer()
                     Text(viewModel.durationLabel)
                     Spacer()
-                    Text(timeLabel(viewModel.window.endTime))
+                    Text(ClipEditorViewModel.timeLabel(viewModel.window.endTime))
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
-                    "Trim range \(timeLabel(viewModel.window.startTime)) to "
-                        + timeLabel(viewModel.window.endTime))
+                    "Trim range \(ClipEditorViewModel.timeLabel(viewModel.window.startTime)) to "
+                        + ClipEditorViewModel.timeLabel(viewModel.window.endTime))
             }
         } else {
             ProgressView()
@@ -128,19 +133,12 @@ struct TrimSliderView: View {
         .contentShape(Rectangle())
         .offset(x: position(of: time, in: range, width: width) - 16)
         .accessibilityLabel(label)
-        .accessibilityValue(timeLabel(time))
+        .accessibilityValue(ClipEditorViewModel.timeLabel(time))
         .accessibilityAdjustableAction { direction in
-            // Tenth-second steps for VoiceOver; the full adjustable-handle checklist is #22's.
+            // Tenth-second steps for VoiceOver.
             trim(time + (direction == .increment ? 0.1 : -0.1))
             viewModel.finishTrim()
         }
-    }
-
-    /// "1.2s"-style timestamp for the slider labels, built by hand so the decimal separator
-    /// can't follow the device locale.
-    private func timeLabel(_ time: TimeInterval) -> String {
-        let tenths = (time * 10).rounded() / 10
-        return "\(tenths)s"
     }
 
     private func position(

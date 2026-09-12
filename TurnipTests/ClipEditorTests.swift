@@ -160,6 +160,28 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(clamped.endTime, 60, accuracy: 0.0001)
     }
 
+    // MARK: - Preview loop
+
+    func testLoopBackFiresAtWindowEndDuringPlayback() {
+        let window = TrickWindow(startTime: 2, endTime: 6)
+
+        // The epsilon keeps the last frame from flashing past the end handle before the
+        // loop-back seek lands.
+        XCTAssertTrue(ClipEditorViewModel.shouldLoopBack(at: 6.0, window: window, isTrimming: false))
+        XCTAssertTrue(ClipEditorViewModel.shouldLoopBack(at: 5.96, window: window, isTrimming: false))
+        XCTAssertFalse(ClipEditorViewModel.shouldLoopBack(at: 5.0, window: window, isTrimming: false))
+    }
+
+    func testLoopBackSuppressedWhileTrimming() {
+        // Dragging the end handle seeks exactly to the new end: the periodic time observer
+        // fires on that jump, and without the guard it would read as the loop point and
+        // bounce the preview back to the window start mid-drag.
+        let window = TrickWindow(startTime: 2, endTime: 6)
+
+        XCTAssertFalse(ClipEditorViewModel.shouldLoopBack(at: 6.0, window: window, isTrimming: true))
+        XCTAssertFalse(ClipEditorViewModel.shouldLoopBack(at: 5.96, window: window, isTrimming: true))
+    }
+
     // MARK: - Keep toggle and commit
 
     @MainActor
