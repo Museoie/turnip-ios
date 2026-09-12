@@ -25,7 +25,7 @@ struct URLSessionModelUpdateClient: ModelUpdateClient {
             let (data, _) = try await session.data(from: endpoint)
             return try JSONDecoder().decode(ModelUpdateManifest.self, from: data)
         } catch {
-            throw ModelUpdateError.network(underlying: error)
+            throw ModelUpdateError.network(underlying: String(describing: error))
         }
     }
 
@@ -35,7 +35,7 @@ struct URLSessionModelUpdateClient: ModelUpdateClient {
             let (temporaryURL, _) = try await session.download(from: url)
             return temporaryURL
         } catch {
-            throw ModelUpdateError.network(underlying: error)
+            throw ModelUpdateError.network(underlying: String(describing: error))
         }
     }
 

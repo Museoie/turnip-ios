@@ -177,8 +177,7 @@ final class ModelUpdateTests: XCTestCase {
         XCTAssertNil(store.activeModelURL())
         XCTAssertNil(store.activeVersion())
         let lastError = await service.lastError
-        guard let updateError = lastError as? ModelUpdateError,
-              case .checksumMismatch = updateError else {
+        guard case .checksumMismatch? = lastError else {
             return XCTFail("expected checksumMismatch, got \(String(describing: lastError))")
         }
     }
@@ -196,7 +195,7 @@ final class ModelUpdateTests: XCTestCase {
         XCTAssertNotNil(store.activeModelURL())
 
         await client.setManifest(makeManifest(version: "2026.09.11-1", bytes: bytes))
-        await client.setManifestError(ModelUpdateError.network(underlying: CocoaError(.fileReadNoSuchFile)))
+        await client.setManifestError(ModelUpdateError.network(underlying: String(describing: CocoaError(.fileReadNoSuchFile))))
         await service.checkForUpdates() // must not throw
 
         // The previously staged model is still the active one.
@@ -233,8 +232,7 @@ final class ModelUpdateTests: XCTestCase {
 
         XCTAssertNil(store.activeModelURL())
         let lastError = await service.lastError
-        guard let updateError = lastError as? ModelUpdateError,
-              case .invalidManifest = updateError else {
+        guard case .invalidManifest? = lastError else {
             return XCTFail("expected invalidManifest, got \(String(describing: lastError))")
         }
     }

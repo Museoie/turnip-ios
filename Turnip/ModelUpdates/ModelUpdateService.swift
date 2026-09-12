@@ -26,8 +26,10 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
     private let store: ModelUpdateStore
 
     /// The failure from the most recent check, or `nil` when the last check
-    /// succeeded or was a no-op.
-    private(set) var lastError: Error?
+    /// succeeded or was a no-op. Typed as `ModelUpdateError` (not `Error`)
+    /// so it is `Sendable` across the actor boundary — non-typed failures are
+    /// boxed at the catch site.
+    private(set) var lastError: ModelUpdateError?
 
     init(baseURL: URL?, client: Client, store: ModelUpdateStore) {
         self.baseURL = baseURL
@@ -63,7 +65,12 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
                 modelData: bytes, version: manifest.version,
                 fileName: manifest.fileName)
         } catch {
-            lastError = error
+            // Narrow to the typed failure: typed errors pass through
+            // untouched, anything else (disk reads, store writes, foreign
+            // client implementations) is boxed as a description so the
+            // stored value stays `Sendable`.
+            lastError = error as? ModelUpdateError
+                ?? .network(underlying: String(describing: error))
         }
     }
 
