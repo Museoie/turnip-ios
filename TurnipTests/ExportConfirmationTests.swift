@@ -57,6 +57,11 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         var saveResults: [Result<Void, Error>]
         /// Fractions the fake reports through the progress handler, in order.
         var progressFractions: [Double] = [0.5, 1.0]
+        /// When true, the next export stashes its progress handler instead of
+        /// reporting fractions, so the test can invoke it after the run has
+        /// moved past `.exporting` (a stale tick).
+        var stashProgressHandler = false
+        var stashedProgressHandlers: [@Sendable (Double) -> Void] = []
         var gateNextExport = false
         var gateNextSave = false
         private var gate: CheckedContinuation<Void, Never>?
@@ -79,8 +84,13 @@ final class ExportConfirmationViewModelTests: XCTestCase {
             exportCalls.append((window, cropRect))
             directoryExistedAtCall.append(
                 FileManager.default.fileExists(atPath: directory.path))
-            for fraction in progressFractions {
-                progress(fraction)
+            if stashProgressHandler {
+                stashProgressHandler = false
+                stashedProgressHandlers.append(progress)
+            } else {
+                for fraction in progressFractions {
+                    progress(fraction)
+                }
             }
             if gateNextExport {
                 gateNextExport = false
@@ -276,6 +286,35 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.clips[0].phase, .saved)
     }
 
+    /// The stale-tick guard in `reportExportProgress` is load-bearing but was
+    /// untested: a tick dispatched just before `exportClip` returns hops to the
+    /// main actor on its own task, so it can land after the phase moved on, and
+    /// must not clobber `.saving` / `.saved` / `.failed`. Without the
+    /// `guard case .exporting` this test fails with `.exporting(fraction: 0.9)`.
+    func testStaleProgressTickDoesNotClobberSavingPhase() async {
+        let fake = FakeExport(exportResults: Self.exportSuccesses(1))
+        await fake.setStashProgressHandler()
+        // The save is gated, so the run sits in `.saving` after the export returns.
+        await fake.setGateNextSave()
+        let viewModel = viewModel(items: [item()], fake: fake)
+
+        viewModel.start()
+        await Self.waitForPhase(viewModel, .saving)
+        XCTAssertEqual(viewModel.clips[0].phase, .saving)
+
+        // A stale tick from the finished export, landing after the phase moved on.
+        let handlers = await fake.stashedProgressHandlers
+        XCTAssertEqual(handlers.count, 1)
+        handlers[0](0.9)
+        // Let the tick's MainActor hop land: without the guard it flips the phase.
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(viewModel.clips[0].phase, .saving)
+
+        await fake.openGate()
+        await Self.waitUntilFinished(viewModel)
+        XCTAssertEqual(viewModel.clips[0].phase, .saved)
+    }
+
     func testStartAfterFinishDoesNotReexport() async {
         let fake = FakeExport(exportResults: Self.exportSuccesses(1))
         let viewModel = viewModel(items: [item()], fake: fake)
@@ -330,4 +369,5 @@ private extension ExportConfirmationViewModelTests.FakeExport {
     func setGateNextExport() { gateNextExport = true }
     func setGateNextSave() { gateNextSave = true }
     func setProgressFractions(_ fractions: [Double]) { progressFractions = fractions }
+    func setStashProgressHandler() { stashProgressHandler = true }
 }
