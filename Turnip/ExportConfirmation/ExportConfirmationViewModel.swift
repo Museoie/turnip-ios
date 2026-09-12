@@ -44,7 +44,7 @@ typealias ExportOneClip = @Sendable (
     _ cropRect: NormalizedRect,
     _ asset: AVAsset,
     _ directory: URL,
-    _ progress: @Sendable (Double) -> Void
+    _ progress: @escaping @Sendable (Double) -> Void
 ) async throws -> URL
 
 /// Saves one exported file to the Photos library. `ClipPhotosSaver` (#10) plugs in here

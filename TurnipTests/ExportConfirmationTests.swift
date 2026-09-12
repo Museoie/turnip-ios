@@ -79,7 +79,7 @@ final class ExportConfirmationViewModelTests: XCTestCase {
             _ cropRect: NormalizedRect,
             _ asset: AVAsset,
             _ directory: URL,
-            _ progress: @Sendable (Double) -> Void
+            _ progress: @escaping @Sendable (Double) -> Void
         ) async throws -> URL {
             exportCalls.append((window, cropRect))
             directoryExistedAtCall.append(
@@ -266,7 +266,8 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         viewModel.start()
         await Self.waitUntilFinished(viewModel)
 
-        XCTAssertEqual(await fake.directoryExistedAtCall, [true])
+        let directoryExisted = await fake.directoryExistedAtCall
+        XCTAssertEqual(directoryExisted, [true])
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
@@ -361,7 +362,8 @@ final class ExportConfirmationViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.clips.map(\.phase), [.saved, .saved])
         XCTAssertEqual(viewModel.summaryText, "2 of 2 clips saved to Photos")
-        XCTAssertEqual((await fake.exportCalls).count, 3)
+        let exportCallCount = await fake.exportCalls.count
+        XCTAssertEqual(exportCallCount, 3)
     }
 }
 
