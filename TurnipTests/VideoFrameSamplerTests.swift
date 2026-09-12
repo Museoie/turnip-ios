@@ -133,9 +133,8 @@ final class VideoFrameSamplerTests: XCTestCase {
         let litFrames = observed.filter { $0.frameIndex > 0 }
         XCTAssertFalse(litFrames.isEmpty, "expected a kept frame past frame 0 to check rendered content")
         for frame in litFrames {
-            XCTAssertGreaterThan(
-                frame.darkestChannelValue, 30,
-                "frame \(frame.frameIndex) has a near-black region — the rotated content did not fill the render rect")
+            let message = "frame \(frame.frameIndex) has a near-black region — the rotated content did not fill the render rect"
+            XCTAssertGreaterThan(frame.darkestChannelValue, 30, message)
         }
     }
 

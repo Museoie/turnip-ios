@@ -106,7 +106,7 @@ final class ProcessingPipelineClipTests: XCTestCase {
         let pipeline = ProcessingPipeline()
         let windows = [
             TrickWindow(startTime: 0.15, endTime: 0.85),
-            TrickWindow(startTime: 1.15, endTime: 1.65),
+            TrickWindow(startTime: 1.15, endTime: 1.65)
         ]
 
         let clips = pipeline.buildClips(windows: windows, frames: frames, naturalSize: size)
