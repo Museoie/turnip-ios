@@ -167,7 +167,7 @@ struct ProcessingPipeline: Sendable {
             let inWindow = frames.filter {
                 $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
             }
-            let cropRect = cropRectCalculator.cropRect(for: inWindow, sourcePixelSize: naturalSize)
+            let cropRect = cropRectCalculator.cropRect(for: inWindow, renderedPixelSize: naturalSize)
                 ?? NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
             return ProcessedClip(window: window, cropRect: cropRect)
         }
