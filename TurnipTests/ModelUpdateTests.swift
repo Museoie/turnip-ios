@@ -102,14 +102,14 @@ final class ModelUpdateTests: XCTestCase {
     /// The manifest must decode from the exact JSON shape turnip-farm will
     /// serve — this test pins the contract the client, store, and server share.
     func testManifestDecodesFromJSON() throws {
-        let json = """
+        let json = Data("""
         {
           "version": "2026.09.10-1",
           "downloadURL": "https://models.example.com/movenet_thunder_int8.tflite",
           "sha256": "abc123",
           "fileName": "movenet_thunder_int8.tflite"
         }
-        """.data(using: .utf8)!
+        """.utf8)
         let manifest = try JSONDecoder().decode(ModelUpdateManifest.self, from: json)
         XCTAssertEqual(manifest.version, ModelVersion("2026.09.10-1"))
         XCTAssertEqual(
@@ -206,7 +206,8 @@ final class ModelUpdateTests: XCTestCase {
         XCTAssertNotNil(store.activeModelURL())
 
         await client.setManifest(makeManifest(version: "2026.09.11-1", bytes: bytes))
-        await client.setManifestError(ModelUpdateError.network(underlying: String(describing: CocoaError(.fileReadNoSuchFile))))
+        let underlying = String(describing: CocoaError(.fileReadNoSuchFile))
+        await client.setManifestError(ModelUpdateError.network(underlying: underlying))
         await service.checkForUpdates() // must not throw
 
         // The previously staged model is still the active one.
