@@ -350,6 +350,10 @@ final class VideoFrameSamplerTests: XCTestCase {
         XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 24), 2)
         XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 30), 3)
         XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 60), 6)
+        // High-rate recording modes (120/240 fps slo-mo): the stride scales up so the
+        // ~10 samples/sec rate holds there too.
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 120), 12)
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 240), 24)
         // Non-integral real-world rates discriminate the intended `rounded()` from a
         // truncation mutation (`Int(fps / 10)`): truncation agrees with every case
         // above but gives 2/2/1/5 here, while `rounded()` gives 3/3/2/6.
