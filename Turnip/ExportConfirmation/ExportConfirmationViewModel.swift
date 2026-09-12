@@ -5,10 +5,8 @@ import Foundation
 /// rect for it (docs/DESIGN.md's pipeline steps 5-6).
 ///
 /// Built only on main-branch types (`TrickWindow`, `NormalizedRect`) so this screen
-/// compiles without the clip list (#11) or the clip exporter (#10) — the same
-/// standalone-contract convention as the clip editor's `ClipEditorSource`. The list maps
-/// its kept items onto these, and the exporter maps these onto `ClipSpec`, when the
-/// wiring PR lands.
+/// compiles standalone: the clip list maps its kept items onto these, and the exporter
+/// maps these onto `ClipSpec`.
 struct ExportConfirmationItem: Identifiable, Sendable {
     let id: UUID
     let window: TrickWindow
@@ -35,9 +33,9 @@ enum ExportConfirmationError: Error, Equatable {
 /// save has no progress of its own, so the screen shows its own "saving" state around
 /// the save step instead.
 ///
-/// A closure rather than a protocol so the screen's only seam is one value: `ClipExporter`
-/// (#10) plugs in here with a small adapter when it merges, and tests inject a fake.
-/// Throws `ExportConfirmationError.exportFailed` (not a raw error) so the failure callout
+/// A closure rather than a protocol so the screen's only seam is one value: the clip
+/// exporter plugs in here with a small adapter, and tests inject a fake. Throws
+/// `ExportConfirmationError.exportFailed` (not a raw error) so the failure callout
 /// can name the step. `@Sendable` because the exporter runs it off the main actor.
 typealias ExportOneClip = @Sendable (
     _ window: TrickWindow,
@@ -47,8 +45,8 @@ typealias ExportOneClip = @Sendable (
     _ progress: @escaping @Sendable (Double) -> Void
 ) async throws -> URL
 
-/// Saves one exported file to the Photos library. `ClipPhotosSaver` (#10) plugs in here
-/// when it merges. Throws `ExportConfirmationError.photosSaveFailed` so the callout names
+/// Saves one exported file to the Photos library. `ClipPhotosSaver` plugs in here.
+/// Throws `ExportConfirmationError.photosSaveFailed` so the callout names
 /// the step.
 typealias SaveOneClipToPhotos = @Sendable (URL) async throws -> Void
 
@@ -62,7 +60,7 @@ func defaultExportDirectory() -> URL {
 }
 
 /// The export confirmation screen's state machine (`docs/UIUX.md` § "Export
-/// Confirmation", issue #19).
+/// Confirmation").
 ///
 /// Drives one clip at a time through export → Photos save, publishing per-clip phases so
 /// the view shows live progress, and ends in a summary: "N of M clips saved to Photos"
@@ -99,6 +97,10 @@ final class ExportConfirmationViewModel: ObservableObject {
     @Published private(set) var clips: [ClipState]
     @Published private(set) var isFinished = false
     @Published private(set) var wasCancelled = false
+    /// Stored (not derived from `runTask`) so `start()`/`cancel()` publish and the
+    /// view re-renders: the Cancel item appears when the run starts and leaves when
+    /// it ends.
+    @Published private(set) var isRunning = false
 
     /// The result summary, in `docs/UIUX.md`'s exact shape. `nil` until the run ends —
     /// the summary counts saved clips, and nothing is saved until the loop reports it.
@@ -118,8 +120,6 @@ final class ExportConfirmationViewModel: ObservableObject {
             return (clip.title, reason)
         }
     }
-
-    var isRunning: Bool { runTask != nil }
 
     private let items: [ExportConfirmationItem]
     private let asset: AVAsset
@@ -162,6 +162,7 @@ final class ExportConfirmationViewModel: ObservableObject {
         guard runTask == nil, !isFinished else { return }
         generation &+= 1
         let runGeneration = generation
+        isRunning = true
         // Captured up front: the loop below runs off the main actor, and `self` is only
         // ever touched through `MainActor.run`.
         let items = self.items
@@ -180,7 +181,7 @@ final class ExportConfirmationViewModel: ObservableObject {
             defer {
                 // Whatever ended the run, the scratch files go with it. The exporter
                 // leaves failed outputs in place for debugging, but this screen owns the
-                // directory and the sandbox must not accumulate them (issue #23).
+                // directory and the sandbox must not accumulate them.
                 try? FileManager.default.removeItem(at: directory)
             }
             for (index, item) in items.enumerated() {
@@ -226,9 +227,11 @@ final class ExportConfirmationViewModel: ObservableObject {
                 // Only the newest run may end the screen. A cancelled run's task can
                 // still be draining when a newer run starts (`cancel()` nils `runTask`
                 // but doesn't stop the task), so a stale teardown must not clear the
-                // new run's handle or flip `isFinished` under it.
+                // new run's handle, flip `isFinished` under it, or drop `isRunning`
+                // while the newer run is still going.
                 guard self?.generation == runGeneration else { return }
                 self?.isFinished = true
+                self?.isRunning = false
                 self?.runTask = nil
             }
         }
@@ -245,11 +248,13 @@ final class ExportConfirmationViewModel: ObservableObject {
     /// Applies one export progress tick. Only while the clip is still `.exporting` —
     /// ticks can arrive after the phase moved on (the export session reports 1.0 as it
     /// goes terminal), and a stale write must not clobber `.saving` / `.saved` / `.failed`.
+    /// Each tick hops to the main actor on its own unstructured task, so ticks can land
+    /// out of order — the phase keeps the max, so the progress bar never moves backwards.
     private func reportExportProgress(index: Int, fraction: Double) {
         guard clips.indices.contains(index),
-              case .exporting = clips[index].phase
+              case .exporting(let current) = clips[index].phase
         else { return }
-        clips[index].phase = .exporting(fraction: min(max(fraction, 0), 1))
+        clips[index].phase = .exporting(fraction: max(current, min(max(fraction, 0), 1)))
     }
 
     private func setPhase(at index: Int, to phase: Phase) {
@@ -272,9 +277,7 @@ final class ExportConfirmationViewModel: ObservableObject {
 
     /// "2.4s"-style duration, built by hand so the decimal separator can't follow the
     /// device locale — a German-locale "2,4s" would read as a list separator next to the
-    /// clip number. Duplicated from the clip list's label rather than shared: that code
-    /// ships in the unmerged #11 PR (the same convention as the clip editor's geometry
-    /// helpers); the two should converge once both land.
+    /// clip number.
     private static func durationLabel(for window: TrickWindow) -> String {
         let tenths = ((window.endTime - window.startTime) * 10).rounded() / 10
         // Whole seconds render as "3s", not "3.0s" — the fractional form reads like

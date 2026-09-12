@@ -1,13 +1,13 @@
 import AVFoundation
 import SwiftUI
 
-/// The export confirmation screen (`docs/UIUX.md` § "Export Confirmation", issue #19).
+/// The export confirmation screen (`docs/UIUX.md` § "Export Confirmation").
 ///
 /// Reached from the clip list's "Export N clips" action with the kept clips. Starts the
 /// export on appear, shows per-clip progress as each clip exports and saves to Photos,
 /// and ends in a summary — "N of M clips saved to Photos" with per-clip failures named
 /// individually. `Done` dismisses back to the list; per the design doc there is no further
-/// action, the user starts over from Home. The Share Sheet (#12) hooks in here in v2.
+/// action, the user starts over from Home. The Share Sheet hooks in here in v2.
 ///
 /// This view deliberately declares no `NavigationStack` of its own — it lives on the
 /// flow's shared stack, like the clip list.

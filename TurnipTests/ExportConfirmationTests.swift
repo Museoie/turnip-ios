@@ -284,9 +284,11 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         let viewModel = viewModel(items: [item()], fake: fake)
 
         viewModel.start()
-        // Both ticks are reported before the gate, so the last one wins — clamped.
-        await Self.waitForPhase(viewModel, .exporting(fraction: 0.0))
-        XCTAssertEqual(viewModel.clips[0].phase, .exporting(fraction: 0.0))
+        // Ticks are clamped to the unit range and the phase never moves backwards:
+        // the max wins, so the order the two unstructured tick tasks land in can't
+        // matter — [2.0, -1.0] settles at 1.0 either way.
+        await Self.waitForPhase(viewModel, .exporting(fraction: 1.0))
+        XCTAssertEqual(viewModel.clips[0].phase, .exporting(fraction: 1.0))
         await fake.openGate()
         await Self.waitUntilFinished(viewModel)
 

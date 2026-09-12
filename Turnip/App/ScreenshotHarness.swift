@@ -2,7 +2,7 @@
 import AVFoundation
 import SwiftUI
 
-/// UI-test screenshot harness for the export confirmation screen (issue #19).
+/// UI-test screenshot harness for the export confirmation screen.
 ///
 /// Shown only when the app is launched with `-screenshotExportConfirmation` (holds
 /// the first clip mid-export at 50% so the screenshot shows the progress UI) or
