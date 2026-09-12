@@ -11,6 +11,10 @@ import SwiftUI
 /// disappears — no separate save step, per the design doc.
 struct ClipEditorView: View {
     @StateObject private var viewModel: ClipEditorViewModel
+    /// The final editor state, committed when the view disappears. Note: `onDisappear`
+    /// fires for *any* disappearance — including a sheet presented over the editor —
+    /// so this view must not present sheets, or a sheet would commit a half-edited
+    /// draft and tear down the preview mid-edit.
     let onCommit: (ClipEditorResult) -> Void
 
     init(source: ClipEditorSource, onCommit: @escaping (ClipEditorResult) -> Void) {
