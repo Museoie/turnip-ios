@@ -87,6 +87,68 @@ final class PhotoVideoResolverTests: XCTestCase {
         XCTAssertEqual(manager.cancelledIDs, [SilentImageManager.requestID])
     }
 
+    // MARK: - Temporary export cleanup
+
+    /// `deleteTemporaryExport(for:)` removes a composition export the resolver created:
+    /// filename prefix plus directly inside tmp/.
+    func testDeleteTemporaryExportRemovesResolverCreatedFile() {
+        let url = URL.temporaryDirectory.appending(
+            path: "\(PhotoVideoResolver.temporaryExportFilenamePrefix)\(UUID().uuidString).mov")
+        XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: Data("x".utf8)))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        PhotoVideoResolver.deleteTemporaryExport(for: AVURLAsset(url: url))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// The guard must discriminate on location, not just the name: a prefixed file *outside*
+    /// tmp/ is never deleted. Deleting the wrong file here would mean corrupting the user's
+    /// Photos library, so this is the test that earns the guard.
+    func testDeleteTemporaryExportKeepsPrefixedFileOutsideTemporaryDirectory() throws {
+        let dir = URL.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appending(
+            path: "\(PhotoVideoResolver.temporaryExportFilenamePrefix)\(UUID().uuidString).mov")
+        XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: Data("x".utf8)))
+
+        PhotoVideoResolver.deleteTemporaryExport(for: AVURLAsset(url: url))
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: url.path),
+            "must not delete files outside tmp/, whatever their name")
+    }
+
+    /// A non-export temp file is left alone — the cleanup is not a license to empty tmp/.
+    func testDeleteTemporaryExportKeepsUnprefixedFileInTemporaryDirectory() {
+        let url = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).mov")
+        XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: Data("x".utf8)))
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        PhotoVideoResolver.deleteTemporaryExport(for: AVURLAsset(url: url))
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// The launch sweep removes orphaned exports and leaves everything else in tmp/ alone.
+    func testDeleteOrphanedTemporaryExportsSweepsOnlyPrefixedFiles() {
+        let orphan = URL.temporaryDirectory.appending(
+            path: "\(PhotoVideoResolver.temporaryExportFilenamePrefix)\(UUID().uuidString).mov")
+        let innocent = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).mov")
+        XCTAssertTrue(FileManager.default.createFile(atPath: orphan.path, contents: Data("x".utf8)))
+        XCTAssertTrue(FileManager.default.createFile(atPath: innocent.path, contents: Data("x".utf8)))
+        defer {
+            try? FileManager.default.removeItem(at: orphan)
+            try? FileManager.default.removeItem(at: innocent)
+        }
+
+        PhotoVideoResolver.deleteOrphanedTemporaryExports()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: innocent.path))
+    }
+
     /// Races `task` against a timeout so a leaked continuation fails the test instead of hanging it.
     ///
     /// Not a task group: awaiting a stuck task's `result` cannot be cancelled, and a group waits for

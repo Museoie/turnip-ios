@@ -88,6 +88,38 @@ struct PhotoVideoResolver {
 
     // MARK: - Composition export
 
+    /// Filename prefix for the composition exports `export()` writes into the temp directory.
+    /// A bare UUID would be indistinguishable from every other temp file; the prefix lets
+    /// `deleteTemporaryExport(for:)` and `deleteOrphanedTemporaryExports()` recognize files
+    /// this resolver created — and only those.
+    static let temporaryExportFilenamePrefix = "turnip-composition-export-"
+
+    /// Deletes the backing file of a resolved asset when it is a composition export this
+    /// resolver created. Ordinary Photos videos resolve to files inside the Photos container —
+    /// deleting one of those would corrupt the user's library — so only a URL sitting directly
+    /// in `temporaryDirectory` *and* carrying `temporaryExportFilenamePrefix` is removed.
+    /// Anything else is left alone; this is best-effort cleanup, so failures are swallowed.
+    static func deleteTemporaryExport(for asset: AVURLAsset) {
+        let url = asset.url
+        guard url.lastPathComponent.hasPrefix(temporaryExportFilenamePrefix),
+              url.deletingLastPathComponent().standardizedFileURL
+                == URL.temporaryDirectory.standardizedFileURL
+        else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// Removes composition exports orphaned by sessions that never reached their cleanup
+    /// (crash, force-quit, watchdog kill). Called once at launch from `TurnipApp`; without it
+    /// a user who opens many slow-mo videos would accumulate gigabytes in tmp/ invisibly.
+    static func deleteOrphanedTemporaryExports() {
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: URL.temporaryDirectory, includingPropertiesForKeys: nil)
+        else { return }
+        for url in urls where url.lastPathComponent.hasPrefix(temporaryExportFilenamePrefix) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
     private func export(_ asset: PHAsset, options: PHVideoRequestOptions) async throws -> AVURLAsset {
         // Not passthrough: slow-mo compositions carry time-scaled segments that passthrough can't
         // re-mux, so this re-encodes. Slower, but it works for every composition Photos produces.
@@ -102,7 +134,8 @@ struct PhotoVideoResolver {
             }
         )
 
-        let outputURL = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).mov")
+        let outputURL = URL.temporaryDirectory.appending(
+            path: "\(Self.temporaryExportFilenamePrefix)\(UUID().uuidString).mov")
         session.outputURL = outputURL
         session.outputFileType = .mov
         session.shouldOptimizeForNetworkUse = false

@@ -10,12 +10,29 @@ final class PoseDiagnosticViewModel: ObservableObject {
 
     private let sampler = VideoFrameSampler()
     private var runTask: Task<Void, Never>?
+    /// The asset the current (or most recent) run was asked to process. For compositions
+    /// (slow-mo, edited) this wraps a temp-file export — see `PhotoVideoResolver` — whose
+    /// lifetime is this screen's: once the screen goes away the file must not linger in tmp/.
+    private var resolvedAsset: AVURLAsset?
 
     /// Popping the screen has to stop the run. Without this a swipe-back would leave a full decode
     /// plus per-frame inference burning the device with no consumer, and every back-and-tap would
     /// stack another one against the same cooperative pool.
     deinit {
+        let runTask = runTask
+        let asset = resolvedAsset
         runTask?.cancel()
+        // The temp export (if any) is owned by this screen: pop means processing is done or
+        // cancelled, so delete it. Wait for the cancelled run to actually stop first — it may
+        // still hold the file open, and ordering the delete after is strictly safer than
+        // relying on POSIX delete-under-open semantics inside AVFoundation.
+        // `Task` captures values, not `self`, so this can't keep the view model alive.
+        Task { [runTask, asset] in
+            _ = await runTask?.result
+            if let asset {
+                PhotoVideoResolver.deleteTemporaryExport(for: asset)
+            }
+        }
     }
 
     /// Runs MoveNet Thunder over `asset`, the video Home resolved from the tapped tile (see
@@ -25,6 +42,7 @@ final class PoseDiagnosticViewModel: ObservableObject {
         results = []
         errorMessage = nil
         isRunning = true
+        resolvedAsset = asset
 
         // `weak self` is what makes `deinit` reachable at all: a strong capture would keep this
         // view model alive for as long as the run it is supposed to be cancelled by.
