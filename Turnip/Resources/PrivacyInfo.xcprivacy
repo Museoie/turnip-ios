@@ -8,7 +8,30 @@
 	<array/>
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array/>
+	<!-- Required-reason API declarations. FileTimestamp/C617.1 covers
+	     PhotoVideoResolver.deleteOrphanedTemporaryExports reading
+	     .creationDateKey on files inside the app's own tmp/ container;
+	     SystemBootTime/35F9.1 covers ProgressReportClock measuring elapsed
+	     time between in-app progress reports via ProcessInfo.systemUptime.
+	     See docs/PRIVACY.md for the audit. -->
 	<key>NSPrivacyAccessedAPITypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

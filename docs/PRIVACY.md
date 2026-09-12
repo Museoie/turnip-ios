@@ -26,15 +26,21 @@ marked as such below.
 ## Privacy manifest (`Turnip/Resources/PrivacyInfo.xcprivacy`)
 
 Declares: no tracking (`NSPrivacyTracking` false, no tracking domains),
-no collected data types, and no required-reason API categories.
+no collected data types, and two required-reason API categories —
+`NSPrivacyAccessedAPICategoryFileTimestamp` with approved reason `C617.1`
+(the orphan sweep in `PhotoVideoResolver` reads `.creationDateKey` on files
+inside the app's own `tmp/` container) and
+`NSPrivacyAccessedAPICategorySystemBootTime` with approved reason `35F9.1`
+(`ProgressReportClock` measures elapsed time between in-app progress reports
+via `systemUptime`). See the audit table below.
 
 Required-reason API audit (re-run if these change):
 
 | API category | Used? | Evidence |
 |---|---|---|
 | UserDefaults | No | No `UserDefaults` references in `Turnip/` |
-| File timestamps | No | `creationDate` appears only as `PHAsset.creationDate` — PhotoKit metadata on assets the user granted access to, not the file-timestamp APIs (`attributesOfItem`, `getResourceValue`) the category covers |
-| System boot time | No | No `systemUptime` usage |
+| File timestamps | Yes — C617.1 | `PhotoVideoResolver.deleteOrphanedTemporaryExports` reads `.creationDateKey` via `resourceValues(forKeys:)` on files in the app's own `tmp/` container — in-container metadata reads, declared with approved reason C617.1. (`PHAsset.creationDate` is PhotoKit metadata on user-granted assets, not a file-timestamp API.) |
+| System boot time | Yes — 35F9.1 | `ProgressReportClock.shouldReport` (in `ProcessingPipeline.swift`) defaults its clock to `ProcessInfo.processInfo.systemUptime` to measure elapsed time between in-app progress reports — declared with approved reason 35F9.1. |
 | Disk space | No | No volume-capacity queries |
 | Active keyboards | No | No text fields anywhere in the app |
 
