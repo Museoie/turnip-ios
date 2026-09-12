@@ -150,7 +150,7 @@ private func makeClipEditorPreviewAsset() -> URL {
             outputSettings: [
                 AVVideoCodecKey: AVVideoCodecType.h264,
                 AVVideoWidthKey: width,
-                AVVideoHeightKey: height,
+                AVVideoHeightKey: height
             ])
         input.expectsMediaDataInRealTime = false
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
@@ -158,7 +158,7 @@ private func makeClipEditorPreviewAsset() -> URL {
             sourcePixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferWidthKey as String: width,
-                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferHeightKey as String: height
             ])
         guard writer.canAdd(input), writer.startWriting() else { throw PreviewAssetError.setupFailed }
         writer.add(input)
