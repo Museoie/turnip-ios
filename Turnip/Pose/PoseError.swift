@@ -1,6 +1,6 @@
 import Foundation
 
-/// Errors from the pose pipeline: frame decode (pipeline step 2), model load, and inference.
+/// Errors from the pose pipeline: frame decode (pipeline step 1), model load, and inference.
 ///
 /// Named for the failure domain, not the caller: the diagnostic screen was the first consumer,
 /// but these errors belong to the pipeline itself, so deleting the screen must never strand them.
