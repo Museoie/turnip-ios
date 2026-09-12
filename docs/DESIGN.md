@@ -60,7 +60,7 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
 - **Pose engine**: MoveNet Thunder (Apache 2.0, ~7 MB TFLite int8 · ~12 MB fp16 · ~24 MB fp32) — pretrained on Google's "Active" dataset (yoga/fitness/dance with high motion + self-occlusion), 84% joint accuracy on the ISBS 2024 gymnastics benchmark. int8 is the default bundle; fp16 is the escalation if accuracy on real footage demands it before the model swap. See "Model escalation ladder" below for the fallback path if empirical testing shows Thunder underperforms.
 - **Runtime**: TensorFlow Lite iOS OR Core ML (via coremltools conversion of the TFLite → Core ML). Core ML is preferable for Neural Engine acceleration on A11+ devices.
 - **Pipeline** (per input video):
-  1. Decode frames at native fps
+  1. Decode frames at native fps, applying the track's rotation transform
   2. Downsample every 3rd frame to 480p (10 samples/sec at 30fps input)
   3. Run pose detection, extract hip-midpoint per frame
   4. Motion signal = frame-to-frame hip displacement, smoothed (3-sample moving average)

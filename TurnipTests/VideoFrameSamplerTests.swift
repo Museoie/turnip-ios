@@ -27,7 +27,7 @@ final class VideoFrameSamplerTests: XCTestCase {
 
     override func setUp() async throws {
         try await super.setUp()
-        videoURL = try await Self.writeTestVideo(frameCount: 10, size: 64, fps: 30)
+        videoURL = try await Self.writeTestVideo(frameCount: 10, width: 64, height: 64, fps: 30)
     }
 
     override func tearDown() async throws {
@@ -75,6 +75,70 @@ final class VideoFrameSamplerTests: XCTestCase {
         }
     }
 
+    func testAppliesPreferredTransform() async throws {
+        // A 64x48 landscape-encoded video carrying the 90° preferredTransform an iPhone writes for
+        // a portrait recording — [0, 1, -1, 0, tx: 48, 0], the rotation plus the translation that
+        // keeps the rotated content at the origin — must decode as 48x64 with the content filling
+        // the render rect.
+        try await assertPreferredTransformApplies(
+            transform: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 48, ty: 0))
+    }
+
+    /// The origin-rotating sibling of `testAppliesPreferredTransform`: a bare 90° rotation with no
+    /// normalizing translation puts the content outside [0, renderSize] without the normalizing
+    /// translate, so this fixture covers the branch the iPhone-shaped fixture cannot
+    /// reach. Reverting `renderTransform` to the raw `preferredTransform` leaves the render rect
+    /// pure background and fails this test while the iPhone-shaped one stays green.
+    func testAppliesPreferredTransformWithOriginRotation() async throws {
+        try await assertPreferredTransformApplies(transform: CGAffineTransform(rotationAngle: .pi / 2))
+    }
+
+    /// Writes a 64x48 video carrying `transform` as the track's preferredTransform and asserts the
+    /// sampler decodes 48x64 frames whose render rect is filled with content, not background.
+    private func assertPreferredTransformApplies(transform: CGAffineTransform) async throws {
+        let rotatedURL = try await Self.writeTestVideo(
+            frameCount: 6, width: 64, height: 48, fps: 30, transform: transform)
+        defer { try? FileManager.default.removeItem(at: rotatedURL) }
+
+        let sampler = VideoFrameSampler()
+        let rendered = RenderedFrames()
+        try await sampler.sampleFrames(from: AVURLAsset(url: rotatedURL)) { frame in
+            await rendered.append(RenderedFrame(
+                frameIndex: frame.frameIndex,
+                size: CGSize(
+                    width: CVPixelBufferGetWidth(frame.pixelBuffer),
+                    height: CVPixelBufferGetHeight(frame.pixelBuffer)),
+                renderSize: frame.renderSize,
+                darkestChannelValue: darkestChannelValue(in: frame.pixelBuffer)))
+        }
+
+        let observed = await rendered.values
+        XCTAssertFalse(observed.isEmpty, "expected the sampler to decode frames from the rotated video")
+        for frame in observed {
+            XCTAssertEqual(
+                frame.size, CGSize(width: 48, height: 64),
+                "decoded frame is \(frame.size) — the track's preferredTransform was not applied")
+            // The coordinate space the keypoints are measured in is recorded on the frame, so a
+            // consumer can map them back to source-frame coordinates.
+            XCTAssertEqual(
+                frame.renderSize, CGSize(width: 48, height: 64),
+                "decoded frame's recorded renderSize is \(frame.renderSize) — the render grid was not recorded")
+        }
+
+        // Dimensions alone prove nothing: renderSize is computed from the transformed bounding box
+        // whether or not the layer instruction applies the transform, so a sampler that drops the
+        // rotation still emits 48x64. `writeTestVideo` fills frame N with `N * 20 % 255`, so every
+        // kept frame past the first is a solid mid-gray — any part of the render rect the rotated
+        // content misses stays the instruction's opaque-black background.
+        let litFrames = observed.filter { $0.frameIndex > 0 }
+        XCTAssertFalse(litFrames.isEmpty, "expected a kept frame past frame 0 to check rendered content")
+        for frame in litFrames {
+            XCTAssertGreaterThan(
+                frame.darkestChannelValue, 30,
+                "frame \(frame.frameIndex) has a near-black region — the rotated content did not fill the render rect")
+        }
+    }
+
     func testCancellingTheRunStopsDecodingBeforeTheNextFrame() async throws {
         let observations = FrameObservations()
         let handshake = FrameHandshake()
@@ -115,6 +179,7 @@ final class VideoFrameSamplerTests: XCTestCase {
     func testThrowsWhenTheAssetHasNoVideoTrack() async throws {
         let audioURL = try Self.writeAudioOnlyFile()
         defer { try? FileManager.default.removeItem(at: audioURL) }
+
         let sampler = VideoFrameSampler()
 
         do {
@@ -129,26 +194,74 @@ final class VideoFrameSamplerTests: XCTestCase {
         }
     }
 
+    func testCompositionFrameDurationFallsBackAndThrows() throws {
+        // A usable minFrameDuration wins outright.
+        XCTAssertEqual(
+            try VideoFrameSampler.compositionFrameDuration(
+                minFrameDuration: CMTime(value: 1, timescale: 30), nominalFrameRate: 0),
+            CMTime(value: 1, timescale: 30))
+        // Otherwise the nominal rate sets the grid.
+        XCTAssertEqual(
+            try VideoFrameSampler.compositionFrameDuration(
+                minFrameDuration: .invalid, nominalFrameRate: 29.97),
+            CMTime(value: 1, timescale: 30))
+
+        // Neither usable: no AVAssetWriter fixture can
+        // produce this pair — a writer-written track always carries a frame duration — so this
+        // goes straight at the pure seam.
+        do {
+            _ = try VideoFrameSampler.compositionFrameDuration(
+                minFrameDuration: .invalid, nominalFrameRate: 0)
+            XCTFail("expected compositionFrameDuration to throw when no usable frame rate exists")
+        } catch let error as PoseDiagnosticError {
+            guard case .videoLoadFailed = error else {
+                return XCTFail("expected videoLoadFailed, got \(error)")
+            }
+        } catch {
+            XCTFail("expected PoseDiagnosticError.videoLoadFailed, got \(error)")
+        }
+
+        // An out-of-range rate must throw, not trap: converting 3e9 fps to the Int32 timescale
+        // is a hard crash, not a throw.
+        do {
+            _ = try VideoFrameSampler.compositionFrameDuration(
+                minFrameDuration: .invalid, nominalFrameRate: 3e9)
+            XCTFail("expected compositionFrameDuration to throw for a frame rate past Int32.max")
+        } catch let error as PoseDiagnosticError {
+            guard case .videoLoadFailed = error else {
+                return XCTFail("expected videoLoadFailed, got \(error)")
+            }
+        } catch {
+            XCTFail("expected PoseDiagnosticError.videoLoadFailed, got \(error)")
+        }
+    }
+
     // MARK: - Fixture
 
     /// Writes a tiny H.264 movie with `frameCount` solid-color frames so the sampler has something
     /// real to decode through AVAssetReader (bundling a fixture .mov would be larger and opaque).
-    private static func writeTestVideo(frameCount: Int, size: Int, fps: Int32) async throws -> URL {
+    /// `transform` is written as the track's preferredTransform — e.g. a 90° rotation to mimic an
+    /// iPhone portrait recording stored as landscape-encoded frames.
+    private static func writeTestVideo(
+        frameCount: Int, width: Int, height: Int, fps: Int32,
+        transform: CGAffineTransform = .identity
+    ) async throws -> URL {
         let url = URL.temporaryDirectory.appending(path: "VideoFrameSamplerTests-\(UUID().uuidString).mov")
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: size,
-            AVVideoHeightKey: size
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height
         ])
         input.expectsMediaDataInRealTime = false
+        input.transform = transform
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(
             assetWriterInput: input,
             sourcePixelBufferAttributes: [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: size,
-                kCVPixelBufferHeightKey as String: size
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height
             ]
         )
         guard writer.canAdd(input) else {
@@ -221,6 +334,43 @@ private actor Timestamps {
     func append(_ value: TimeInterval) {
         values.append(value)
     }
+}
+
+private struct RenderedFrame {
+    let frameIndex: Int
+    let size: CGSize
+    let renderSize: CGSize
+    let darkestChannelValue: UInt8
+}
+
+private actor RenderedFrames {
+    private(set) var values: [RenderedFrame] = []
+
+    func append(_ value: RenderedFrame) {
+        values.append(value)
+    }
+}
+
+/// Smallest blue, green or red value anywhere in a BGRA frame, ignoring a 2px border where the
+/// compositor blends the content's edge into the background. Alpha is skipped — the compositor
+/// writes it opaque whatever the source fill was.
+private func darkestChannelValue(in pixelBuffer: CVPixelBuffer) -> UInt8 {
+    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+    guard let base = CVPixelBufferGetBaseAddress(pixelBuffer) else { return 0 }
+
+    let bytes = base.assumingMemoryBound(to: UInt8.self)
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+    let inset = 2
+    var darkest = UInt8.max
+    for y in inset..<(CVPixelBufferGetHeight(pixelBuffer) - inset) {
+        for x in inset..<(CVPixelBufferGetWidth(pixelBuffer) - inset) {
+            for channel in 0..<3 {
+                darkest = min(darkest, bytes[y * bytesPerRow + x * 4 + channel])
+            }
+        }
+    }
+    return darkest
 }
 
 /// Lets a test pause the sampler's decode loop at the first kept frame and resume it after

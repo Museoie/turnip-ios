@@ -13,11 +13,28 @@ struct SampledFrame: @unchecked Sendable {
     let frameIndex: Int
     let timestamp: TimeInterval
     let pixelBuffer: CVPixelBuffer
+    /// The composition grid the frame was rendered onto, in display orientation. The sampler
+    /// applies the track's `preferredTransform` when rendering, so on a portrait iPhone clip
+    /// this is the transpose of the track's `naturalSize`. Keypoints measured against the pixel
+    /// buffer live in this space; mapping them back to source-frame coordinates needs this size
+    /// plus the track's `preferredTransform`.
+    let renderSize: CGSize
 }
 
-/// Decodes video frames at native fps via AVAssetReader (not AVAssetImageGenerator, which
-/// reseeks per-frame and is both slower and less frame-accurate during fast motion), keeping
-/// every 3rd frame per docs/DESIGN.md's pipeline step 2.
+/// Decodes video frames via AVAssetReader (not AVAssetImageGenerator, which reseeks per-frame and
+/// is both slower and less frame-accurate during fast motion), keeping every 3rd frame per
+/// docs/DESIGN.md's pipeline step 2.
+///
+/// Frames are rendered through an `AVMutableVideoComposition` that applies the track's
+/// `preferredTransform`. The composition output's `frameDuration` defines a uniform output grid:
+/// one frame is emitted per source sample, at the first grid position at or after that sample's
+/// own presentation time. With `frameDuration = minFrameDuration` no frame is dropped, but
+/// per-frame Δt is quantized to the grid — a source timestamp that is not a multiple of it is
+/// reported late, and a steady variable-frame-rate stretch (an iPhone lowers the rate in dim
+/// light) can read back as an alternating stutter. So `frameIndex` counts source samples in
+/// emission order, but `timestamp` is a grid position rather than the track's own presentation
+/// timestamp, and any future consumer that divides displacement by Δt must tolerate up to one
+/// frame duration of lateness.
 ///
 /// A `Sendable` struct rather than a class: it is owned by a `@MainActor` view model but
 /// `sampleFrames` is nonisolated, so every call sends the sampler out of the main actor. With no
@@ -45,11 +62,35 @@ struct VideoFrameSampler: Sendable {
             throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
         }
 
+        // iPhone portrait videos are stored as landscape-encoded buffers with a 90° preferredTransform,
+        // so frames have to be rendered through a video composition that applies it.
+        let preferredTransform = try await track.load(.preferredTransform)
+        let naturalSize = try await track.load(.naturalSize)
+        let transformedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
+        let renderSize = CGSize(width: abs(transformedRect.width), height: abs(transformedRect.height))
+        // A transform that rotates about the origin puts the content outside [0, renderSize], which
+        // composes correctly sized frames of pure background. Camera-roll assets carry the
+        // normalizing translation already; imported and edited ones need not.
+        let renderTransform = preferredTransform.concatenating(
+            CGAffineTransform(translationX: -transformedRect.minX, y: -transformedRect.minY))
+
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = renderSize
+        videoComposition.frameDuration = try await Self.compositionFrameDuration(of: track)
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        layerInstruction.setTransform(renderTransform, at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        videoComposition.instructions = [instruction]
+
         let reader = try AVAssetReader(asset: asset)
         let outputSettings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
-        let trackOutput = AVAssetReaderTrackOutput(track: track, outputSettings: outputSettings)
+        let trackOutput = AVAssetReaderVideoCompositionOutput(
+            videoTracks: [track], videoSettings: outputSettings)
+        trackOutput.videoComposition = videoComposition
         trackOutput.alwaysCopiesSampleData = false
 
         guard reader.canAdd(trackOutput) else {
@@ -70,11 +111,41 @@ struct VideoFrameSampler: Sendable {
             guard frameIndex % Self.sampleStride == 0 else { continue }
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
             let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
-            try await handler(SampledFrame(frameIndex: frameIndex, timestamp: timestamp, pixelBuffer: pixelBuffer))
+            try await handler(SampledFrame(
+                frameIndex: frameIndex, timestamp: timestamp, pixelBuffer: pixelBuffer, renderSize: renderSize))
         }
 
         if reader.status == .failed {
             throw PoseDiagnosticError.videoLoadFailed(underlying: reader.error)
         }
+    }
+
+    /// The composition's output grid from the track's own timing values. The pure overload below
+    /// carries the logic so the throw branch has a test seam — no `AVAssetWriter` fixture can
+    /// produce a track with neither a usable `minFrameDuration` nor a nonzero `nominalFrameRate`.
+    private static func compositionFrameDuration(of track: AVAssetTrack) async throws -> CMTime {
+        let minFrameDuration = try await track.load(.minFrameDuration)
+        let nominalFrameRate = try await track.load(.nominalFrameRate)
+        return try compositionFrameDuration(minFrameDuration: minFrameDuration, nominalFrameRate: nominalFrameRate)
+    }
+
+    /// The composition's output grid. `minFrameDuration` is exact and per-track; `nominalFrameRate`
+    /// is the fallback and is `0` whenever the rate cannot be determined. With neither there is no
+    /// valid grid: an `AVMutableVideoComposition` defaults to a non-numeric `frameDuration`
+    /// (`CMTime(value: 0, timescale: 0)`), and assigning it one raises `NSInvalidArgumentException`
+    /// ("video composition must have a positive frameDuration") where the composition is attached
+    /// to the reader output — uncatchable from Swift, so the process dies instead of failing the
+    /// load. Throw `videoLoadFailed` instead, which the app can surface.
+    static func compositionFrameDuration(minFrameDuration: CMTime, nominalFrameRate: Float) throws -> CMTime {
+        if minFrameDuration.isNumeric && minFrameDuration.seconds > 0 {
+            return minFrameDuration
+        }
+        let roundedFrameRate = nominalFrameRate.rounded()
+        // `CMTimeScale` is `Int32`: converting a rate past `Int32.max` traps instead of throwing,
+        // so reject it here the same way the guard rejects a rate below 1.
+        guard roundedFrameRate >= 1, let timescale = CMTimeScale(exactly: roundedFrameRate) else {
+            throw PoseDiagnosticError.videoLoadFailed(underlying: nil)
+        }
+        return CMTime(value: 1, timescale: timescale)
     }
 }
