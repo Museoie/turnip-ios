@@ -143,10 +143,40 @@ final class PhotoVideoResolverTests: XCTestCase {
             try? FileManager.default.removeItem(at: innocent)
         }
 
-        PhotoVideoResolver.deleteOrphanedTemporaryExports()
+        PhotoVideoResolver.deleteOrphanedTemporaryExports(olderThan: Date())
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: innocent.path))
+    }
+
+    /// The sweep must not race in-flight resolutions: an export this session writes while the
+    /// detached sweep is still running is created after the launch timestamp, so it survives.
+    func testDeleteOrphanedTemporaryExportsKeepsFilesCreatedAfterLaunch() {
+        let fm = FileManager.default
+        let orphan = URL.temporaryDirectory.appending(
+            path: "\(PhotoVideoResolver.temporaryExportFilenamePrefix)\(UUID().uuidString).mov")
+        XCTAssertTrue(fm.createFile(atPath: orphan.path, contents: Data("x".utf8)))
+        // Pin the orphan to a previous session explicitly; creation-time granularity is not
+        // something this test should depend on.
+        try? fm.setAttributes(
+            [.creationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: orphan.path)
+        let launchDate = Date()
+        let inFlight = URL.temporaryDirectory.appending(
+            path: "\(PhotoVideoResolver.temporaryExportFilenamePrefix)\(UUID().uuidString).mov")
+        XCTAssertTrue(fm.createFile(atPath: inFlight.path, contents: Data("x".utf8)))
+        defer {
+            try? fm.removeItem(at: orphan)
+            try? fm.removeItem(at: inFlight)
+        }
+
+        PhotoVideoResolver.deleteOrphanedTemporaryExports(olderThan: launchDate)
+
+        XCTAssertFalse(
+            fm.fileExists(atPath: orphan.path),
+            "an export orphaned by a previous session is still swept")
+        XCTAssertTrue(
+            fm.fileExists(atPath: inFlight.path),
+            "an export written after launch must survive the sweep")
     }
 
     /// Races `task` against a timeout so a leaked continuation fails the test instead of hanging it.

@@ -3,13 +3,14 @@ import SwiftUI
 @main
 struct TurnipApp: App {
     init() {
-        // Composition exports orphaned by a session that never cleaned up (crash, force-quit,
-        // watchdog kill) would otherwise sit in tmp/ forever; one sweep at launch bounds the
-        // accumulation. Detached at utility priority: nothing downstream depends on it having
-        // finished, so it stays off the main-thread launch path (watchdog budget).
+        // The sweep races in-flight resolutions: this session can export a fresh composition
+        // while the detached sweep below is still snapshotting tmp/. The launch timestamp
+        // captured here bounds what the sweep may delete, so only exports orphaned by
+        // previous sessions are swept and anything written after launch is never touched.
         // See `PhotoVideoResolver.deleteOrphanedTemporaryExports`.
+        let launchDate = Date()
         Task.detached(priority: .utility) {
-            PhotoVideoResolver.deleteOrphanedTemporaryExports()
+            PhotoVideoResolver.deleteOrphanedTemporaryExports(olderThan: launchDate)
         }
     }
 

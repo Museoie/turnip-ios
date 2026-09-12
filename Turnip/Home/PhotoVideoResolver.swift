@@ -111,12 +111,23 @@ struct PhotoVideoResolver {
     /// Removes composition exports orphaned by sessions that never reached their cleanup
     /// (crash, force-quit, watchdog kill). Called once at launch from `TurnipApp`; without it
     /// a user who opens many slow-mo videos would accumulate gigabytes in tmp/ invisibly.
-    static func deleteOrphanedTemporaryExports() {
+    ///
+    /// The sweep runs on a detached task, concurrently with the main-actor resolution path,
+    /// so this session could already be exporting a fresh composition while the sweep is
+    /// still running. To close that race, only files whose creation date predates `launchDate`
+    /// are deleted; anything written after launch belongs to this session and is left alone.
+    static func deleteOrphanedTemporaryExports(olderThan launchDate: Date) {
         guard let urls = try? FileManager.default.contentsOfDirectory(
-            at: URL.temporaryDirectory, includingPropertiesForKeys: nil)
+            at: URL.temporaryDirectory, includingPropertiesForKeys: [.creationDateKey])
         else { return }
         for url in urls where url.lastPathComponent.hasPrefix(temporaryExportFilenamePrefix) {
-            try? FileManager.default.removeItem(at: url)
+            // If the creation date is unreadable, treat the file as an orphan: the sweep's
+            // job is to bound accumulation, and a file with no date cannot be proven new.
+            let created = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate)
+                ?? .distantPast
+            if created < launchDate {
+                try? FileManager.default.removeItem(at: url)
+            }
         }
     }
 
