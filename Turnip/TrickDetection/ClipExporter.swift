@@ -124,8 +124,9 @@ actor ClipExporter {
         return start...end
     }
 
-    /// Exports one clip. Throws `ClipExportError`; the output file is left in place on
-    /// failure for debugging and the caller decides whether to delete it.
+    /// Exports one clip. Throws `ClipExportError`, or the underlying AVFoundation
+    /// error from asset loading; the output file is left in place on failure for
+    /// debugging and the caller decides whether to delete it.
     func export(
         _ spec: ClipSpec,
         from asset: AVAsset,
