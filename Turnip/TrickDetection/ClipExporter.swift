@@ -223,7 +223,11 @@ actor ClipExporter {
                 progress?(Double(box.session.progress))
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
-            progress?(1.0)
+            // Only report 1.0 on success: a failed or cancelled export never completed,
+            // and the handler's contract is the fraction of this clip's export completed.
+            if box.session.status == .completed {
+                progress?(1.0)
+            }
         }
         defer { progressTask.cancel() }
 
