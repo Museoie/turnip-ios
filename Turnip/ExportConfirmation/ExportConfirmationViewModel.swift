@@ -61,13 +61,39 @@ typealias ExportOneClip = @Sendable (
 /// actor internally for any blocking work.
 typealias SaveOneClipToPhotos = @Sendable (URL) async throws -> Void
 
+/// The name prefix for every export scratch directory. The stale-directory sweep
+/// below removes only directories carrying this prefix; anything else sharing the
+/// parent folder is left alone.
+let exportDirectoryNamePrefix = "turnip-export-"
+
 /// The scratch directory for one export run: a fresh UUID-named folder under the app's
 /// temp directory, so repeated runs never share outputs. The run deletes it in
 /// `start()`'s `defer`, whatever ended the run. Internal so tests can pass their own
 /// directory and assert on the lifecycle without touching the real tmp dir.
 func defaultExportDirectory() -> URL {
     FileManager.default.temporaryDirectory
-        .appendingPathComponent("turnip-export-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("\(exportDirectoryNamePrefix)\(UUID().uuidString)", isDirectory: true)
+}
+
+/// Best-effort sweep of orphaned export scratch directories. A killed run never
+/// executes `start()`'s cleanup `defer`, so its scratch directory is left behind;
+/// each new run removes those stale siblings before making its own. Skips
+/// `excluding` (this run's about-to-be-created directory), touches only
+/// directories whose name carries `exportDirectoryNamePrefix`, and swallows every
+/// failure — leftover scratch is untidy but bounded (the OS purges tmp under
+/// pressure), so a sweep failure must never fail the run.
+func sweepStaleExportDirectories(in parentDirectory: URL, excluding current: URL) {
+    let candidates = (try? FileManager.default.contentsOfDirectory(
+        at: parentDirectory,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles])) ?? []
+    for candidate in candidates {
+        guard candidate != current,
+              candidate.lastPathComponent.hasPrefix(exportDirectoryNamePrefix),
+              (try? candidate.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        else { continue }
+        try? FileManager.default.removeItem(at: candidate)
+    }
 }
 
 /// The export confirmation screen's state machine (`docs/UIUX.md` § "Export
@@ -215,6 +241,11 @@ final class ExportConfirmationViewModel: ObservableObject {
             // skip-`.saved` check below can't race the old run's in-flight save.
             await previousRun?.value
             let directory = makeDirectory()
+            // A killed run never executes the cleanup `defer` below, orphaning its
+            // scratch directory: sweep stale `turnip-export-*` siblings before making
+            // this run's directory, so repeated kills can't accumulate temp dirs.
+            sweepStaleExportDirectories(
+                in: directory.deletingLastPathComponent(), excluding: directory)
             // The exporter writes into this directory; it must exist before the first
             // export session starts. A failure here surfaces per clip from the export
             // step — tmp creation all but never fails, so there is no dedicated state

@@ -281,6 +281,36 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
+    /// A killed run never executes `start()`'s cleanup `defer`, orphaning its
+    /// `turnip-export-*` scratch directory. Each new run sweeps those stale
+    /// siblings at start; without the sweep this test leaves the orphan behind,
+    /// and a name without the prefix must never be touched.
+    func testStaleExportDirectoriesAreSweptAtRunStart() async {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("turnip-test-\(UUID().uuidString)", isDirectory: true)
+        let orphan = parent.appendingPathComponent(
+            "\(exportDirectoryNamePrefix)\(UUID().uuidString)", isDirectory: true)
+        let unrelated = parent.appendingPathComponent(
+            "turnip-keep-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: orphan, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let fake = FakeExport(exportResults: Self.exportSuccesses(1))
+        let viewModel = viewModel(
+            items: [item()], fake: fake,
+            makeDirectory: {
+                parent.appendingPathComponent(
+                    "\(exportDirectoryNamePrefix)\(UUID().uuidString)", isDirectory: true)
+            })
+
+        viewModel.start()
+        await Self.waitUntilFinished(viewModel)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
+        XCTAssertEqual(viewModel.clips[0].phase, .saved)
+    }
+
     func testProgressFractionsAreClampedToTheUnitRange() async {
         let fake = FakeExport(exportResults: Self.exportSuccesses(1))
         await fake.setProgressFractions([2.0, -1.0])
