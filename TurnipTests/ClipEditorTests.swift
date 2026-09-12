@@ -71,6 +71,36 @@ final class ClipEditorTests: XCTestCase {
     }
 
     @MainActor
+    func testRecomputeUsesDisplayedSizeOnRotatedClips() {
+        // 90°-rotated track: the encoded 200x100 is really a 100x200 portrait video.
+        // The keypoints are measured in displayed space, so the ratio snap must use the
+        // displayed size — passing the encoded naturalSize transposes the dimensions and
+        // produces a wrongly-proportioned rect.
+        let rotate90 = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 100, ty: 0)
+        let frames = twoPositionFrames()
+        let viewModel = ClipEditorViewModel(
+            source: makeSource(window: TrickWindow(startTime: 0, endTime: 3.9), frames: frames))
+        viewModel.setMediaInfo(
+            duration: duration, naturalSize: naturalSize, preferredTransform: rotate90)
+
+        let displayedSize = ClipEditorViewModel.displayedSize(
+            naturalSize: naturalSize, preferredTransform: rotate90)
+        // Sanity: the displayed size is the transpose.
+        XCTAssertEqual(displayedSize, CGSize(width: 100, height: 200))
+
+        guard let expected = CropRectCalculator().cropRect(
+            for: frames.filter { $0.timestamp >= 0 && $0.timestamp <= 3.9 },
+            renderedPixelSize: displayedSize)
+        else {
+            return XCTFail("the window's frames should yield a crop rect")
+        }
+        // Discriminating: with the encoded naturalSize (200x100) the 9:16 snap produces
+        // a different rect than with the displayed size (100x200); this fails if the
+        // implementation passes the wrong pixel space.
+        XCTAssertEqual(viewModel.cropRect, expected)
+    }
+
+    @MainActor
     func testCropRectHoldsWhenTrimmedIntoKeypointFreeFrames() {
         // Frames 20..<40 carry no usable keypoints; trimming into them must not yank the
         // preview to the full frame mid-drag.
@@ -300,6 +330,20 @@ final class ClipEditorTests: XCTestCase {
             preferredTransform: rotate90)
 
         XCTAssertEqual(rect, CGRect(x: 0, y: 0, width: 1080, height: 1920))
+    }
+
+    func testDisplayedCropRectUsesTheDisplayedSizeForPartialRects() {
+        // A partial rect discriminates the encoded-vs-displayed denormalization: with the
+        // old (buggy) denormalize-in-encoded-size + map-through-transform, this
+        // display-normalized rect lands at (0, 480, 1080, 960) instead of (270, 0, 540, 1920).
+        let rotate90 = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1080, ty: 0)
+
+        let rect = ClipEditorViewModel.displayedCropRect(
+            cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0, maxY: 1),
+            naturalSize: CGSize(width: 1920, height: 1080),
+            preferredTransform: rotate90)
+
+        XCTAssertEqual(rect, CGRect(x: 270, y: 0, width: 540, height: 1920))
     }
 
     func testDisplayedCropRectReturnsNilForDegenerateInputs() {

@@ -207,9 +207,10 @@ final class ClipEditorViewModel: ObservableObject {
         return TrickWindow(startTime: startTime, endTime: endTime)
     }
 
-    /// Maps the crop rect from `NormalizedRect`'s space contract — the encoded frame's
-    /// pixel space, top-left origin, `preferredTransform` not applied — into the displayed
-    /// frame's space, matching what the player shows. `nil` for degenerate inputs.
+    /// Maps the crop rect from `NormalizedRect`'s space contract — the decoded frames'
+    /// normalized space (display orientation, y down from the top), matching the pose
+    /// keypoints it is built from — into displayed pixel space, matching what the player
+    /// shows. `nil` for degenerate inputs.
     ///
     /// Pure so the geometry is unit-testable; the 90°-rotation case is the discriminating
     /// one.
@@ -219,9 +220,13 @@ final class ClipEditorViewModel: ObservableObject {
         preferredTransform: CGAffineTransform
     ) -> CGRect? {
         guard naturalSize.width > 0, naturalSize.height > 0 else { return nil }
-        let encoded = cropRect.denormalized(in: naturalSize)
-        guard encoded.width > 0, encoded.height > 0 else { return nil }
-        return boundingBox(of: encoded.corners.map { $0.applying(preferredTransform) })
+        // cropRect is already normalized in display orientation, so denormalize in the
+        // displayed size directly — no trip through preferredTransform needed.
+        let displayedSize = Self.displayedSize(
+            naturalSize: naturalSize, preferredTransform: preferredTransform)
+        let displayed = cropRect.denormalized(in: displayedSize)
+        guard displayed.width > 0, displayed.height > 0 else { return nil }
+        return displayed
     }
 
     /// The frame size as the player shows it: the encoded frame's corners through
@@ -243,7 +248,13 @@ final class ClipEditorViewModel: ObservableObject {
         let inWindow = source.poseFrames.filter {
             $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
         }
-        if let rect = calculator.cropRect(for: inWindow, renderedPixelSize: naturalSize) {
+        // The keypoints are measured in rendered (displayed-orientation) space, so the
+        // ratio snap must use the displayed size — passing the encoded naturalSize
+        // transposes the dimensions on rotated clips and silently produces a
+        // wrongly-proportioned rect.
+        let renderedSize = Self.displayedSize(
+            naturalSize: naturalSize, preferredTransform: preferredTransform)
+        if let rect = calculator.cropRect(for: inWindow, renderedPixelSize: renderedSize) {
             cropRect = rect
         }
     }

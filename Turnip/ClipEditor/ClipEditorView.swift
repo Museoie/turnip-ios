@@ -46,7 +46,7 @@ struct ClipEditorView: View {
     /// aspect ratio so the overlay maps 1:1 onto the video.
     private var previewSection: some View {
         Group {
-            if let overlay = viewModel.previewOverlay {
+            if let overlay = viewModel.previewOverlay, overlay.videoSize.width > 0 {
                 GeometryReader { proxy in
                     let scale = proxy.size.width / overlay.videoSize.width
                     let hole = CGRect(
