@@ -49,7 +49,7 @@ final class ExportConfirmationViewModelTests: XCTestCase {
     /// Scripted fake for the export/save seam: per-step outcomes consumed in order, a
     /// record of every call, and a one-shot gate the test arms to observe a mid-run phase
     /// deterministically.
-    private actor FakeExport {
+    fileprivate actor FakeExport {
         var exportCalls: [(window: TrickWindow, cropRect: NormalizedRect)] = []
         var savedURLs: [URL] = []
         var directoryExistedAtCall: [Bool] = []
