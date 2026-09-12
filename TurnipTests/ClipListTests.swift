@@ -325,13 +325,20 @@ final class ClipListTests: XCTestCase {
 
     /// The RGBA bytes of one pixel, read in data order (top row first). The vertical
     /// orientation doesn't matter for the left/right-half assertions below.
-    private static func pixel(atX x: Int, y: Int, in image: CGImage) -> (red: CGFloat, green: CGFloat, blue: CGFloat)? {
+    /// A pixel's normalized RGB components (avoids a >2-member tuple return).
+    private struct PixelRGB {
+        let red: CGFloat
+        let green: CGFloat
+        let blue: CGFloat
+    }
+
+    private static func pixel(atX x: Int, y: Int, in image: CGImage) -> PixelRGB? {
         guard image.bitsPerPixel == 32,
               let data = image.dataProvider?.data as Data?
         else { return nil }
         let offset = y * image.bytesPerRow + x * 4
         guard offset + 4 <= data.count else { return nil }
-        return (
+        return PixelRGB(
             red: CGFloat(data[offset]) / 255,
             green: CGFloat(data[offset + 1]) / 255,
             blue: CGFloat(data[offset + 2]) / 255

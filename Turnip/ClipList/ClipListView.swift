@@ -95,10 +95,13 @@ private struct ClipCardView: View {
             .buttonStyle(.plain)
             .opacity(item.isKept ? 1 : 0.45)
 
-            Button(action: { viewModel.toggleKeep(item) }) {
-                Image(systemName: item.isKept ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-            }
+            Button(
+                action: { viewModel.toggleKeep(item) },
+                label: {
+                    Image(systemName: item.isKept ? "checkmark.circle.fill" : "circle")
+                        .font(.title2)
+                }
+            )
             .buttonStyle(.plain)
             .padding(8)
             .accessibilityLabel(item.isKept ? "Discard clip" : "Keep clip")
@@ -122,7 +125,7 @@ private struct ClipCardView: View {
             // no UIKit bridge needed.
             Image(decorative: image, scale: 1.0, orientation: .up)
                 .resizable()
-                .aspectRatio(contentMode: .fit)
+                .scaledToFit()
                 .clipShape(RoundedRectangle(cornerRadius: 8))
         } else {
             RoundedRectangle(cornerRadius: 8)

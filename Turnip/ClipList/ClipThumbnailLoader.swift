@@ -143,9 +143,9 @@ actor ClipThumbnailLoader {
     }
 
     private static func boundingBox(of points: [CGPoint]) -> CGRect {
-        let xs = points.map(\.x), ys = points.map(\.y)
-        guard let minX = xs.min(), let maxX = xs.max(),
-              let minY = ys.min(), let maxY = ys.max()
+        let xValues = points.map(\.x), yValues = points.map(\.y)
+        guard let minX = xValues.min(), let maxX = xValues.max(),
+              let minY = yValues.min(), let maxY = yValues.max()
         else { return .zero }
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
