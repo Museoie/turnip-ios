@@ -236,7 +236,7 @@ final class ExportConfirmationViewModel: ObservableObject {
     /// The body of one export run: serializes with the previous run, prepares the
     /// scratch directory, drives each clip through export → Photos save, then tears
     /// the screen down. Extracted from `start()` so the entry point stays small.
-    private func runExport(generation runGeneration: Int, previousRun: Task<Void, Never>?) async {
+    private func runExport(generation runGeneration: UInt64, previousRun: Task<Void, Never>?) async {
         // Serialize with the previous run: after `cancel()` it can still be
         // draining cooperatively. Waiting here — before any phase write or side
         // effect — means two runs never interleave exports or Photos writes, so the
@@ -311,7 +311,7 @@ final class ExportConfirmationViewModel: ObservableObject {
     /// must not clear the new run's handle, flip `isFinished` under it, drop
     /// `isRunning` while the newer run is still going, or publish its cancellation
     /// flag into the new run's summary.
-    private func finishRun(generation runGeneration: Int, wasCancelled runWasCancelled: Bool) {
+    private func finishRun(generation runGeneration: UInt64, wasCancelled runWasCancelled: Bool) {
         guard generation == runGeneration else { return }
         wasCancelled = runWasCancelled
         isFinished = true
