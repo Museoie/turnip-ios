@@ -7,6 +7,14 @@ private struct FixtureFailure: Error {
     let message: String
 }
 
+/// One BGRA pixel's channels. Field names spell the channels out: single-letter
+/// `b`/`g`/`r` would trip identifier_name.
+private struct Pixel {
+    var blue: UInt8
+    var green: UInt8
+    var red: UInt8
+}
+
 final class FramePreprocessorTests: XCTestCase {
 
     // MARK: - Input shape
@@ -275,12 +283,18 @@ final class FramePreprocessorTests: XCTestCase {
     func testPackEmitsRGBTripletsFromABGRASource() throws {
         let preprocessor = FramePreprocessor(targetWidth: 2, targetHeight: 2)
 
-        try withBGRABuffer(width: 2, height: 2, bytesPerRow: 8, fill: { _, _ in (b: 10, g: 20, r: 30) }) { buffer in
-            let packed = try preprocessor.packRGB(from: buffer)
+        try withBGRABuffer(
+            width: 2,
+            height: 2,
+            bytesPerRow: 8,
+            fill: { _, _ in Pixel(blue: 10, green: 20, red: 30) },
+            body: { buffer in
+                let packed = try preprocessor.packRGB(from: buffer)
 
-            XCTAssertEqual(packed.count, 2 * 2 * 3, "one RGB triplet per pixel")
-            XCTAssertEqual(Array(packed), [30, 20, 10, 30, 20, 10, 30, 20, 10, 30, 20, 10])
-        }
+                XCTAssertEqual(packed.count, 2 * 2 * 3, "one RGB triplet per pixel")
+                XCTAssertEqual(Array(packed), [30, 20, 10, 30, 20, 10, 30, 20, 10, 30, 20, 10])
+            }
+        )
     }
 
     /// A buffer whose rows are padded past `width * 4`. A walk that steps by `width * 4` reads
@@ -291,8 +305,8 @@ final class FramePreprocessorTests: XCTestCase {
         let bytesPerRow = 1024
         let preprocessor = FramePreprocessor(targetWidth: width, targetHeight: height)
 
-        let fill: (Int, Int) -> (b: UInt8, g: UInt8, r: UInt8) = { row, col in
-            (b: UInt8(row), g: UInt8(col % 256), r: UInt8((row + col) % 256))
+        let fill: (Int, Int) -> Pixel = { row, col in
+            Pixel(blue: UInt8(row), green: UInt8(col % 256), red: UInt8((row + col) % 256))
         }
 
         try withBGRABuffer(width: width, height: height, bytesPerRow: bytesPerRow, fill: fill) { buffer in
@@ -308,9 +322,9 @@ final class FramePreprocessorTests: XCTestCase {
                 for col in 0..<width {
                     let expected = fill(row, col)
                     let index = (row * width + col) * 3
-                    XCTAssertEqual(packed[index], expected.r, "R at row \(row) col \(col)")
-                    XCTAssertEqual(packed[index + 1], expected.g, "G at row \(row) col \(col)")
-                    XCTAssertEqual(packed[index + 2], expected.b, "B at row \(row) col \(col)")
+                    XCTAssertEqual(packed[index], expected.red, "R at row \(row) col \(col)")
+                    XCTAssertEqual(packed[index + 1], expected.green, "G at row \(row) col \(col)")
+                    XCTAssertEqual(packed[index + 2], expected.blue, "B at row \(row) col \(col)")
                 }
             }
         }
@@ -319,9 +333,15 @@ final class FramePreprocessorTests: XCTestCase {
     func testPackRejectsABufferOfADifferentSize() throws {
         let preprocessor = FramePreprocessor(targetWidth: 2, targetHeight: 2)
 
-        try withBGRABuffer(width: 4, height: 4, bytesPerRow: 16, fill: { _, _ in (b: 1, g: 2, r: 3) }) { buffer in
-            XCTAssertThrowsError(try preprocessor.packRGB(from: buffer))
-        }
+        try withBGRABuffer(
+            width: 4,
+            height: 4,
+            bytesPerRow: 16,
+            fill: { _, _ in Pixel(blue: 1, green: 2, red: 3) },
+            body: { buffer in
+                XCTAssertThrowsError(try preprocessor.packRGB(from: buffer))
+            }
+        )
     }
 
     func testPackRejectsANonBGRAPixelFormat() throws {
@@ -346,7 +366,7 @@ final class FramePreprocessorTests: XCTestCase {
         width: Int,
         height: Int,
         bytesPerRow: Int,
-        fill: (Int, Int) -> (b: UInt8, g: UInt8, r: UInt8),
+        fill: (Int, Int) -> Pixel,
         body: (CVPixelBuffer) throws -> Void
     ) throws {
         var storage = [UInt8](repeating: 0, count: bytesPerRow * height)
@@ -354,9 +374,9 @@ final class FramePreprocessorTests: XCTestCase {
             for col in 0..<width {
                 let pixel = fill(row, col)
                 let offset = row * bytesPerRow + col * 4
-                storage[offset] = pixel.b
-                storage[offset + 1] = pixel.g
-                storage[offset + 2] = pixel.r
+                storage[offset] = pixel.blue
+                storage[offset + 1] = pixel.green
+                storage[offset + 2] = pixel.red
                 storage[offset + 3] = 255
             }
         }

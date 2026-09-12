@@ -9,7 +9,7 @@ final class CropRectCalculatorTests: XCTestCase {
     /// fixtures discriminates against that on its own.
     private func frame(
         index: Int = 0,
-        _ keypoints: [(x: Float, y: Float, confidence: Float)]
+        _ keypoints: [KeypointSeed]
     ) -> PoseFrameResult {
         let located = zip(PoseKeypoint.names, keypoints).map { name, keypoint in
             PoseKeypoint(name: name, y: keypoint.y, x: keypoint.x, confidence: keypoint.confidence)
@@ -24,8 +24,8 @@ final class CropRectCalculatorTests: XCTestCase {
         )
     }
 
-    private func confident(_ points: [(x: Float, y: Float)]) -> [(x: Float, y: Float, confidence: Float)] {
-        points.map { (x: $0.x, y: $0.y, confidence: 0.9) }
+    private func confident(_ points: [(x: Float, y: Float)]) -> [KeypointSeed] {
+        points.map { KeypointSeed(x: $0.x, y: $0.y, confidence: 0.9) }
     }
 
     private func assertRect(
@@ -119,11 +119,11 @@ final class CropRectCalculatorTests: XCTestCase {
     func testLowConfidenceKeypointsAreExcludedFromTheBox() {
         let frames = [
             frame([
-                (x: 0.45, y: 0.45, confidence: 0.9),
-                (x: 0.55, y: 0.55, confidence: 0.9),
-                (x: 0.95, y: 0.95, confidence: 0.2),
+                KeypointSeed(x: 0.45, y: 0.45, confidence: 0.9),
+                KeypointSeed(x: 0.55, y: 0.55, confidence: 0.9),
+                KeypointSeed(x: 0.95, y: 0.95, confidence: 0.2),
                 // The threshold is exclusive, so a keypoint sitting exactly on it is unusable.
-                (x: 0.05, y: 0.05, confidence: PoseKeypoint.confidenceThreshold)
+                KeypointSeed(x: 0.05, y: 0.05, confidence: PoseKeypoint.confidenceThreshold)
             ])
         ]
 

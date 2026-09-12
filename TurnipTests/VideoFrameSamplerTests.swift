@@ -274,6 +274,29 @@ final class VideoFrameSamplerTests: XCTestCase {
         }
         writer.startSession(atSourceTime: .zero)
 
+        try await appendFrames(
+            frameCount: frameCount,
+            fps: fps,
+            input: input,
+            adaptor: adaptor,
+            writer: writer
+        )
+
+        input.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else {
+            throw writer.error ?? PoseDiagnosticError.videoLoadFailed(underlying: nil)
+        }
+        return url
+    }
+
+    private static func appendFrames(
+        frameCount: Int,
+        fps: Int32,
+        input: AVAssetWriterInput,
+        adaptor: AVAssetWriterInputPixelBufferAdaptor,
+        writer: AVAssetWriter
+    ) async throws {
         for frameIndex in 0..<frameCount {
             // Bounded on writer status: if the writer fails mid-write, `isReadyForMoreMediaData`
             // never becomes true, and without this check the loop would spin until XCTest's
@@ -303,13 +326,6 @@ final class VideoFrameSamplerTests: XCTestCase {
                 throw writer.error ?? PoseDiagnosticError.videoLoadFailed(underlying: nil)
             }
         }
-
-        input.markAsFinished()
-        await writer.finishWriting()
-        guard writer.status == .completed else {
-            throw writer.error ?? PoseDiagnosticError.videoLoadFailed(underlying: nil)
-        }
-        return url
     }
 
     /// Writes a short silent CAF so the asset has an audio track and no video track.

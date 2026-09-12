@@ -76,7 +76,9 @@ actor MoveNetThunderModel {
             interpreter = try Interpreter(modelPath: modelPath)
             try interpreter.allocateTensors()
         } catch {
-            throw PoseDiagnosticError.inferenceFailed("Failed to load MoveNet Thunder model: \(error.localizedDescription)")
+            throw PoseDiagnosticError.inferenceFailed(
+                "Failed to load MoveNet Thunder model: \(error.localizedDescription)"
+            )
         }
 
         // Read the tensors at runtime rather than assuming 256x256 uint8, so the checks below

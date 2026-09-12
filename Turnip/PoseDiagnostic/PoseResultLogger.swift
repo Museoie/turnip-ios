@@ -8,7 +8,10 @@ enum PoseResultLogger {
     /// redacts interpolated `String` values to `<private>` by default, which would silently drop
     /// the two numbers this line exists to carry.
     static func line(for result: PoseFrameResult) -> String {
-        "frame \(result.frameIndex) t=\(String(format: "%.2f", result.timestamp))s avgConfidence=\(String(format: "%.2f", result.averageConfidence)) usableKeypoints=\(result.usableKeypointCount)/\(PoseKeypoint.names.count)"
+        let timestamp = String(format: "%.2f", result.timestamp)
+        let confidence = String(format: "%.2f", result.averageConfidence)
+        let usable = "\(result.usableKeypointCount)/\(PoseKeypoint.names.count)"
+        return "frame \(result.frameIndex) t=\(timestamp)s avgConfidence=\(confidence) usableKeypoints=\(usable)"
     }
 
     static func log(_ result: PoseFrameResult) {

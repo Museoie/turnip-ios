@@ -37,6 +37,15 @@ install_xcodegen() {
   export PATH="$prefix/bin:$PATH"
 }
 
+# Pinned the same way as XcodeGen (see .github/workflows/ci.yml): a floating
+# `brew install swiftlint` would let Xcode Cloud's formula index drift away
+# from what Actions runs.
+install_swiftlint() {
+  local prefix="$HOME/.local"
+  ./ci_scripts/install-swiftlint.sh "$prefix"
+  export PATH="$prefix/bin:$PATH"
+}
+
 # Xcode Cloud's image only ships macOS's system Ruby 2.6 (/usr/bin/bundle),
 # which Apple has deprecated and which can't run Gemfile.lock: the lockfile
 # was resolved on a modern Ruby, so its BUNDLED WITH Bundler 4.x and gems
@@ -56,6 +65,10 @@ install_ruby() {
   echo "[ci_post_clone] using $(ruby --version), bundler $(bundle --version)"
 }
 
+step "install swiftlint" install_swiftlint
+# --strict matches ci.yml: warnings fail the run here too, so Xcode Cloud and
+# Actions agree on the gate. Lint needs no generated project, so it runs first.
+step "swiftlint lint --strict" swiftlint lint --strict
 step "install xcodegen" install_xcodegen
 step "xcodegen generate" xcodegen generate
 step "install ruby (homebrew)" install_ruby

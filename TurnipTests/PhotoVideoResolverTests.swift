@@ -60,7 +60,11 @@ final class PhotoVideoResolverTests: XCTestCase {
             return XCTFail("expected CancellationError, got \(outcome)")
         }
         XCTAssertTrue(error is CancellationError, "expected CancellationError, got \(error)")
-        XCTAssertEqual(manager.cancelledIDs, [SilentImageManager.requestID], "the issued request should be cancelled once its ID is known")
+        XCTAssertEqual(
+            manager.cancelledIDs,
+            [SilentImageManager.requestID],
+            "the issued request should be cancelled once its ID is known"
+        )
     }
 
     /// Cancellation after the request is in flight, with PhotoKit never calling back: the

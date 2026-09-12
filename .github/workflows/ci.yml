@@ -62,6 +62,18 @@ jobs:
           ci_scripts/install-xcodegen.sh "$HOME/.local"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # SwiftLint is pinned the way XcodeGen is: a versioned release archive
+      # into $HOME/.local with no sudo, verified by SHA-256 (see
+      # ci_scripts/install-swiftlint.sh). A floating `brew install swiftlint`
+      # would make the CI result depend on the runner image's package index.
+      - name: Install SwiftLint
+        run: |
+          ci_scripts/install-swiftlint.sh "$HOME/.local"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Lint
+        run: swiftlint lint --strict --reporter github-actions-logging
+
       - name: Generate Xcode project
         run: xcodegen generate
 

@@ -180,7 +180,8 @@ struct PhotosAccessDeniedView: View {
             Text(
                 restricted
                     ? "Photos access is restricted on this device, so Turnip can't show your videos."
-                    : "Turnip finds and trims tricks in recordings from your Photos library. Allow access in Settings to get started."
+                    : "Turnip finds and trims tricks in recordings from your Photos library. "
+                        + "Allow access in Settings to get started."
             )
             .font(.subheadline)
             .foregroundStyle(.secondary)

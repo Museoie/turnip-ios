@@ -17,7 +17,10 @@ enum VideoResolutionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .iCloudDownloadFailed(let underlying):
-            return Self.describe("Couldn't download this video from iCloud. Check your connection and try again.", underlying)
+            return Self.describe(
+                "Couldn't download this video from iCloud. Check your connection and try again.",
+                underlying
+            )
         case .exportFailed(let underlying):
             return Self.describe("Couldn't prepare this video for analysis.", underlying)
         case .unavailable(let underlying):
@@ -62,15 +65,18 @@ struct PhotoVideoResolver {
             onProgress(progress)
         }
 
-        let avAsset: AVAsset = try await request(errorKind: { underlying in
-            sawDownload.value || Self.looksLikeNetworkError(underlying)
-                ? .iCloudDownloadFailed(underlying: underlying)
-                : .unavailable(underlying: underlying)
-        }) { handler in
-            imageManager.requestAVAsset(forVideo: asset, options: options) { avAsset, _, info in
-                handler(avAsset, info)
+        let avAsset: AVAsset = try await request(
+            errorKind: { underlying in
+                sawDownload.value || Self.looksLikeNetworkError(underlying)
+                    ? .iCloudDownloadFailed(underlying: underlying)
+                    : .unavailable(underlying: underlying)
+            },
+            { handler in
+                imageManager.requestAVAsset(forVideo: asset, options: options) { avAsset, _, info in
+                    handler(avAsset, info)
+                }
             }
-        }
+        )
 
         if let urlAsset = avAsset as? AVURLAsset {
             return urlAsset
@@ -85,13 +91,16 @@ struct PhotoVideoResolver {
     private func export(_ asset: PHAsset, options: PHVideoRequestOptions) async throws -> AVURLAsset {
         // Not passthrough: slow-mo compositions carry time-scaled segments that passthrough can't
         // re-mux, so this re-encodes. Slower, but it works for every composition Photos produces.
-        let session: AVAssetExportSession = try await request(errorKind: { .exportFailed(underlying: $0) }) { handler in
-            imageManager.requestExportSession(
-                forVideo: asset, options: options, exportPreset: AVAssetExportPresetHighestQuality
-            ) { session, info in
-                handler(session, info)
+        let session: AVAssetExportSession = try await request(
+            errorKind: { .exportFailed(underlying: $0) },
+            { handler in
+                imageManager.requestExportSession(
+                    forVideo: asset, options: options, exportPreset: AVAssetExportPresetHighestQuality
+                ) { session, info in
+                    handler(session, info)
+                }
             }
-        }
+        )
 
         let outputURL = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).mov")
         session.outputURL = outputURL

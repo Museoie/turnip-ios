@@ -122,6 +122,36 @@ xcodebuild test -workspace Turnip.xcworkspace -scheme Turnip \
 
 or Cmd+U in Xcode with the `Turnip` scheme selected.
 
+## Lint
+
+SwiftLint runs in CI on every PR (`lint + build + test` — see
+`.github/workflows/ci.yml`) and as a step of Xcode Cloud's
+`ci_scripts/ci_post_clone.sh`. It is a hard gate: both pipelines run
+`swiftlint lint --strict`, so warnings fail the run too.
+
+- **Pinned — the version lives in `ci_scripts/install-swiftlint.sh` only.**
+  Both CI pipelines install SwiftLint from the versioned
+  `portable_swiftlint.zip` release archive via that script (SHA-256-verified,
+  no sudo — the same pattern as the XcodeGen pin). The script is the single
+  source of truth for both the version and its checksum, so a future bump
+  edits one file and the docs can't drift. Don't `brew install swiftlint`:
+  Homebrew only bottles the latest formula, so the version you lint with
+  locally would drift from what CI runs.
+- **Config lives in `.swiftlint.yml`** at the repo root — the default rule set
+  plus a few documented opt-outs (rules that fight SwiftUI views, and short
+  geometry names like `x`/`y`/`dx`/`dy`). Each opt-out records why it exists;
+  add a reason when you add one. When a rule is right for the codebase but
+  wrong at one site, use a scoped `// swiftlint:disable`/`enable` pair with a
+  reason instead of a config entry; when the rule is wrong for this codebase,
+  disable it in `.swiftlint.yml`.
+- **Run it locally** before pushing:
+
+  ```
+  ci_scripts/install-swiftlint.sh "$HOME/.local"
+  export PATH="$HOME/.local/bin:$PATH"
+  swiftlint lint --strict
+  ```
+
 ## Areas of contribution
 
 From the design doc's "Contribution ramp":

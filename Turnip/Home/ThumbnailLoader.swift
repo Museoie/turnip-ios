@@ -50,7 +50,9 @@ final class ThumbnailLoader {
         for asset: PHAsset, pixelSize: CGSize, handler: @escaping (UIImage?, _ isDegraded: Bool) -> Void
     ) -> PHImageRequestID {
         self.pixelSize = pixelSize
-        return manager.requestImage(for: asset, targetSize: pixelSize, contentMode: .aspectFill, options: options) { image, info in
+        return manager.requestImage(
+            for: asset, targetSize: pixelSize, contentMode: .aspectFill, options: options
+        ) { image, info in
             handler(image, (info?[PHImageResultIsDegradedKey] as? Bool) == true)
         }
     }

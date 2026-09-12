@@ -1,6 +1,15 @@
 import Foundation
 @testable import Turnip
 
+/// A positioned keypoint seed for fixture builders: where the keypoint sits plus the
+/// confidence the fixture should carry. The seed is shared by the crop-rect and
+/// motion-signal fixtures in this target.
+struct KeypointSeed {
+    var x: Float
+    var y: Float
+    var confidence: Float
+}
+
 /// Synthetic `PoseFrameResult`s for the motion-signal and peak-detection tests. No video and no
 /// model: every fixture states the anchor position it wants and this fills the rest of the 17
 /// keypoints in below the confidence threshold.
@@ -12,8 +21,8 @@ enum PoseFixture {
         index: Int,
         hip: (x: Float, y: Float)?,
         upperBody: (x: Float, y: Float)? = nil,
-        leftHip: (x: Float, y: Float, confidence: Float)? = nil,
-        rightHip: (x: Float, y: Float, confidence: Float)? = nil
+        leftHip: KeypointSeed? = nil,
+        rightHip: KeypointSeed? = nil
     ) -> PoseFrameResult {
         let keypoints = PoseKeypoint.names.map { name -> PoseKeypoint in
             if name == "left_hip", let leftHip {
