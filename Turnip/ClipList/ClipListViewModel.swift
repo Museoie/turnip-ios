@@ -111,7 +111,9 @@ final class ClipListViewModel: ObservableObject {
 
     /// The card thumbnail, loading lazily. Idempotent and safe to call from every card's
     /// `.task`: repeat calls return the cached image, and concurrent calls for the same
-    /// card share one decode instead of seeking the same frame twice.
+    /// card share one decode instead of seeking the same frame twice. Cancelling the
+    /// caller's task (card scrolled off-screen, view dismissed) cancels the in-flight
+    /// decode too — it is not left running to completion.
     func thumbnail(for item: ClipListItem) async -> CGImage? {
         if let cached = thumbnails[item.id] {
             return cached
@@ -123,7 +125,15 @@ final class ClipListViewModel: ObservableObject {
             await loader.thumbnail(for: item, in: asset)
         }
         inFlight[item.id] = task
-        let image = await task.value
+        // Propagate the card's `.task` cancellation into the decode: when a card
+        // scrolls off-screen or the view is dismissed mid-decode, the seek+decode
+        // stops at the loader's next cancellation checkpoint instead of running to
+        // completion and caching a thumbnail no card will show.
+        let image = await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
         inFlight[item.id] = nil
         if let image = image {
             thumbnails[item.id] = image

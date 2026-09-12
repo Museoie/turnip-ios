@@ -16,6 +16,10 @@ actor ClipThumbnailLoader {
     /// The generator returns the displayed (upright) frame, so the crop below is computed
     /// in displayed space too — no second flip. `nil` when the frame can't be decoded or
     /// the crop rect is degenerate; the card falls back to its placeholder tile.
+    ///
+    /// Cooperative cancellation: `Task.isCancelled` is checked after each await point,
+    /// so a cancelled decode bails before the crop math instead of finishing work no
+    /// card will show. (`copyCGImage` itself blocks, so the check lands after it.)
     func thumbnail(for item: ClipListItem, in asset: AVAsset) async -> CGImage? {
         do {
             // Fail fast on assets with no video track: seeking a frame that can't exist
@@ -23,6 +27,7 @@ actor ClipThumbnailLoader {
             guard let track = try await asset.loadTracks(withMediaType: .video).first else {
                 return nil
             }
+            if Task.isCancelled { return nil }
             let midpoint = (item.window.startTime + item.window.endTime) / 2
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
@@ -36,8 +41,10 @@ actor ClipThumbnailLoader {
                 at: CMTime(seconds: midpoint, preferredTimescale: 600),
                 actualTime: nil
             )
+            if Task.isCancelled { return nil }
             let naturalSize = try await track.load(.naturalSize)
             let preferredTransform = try await track.load(.preferredTransform)
+            if Task.isCancelled { return nil }
             guard let displayedCrop = Self.displayedCropRect(
                 cropRect: item.cropRect,
                 naturalSize: naturalSize,
