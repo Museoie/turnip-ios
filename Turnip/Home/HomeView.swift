@@ -98,8 +98,11 @@ struct VideoGalleryView: View {
                 }
             }
         }
-        // The grid announces its count when VoiceOver enters it (issue #22) — a VoiceOver
-        // user otherwise has no sense of how many videos they're swiping through.
+        // The grid announces its count when VoiceOver enters it — a VoiceOver user
+        // otherwise has no sense of how many videos they're swiping through. The
+        // ScrollView must be declared an accessibility container: a label on a
+        // non-element container is never announced on entry.
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(gridAccessibilityLabel)
         .accessibilityIdentifier("video-grid")
     }

@@ -38,8 +38,9 @@ screen's PR rather than retrofitting later.
   state. The keep/discard toggle is reachable as an action, not just a tap target.
 - "Export N clips" action labeled with the live count; disabled state announced.
 - No auto-playing loops when `accessibilityReduceMotion` is on; respect
-  `UIAccessibility.isVideoAutoplayEnabled` (iOS 17+ — gate with `if #available(iOS 17, *)`;
-  on iOS 16 the reduce-motion check alone governs autoplay).
+  `UIAccessibility.isVideoAutoplayEnabled` (iOS 13.0+, no availability gate needed on the
+  iOS 16 floor). The only iOS 17+ symbol named by this checklist is SwiftUI's
+  `AccessibilityNotification.Announcement` (Processing section above).
 
 ### Clip Detail / Editor (#18) — verify on device
 

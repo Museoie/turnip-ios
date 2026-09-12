@@ -53,8 +53,8 @@ struct VideoTileView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityDescription)
         .accessibilityAddTraits(.isButton)
-        // Stable identifier for a future UI-test target (issue #22). The Photos
-        // `localIdentifier` is stable per asset, so the identifier survives edits.
+        // Stable identifier for a future UI-test target. The Photos `localIdentifier`
+        // is stable per asset, so the identifier survives edits.
         .accessibilityIdentifier("video-tile-\(asset.localIdentifier)")
     }
 
@@ -64,6 +64,9 @@ struct VideoTileView: View {
             .monospacedDigit()
             .foregroundStyle(.white)
             .lineLimit(1)
+            // At the largest accessibility text sizes the badge would otherwise
+            // truncate to an ellipsis; shrink-to-fit keeps the duration readable.
+            .minimumScaleFactor(0.5)
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             // Scrim, not shadow: white text sits on arbitrary video frames, so contrast needs a
