@@ -279,8 +279,8 @@ final class ExportConfirmationViewModel: ObservableObject {
                 do {
                     let fileURL = try await exportClip(
                         item.window, item.cropRect, asset, directory
-                    ) { fraction in
-                        Task {
+                    ) { [weak self] fraction in
+                        Task { [weak self] in
                             await MainActor.run { [weak self] in
                                 self?.reportExportProgress(index: index, fraction: fraction)
                             }

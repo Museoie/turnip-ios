@@ -90,10 +90,15 @@ jobs:
           # scalars in {_value}, so unwrap defensively.
           # `get`/`export` are deprecated in newer Xcode; --legacy restores the
           # previous interface (without it the step fails with exit code 64).
-          xcrun xcresulttool get --legacy --format json --path screenshots.xcresult | jq -r '
+          JSON="$(xcrun xcresulttool get --legacy --format json --path screenshots.xcresult)"
+          echo "$JSON" | jq -r '
             [.. | objects
               | select(
-                  ((.filename._value // .filename // "") | tostring | endswith(".png"))
+                  (
+                    ((.filename._value // .filename // "") | tostring | endswith(".png"))
+                    or ((.name._value // .name // "") | tostring | endswith(".png"))
+                    or ((.uniformTypeIdentifier._value // .uniformTypeIdentifier // "") | tostring | test("png$"))
+                  )
                   and (((.payloadRef._value // .payloadRef.id._value // "") | tostring | length) > 0)
                 )
               | "\((.payloadRef._value // .payloadRef.id._value))\t\((.name._value // .name // .filename._value // .filename))"
@@ -117,13 +122,18 @@ jobs:
           echo "Extracted $count screenshot(s):"
           ls -la "$OUT"
           if [[ "$count" -eq 0 ]]; then
+            # Log a sample of the attachment nodes so this Xcode's actual JSON
+            # shape is visible in the log and the selector above can be fixed
+            # against it on the next iteration.
+            echo "::error::No screenshot PNGs found in screenshots.xcresult. Sample attachment nodes:"
+            echo "$JSON" | jq -c '[.. | objects | select(has("payloadRef")) | {type: (._type._name // "?"), filename: (.filename._value // .filename // ""), name: (.name._value // .name // ""), uti: (.uniformTypeIdentifier._value // .uniformTypeIdentifier // ""), payloadRef: (.payloadRef._value // .payloadRef.id._value // null)}] | .[0:12]' || true
             echo "::error::No screenshot PNGs found in screenshots.xcresult"
             exit 1
           fi
           echo "dir=$OUT" >> "$GITHUB_OUTPUT"
 
       - name: Upload screenshots
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: pr-screenshots
           path: ${{ steps.extract.outputs.dir }}

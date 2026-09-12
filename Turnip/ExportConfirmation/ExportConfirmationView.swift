@@ -183,7 +183,12 @@ private struct ClipStatusRow: View {
                     window: TrickWindow(startTime: 9, endTime: 11.5),
                     cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)),
             ],
-            asset: AVAsset(),
+            // AVURLAsset over /dev/null rather than a bare AVAsset(): the bare
+            // initializer aborts the test host ("freed pointer was not the last
+            // allocation") while this form runs clean (see the test fixtures
+            // and ScreenshotHarness). Previews don't execute in CI, but the safe
+            // form avoids anyone copy-pasting the crashing one into a test.
+            asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
             exportClip: { _, _, _, _, progress in
                 progress(0.5)
                 progress(1.0)

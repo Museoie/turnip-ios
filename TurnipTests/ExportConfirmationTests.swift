@@ -405,10 +405,12 @@ final class ExportConfirmationViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.clips.map(\.phase), [.saved, .saved])
         XCTAssertEqual(viewModel.summaryText, "2 of 2 clips saved to Photos")
-        // Run 1's export ran (call 1) but its save was superseded by the restart, and
-        // run 2 exported both clips — while each clip reached Photos exactly once.
+        // Run 1's export ran (call 1): cancel() only cancels the task, so the
+        // parked continuation still completed and saved clip 1 once the gate
+        // opened. Run 2 then skipped the already-saved clip 1 and exported
+        // only clip 2 (call 2) — each clip reached Photos exactly once.
         let exportCallCount = await fake.exportCalls.count
-        XCTAssertEqual(exportCallCount, 3)
+        XCTAssertEqual(exportCallCount, 2)
         let savedURLs = await fake.savedURLs
         XCTAssertEqual(savedURLs.count, 2)
     }
