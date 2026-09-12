@@ -13,6 +13,10 @@ import SwiftUI
 struct TrimSliderView: View {
     @ObservedObject var viewModel: ClipEditorViewModel
     @GestureState private var drag: TimelineDrag?
+    // SwiftUI resets `@GestureState` to nil when the gesture's lifecycle ends, but
+    // `DragGesture.onEnded` does not fire on a system-cancelled drag (phone call,
+    // Control Center) — so the in-flight drag's presence, not its callbacks, is the
+    // reliable signal that a trim interaction is over.
 
     private enum ActiveHandle {
         case start, end
@@ -108,6 +112,17 @@ struct TrimSliderView: View {
             )
         }
         .frame(height: 56)
+        .onChange(of: drag != nil) { isDragging in
+            // `onEnded` never fires when the system cancels the drag (call, Control
+            // Center); the GestureState reset above is the only signal in that case.
+            // If the trim latch is still set, `finishTrim()` never ran, so the player
+            // would stay paused and `tick` would suppress the loop-back for the rest
+            // of the session. The call is idempotent (clear + seek + play), so this
+            // can't fight the normal `onEnded` path — whichever fires first wins.
+            if !isDragging, viewModel.isTrimming {
+                viewModel.finishTrim()
+            }
+        }
     }
 
     /// The handle nearer to a touch, so a drag anywhere on the timeline grabs something
