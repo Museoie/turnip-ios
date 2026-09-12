@@ -148,6 +148,39 @@ actor ClipExporter {
         return start...end
     }
 
+    /// Where one clip's ranges land in the composition, computed from pure inputs — no
+    /// asset or export session needed, so it is unit-testable.
+    ///
+    /// The audio range is *subordinate* to the video range, not parallel to it: it is
+    /// intersected with the video range and inserted at its offset from the video range's
+    /// start. Inserting both tracks at `.zero` turns any difference between the tracks'
+    /// start times into a fixed A/V offset for the whole clip (real on recordings whose
+    /// audio track starts during capture ramp-up), and an audio range computed
+    /// independently of the video range can outrun the video into a tail with no picture
+    /// (real when the audio track runs past the last video sample).
+    ///
+    /// `nil` when the trimmed range holds no video — a deterministic property of
+    /// (window, asset), so the caller reports `invalidTimeRange` (skip the clip) rather
+    /// than the retryable `exportFailed`.
+    static func insertRanges(
+        trim: CMTimeRange,
+        videoTrack: CMTimeRange,
+        audioTrack: CMTimeRange?
+    ) -> (video: CMTimeRange, audio: CMTimeRange, audioOffset: CMTime)? {
+        let video = trim.intersection(videoTrack)
+        guard video.duration > .zero else { return nil }
+        var audio = CMTimeRange(start: .zero, duration: .zero)
+        var audioOffset = CMTime.zero
+        if let audioTrack {
+            let range = trim.intersection(audioTrack).intersection(video)
+            if range.duration > .zero {
+                audio = range
+                audioOffset = range.start - video.start
+            }
+        }
+        return (video: video, audio: audio, audioOffset: audioOffset)
+    }
+
     /// Exports one clip. Throws `ClipExportError`, or the underlying AVFoundation
     /// error from asset loading; a stale file at the output URL is removed before the
     /// export starts (a failed or cancelled attempt leaves its partial file behind, and
@@ -178,8 +211,21 @@ actor ClipExporter {
         }
 
         let audioTrack = try await asset.loadTracks(withMediaType: .audio).first
-        let composition = try await makeComposition(
-            videoTrack: videoTrack, audioTrack: audioTrack, trimmingTo: range)
+        let timeRange = CMTimeRange(
+            start: CMTime(seconds: range.lowerBound, preferredTimescale: 600),
+            end: CMTime(seconds: range.upperBound, preferredTimescale: 600))
+        // The ranges are computed here, where spec.window is in hand, so an empty video
+        // range reports invalidTimeRange (a deterministic bad window) instead of the
+        // retryable exportFailed that a window-less makeComposition had to throw.
+        let videoTrackRange = try await videoTrack.load(.timeRange)
+        let audioTrackRange = try await audioTrack?.load(.timeRange)
+        guard let ranges = Self.insertRanges(
+            trim: timeRange, videoTrack: videoTrackRange, audioTrack: audioTrackRange)
+        else {
+            throw ClipExportError.invalidTimeRange(window: spec.window)
+        }
+        let composition = try makeComposition(
+            videoTrack: videoTrack, audioTrack: audioTrack, ranges: ranges)
         let videoComposition = try await makeVideoComposition(
             for: videoTrack, in: composition, transform: transform)
 
@@ -210,46 +256,35 @@ actor ClipExporter {
         }
     }
 
-    /// The trimmed timeline: the source video track, cut to `range`, with the source's
+    /// The trimmed timeline: the source video track, cut to its range, with the source's
     /// audio track laid over the same range. Exported clips keep their audio: the design
     /// doc's share path hands the file to Instagram / TikTok / YouTube Shorts, where a
     /// silent clip reads as broken. A source with no audio track exports silent.
     ///
-    /// `range` is clamped to the asset's duration, which is the *longest* track's — an
-    /// individual track can end earlier (a recording whose audio runs past the last video
-    /// sample), so each insert is intersected with that track's own time range.
+    /// The ranges come from `insertRanges`, already reconciled: the audio is intersected
+    /// with the video range and inserted at its offset from the video range's start, so
+    /// the clip can neither drift out of A/V sync nor end with audio and no picture.
     private func makeComposition(
         videoTrack: AVAssetTrack,
         audioTrack: AVAssetTrack?,
-        trimmingTo range: ClosedRange<TimeInterval>
-    ) async throws -> AVMutableComposition {
+        ranges: (video: CMTimeRange, audio: CMTimeRange, audioOffset: CMTime)
+    ) throws -> AVMutableComposition {
         let composition = AVMutableComposition()
         guard let compositionTrack = composition.addMutableTrack(
             withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
         else {
             throw ClipExportError.exportFailed(reason: "could not add a video track to the composition")
         }
-        let timeRange = CMTimeRange(
-            start: CMTime(seconds: range.lowerBound, preferredTimescale: 600),
-            end: CMTime(seconds: range.upperBound, preferredTimescale: 600))
-        let videoTrackRange = try await videoTrack.load(.timeRange)
-        let videoRange = timeRange.intersection(videoTrackRange)
-        guard videoRange.duration > .zero else {
-            throw ClipExportError.exportFailed(reason: "the trimmed range holds no video")
-        }
-        try compositionTrack.insertTimeRange(videoRange, of: videoTrack, at: .zero)
-        if let audioTrack {
-            let audioTrackRange = try await audioTrack.load(.timeRange)
-            let audioRange = timeRange.intersection(audioTrackRange)
-            if audioRange.duration > .zero {
-                guard let compositionAudioTrack = composition.addMutableTrack(
-                    withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-                else {
-                    throw ClipExportError.exportFailed(
-                        reason: "could not add an audio track to the composition")
-                }
-                try compositionAudioTrack.insertTimeRange(audioRange, of: audioTrack, at: .zero)
+        try compositionTrack.insertTimeRange(ranges.video, of: videoTrack, at: .zero)
+        if let audioTrack, ranges.audio.duration > .zero {
+            guard let compositionAudioTrack = composition.addMutableTrack(
+                withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            else {
+                throw ClipExportError.exportFailed(
+                    reason: "could not add an audio track to the composition")
             }
+            try compositionAudioTrack.insertTimeRange(
+                ranges.audio, of: audioTrack, at: ranges.audioOffset)
         }
         return composition
     }

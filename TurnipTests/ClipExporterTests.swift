@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreGraphics
 import XCTest
 @testable import Turnip
@@ -138,6 +139,83 @@ final class ClipExporterTests: XCTestCase {
         // The crop's displayed top-left stays pinned to the render origin — the extra
         // pixel pads the right edge rather than shifting the picture.
         assertPoint(CGPoint(x: 0, y: 0), mapsTo: .zero, by: transform.layerTransform)
+    }
+
+    // MARK: - insertRanges
+
+    /// Builds a CMTimeRange from seconds; the export path uses timescale 600.
+    private func secondsRange(_ start: TimeInterval, _ end: TimeInterval) -> CMTimeRange {
+        CMTimeRange(
+            start: CMTime(seconds: start, preferredTimescale: 600),
+            end: CMTime(seconds: end, preferredTimescale: 600))
+    }
+
+    private func assertRange(
+        _ range: CMTimeRange,
+        start: TimeInterval,
+        end: TimeInterval,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(range.start.seconds, start, accuracy: 0.0001, "start", file: file, line: line)
+        XCTAssertEqual(range.end.seconds, end, accuracy: 0.0001, "end", file: file, line: line)
+    }
+
+    func testInsertRangesOffsetsAudioToTheVideoStart() throws {
+        // Capture ramp-up: the audio track starts 20 ms after the video track. Inserting
+        // both tracks at .zero would pin that 20 ms offset into the whole clip, so the
+        // audio must land at its offset from the video range's start instead.
+        let ranges = try XCTUnwrap(ClipExporter.insertRanges(
+            trim: secondsRange(0, 2),
+            videoTrack: secondsRange(0, 10),
+            audioTrack: secondsRange(0.02, 10)))
+
+        assertRange(ranges.video, start: 0, end: 2)
+        assertRange(ranges.audio, start: 0.02, end: 2)
+        // The audio's composition-time origin: a source sample at 0.02 lands at 0.02
+        // while the video's 0.0 lands at 0.0, so the board-pop stays on its frame.
+        XCTAssertEqual(ranges.audioOffset.seconds, 0.02, accuracy: 0.0001)
+    }
+
+    func testInsertRangesReturnsNilWhenTheTrimHoldsNoVideo() {
+        // A window inside the asset's duration but past the last video sample: the audio
+        // track runs on, so intersecting with the trim alone would accept it. The empty
+        // video range is deterministic in (window, asset) — the caller reports
+        // .invalidTimeRange (skip the clip), not the retryable .exportFailed.
+        XCTAssertNil(ClipExporter.insertRanges(
+            trim: secondsRange(20, 25),
+            videoTrack: secondsRange(0, 10),
+            audioTrack: secondsRange(0, 30)))
+    }
+
+    func testInsertRangesClampsAudioToTheVideoRange() throws {
+        // The audio track outruns the video track: without the subordinate intersection
+        // the composition would end with two seconds of audio and no picture.
+        let ranges = try XCTUnwrap(ClipExporter.insertRanges(
+            trim: secondsRange(0, 10),
+            videoTrack: secondsRange(0, 8),
+            audioTrack: secondsRange(0, 10)))
+
+        assertRange(ranges.video, start: 0, end: 8)
+        assertRange(ranges.audio, start: 0, end: 8)
+        XCTAssertEqual(ranges.audioOffset.seconds, 0, accuracy: 0.0001)
+    }
+
+    func testInsertRangesWithNoAudioTrackExportsSilent() throws {
+        let ranges = try XCTUnwrap(ClipExporter.insertRanges(
+            trim: secondsRange(0, 2),
+            videoTrack: secondsRange(0, 10),
+            audioTrack: nil))
+
+        assertRange(ranges.video, start: 0, end: 2)
+        XCTAssertEqual(ranges.audio.duration.seconds, 0, accuracy: 0.0001)
+    }
+
+    func testInsertRangesReturnsNilWhenTheTrimMissesTheVideoTrack() {
+        XCTAssertNil(ClipExporter.insertRanges(
+            trim: secondsRange(0, 2),
+            videoTrack: secondsRange(5, 10),
+            audioTrack: secondsRange(0, 10)))
     }
 
     // MARK: - removeExistingFile
