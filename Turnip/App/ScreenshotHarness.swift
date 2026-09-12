@@ -21,7 +21,7 @@ struct ScreenshotHarness: View {
                         cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)),
                     ExportConfirmationItem(
                         window: TrickWindow(startTime: 9, endTime: 11.5),
-                        cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)),
+                        cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1))
                 ],
                 asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
                 exportClip: { _, _, _, _, progress in

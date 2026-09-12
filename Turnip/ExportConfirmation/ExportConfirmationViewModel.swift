@@ -225,102 +225,99 @@ final class ExportConfirmationViewModel: ObservableObject {
         for index in clips.indices where clips[index].phase != .saved {
             clips[index].phase = .pending
         }
-        // Captured up front: the run task inherits `@MainActor` isolation, so the loop
-        // below — including the injected closures — starts on the main actor's executor.
-        // The closures must hop off internally rather than block it (see the typealias
-        // contracts).
-        let items = self.items
-        let asset = self.asset
-        let exportClip = self.exportClip
-        let saveToPhotos = self.saveToPhotos
-        let makeDirectory = self.makeDirectory
+        // The run task inherits `@MainActor` isolation, so the run — including the
+        // injected closures — starts on the main actor's executor. The closures must
+        // hop off internally rather than block it (see the typealias contracts).
         runTask = Task { [weak self] in
-            // Serialize with the previous run: after `cancel()` it can still be
-            // draining cooperatively. Waiting here — before any phase write or side
-            // effect — means two runs never interleave exports or Photos writes, so the
-            // skip-`.saved` check below can't race the old run's in-flight save.
-            await previousRun?.value
-            let directory = makeDirectory()
-            // A killed run never executes the cleanup `defer` below, orphaning its
-            // scratch directory: sweep stale `turnip-export-*` siblings before making
-            // this run's directory, so repeated kills can't accumulate temp dirs.
-            sweepStaleExportDirectories(
-                in: directory.deletingLastPathComponent(), excluding: directory)
-            // The exporter writes into this directory; it must exist before the first
-            // export session starts. A failure here surfaces per clip from the export
-            // step — tmp creation all but never fails, so there is no dedicated state
-            // for it.
-            try? FileManager.default.createDirectory(
-                at: directory, withIntermediateDirectories: true)
-            defer {
-                // Whatever ended the run, the scratch files go with it. The exporter
-                // leaves failed outputs in place for debugging, but this screen owns the
-                // directory and the sandbox must not accumulate them.
-                try? FileManager.default.removeItem(at: directory)
-            }
-            // Cancellation is per-run: only the newest run's teardown publishes the
-            // flag, so a superseded run can't taint the new run's summary.
-            var runWasCancelled = false
-            for (index, item) in items.enumerated() {
-                if Task.isCancelled {
-                    runWasCancelled = true
-                    break
-                }
-                // A clip the previous run already saved stays saved: re-running the
-                // loop must not write the same video to Photos twice.
-                let alreadySaved = await MainActor.run { [weak self] in
-                    self?.clips.indices.contains(index) == true
-                        && self?.clips[index].phase == .saved
-                }
-                if alreadySaved { continue }
-                await MainActor.run { [weak self] in
-                    self?.setPhase(at: index, to: .exporting(fraction: 0))
-                }
-                do {
-                    let fileURL = try await exportClip(
-                        item.window, item.cropRect, asset, directory
-                    ) { [weak self] fraction in
-                        Task { [weak self] in
-                            await MainActor.run { [weak self] in
-                                self?.reportExportProgress(index: index, fraction: fraction)
-                            }
-                        }
-                    }
-                    await MainActor.run { [weak self] in
-                        self?.setPhase(at: index, to: .saving)
-                    }
-                    try await saveToPhotos(fileURL)
-                    await MainActor.run { [weak self] in
-                        self?.setPhase(at: index, to: .saved)
-                    }
-                } catch {
-                    // Cancellation surfaces as whatever the in-flight step threw (the
-                    // export session resumes with its own cancelled error, not
-                    // `CancellationError`), so the cancelled task — not the error type —
-                    // decides: cancelled stops the run, anything else fails the clip.
-                    if Task.isCancelled {
-                        runWasCancelled = true
-                        break
-                    }
-                    await MainActor.run { [weak self] in
-                        self?.setPhase(at: index, to: .failed(reason: Self.reason(for: error)))
-                    }
-                }
-            }
-            await MainActor.run { [weak self] in
-                // Only the newest run may end the screen. A cancelled run's task can
-                // still be draining when a newer run starts, so a stale teardown must
-                // not clear the new run's handle, flip `isFinished` under it, drop
-                // `isRunning` while the newer run is still going, or publish its
-                // cancellation flag into the new run's summary.
-                guard self?.generation == runGeneration else { return }
-                self?.wasCancelled = runWasCancelled
-                self?.isFinished = true
-                self?.isRunning = false
-                self?.cancelRequested = false
-                self?.runTask = nil
+            await self?.runExport(generation: runGeneration, previousRun: previousRun)
+        }
+    }
+
+    /// The body of one export run: serializes with the previous run, prepares the
+    /// scratch directory, drives each clip through export → Photos save, then tears
+    /// the screen down. Extracted from `start()` so the entry point stays small.
+    private func runExport(generation runGeneration: Int, previousRun: Task<Void, Never>?) async {
+        // Serialize with the previous run: after `cancel()` it can still be
+        // draining cooperatively. Waiting here — before any phase write or side
+        // effect — means two runs never interleave exports or Photos writes, so the
+        // skip-`.saved` check below can't race the old run's in-flight save.
+        await previousRun?.value
+        let directory = makeDirectory()
+        // A killed run never executes the cleanup `defer` below, orphaning its
+        // scratch directory: sweep stale `turnip-export-*` siblings before making
+        // this run's directory, so repeated kills can't accumulate temp dirs.
+        sweepStaleExportDirectories(
+            in: directory.deletingLastPathComponent(), excluding: directory)
+        // The exporter writes into this directory; it must exist before the first
+        // export session starts. A failure here surfaces per clip from the export
+        // step — tmp creation all but never fails, so there is no dedicated state
+        // for it.
+        try? FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        defer {
+            // Whatever ended the run, the scratch files go with it. The exporter
+            // leaves failed outputs in place for debugging, but this screen owns the
+            // directory and the sandbox must not accumulate them.
+            try? FileManager.default.removeItem(at: directory)
+        }
+        var runWasCancelled = false
+        for (index, item) in items.enumerated() {
+            let shouldContinue = await exportClipItem(
+                at: index, item: item, directory: directory)
+            if !shouldContinue {
+                // Cancellation is per-run: only the newest run's teardown publishes
+                // the flag, so a superseded run can't taint the new run's summary.
+                runWasCancelled = true
+                break
             }
         }
+        finishRun(generation: runGeneration, wasCancelled: runWasCancelled)
+    }
+
+    /// Drives one clip through export → Photos save, publishing its phases.
+    /// Returns false when the run must stop: the task was cancelled, either before
+    /// the clip started or by whatever the in-flight step threw (the export session
+    /// resumes with its own cancelled error, not `CancellationError`, so the
+    /// cancelled task — not the error type — decides). Any other error fails just
+    /// this clip and the run continues with the next one.
+    private func exportClipItem(
+        at index: Int, item: ExportConfirmationItem, directory: URL
+    ) async -> Bool {
+        if Task.isCancelled { return false }
+        // A clip the previous run already saved stays saved: re-running the
+        // loop must not write the same video to Photos twice.
+        if clips.indices.contains(index), clips[index].phase == .saved { return true }
+        setPhase(at: index, to: .exporting(fraction: 0))
+        do {
+            let fileURL = try await exportClip(
+                item.window, item.cropRect, asset, directory
+            ) { [weak self] fraction in
+                Task { [weak self] in
+                    await self?.reportExportProgress(index: index, fraction: fraction)
+                }
+            }
+            setPhase(at: index, to: .saving)
+            try await saveToPhotos(fileURL)
+            setPhase(at: index, to: .saved)
+        } catch {
+            if Task.isCancelled { return false }
+            setPhase(at: index, to: .failed(reason: Self.reason(for: error)))
+        }
+        return true
+    }
+
+    /// Ends the run on screen. Only the newest run may end the screen: a cancelled
+    /// run's task can still be draining when a newer run starts, so a stale teardown
+    /// must not clear the new run's handle, flip `isFinished` under it, drop
+    /// `isRunning` while the newer run is still going, or publish its cancellation
+    /// flag into the new run's summary.
+    private func finishRun(generation runGeneration: Int, wasCancelled runWasCancelled: Bool) {
+        guard generation == runGeneration else { return }
+        wasCancelled = runWasCancelled
+        isFinished = true
+        isRunning = false
+        cancelRequested = false
+        runTask = nil
     }
 
     /// Cancels the run. Cooperative: the in-flight step stops on its own, remaining clips
