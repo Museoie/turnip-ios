@@ -164,7 +164,7 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         let fake = FakeExport(exportResults: [
             .success(URL(fileURLWithPath: "/tmp/a.mp4")),
             .failure(ExportConfirmationError.exportFailed(reason: "window past end of video")),
-            .success(URL(fileURLWithPath: "/tmp/c.mp4")),
+            .success(URL(fileURLWithPath: "/tmp/c.mp4"))
         ])
         let viewModel = viewModel(
             items: [item(start: 2, end: 5), item(start: 9, end: 11.5), item(start: 20, end: 22)],
@@ -191,7 +191,7 @@ final class ExportConfirmationViewModelTests: XCTestCase {
             saveResults: [
                 .success(()),
                 .failure(ExportConfirmationError.photosSaveFailed(
-                    reason: "Photos permission was revoked")),
+                    reason: "Photos permission was revoked"))
             ])
         let viewModel = viewModel(items: [item(), item(start: 9, end: 11.5)], fake: fake)
 
