@@ -15,7 +15,7 @@ final class ScreenshotTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotExportConfirmation"]
         app.launch()
-        // The row sets an explicit combined accessibilityLabel ("Clip 1 · 2.4s,
+        // The row sets an explicit combined accessibilityLabel ("Clip 1 · 3s,
         // exporting, 50 percent"), so the ProgressView's own "Exporting…" text is
         // never exposed as its own element — match the row's label instead.
         let exportingRow = app.descendants(matching: .any)
