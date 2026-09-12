@@ -125,11 +125,12 @@ final class ClipExporterTests: XCTestCase {
     }
 
     func testRenderSizeIsRoundedUpToEvenDimensions() throws {
-        // Float keypoint math denormalizes to fractional pixels (here 839.23 wide);
-        // H.264 needs integral, even dimensions, so the render rounds to 840x1080.
-        // A size that truncates to odd dimensions would fail on this expectation.
+        // Float keypoint math denormalizes to fractional pixels: 838.85 wide, which
+        // round-to-nearest would take *down* to 838 and round-up takes to 840. Widening
+        // is the only direction that pads rather than clips the pinned crop, so the
+        // fixture is chosen to fail against a round-to-nearest implementation.
         let transform = try XCTUnwrap(ClipExportTransform.make(
-            cropRect: NormalizedRect(minX: 0, maxX: 0.4371, minY: 0, maxY: 1),
+            cropRect: NormalizedRect(minX: 0, maxX: 0.4369, minY: 0, maxY: 1),
             naturalSize: landscape,
             preferredTransform: .identity))
 

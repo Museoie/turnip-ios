@@ -97,10 +97,14 @@ private extension CGRect {
 }
 
 private extension CGFloat {
-    /// Nearest even integer, at least 2 — H.264 requires even frame dimensions, and a
-    /// sub-two-pixel frame has nothing to encode.
+    /// Smallest even integer no smaller than self, and at least 2 — H.264 requires even
+    /// frame dimensions, and a sub-two-pixel frame has nothing to encode. Rounding up
+    /// rather than to nearest keeps the widening one-directional, which is what lets the
+    /// pinned crop origin pad the right/bottom edges instead of clipping them.
+    /// `Swift.max` is qualified: unqualified `max` inside this extension resolves to
+    /// `CGFloat.max`.
     var roundedToEvenDimensions: CGFloat {
-        max(2, (self / 2).rounded() * 2)
+        Swift.max(2, (self / 2).rounded(.up) * 2)
     }
 }
 
@@ -174,7 +178,7 @@ actor ClipExporter {
         }
 
         let audioTrack = try await asset.loadTracks(withMediaType: .audio).first
-        let composition = try makeComposition(
+        let composition = try await makeComposition(
             videoTrack: videoTrack, audioTrack: audioTrack, trimmingTo: range)
         let videoComposition = try await makeVideoComposition(
             for: videoTrack, in: composition, transform: transform)
@@ -210,11 +214,15 @@ actor ClipExporter {
     /// audio track laid over the same range. Exported clips keep their audio: the design
     /// doc's share path hands the file to Instagram / TikTok / YouTube Shorts, where a
     /// silent clip reads as broken. A source with no audio track exports silent.
+    ///
+    /// `range` is clamped to the asset's duration, which is the *longest* track's — an
+    /// individual track can end earlier (a recording whose audio runs past the last video
+    /// sample), so each insert is intersected with that track's own time range.
     private func makeComposition(
         videoTrack: AVAssetTrack,
         audioTrack: AVAssetTrack?,
         trimmingTo range: ClosedRange<TimeInterval>
-    ) throws -> AVMutableComposition {
+    ) async throws -> AVMutableComposition {
         let composition = AVMutableComposition()
         guard let compositionTrack = composition.addMutableTrack(
             withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
@@ -224,14 +232,24 @@ actor ClipExporter {
         let timeRange = CMTimeRange(
             start: CMTime(seconds: range.lowerBound, preferredTimescale: 600),
             end: CMTime(seconds: range.upperBound, preferredTimescale: 600))
-        try compositionTrack.insertTimeRange(timeRange, of: videoTrack, at: .zero)
+        let videoTrackRange = try await videoTrack.load(.timeRange)
+        let videoRange = timeRange.intersection(videoTrackRange)
+        guard videoRange.duration > .zero else {
+            throw ClipExportError.exportFailed(reason: "the trimmed range holds no video")
+        }
+        try compositionTrack.insertTimeRange(videoRange, of: videoTrack, at: .zero)
         if let audioTrack {
-            guard let compositionAudioTrack = composition.addMutableTrack(
-                withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-            else {
-                throw ClipExportError.exportFailed(reason: "could not add an audio track to the composition")
+            let audioTrackRange = try await audioTrack.load(.timeRange)
+            let audioRange = timeRange.intersection(audioTrackRange)
+            if audioRange.duration > .zero {
+                guard let compositionAudioTrack = composition.addMutableTrack(
+                    withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+                else {
+                    throw ClipExportError.exportFailed(
+                        reason: "could not add an audio track to the composition")
+                }
+                try compositionAudioTrack.insertTimeRange(audioRange, of: audioTrack, at: .zero)
             }
-            try compositionAudioTrack.insertTimeRange(timeRange, of: audioTrack, at: .zero)
         }
         return composition
     }

@@ -48,10 +48,16 @@ struct ClipPhotosSaver: Sendable {
             throw ClipPhotosSaveError.authorizationDenied(restricted: false)
         }
         // The change block can't throw, so a nil creation request is reported with a flag.
+        // The commit itself throws a raw PhotoKit NSError (out of space, asset rejected);
+        // it is wrapped so every failure out of this method is a ClipPhotosSaveError.
         var requestAccepted = false
-        try await PHPhotoLibrary.shared().performChanges {
-            requestAccepted =
-                PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: fileURL) != nil
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                requestAccepted =
+                    PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: fileURL) != nil
+            }
+        } catch {
+            throw ClipPhotosSaveError.saveRejected(reason: error.localizedDescription)
         }
         guard requestAccepted else {
             throw ClipPhotosSaveError.saveRejected(
