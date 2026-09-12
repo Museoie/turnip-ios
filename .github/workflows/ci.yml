@@ -215,7 +215,11 @@ jobs:
       - name: Ensure iPhone 17 simulator exists
         run: |
           set -euo pipefail
-          if xcrun simctl list devices available 2>/dev/null | grep -q "iPhone 17"; then
+          # Anchor the match to the exact "iPhone 17" device name: an
+          # unanchored grep also matches "iPhone 17 Pro" lines, so a VM with
+          # only the Pro would pass this preflight and then die in xcodebuild
+          # with the cryptic "unable to find a device" error below.
+          if xcrun simctl list devices available 2>/dev/null | grep -qE "^\s*iPhone 17 \("; then
             echo "iPhone 17 simulator is available."
             exit 0
           fi
