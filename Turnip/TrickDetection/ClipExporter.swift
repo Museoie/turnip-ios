@@ -4,6 +4,11 @@ import Foundation
 
 /// One detected clip to export: its time window in the source video and the static crop rect
 /// for it (docs/DESIGN.md's pipeline steps 5-6 feeding step 7).
+///
+/// `cropRect` is normalized in *display* orientation — the decoded frames' normalized space,
+/// matching the pose keypoints it is computed from (`VideoFrameSampler` applies the track's
+/// `preferredTransform` when sampling, so keypoints are measured upright). Pass
+/// `SampledFrame.renderSize` (not `track.naturalSize`) when denormalizing it.
 struct ClipSpec: Equatable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
@@ -35,17 +40,21 @@ struct ClipExportTransform {
 
     /// Builds the crop transform for `cropRect`.
     ///
-    /// `cropRect` lives in the encoded frame's pixel space (top-left origin) — the same space
-    /// as the pose keypoints it is computed from, since the frame sampler does not apply the
-    /// track's `preferredTransform`. The layer transform therefore starts from
-    /// `preferredTransform` (so the export comes out upright) and translates the crop's
-    /// displayed top-left corner to the origin. There is no Y-flip: an
-    /// `AVMutableVideoCompositionLayerInstruction` transform maps into a top-left-origin
-    /// render space, the same space `preferredTransform` already targets — the bottom-left
-    /// convention belongs to Core Image and to `AVVideoCompositionCoreAnimationTool`
-    /// overlay layers, neither of which is in play here. The crop is never scaled: the
-    /// output frame is exactly the crop rect's size, rounded up to even H.264 dimensions,
-    /// per the design doc's "crop, not scale-and-letterbox".
+    /// `cropRect` is normalized in the *displayed* (upright) frame's space — the same space
+    /// as the pose keypoints it is computed from, since the frame sampler applies the
+    /// track's `preferredTransform` when decoding. It is denormalized against the displayed
+    /// size (the bounding box of the encoded frame's corners through `preferredTransform`),
+    /// not `naturalSize`: on a 90°-rotated track those differ by a transpose, and
+    /// denormalizing a display-normalized rect in the encoded size silently crops the wrong
+    /// region. The layer transform therefore uprights the encoded frame into origin-based
+    /// displayed space and then translates the crop's displayed top-left corner to the
+    /// origin. There is no Y-flip: an `AVMutableVideoCompositionLayerInstruction` transform
+    /// maps into a top-left-origin render space, the same space `preferredTransform`
+    /// already targets — the bottom-left convention belongs to Core Image and to
+    /// `AVVideoCompositionCoreAnimationTool` overlay layers, neither of which is in play
+    /// here. The crop is never scaled: the output frame is exactly the crop rect's size,
+    /// rounded up to even H.264 dimensions, per the design doc's "crop, not
+    /// scale-and-letterbox".
     ///
     /// `nil` when the source dimensions are unknown or the crop rect is degenerate — in
     /// either case there is no frame to render into.
@@ -55,44 +64,34 @@ struct ClipExportTransform {
         preferredTransform: CGAffineTransform
     ) -> ClipExportTransform? {
         guard naturalSize.width > 0, naturalSize.height > 0 else { return nil }
-        let crop = cropRect.denormalized(in: naturalSize)
+
+        // The displayed (upright) frame: the bounding box of the encoded frame's corners
+        // through preferredTransform. On a 90°-rotated track this transposes naturalSize.
+        let displayedFrame = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
+        let displayedSize = CGSize(
+            width: abs(displayedFrame.width), height: abs(displayedFrame.height))
+        let crop = cropRect.denormalized(in: displayedSize)
         guard crop.width > 0, crop.height > 0 else { return nil }
 
-        // The crop's corners run through preferredTransform to find where the crop sits in
-        // the displayed (upright) frame. The origin must be subtracted in *displayed* space:
-        // for a 90°-rotated track the encoded top-left corner lands at the displayed
-        // top-right, so subtracting the encoded origin would shift the crop to the wrong side.
-        let displayed = boundingBox(of: crop.corners.map { $0.applying(preferredTransform) })
-
-        let layerTransform = preferredTransform
-            .concatenating(CGAffineTransform(translationX: -displayed.minX, y: -displayed.minY))
+        // Upright the encoded frame into origin-based displayed space: a rotation about
+        // the origin can place the content outside [0, displayedSize], so the transform
+        // is normalized by the displayed frame's origin before the crop offset applies.
+        // The crop itself is already in displayed space (denormalized above), so its
+        // top-left subtracts directly — no second trip through preferredTransform.
+        let uprightTransform = preferredTransform.concatenating(CGAffineTransform(
+            translationX: -displayedFrame.minX, y: -displayedFrame.minY))
+        let layerTransform = uprightTransform.concatenating(CGAffineTransform(
+            translationX: -crop.minX, y: -crop.minY))
 
         // H.264 requires integral, even width and height, and the crop math above is
         // float — round here. The layer transform already pins the crop's displayed
         // top-left to the render origin, so widening the frame only pads the
         // right/bottom edges; the translation stays consistent with the rounded size.
         let renderSize = CGSize(
-            width: displayed.width.roundedToEvenDimensions,
-            height: displayed.height.roundedToEvenDimensions)
+            width: crop.width.roundedToEvenDimensions,
+            height: crop.height.roundedToEvenDimensions)
 
         return ClipExportTransform(renderSize: renderSize, layerTransform: layerTransform)
-    }
-
-    private static func boundingBox(of points: [CGPoint]) -> CGRect {
-        let xValues = points.map(\.x), yValues = points.map(\.y)
-        guard let minX = xValues.min(), let maxX = xValues.max(),
-              let minY = yValues.min(), let maxY = yValues.max()
-        else { return .zero }
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-    }
-}
-
-private extension CGRect {
-    var corners: [CGPoint] {
-        [origin,
-         CGPoint(x: maxX, y: minY),
-         CGPoint(x: minX, y: maxY),
-         CGPoint(x: maxX, y: maxY)]
     }
 }
 
@@ -201,6 +200,9 @@ actor ClipExporter {
     /// advertises as retryable would fail with `AVErrorFileAlreadyExists`), while the
     /// output file is left in place on failure for debugging and the caller decides
     /// whether to delete it afterwards.
+    ///
+    /// `fileName` must be a single path component (no slashes): it is appended to
+    /// `directory`, so a `../` would escape the caller's output directory.
     func export(
         _ spec: ClipSpec,
         from asset: AVAsset,

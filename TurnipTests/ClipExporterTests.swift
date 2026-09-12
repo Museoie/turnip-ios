@@ -93,20 +93,41 @@ final class ClipExporterTests: XCTestCase {
     }
 
     func testRotatedTrackSubtractsTheCropOriginInDisplayedSpace() throws {
-        // The right half of the encoded frame. A transform that subtracts the *encoded*
-        // origin from displayed coordinates would land the crop's top-left at x = 1080 - 960
-        // instead of 1080, so this case fails on exactly that bug.
+        // The right half of the *displayed* (portrait) frame: cropRect is normalized in
+        // display orientation, so x in [0.5, 1] is the displayed right half, not the
+        // encoded right half. A transform that subtracts the *encoded* origin from
+        // displayed coordinates would land the crop's top-left at x = 1080 - 960
+        // instead of 0, so this case fails on exactly that bug.
         let transform = try XCTUnwrap(ClipExportTransform.make(
             cropRect: NormalizedRect(minX: 0.5, maxX: 1, minY: 0, maxY: 1),
             naturalSize: landscape,
             preferredTransform: rotate90))
 
-        XCTAssertEqual(transform.renderSize, CGSize(width: 1080, height: 960))
-        // Encoded crop corners, mapped through the 90° rotation into displayed space,
-        // then translated to the render origin — top-left stays top-left.
-        assertPoint(CGPoint(x: 960, y: 0), mapsTo: CGPoint(x: 1080, y: 0), by: transform.layerTransform)
-        assertPoint(CGPoint(x: 1920, y: 1080), mapsTo: CGPoint(x: 0, y: 960), by: transform.layerTransform)
-        assertPoint(CGPoint(x: 1440, y: 540), mapsTo: CGPoint(x: 540, y: 480), by: transform.layerTransform)
+        // Displayed size is 1080x1920; the crop is the right half: 540x1920.
+        XCTAssertEqual(transform.renderSize, CGSize(width: 540, height: 1920))
+        // The crop's displayed top-left (540, 0) is encoded (0, 540): it must land at
+        // the render origin, and the displayed bottom-right (1080, 1920) — encoded
+        // (1920, 0) — at the render frame's far corner.
+        assertPoint(CGPoint(x: 0, y: 540), mapsTo: CGPoint(x: 0, y: 0), by: transform.layerTransform)
+        assertPoint(CGPoint(x: 1920, y: 0), mapsTo: CGPoint(x: 540, y: 1920), by: transform.layerTransform)
+    }
+
+    func testRotatedTrackCropUsesTheDisplayedSize() throws {
+        // Athlete in the upper middle of the upright frame: display-normalized rect
+        // x in [0.25, 0.75], y in [0.10, 0.60]. Denormalizing against the *encoded*
+        // size (the old bug) maps this to the displayed middle band instead of the
+        // upper middle; the layer transform then points at the wrong region.
+        let transform = try XCTUnwrap(ClipExportTransform.make(
+            cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.10, maxY: 0.60),
+            naturalSize: landscape,
+            preferredTransform: rotate90))
+
+        // Displayed 1080x1920: crop is 540x960 pixels.
+        XCTAssertEqual(transform.renderSize, CGSize(width: 540, height: 960))
+        // The crop's displayed top-left (270, 192) is encoded (192, 810): it must land
+        // at the render origin. Under the encoded-size bug this encoded point maps to
+        // (-162, -288) instead — the athlete would be cropped out.
+        assertPoint(CGPoint(x: 192, y: 810), mapsTo: CGPoint(x: 0, y: 0), by: transform.layerTransform)
     }
 
     func testMakeReturnsNilForUnknownSourceSize() {
