@@ -155,7 +155,7 @@ private struct ClipCardView: View {
                     window: TrickWindow(startTime: 9, endTime: 11.5),
                     cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
                     isKept: false
-                ),
+                )
             ],
             // AVAsset is abstract and throws at runtime; AVURLAsset is the concrete
             // subclass. The URL resolves to nothing — the preview shows the
