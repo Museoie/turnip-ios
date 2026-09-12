@@ -284,7 +284,7 @@ actor ClipExporter {
     /// Runs the session to a terminal state, reporting progress along the way.
     /// `AVAssetExportSession` has no async progress stream on iOS 16, so progress is polled;
     /// task cancellation funnels into `cancelExport()`.
-    private func runExport(_ session: AVAssetExportSession, progress: ProgressHandler?) async throws {
+    private func runExport(_ session: AVAssetExportSession, progress: @escaping ProgressHandler?) async throws {
         let box = ExportSessionBox(session)
         let progressTask = Task {
             while !Task.isCancelled, !box.session.status.isTerminal {
