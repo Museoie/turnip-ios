@@ -5,7 +5,7 @@ import Foundation
 /// `endTime` carries the trailing buffer and can therefore sit past the last sampled frame;
 /// clip trimming clamps it to the asset's duration. Two windows may overlap where their
 /// buffers meet — each is a standalone clip of its own trick, not a partition of the video.
-struct TrickWindow: Equatable, Sendable {
+struct TrickWindow: Hashable, Sendable {
     let startTime: TimeInterval
     let endTime: TimeInterval
 }
