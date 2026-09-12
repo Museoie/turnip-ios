@@ -199,18 +199,31 @@ final class ExportConfirmationViewModel: ObservableObject {
         self.makeDirectory = makeDirectory
     }
 
-    /// Starts the export run. Ignored while a live run is in flight and once a run has
-    /// finished — the screen shows one run. A start after `cancel()` is a genuine
-    /// restart: the new run first waits for the cancelled run to drain, then the
-    /// cancellation flag clears, unfinished clips go back to `.pending`, and clips
-    /// already `.saved` stay saved and are skipped — so the new run never writes the
-    /// same video to Photos twice. Bumps the generation so the trailing teardown below
-    /// belongs to exactly this run (see `generation`).
-    func start() {
+    /// Starts the export run.
+    ///
+    /// - Parameter userInitiated: pass `true` only when the start comes from an
+    ///   explicit user gesture (a retry control, once one exists). The view's `.task`
+    ///   re-fires on every re-appear and calls `start()` without it, so re-appear
+    ///   starts the first run but can never resurrect a cancelled one.
+    ///
+    /// Ignored while a live run is in flight and once a run has finished — the screen
+    /// shows one run. A user-initiated start after `cancel()` is a genuine restart: the
+    /// new run first waits for the cancelled run to drain, then the cancellation flag
+    /// clears, unfinished clips go back to `.pending`, and clips already `.saved` stay
+    /// saved and are skipped — so the new run never writes the same video to Photos
+    /// twice. Bumps the generation so the trailing teardown below belongs to exactly
+    /// this run (see `generation`).
+    func start(userInitiated: Bool = false) {
         guard !isFinished else { return }
+        // A `.task` re-fire (re-appear) may only start the first run: once a run has
+        // begun, only an explicit user gesture may start another. Without this, the
+        // re-appear after `cancel()` — the view cancels on disappear — would resurrect
+        // the cancelled run while it is still draining.
+        if !userInitiated, generation > 0 { return }
         // A live run owns the screen: the view's `.task` re-fires on re-appear and
-        // must not disturb it. A cancelled-but-draining run doesn't block a restart —
-        // the new task waits for it below before touching any clip.
+        // must not disturb it. A cancelled-but-draining run doesn't block a
+        // user-initiated restart — the new task waits for it below before touching
+        // any clip.
         if runTask != nil, !cancelRequested { return }
         generation &+= 1
         let runGeneration = generation

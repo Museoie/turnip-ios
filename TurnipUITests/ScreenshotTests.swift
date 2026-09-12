@@ -15,7 +15,13 @@ final class ScreenshotTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotExportConfirmation"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["Exporting…"].waitForExistence(timeout: 15))
+        // The row sets an explicit combined accessibilityLabel ("Clip 1 · 2.4s,
+        // exporting, 50 percent"), so the ProgressView's own "Exporting…" text is
+        // never exposed as its own element — match the row's label instead.
+        let exportingRow = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS 'exporting'"))
+            .firstMatch
+        XCTAssertTrue(exportingRow.waitForExistence(timeout: 15))
         addScreenshot(named: "export-confirmation-progress")
     }
 

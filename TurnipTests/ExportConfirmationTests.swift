@@ -372,6 +372,34 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isFinished)
     }
 
+    /// The view's `.task` re-fires on re-appear with a plain `start()` — and the view
+    /// also cancels on disappear — so a re-appear while the cancelled run is still
+    /// draining must not resurrect it: only an explicit user gesture restarts. Without
+    /// the `userInitiated` gate, the second `start()` below treats the draining run as
+    /// a genuine restart and exports the second clip a second time.
+    func testReappearAfterCancelDoesNotRestartRun() async {
+        let fake = FakeExport(exportResults: Self.exportSuccesses(2))
+        await fake.setGateNextExport()
+        let viewModel = viewModel(items: [item(), item(start: 9, end: 11.5)], fake: fake)
+
+        viewModel.start()
+        await Self.waitForFullExportProgress(viewModel)
+        // Disappear cancels the run; the re-appear's `.task` re-fire calls plain
+        // `start()` — not a user gesture — while the cancelled run still drains.
+        viewModel.cancel()
+        viewModel.start()
+        await fake.openGate()
+        await Self.waitUntilFinished(viewModel)
+
+        // The re-appear start was ignored: only the first run's export ran, the
+        // cancelled run drained honestly, and the second clip was never exported.
+        let exportCallCount = await fake.exportCalls.count
+        XCTAssertEqual(exportCallCount, 1)
+        XCTAssertEqual(viewModel.clips.map(\.phase), [.saved, .pending])
+        XCTAssertTrue(viewModel.wasCancelled)
+        XCTAssertTrue(viewModel.isFinished)
+    }
+
     /// A restart after cancel is a genuine restart, not a second concurrent run: run 2
     /// waits for run 1 to drain, run 1's stale teardown can't end the screen under it,
     /// and a clip run 1 already saved is skipped rather than written to Photos twice.
@@ -385,10 +413,11 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         await Self.waitForFullExportProgress(viewModel)
         viewModel.cancel()
 
-        // Run 2 starts while run 1 is still draining. Its export is gated up front so
+        // Run 2 starts while run 1 is still draining — the explicit user-initiated
+        // restart path (`start(userInitiated:)`). Its export is gated up front so
         // run 1 is guaranteed to reach its trailing teardown while run 2 is parked.
         await fake.setGateNextExport()
-        viewModel.start()
+        viewModel.start(userInitiated: true)
         await fake.openGate()
         // Cancellation is per-run: run 1's stale teardown must not flip wasCancelled
         // or isFinished under the newer run. Give it a beat to land.
