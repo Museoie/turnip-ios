@@ -132,6 +132,7 @@ final class ExportConfirmationViewModel: ObservableObject {
     /// `cancel()` nils `runTask` while the cancelled task is still draining, so a newer
     /// `start()` can already be in flight — the stale teardown must not clear the new
     /// run's handle or flip `isFinished` under it.
+    private var generation: UInt64 = 0
 
     init(
         items: [ExportConfirmationItem],
