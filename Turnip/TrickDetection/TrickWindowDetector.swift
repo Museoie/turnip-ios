@@ -76,10 +76,9 @@ struct TrickWindowDetector: Sendable {
         /// Index of the tolerated unknown inside the open run, if one is being bridged.
         var openSeam: Int?
 
-        /// The run's last sample when it closes at `index`: the last moving sample when a
-        /// seam is open, so a trailing unknown never extends a window past measured motion.
-        func endOfOpenRun(closingAt index: Int) -> Int {
-            (openSeam ?? (index + 1)) - 1
+        /// The run's last sample when everything before `index` belongs to the run.
+        func endOfOpenRun(excluding index: Int) -> Int {
+            (openSeam ?? index) - 1
         }
 
         for index in states.indices {
@@ -91,20 +90,20 @@ struct TrickWindowDetector: Sendable {
                 if start != nil, openSeam == nil {
                     openSeam = index
                 } else if let begin = start {
-                    runs.append(begin...endOfOpenRun(closingAt: index))
+                    runs.append(begin...endOfOpenRun(excluding: index))
                     start = nil
                     openSeam = nil
                 }
             case .quiet:
                 if let begin = start {
-                    runs.append(begin...endOfOpenRun(closingAt: index))
+                    runs.append(begin...endOfOpenRun(excluding: index))
                     start = nil
                     openSeam = nil
                 }
             }
         }
         if let begin = start {
-            runs.append(begin...endOfOpenRun(closingAt: states.count - 1))
+            runs.append(begin...endOfOpenRun(excluding: states.count))
         }
         return runs
     }
