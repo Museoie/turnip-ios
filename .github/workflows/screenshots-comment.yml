@@ -53,5 +53,10 @@ jobs:
           # run that holds the artifacts, and PNG paths are namespaced by it.
           RUN_ID: ${{ github.event.workflow_run.id }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          # Fork owner and branch the CI run's head came from: resolving the
+          # PR by head=owner:branch, since the commits/pulls API only indexes
+          # commits present in the base repo and misses fork PRs by SHA.
+          HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           SCREENSHOTS_DIR: screenshots
         run: python3 .github/scripts/post_screenshots_comment.py
