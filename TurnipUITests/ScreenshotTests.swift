@@ -40,11 +40,10 @@ final class ScreenshotTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
-        // Also save directly to disk for CI extraction (xcresult parsing is fragile).
-        // The screenshots workflow collects PNGs from this directory.
-        if let dir = ProcessInfo.processInfo.environment["SCREENSHOT_OUTPUT_DIR"] {
-            let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
-            try? screenshot.pngRepresentation.write(to: url)
-        }
+        // Print base64 PNG to stdout for CI extraction (env vars don't propagate
+        // to the test runner, and xcresult parsing is fragile).
+        // The workflow greps for TURNIP_SCREENSHOT:<name>:<base64>.
+        let b64 = screenshot.pngRepresentation.base64EncodedString()
+        print("TURNIP_SCREENSHOT:\(name):\(b64)")
     }
 }
