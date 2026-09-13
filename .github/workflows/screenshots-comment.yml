@@ -1,0 +1,57 @@
+name: Screenshots comment
+
+# Posts the UI screenshots captured by CI as a markdown PR comment.
+#
+# This must live in a workflow_run workflow, not in CI's pull_request
+# workflow: runs triggered by pull_request from a fork get a read-only
+# GITHUB_TOKEN and no secrets, so they can neither push the PNGs nor post
+# the comment (the API answers 403 "Resource not accessible by integration").
+# workflow_run runs in the base-repo context with full permissions and
+# secrets, so both work here. pull_request_target is deliberately not used.
+#
+# NOTE: workflow_run workflows only trigger from the default branch, so this
+# takes effect after merge; it cannot be exercised from the PR itself.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  comment:
+    # Only CI runs for pull requests can have a PR to comment on. Whether
+    # there are screenshots to post is decided by the artifact: the script
+    # skips gracefully when the pr-screenshots artifact is absent (non-UI
+    # PR, or CI failed before uploading).
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Download screenshots artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        continue-on-error: true
+        with:
+          name: pr-screenshots
+          path: screenshots
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post screenshots comment on PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SCREENSHOTS_PUSH_TOKEN: ${{ secrets.SCREENSHOTS_PUSH_TOKEN }}
+          BASE_REPO: ${{ github.repository }}
+          SCREENSHOTS_REPO: Museoie/turnip-screenshots
+          # The CI run's id (not this run's): the comment links back to the
+          # run that holds the artifacts, and PNG paths are namespaced by it.
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          SCREENSHOTS_DIR: screenshots
+        run: python3 .github/scripts/post_screenshots_comment.py
