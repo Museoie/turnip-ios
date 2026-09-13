@@ -187,12 +187,13 @@ struct ProcessingPipeline: Sendable {
             frameRate > 0
         else { return nil }
         let total = Int((Float(timeRange.duration.seconds) * frameRate).rounded())
-        return sampledFrameCount(trackFrameCount: total)
+        let stride = VideoFrameSampler.stride(forNominalFrameRate: frameRate)
+        return sampledFrameCount(trackFrameCount: total, stride: stride)
     }
 
-    /// `ceil(count / stride)`, floored at 1.
-    static func sampledFrameCount(trackFrameCount: Int) -> Int {
-        let stride = VideoFrameSampler.sampleStride
+    /// `ceil(count / stride)`, floored at 1. Requires `stride > 0`.
+    static func sampledFrameCount(trackFrameCount: Int, stride: Int) -> Int {
+        precondition(stride > 0, "sampledFrameCount requires stride > 0 (got \(stride))")
         return max((trackFrameCount + stride - 1) / stride, 1)
     }
 }

@@ -44,15 +44,20 @@ final class SampledFrameCountTests: XCTestCase {
     /// 0/3/6/9 — four, not three. Integer division would under-count the denominator and the
     /// counter would run past it.
     func testCountRoundsUpTheWayTheSamplerDoes() {
-        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 9), 3)
-        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 10), 4)
-        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 11), 4)
-        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 12), 4)
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 9, stride: 3), 3)
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 10, stride: 3), 4)
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 11, stride: 3), 4)
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 12, stride: 3), 4)
     }
 
     func testCountIsAtLeastOne() {
-        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 0), 1)
-        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 1), 1)
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 0, stride: 3), 1)
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 1, stride: 3), 1)
+    }
+
+    func testCountUsesTheGivenStride() {
+        // At 60 fps the stride is 6: a 61-frame track yields frames 0/6/…/60 — 11, not 21.
+        XCTAssertEqual(ProcessingPipeline.sampledFrameCount(trackFrameCount: 61, stride: 6), 11)
     }
 }
 

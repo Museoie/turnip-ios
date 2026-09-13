@@ -42,9 +42,24 @@ struct SampledFrame: @unchecked Sendable {
 /// strict concurrency (Swift 6 would otherwise report "sending 'self.sampler' risks causing data
 /// races").
 struct VideoFrameSampler: Sendable {
-    /// Frames are kept 1-in-N. The processing pipeline divides a track's frame count by this
-    /// to estimate its progress denominator, so the two have to read the same number.
-    static let sampleStride = 3
+    /// Samples per second of footage, independent of the source frame rate (docs/DESIGN.md
+    /// "Performance targets"). At 30 fps this reproduces the old hardcoded stride of 3; at the
+    /// 240 fps slo-mo the design doc recommends as the recording mode, a fixed stride of 3 would
+    /// have run 80 inferences per second of footage — 8x the intended sample rate, for no
+    /// accuracy benefit.
+    static let targetSamplesPerSecond = 10
+
+    /// Maps a track's nominal frame rate to the decode stride that yields ~`targetSamplesPerSecond`
+    /// samples per second of footage. A pure function (rather than inline math) so the fps→stride
+    /// mapping is unit-testable without a video file.
+    static func stride(forNominalFrameRate nominalFrameRate: Float) -> Int {
+        guard nominalFrameRate > 0 else {
+            // The track doesn't declare a rate (nominalFrameRate == 0): keep the old 30 fps
+            // behavior instead of sampling every frame or dividing by zero.
+            return 3
+        }
+        return max(1, Int((Double(nominalFrameRate) / Double(targetSamplesPerSecond)).rounded()))
+    }
 
     /// Decodes `asset` and invokes `handler` once per kept frame, sequentially, off the main actor.
     ///
@@ -61,6 +76,12 @@ struct VideoFrameSampler: Sendable {
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw PoseError.videoLoadFailed(underlying: nil)
         }
+
+        // Sample ~10 frames/sec of footage regardless of source fps (issue #21): a fixed stride
+        // of 3 matches the design doc only at 30 fps, and at 240 fps slo-mo it would run 8x the
+        // intended inferences per second of footage.
+        let nominalFrameRate = try await track.load(.nominalFrameRate)
+        let sampleStride = Self.stride(forNominalFrameRate: nominalFrameRate)
 
         // iPhone portrait videos are stored as landscape-encoded buffers with a 90° preferredTransform,
         // so frames have to be rendered through a video composition that applies it.
@@ -108,7 +129,7 @@ struct VideoFrameSampler: Sendable {
             // itself gives up: nothing else here suspends at a cancellation point.
             try Task.checkCancellation()
             defer { frameIndex += 1 }
-            guard frameIndex % Self.sampleStride == 0 else { continue }
+            guard frameIndex % sampleStride == 0 else { continue }
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
             let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
             try await handler(SampledFrame(
