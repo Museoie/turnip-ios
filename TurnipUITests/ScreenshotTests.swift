@@ -35,9 +35,16 @@ final class ScreenshotTests: XCTestCase {
     }
 
     private func addScreenshot(named name: String) {
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        let screenshot = XCUIScreen.main.screenshot()
+        let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+        // Also save directly to disk for CI extraction (xcresult parsing is fragile).
+        // The screenshots workflow collects PNGs from this directory.
+        if let dir = ProcessInfo.processInfo.environment["SCREENSHOT_OUTPUT_DIR"] {
+            let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
+            try? screenshot.pngRepresentation.write(to: url)
+        }
     }
 }
