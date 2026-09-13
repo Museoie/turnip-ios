@@ -63,20 +63,20 @@ final class MotionSignalBuilderTests: XCTestCase {
             PoseFixture.frame(
                 index: 0,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: 0.9)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.9)
             ),
             PoseFixture.frame(
                 index: 1,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: 0.1)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.1)
             ),
             PoseFixture.frame(
                 index: 2,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: 0.9)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.9)
             )
         ]
 
@@ -127,14 +127,14 @@ final class MotionSignalBuilderTests: XCTestCase {
             PoseFixture.frame(
                 index: 0,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: 0.1)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.1)
             ),
             PoseFixture.frame(
                 index: 1,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: 0.9)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.9)
             )
         ]
 
@@ -155,8 +155,8 @@ final class MotionSignalBuilderTests: XCTestCase {
             PoseFixture.frame(
                 index: index,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: index == 0 ? 0.9 : 0.1)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: index == 0 ? 0.9 : 0.1)
             )
         }
 
