@@ -266,7 +266,7 @@ jobs:
           OUT="$RUNNER_TEMP/screenshots"
           mkdir -p "$OUT"
           # Tests print TURNIP_SCREENSHOT:<name>:<base64> to stdout; decode them here.
-          grep "TURNIP_SCREENSHOT:" "$RUNNER_TEMP/xcodebuild.log" 2>/dev/null || true | while IFS= read -r line; do
+          (grep "TURNIP_SCREENSHOT:" "$RUNNER_TEMP/xcodebuild.log" 2>/dev/null || true) | while IFS= read -r line; do
             # Extract name and base64 (format: ...TURNIP_SCREENSHOT:<name>:<base64>)
             payload="${line##*TURNIP_SCREENSHOT:}"
             name="${payload%%:*}"
