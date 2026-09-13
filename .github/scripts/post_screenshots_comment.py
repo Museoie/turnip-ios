@@ -6,9 +6,10 @@ Uses only the standard library so it runs on a stock macOS runner.
 
 Two modes:
   Inline images (preferred): when SCREENSHOTS_PUSH_TOKEN is set -- a
-  fine-grained PAT with contents:write on the fork repo -- the PNGs are
-  pushed to the `ci-screenshots` orphan branch of the fork (under
+  fine-grained PAT with contents:write on the dedicated screenshots repo --
+  the PNGs are pushed to the `screenshots` orphan branch of that repo (under
   pr-<N>/<run_id>/) and embedded via raw.githubusercontent.com URLs.
+  A separate repo keeps PNG blobs out of the dev repo's fetch history.
   GITHUB_TOKEN on a fork PR cannot push anywhere, hence the PAT.
   Fallback: the comment links to the workflow run's artifacts instead.
 
@@ -26,7 +27,7 @@ import urllib.request
 import urllib.error
 
 MARKER = "<!-- turnip-ui-screenshots -->"
-BRANCH = "ci-screenshots"
+BRANCH = "screenshots"
 
 
 def api(token, method, path, data=None):
@@ -48,11 +49,11 @@ def api(token, method, path, data=None):
                            % (method, path, e.code, detail))
 
 
-def push_to_fork(pat, fork_repo, pr_number, run_id, pngs):
-    """Push PNGs to the ci-screenshots orphan branch; return {name: raw_url}."""
+def push_to_shots_repo(pat, shots_repo, pr_number, run_id, pngs):
+    """Push PNGs to the screenshots orphan branch; return {name: raw_url}."""
     entries = []
     for name, data in pngs:
-        blob = api(pat, "POST", "/repos/%s/git/blobs" % fork_repo,
+        blob = api(pat, "POST", "/repos/%s/git/blobs" % shots_repo,
                    {"content": base64.b64encode(data).decode(),
                     "encoding": "base64"})
         entries.append({"path": "pr-%s/%s/%s" % (pr_number, run_id, name),
@@ -60,10 +61,10 @@ def push_to_fork(pat, fork_repo, pr_number, run_id, pngs):
 
     try:
         ref = api(pat, "GET",
-                  "/repos/%s/git/ref/heads/%s" % (fork_repo, BRANCH))
+                  "/repos/%s/git/ref/heads/%s" % (shots_repo, BRANCH))
         base_sha = ref["object"]["sha"]
         commit = api(pat, "GET",
-                     "/repos/%s/git/commits/%s" % (fork_repo, base_sha))
+                     "/repos/%s/git/commits/%s" % (shots_repo, base_sha))
         tree_payload = {"base_tree": commit["tree"]["sha"], "tree": entries}
         parents = [base_sha]
         ref_exists = True
@@ -74,22 +75,22 @@ def push_to_fork(pat, fork_repo, pr_number, run_id, pngs):
         parents = []
         ref_exists = False
 
-    tree = api(pat, "POST", "/repos/%s/git/trees" % fork_repo, tree_payload)
-    new_commit = api(pat, "POST", "/repos/%s/git/commits" % fork_repo,
+    tree = api(pat, "POST", "/repos/%s/git/trees" % shots_repo, tree_payload)
+    new_commit = api(pat, "POST", "/repos/%s/git/commits" % shots_repo,
                      {"message": "screenshots for PR #%s (run %s)"
                                  % (pr_number, run_id),
                       "tree": tree["sha"], "parents": parents})
     if ref_exists:
-        api(pat, "PATCH", "/repos/%s/git/ref/heads/%s" % (fork_repo, BRANCH),
+        api(pat, "PATCH", "/repos/%s/git/ref/heads/%s" % (shots_repo, BRANCH),
             {"sha": new_commit["sha"]})
     else:
-        api(pat, "POST", "/repos/%s/git/refs" % fork_repo,
+        api(pat, "POST", "/repos/%s/git/refs" % shots_repo,
             {"ref": "refs/heads/" + BRANCH, "sha": new_commit["sha"]})
 
     urls = {}
     for name, _ in pngs:
         urls[name] = ("https://raw.githubusercontent.com/%s/%s/pr-%s/%s/%s"
-                      % (fork_repo, BRANCH, pr_number, run_id,
+                      % (shots_repo, BRANCH, pr_number, run_id,
                          urllib.parse.quote(name)))
     return urls
 
@@ -112,7 +113,7 @@ def find_bot_comment(token, base_repo, pr_number):
 def main():
     token = os.environ["GITHUB_TOKEN"]
     base_repo = os.environ["BASE_REPO"]
-    fork_repo = os.environ["FORK_REPO"]
+    shots_repo = os.environ["SCREENSHOTS_REPO"]
     pr_number = os.environ["PR_NUMBER"]
     run_id = os.environ["RUN_ID"]
     sha = os.environ["HEAD_SHA"][:7]
@@ -130,7 +131,7 @@ def main():
 
     pat = os.environ.get("SCREENSHOTS_PUSH_TOKEN")
     if pat:
-        urls = push_to_fork(pat, fork_repo, pr_number, run_id, pngs)
+        urls = push_to_shots_repo(pat, shots_repo, pr_number, run_id, pngs)
         header = " | ".join("`%s`" % n for n, _ in pngs)
         sep = " | ".join("---" for _ in pngs)
         cells = " | ".join("![%s](%s)" % (n, urls[n]) for n, _ in pngs)
@@ -144,7 +145,7 @@ def main():
                 "%d screenshot(s) captured from `%s`: %s\n\n"
                 "[Download the PNGs from the workflow run artifacts](%s).\n\n"
                 "_Inline images need a `SCREENSHOTS_PUSH_TOKEN` repo secret "
-                "(fine-grained PAT with contents:write on the fork)._"
+                "(fine-grained PAT with contents:write on the screenshots repo)._"
                 % (MARKER, len(pngs), sha, names, run_url))
 
     comment_id = find_bot_comment(token, base_repo, pr_number)
