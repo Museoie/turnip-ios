@@ -23,6 +23,15 @@ You film a tricking session. Turnip:
 
 All on-device. No server, no data upload for the core auto-edit path.
 
+## Privacy
+
+Turnip v1 never sends your videos anywhere: no accounts, no uploads, no
+analytics. The app asks for Photos access only to show your videos and
+save the clips you export. The App Store privacy answers, the privacy
+manifest, and temp-file hygiene are documented in
+[`docs/PRIVACY.md`](docs/PRIVACY.md). Upload and accounts arrive with v2
+as an explicit opt-in, and the privacy story will be updated then.
+
 ## Status
 
 Very early. As of 2026-09-06 the repo has initial app scaffolding: the

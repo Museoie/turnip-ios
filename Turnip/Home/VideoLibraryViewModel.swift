@@ -33,7 +33,20 @@ final class VideoLibraryViewModel: ObservableObject {
     @Published private(set) var hasLoaded = false
     @Published private(set) var resolution: Resolution?
     @Published var errorMessage: String?
-    @Published var path: [SelectedVideo] = []
+    /// Navigation path of picked videos. A `SelectedVideo`'s lifetime here *is* its temp
+    /// export's lifetime: `select()` resolves the tapped tile (possibly writing a composition
+    /// export into tmp/), and when the element leaves the path the file must not linger —
+    /// browsing back out without running the diagnostic is the dominant path, not an edge case.
+    @Published var path: [SelectedVideo] = [] {
+        didSet {
+            for video in oldValue where !path.contains(video) {
+                // Ordinary Photos videos point into the Photos container and this is a no-op
+                // for them (`deleteTemporaryExport` discriminates on the tmp/ prefix); exports
+                // are deleted the moment nothing references them anymore.
+                PhotoVideoResolver.deleteTemporaryExport(for: video.asset)
+            }
+        }
+    }
 
     let thumbnails = ThumbnailLoader()
 
@@ -188,6 +201,8 @@ final class VideoLibraryViewModel: ObservableObject {
 
     /// Resolves the tapped asset to a readable `AVURLAsset` and pushes it onto `path`. One at a
     /// time: tiles are disabled while a resolution is in flight, and `cancelSelection()` aborts it.
+    /// A composition export written during resolution lives as long as its `SelectedVideo` stays
+    /// on `path` — see the property's `didSet`.
     func select(_ asset: PHAsset) {
         guard resolution == nil else { return }
         errorMessage = nil
@@ -206,7 +221,13 @@ final class VideoLibraryViewModel: ObservableObject {
                         }
                     }
                 }
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    // The export finished but the task was cancelled before the append: no
+                    // `SelectedVideo` ever enters `path`, so the `didSet` cleanup never sees
+                    // the file. Delete it here — ordinary Photos videos are a no-op.
+                    PhotoVideoResolver.deleteTemporaryExport(for: avAsset)
+                    return
+                }
                 path.append(SelectedVideo(assetIdentifier: identifier, asset: avAsset, duration: asset.duration))
             } catch is CancellationError {
                 // User backed out; nothing to report.

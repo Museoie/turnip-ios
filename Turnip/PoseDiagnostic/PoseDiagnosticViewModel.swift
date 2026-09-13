@@ -19,7 +19,8 @@ final class PoseDiagnosticViewModel: ObservableObject {
     }
 
     /// Runs MoveNet Thunder over `asset`, the video Home resolved from the tapped tile (see
-    /// `SelectedVideo`).
+    /// `SelectedVideo`). Temp-file lifetime for composition exports is owned by
+    /// `VideoLibraryViewModel.path`, not by this screen — a back-out without a run still cleans up.
     func runDiagnostic(on asset: AVURLAsset) {
         guard !isRunning else { return }
         results = []

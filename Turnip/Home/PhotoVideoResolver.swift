@@ -88,6 +88,49 @@ struct PhotoVideoResolver {
 
     // MARK: - Composition export
 
+    /// Filename prefix for the composition exports `export()` writes into the temp directory.
+    /// A bare UUID would be indistinguishable from every other temp file; the prefix lets
+    /// `deleteTemporaryExport(for:)` and `deleteOrphanedTemporaryExports()` recognize files
+    /// this resolver created — and only those.
+    static let temporaryExportFilenamePrefix = "turnip-composition-export-"
+
+    /// Deletes the backing file of a resolved asset when it is a composition export this
+    /// resolver created. Ordinary Photos videos resolve to files inside the Photos container —
+    /// deleting one of those would corrupt the user's library — so only a URL sitting directly
+    /// in `temporaryDirectory` *and* carrying `temporaryExportFilenamePrefix` is removed.
+    /// Anything else is left alone; this is best-effort cleanup, so failures are swallowed.
+    static func deleteTemporaryExport(for asset: AVURLAsset) {
+        let url = asset.url
+        guard url.lastPathComponent.hasPrefix(temporaryExportFilenamePrefix),
+              url.deletingLastPathComponent().standardizedFileURL
+                == URL.temporaryDirectory.standardizedFileURL
+        else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// Removes composition exports orphaned by sessions that never reached their cleanup
+    /// (crash, force-quit, watchdog kill). Called once at launch from `TurnipApp`; without it
+    /// a user who opens many slow-mo videos would accumulate gigabytes in tmp/ invisibly.
+    ///
+    /// The sweep runs on a detached task, concurrently with the main-actor resolution path,
+    /// so this session could already be exporting a fresh composition while the sweep is
+    /// still running. To close that race, only files whose creation date predates `launchDate`
+    /// are deleted; anything written after launch belongs to this session and is left alone.
+    static func deleteOrphanedTemporaryExports(olderThan launchDate: Date) {
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: URL.temporaryDirectory, includingPropertiesForKeys: [.creationDateKey])
+        else { return }
+        for url in urls where url.lastPathComponent.hasPrefix(temporaryExportFilenamePrefix) {
+            // If the creation date is unreadable, treat the file as an orphan: the sweep's
+            // job is to bound accumulation, and a file with no date cannot be proven new.
+            let created = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate)
+                ?? .distantPast
+            if created < launchDate {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
     private func export(_ asset: PHAsset, options: PHVideoRequestOptions) async throws -> AVURLAsset {
         // Not passthrough: slow-mo compositions carry time-scaled segments that passthrough can't
         // re-mux, so this re-encodes. Slower, but it works for every composition Photos produces.
@@ -102,10 +145,21 @@ struct PhotoVideoResolver {
             }
         )
 
-        let outputURL = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).mov")
+        let outputURL = URL.temporaryDirectory.appending(
+            path: "\(Self.temporaryExportFilenamePrefix)\(UUID().uuidString).mov")
         session.outputURL = outputURL
         session.outputFileType = .mov
         session.shouldOptimizeForNetworkUse = false
+
+        // A failed or cancelled export leaves a half-written file at outputURL that nobody owns
+        // (no SelectedVideo is ever created on the throw path); remove it here so a failed
+        // export cleans up in-session instead of waiting for the next launch sweep.
+        var exportSucceeded = false
+        defer {
+            if !exportSucceeded {
+                try? FileManager.default.removeItem(at: outputURL)
+            }
+        }
 
         let cancellable = ExportCancellation(session: session)
         await withTaskCancellationHandler {
@@ -116,6 +170,7 @@ struct PhotoVideoResolver {
 
         switch session.status {
         case .completed:
+            exportSucceeded = true
             return AVURLAsset(url: outputURL)
         case .cancelled:
             throw CancellationError()

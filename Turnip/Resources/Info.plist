@@ -20,6 +20,8 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Turnip shows the videos in your library so you can pick a recording to trim and crop. Nothing leaves your device.</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
