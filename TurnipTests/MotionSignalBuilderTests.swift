@@ -63,20 +63,20 @@ final class MotionSignalBuilderTests: XCTestCase {
             PoseFixture.frame(
                 index: 0,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: 0.9)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.9)
             ),
             PoseFixture.frame(
                 index: 1,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: 0.1)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.1)
             ),
             PoseFixture.frame(
                 index: 2,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: 0.9)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.9)
             )
         ]
 
@@ -98,17 +98,17 @@ final class MotionSignalBuilderTests: XCTestCase {
     func testNoseOnlyDropoutOnAStationaryAthleteStaysQuiet() throws {
         let frames = [
             upperBodyFrame(index: 0, seeds: [
-                "left_shoulder": (x: 0.42, y: 0.30, confidence: 0.9),
-                "right_shoulder": (x: 0.58, y: 0.30, confidence: 0.9),
-                "nose": (x: 0.50, y: 0.22, confidence: 0.9)
+                "left_shoulder": KeypointSeed(x: 0.42, y: 0.30, confidence: 0.9),
+                "right_shoulder": KeypointSeed(x: 0.58, y: 0.30, confidence: 0.9),
+                "nose": KeypointSeed(x: 0.50, y: 0.22, confidence: 0.9)
             ]),
             upperBodyFrame(index: 1, seeds: [
-                "nose": (x: 0.50, y: 0.22, confidence: 0.9)
+                "nose": KeypointSeed(x: 0.50, y: 0.22, confidence: 0.9)
             ]),
             upperBodyFrame(index: 2, seeds: [
-                "left_shoulder": (x: 0.42, y: 0.30, confidence: 0.9),
-                "right_shoulder": (x: 0.58, y: 0.30, confidence: 0.9),
-                "nose": (x: 0.50, y: 0.22, confidence: 0.9)
+                "left_shoulder": KeypointSeed(x: 0.42, y: 0.30, confidence: 0.9),
+                "right_shoulder": KeypointSeed(x: 0.58, y: 0.30, confidence: 0.9),
+                "nose": KeypointSeed(x: 0.50, y: 0.22, confidence: 0.9)
             ])
         ]
 
@@ -127,14 +127,14 @@ final class MotionSignalBuilderTests: XCTestCase {
             PoseFixture.frame(
                 index: 0,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: 0.1)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.1)
             ),
             PoseFixture.frame(
                 index: 1,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: 0.9)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.9)
             )
         ]
 
@@ -155,8 +155,8 @@ final class MotionSignalBuilderTests: XCTestCase {
             PoseFixture.frame(
                 index: index,
                 hip: nil,
-                leftHip: (x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: (x: 0.56, y: 0.55, confidence: index == 0 ? 0.9 : 0.1)
+                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
+                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: index == 0 ? 0.9 : 0.1)
             )
         }
 
@@ -269,7 +269,7 @@ final class MotionSignalBuilderTests: XCTestCase {
     /// position into the whole group, which cannot express a nose-only dropout.
     private func upperBodyFrame(
         index: Int,
-        seeds: [String: (x: Float, y: Float, confidence: Float)]
+        seeds: [String: KeypointSeed]
     ) -> PoseFrameResult {
         let keypoints = PoseKeypoint.names.map { name -> PoseKeypoint in
             if let seed = seeds[name] {
