@@ -249,16 +249,15 @@ jobs:
 
       - name: Run screenshot UI tests (no rebuild)
         run: |
-          mkdir -p "$RUNNER_TEMP/screenshot-pngs"
-          SCREENSHOT_OUTPUT_DIR="$RUNNER_TEMP/screenshot-pngs" xcodebuild test-without-building \
+          xcodebuild test-without-building \
             -workspace Turnip.xcworkspace \
             -scheme Turnip \
             -destination "platform=iOS Simulator,name=iPhone 17" \
             -only-testing:TurnipUITests \
             -derivedDataPath "$RUNNER_TEMP/derived-data" \
-            -resultBundlePath screenshots.xcresult
-          echo "=== PNGs saved by tests ==="
-          ls -la "$RUNNER_TEMP/screenshot-pngs/" || echo "No PNGs saved"
+            -resultBundlePath screenshots.xcresult 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+          echo "=== Screenshot lines in log ==="
+          grep -c "TURNIP_SCREENSHOT:" "$RUNNER_TEMP/xcodebuild.log" || echo "No screenshots in log"
 
       - name: Collect screenshot PNGs
         id: extract
@@ -266,15 +265,22 @@ jobs:
           set -euo pipefail
           OUT="$RUNNER_TEMP/screenshots"
           mkdir -p "$OUT"
-          # Tests save PNGs directly to $RUNNER_TEMP/screenshot-pngs via SCREENSHOT_OUTPUT_DIR
-          if [[ -d "$RUNNER_TEMP/screenshot-pngs" ]]; then
-            cp "$RUNNER_TEMP/screenshot-pngs"/*.png "$OUT/" 2>/dev/null || true
-          fi
+          # Tests print TURNIP_SCREENSHOT:<name>:<base64> to stdout; decode them here.
+          grep "TURNIP_SCREENSHOT:" "$RUNNER_TEMP/xcodebuild.log" | while IFS= read -r line; do
+            # Extract name and base64 (format: ...TURNIP_SCREENSHOT:<name>:<base64>)
+            payload="${line##*TURNIP_SCREENSHOT:}"
+            name="${payload%%:*}"
+            b64="${payload#*:}"
+            if [[ -n "$name" && -n "$b64" ]]; then
+              echo "$b64" | base64 -d > "$OUT/${name}.png"
+              echo "Decoded $name.png ($(wc -c < "$OUT/${name}.png") bytes)"
+            fi
+          done
           count="$(find "$OUT" -name '*.png' | wc -l | tr -d ' ')"
           echo "Collected $count screenshot(s):"
           ls -la "$OUT" || true
           if [[ "$count" -eq 0 ]]; then
-            echo "::error::No screenshot PNGs were saved by the tests."
+            echo "::error::No screenshot PNGs found in test output."
             exit 1
           fi
           echo "dir=$OUT" >> "$GITHUB_OUTPUT"
