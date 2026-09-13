@@ -153,8 +153,9 @@ jobs:
   # Reuses the build products from build-and-test via test-without-building —
   # it does NOT recompile the app. Posts the screenshots as a PR comment:
   # inline markdown images when the SCREENSHOTS_PUSH_TOKEN secret is set
-  # (fine-grained PAT with contents:write on the fork), artifact links
-  # otherwise.
+  # (fine-grained PAT with contents:write on Museoie/turnip-screenshots),
+  # artifact links otherwise. PNGs live in the dedicated screenshots repo
+  # so the dev repo's fetch history stays clean.
   screenshots:
     needs: [changes, build-and-test]
     if: needs.changes.outputs.ui == 'true'
@@ -310,7 +311,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SCREENSHOTS_PUSH_TOKEN: ${{ secrets.SCREENSHOTS_PUSH_TOKEN }}
           BASE_REPO: ${{ github.repository }}
-          FORK_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          SCREENSHOTS_REPO: Museoie/turnip-screenshots
           PR_NUMBER: ${{ github.event.pull_request.number }}
           RUN_ID: ${{ github.run_id }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
