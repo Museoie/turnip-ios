@@ -201,7 +201,7 @@ jobs:
       # The build products (app + UITest bundle) come from build-and-test;
       # this job never compiles.
       - name: Download build products
-        uses: actions/download-artifact@cc203385981b70ca67e1e2e317852de0a8ef9f0 # v4.3.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: build-products
           path: ${{ runner.temp }}/derived-data/Build/Products
