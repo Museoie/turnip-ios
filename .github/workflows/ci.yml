@@ -272,17 +272,13 @@ jobs:
           TOP_JSON="$(xcrun xcresulttool get --legacy --format json --path screenshots.xcresult)"
           # Find all candidate testsRef IDs (there may be multiple actions);
           # prefer the one whose subtree actually contains attachments.
-          mapfile -t CANDIDATE_REFS < <(echo "$TOP_JSON" | jq -r '
-            [.. | objects
-             | select(has("testsRef") or has("testSummaryRef"))
-             | (.testsRef // .testSummaryRef)
-             | (.id._value // ._value // .)]
-            | unique | .[]' 2>/dev/null || true)
-          echo "Found ${#CANDIDATE_REFS[@]} testsRef candidate(s)."
+          # Note: macOS /bin/bash is 3.2 (no mapfile), so use a while-read loop.
           SUMMARY_JSON=""
           TESTS_REF=""
-          for cand in "${CANDIDATE_REFS[@]}"; do
+          CANDIDATE_COUNT=0
+          while IFS= read -r cand; do
             [[ -n "$cand" ]] || continue
+            CANDIDATE_COUNT=$((CANDIDATE_COUNT + 1))
             echo "Trying testsRef: $cand"
             cand_json="$(xcrun xcresulttool get --legacy --format json --path screenshots.xcresult --id "$cand" 2>/dev/null || true)"
             cand_count="$(echo "$cand_json" | jq '[.. | objects | select(has("payloadRef"))] | length' 2>/dev/null || echo 0)"
@@ -297,7 +293,13 @@ jobs:
               TESTS_REF="$cand"
               SUMMARY_JSON="$cand_json"
             fi
-          done
+          done < <(echo "$TOP_JSON" | jq -r '
+            [.. | objects
+             | select(has("testsRef") or has("testSummaryRef"))
+             | (.testsRef // .testSummaryRef)
+             | (.id._value // ._value // .)]
+            | unique | .[]' 2>/dev/null || true)
+          echo "Found $CANDIDATE_COUNT testsRef candidate(s)." 
           if [[ -z "$TESTS_REF" ]]; then
             echo "::error::No testsRef/testSummaryRef in the xcresult bundle. Top-level keys:"
             echo "$TOP_JSON" | jq -c 'keys' || true
