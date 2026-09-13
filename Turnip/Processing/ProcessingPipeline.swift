@@ -191,8 +191,9 @@ struct ProcessingPipeline: Sendable {
         return sampledFrameCount(trackFrameCount: total, stride: stride)
     }
 
-    /// `ceil(count / stride)`, floored at 1.
+    /// `ceil(count / stride)`, floored at 1. Requires `stride > 0`.
     static func sampledFrameCount(trackFrameCount: Int, stride: Int) -> Int {
+        precondition(stride > 0, "sampledFrameCount requires stride > 0 (got \(stride))")
         return max((trackFrameCount + stride - 1) / stride, 1)
     }
 }
