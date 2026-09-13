@@ -2,9 +2,11 @@ import XCTest
 
 /// Screenshot automation for UI-change PRs (CONTRIBUTING.md asks for screenshots
 /// on UI changes): launches the app into scripted states via launch arguments
-/// (see `ScreenshotHarness.swift`) and captures XCUITest screenshots. The
-/// screenshots workflow extracts them from the xcresult and uploads them as an
-/// artifact, so nobody needs a local simulator to produce PR screenshots.
+/// (see `ScreenshotHarness.swift`) and captures XCUITest screenshots. Each test
+/// prints its PNG as base64 to stdout (TURNIP_SCREENSHOT:<name>:<base64>); the CI
+/// screenshots job greps the log and uploads the PNGs as the pr-screenshots
+/// artifact, and the screenshots-comment workflow posts them on the PR — so
+/// nobody needs a local simulator to produce PR screenshots.
 final class ScreenshotTests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
