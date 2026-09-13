@@ -69,8 +69,8 @@ final class TrickWindowDetectorTests: XCTestCase {
             PoseFixture.frame(
                 index: index,
                 hip: nil,
-                leftHip: (x: x - 0.1, y: 0.5, confidence: 0.9),
-                rightHip: (x: x + 0.1, y: 0.5, confidence: index == dropoutIndex ? 0.1 : 0.9)
+                leftHip: KeypointSeed(x: x - 0.1, y: 0.5, confidence: 0.9),
+                rightHip: KeypointSeed(x: x + 0.1, y: 0.5, confidence: index == dropoutIndex ? 0.1 : 0.9)
             )
         }
 
@@ -97,8 +97,8 @@ final class TrickWindowDetectorTests: XCTestCase {
             PoseFixture.frame(
                 index: index,
                 hip: nil,
-                leftHip: (x: x - 0.1, y: 0.5, confidence: 0.9),
-                rightHip: (x: x + 0.1, y: 0.5, confidence: (5...10).contains(index) ? 0.1 : 0.9)
+                leftHip: KeypointSeed(x: x - 0.1, y: 0.5, confidence: 0.9),
+                rightHip: KeypointSeed(x: x + 0.1, y: 0.5, confidence: (5...10).contains(index) ? 0.1 : 0.9)
             )
         }
 
