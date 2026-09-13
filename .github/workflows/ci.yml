@@ -151,12 +151,21 @@ jobs:
   # Captures simulator screenshots for UI-change PRs (CONTRIBUTING.md asks for
   # screenshots on UI changes) so nobody needs a local simulator to produce them.
   # Reuses the build products from build-and-test via test-without-building —
-  # it does NOT recompile the app.
+  # it does NOT recompile the app. Posts the screenshots as a PR comment:
+  # inline markdown images when the SCREENSHOTS_PUSH_TOKEN secret is set
+  # (fine-grained PAT with contents:write on the fork), artifact links
+  # otherwise.
   screenshots:
     needs: [changes, build-and-test]
     if: needs.changes.outputs.ui == 'true'
     runs-on: macos-26
     timeout-minutes: 30
+    # Job-level permissions replace the workflow-level block for this job:
+    # keep contents:read for checkout, add PR commenting (works on fork PRs).
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     env:
       BUNDLE_PATH: vendor/bundle
 
@@ -291,3 +300,19 @@ jobs:
           name: pr-screenshots
           path: ${{ steps.extract.outputs.dir }}
           retention-days: 14
+
+      # Post the screenshots as a markdown PR comment (updates the same
+      # comment on re-runs via a marker). Only on pull_request events —
+      # pushes to main have no PR number to comment on.
+      - name: Post screenshots comment on PR
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SCREENSHOTS_PUSH_TOKEN: ${{ secrets.SCREENSHOTS_PUSH_TOKEN }}
+          BASE_REPO: ${{ github.repository }}
+          FORK_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SCREENSHOTS_DIR: ${{ steps.extract.outputs.dir }}
+        run: python3 .github/scripts/post_screenshots_comment.py
