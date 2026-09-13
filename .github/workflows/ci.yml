@@ -249,126 +249,32 @@ jobs:
 
       - name: Run screenshot UI tests (no rebuild)
         run: |
-          xcodebuild test-without-building \
+          mkdir -p "$RUNNER_TEMP/screenshot-pngs"
+          SCREENSHOT_OUTPUT_DIR="$RUNNER_TEMP/screenshot-pngs" xcodebuild test-without-building \
             -workspace Turnip.xcworkspace \
             -scheme Turnip \
             -destination "platform=iOS Simulator,name=iPhone 17" \
             -only-testing:TurnipUITests \
             -derivedDataPath "$RUNNER_TEMP/derived-data" \
             -resultBundlePath screenshots.xcresult
+          echo "=== PNGs saved by tests ==="
+          ls -la "$RUNNER_TEMP/screenshot-pngs/" || echo "No PNGs saved"
 
-      - name: Extract screenshot PNGs from xcresult
+      - name: Collect screenshot PNGs
         id: extract
         run: |
           set -euo pipefail
           OUT="$RUNNER_TEMP/screenshots"
           mkdir -p "$OUT"
-          # Attachments live behind the action's testsRef, not in the
-          # top-level bundle document (which is why a whole-document scan
-          # finds zero PNGs): resolve the referenced test summary first,
-          # then select the screenshot payloads from it.
-          # `get`/`export` are deprecated in newer Xcode; --legacy restores the
-          # previous interface (without it the step fails with exit code 64).
-          TOP_JSON="$(xcrun xcresulttool get --legacy --format json --path screenshots.xcresult)"
-          # Find all candidate testsRef IDs (there may be multiple actions);
-          # prefer the one whose subtree actually contains attachments.
-          # Note: macOS /bin/bash is 3.2 (no mapfile), so use a while-read loop.
-          SUMMARY_JSON=""
-          TESTS_REF=""
-          CANDIDATE_COUNT=0
-          while IFS= read -r cand; do
-            [[ -n "$cand" ]] || continue
-            CANDIDATE_COUNT=$((CANDIDATE_COUNT + 1))
-            echo "Trying testsRef: $cand"
-            cand_json="$(xcrun xcresulttool get --legacy --format json --path screenshots.xcresult --id "$cand" 2>/dev/null || true)"
-            cand_count="$(echo "$cand_json" | jq '[.. | objects | select(has("payloadRef"))] | length' 2>/dev/null || echo 0)"
-            echo "  -> $cand_count object(s) with payloadRef"
-            if [[ "$cand_count" -gt 0 ]]; then
-              TESTS_REF="$cand"
-              SUMMARY_JSON="$cand_json"
-              break
-            fi
-            # Keep the first as fallback for diagnostics
-            if [[ -z "$SUMMARY_JSON" ]]; then
-              TESTS_REF="$cand"
-              SUMMARY_JSON="$cand_json"
-            fi
-          done < <(echo "$TOP_JSON" | jq -r '
-            [.. | objects
-             | select(has("testsRef") or has("testSummaryRef"))
-             | (.testsRef // .testSummaryRef)
-             | (.id._value // ._value // .)]
-            | unique | .[]' 2>/dev/null || true)
-          echo "Found $CANDIDATE_COUNT testsRef candidate(s)." 
-          if [[ -z "$TESTS_REF" ]]; then
-            echo "::error::No testsRef/testSummaryRef in the xcresult bundle. Top-level keys:"
-            echo "$TOP_JSON" | jq -c 'keys' || true
-            echo "$TOP_JSON" | jq -c '[.. | objects | select(has("actionResult")) | keys] | .[0:3]' || true
-            exit 1
+          # Tests save PNGs directly to $RUNNER_TEMP/screenshot-pngs via SCREENSHOT_OUTPUT_DIR
+          if [[ -d "$RUNNER_TEMP/screenshot-pngs" ]]; then
+            cp "$RUNNER_TEMP/screenshot-pngs"/*.png "$OUT/" 2>/dev/null || true
           fi
-          echo "Using testsRef: $TESTS_REF"
-          echo "Summary top-level keys: $(echo "$SUMMARY_JSON" | jq -c 'if type == "object" then keys else type end' 2>/dev/null || echo '?')"
-          echo "Total objects with payloadRef: $(echo "$SUMMARY_JSON" | jq '[.. | objects | select(has("payloadRef"))] | length' 2>/dev/null || echo '?')"
-          # Screenshot attachments are the only image payloads in the bundle
-          # (this run executes TurnipUITests only). Search both the test summary
-          # AND the top-level JSON (attachments can live at action level).
-          for SEARCH_JSON in "$SUMMARY_JSON" "$TOP_JSON"; do
-          echo "$SEARCH_JSON" | jq -r '
-            [.. | objects
-              | select(has("payloadRef"))
-              | select(
-                  ((.filename._value // .filename // "") | tostring | test("(?i)png|jpg|jpeg"))
-                  or ((.name._value // .name // "") | tostring | test("(?i)png|screenshot|jpg|jpeg"))
-                  or ((.uniformTypeIdentifier._value // .uniformTypeIdentifier // "") | tostring | test("(?i)png|jpeg")))
-              | "\((.payloadRef.id._value // .payloadRef._value // ""))\t\((.name._value // .name // .filename._value // .filename // "screenshot"))"
-            ] | unique | .[]'
-          done |
-          while IFS=$'\t' read -r ref raw_name; do
-            [[ -n "$ref" ]] || continue
-            safe="$(basename "$raw_name" | tr -c 'A-Za-z0-9._-' '_')"
-            [[ "$safe" == *.png ]] || safe="$safe.png"
-            dest="$OUT/$safe"
-            n=2
-            while [[ -e "$dest" ]]; do
-              dest="$OUT/${safe%.png}-$n.png"
-              n=$((n + 1))
-            done
-            xcrun xcresulttool export --legacy \
-              --path screenshots.xcresult \
-              --id "$ref" \
-              --output-path "$dest" \
-              --type file
-          done
           count="$(find "$OUT" -name '*.png' | wc -l | tr -d ' ')"
-          echo "Extracted $count screenshot(s):"
-          ls -la "$OUT"
+          echo "Collected $count screenshot(s):"
+          ls -la "$OUT" || true
           if [[ "$count" -eq 0 ]]; then
-            echo "No PNGs via xcresulttool JSON; falling back to direct bundle scan."
-            echo "Attachment-like nodes (up to 12):"
-            echo "$SUMMARY_JSON" | jq -c '[.. | objects | select(has("payloadRef") or has("attachment")) | {type: (._type._name // "?"), keys: keys, filename: (.filename._value // .filename // ""), name: (.name._value // .name // ""), uti: (.uniformTypeIdentifier._value // .uniformTypeIdentifier // "")}] | .[0:12]' || true
-            # xcresult bundles store attachments as files under Data/; the JSON
-            # summary doesn't always reference them (e.g. test-without-building).
-            # Scan for PNGs directly by file signature.
-            find screenshots.xcresult -type f | while IFS= read -r f; do
-              if head -c 8 "$f" 2>/dev/null | od -An -tx1 | grep -q "89 50 4e 47 0d 0a 1a 0a"; then
-                safe="screenshot-$(basename "$f" | tr -c 'A-Za-z0-9' '_').png"
-                dest="$OUT/$safe"
-                n=2
-                while [[ -e "$dest" ]]; do
-                  dest="$OUT/screenshot-$n.png"
-                  n=$((n + 1))
-                done
-                cp "$f" "$dest"
-                echo "Copied $f -> $dest"
-              fi
-            done
-            count="$(find "$OUT" -name '*.png' | wc -l | tr -d ' ')"
-            echo "After bundle scan: $count screenshot(s)."
-          fi
-          if [[ "$count" -eq 0 ]]; then
-            echo "::error::No screenshot PNGs found via xcresulttool or bundle scan."
-            echo "All _type names present (up to 30):"
-            echo "$SUMMARY_JSON" | jq -c '[.. | objects | ._type._name // empty] | unique | .[0:30]' || true
+            echo "::error::No screenshot PNGs were saved by the tests."
             exit 1
           fi
           echo "dir=$OUT" >> "$GITHUB_OUTPUT"
