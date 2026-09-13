@@ -98,17 +98,17 @@ final class MotionSignalBuilderTests: XCTestCase {
     func testNoseOnlyDropoutOnAStationaryAthleteStaysQuiet() throws {
         let frames = [
             upperBodyFrame(index: 0, seeds: [
-                "left_shoulder": (x: 0.42, y: 0.30, confidence: 0.9),
-                "right_shoulder": (x: 0.58, y: 0.30, confidence: 0.9),
-                "nose": (x: 0.50, y: 0.22, confidence: 0.9)
+                "left_shoulder": KeypointSeed(x: 0.42, y: 0.30, confidence: 0.9),
+                "right_shoulder": KeypointSeed(x: 0.58, y: 0.30, confidence: 0.9),
+                "nose": KeypointSeed(x: 0.50, y: 0.22, confidence: 0.9)
             ]),
             upperBodyFrame(index: 1, seeds: [
-                "nose": (x: 0.50, y: 0.22, confidence: 0.9)
+                "nose": KeypointSeed(x: 0.50, y: 0.22, confidence: 0.9)
             ]),
             upperBodyFrame(index: 2, seeds: [
-                "left_shoulder": (x: 0.42, y: 0.30, confidence: 0.9),
-                "right_shoulder": (x: 0.58, y: 0.30, confidence: 0.9),
-                "nose": (x: 0.50, y: 0.22, confidence: 0.9)
+                "left_shoulder": KeypointSeed(x: 0.42, y: 0.30, confidence: 0.9),
+                "right_shoulder": KeypointSeed(x: 0.58, y: 0.30, confidence: 0.9),
+                "nose": KeypointSeed(x: 0.50, y: 0.22, confidence: 0.9)
             ])
         ]
 
@@ -269,7 +269,7 @@ final class MotionSignalBuilderTests: XCTestCase {
     /// position into the whole group, which cannot express a nose-only dropout.
     private func upperBodyFrame(
         index: Int,
-        seeds: [String: (x: Float, y: Float, confidence: Float)]
+        seeds: [String: KeypointSeed]
     ) -> PoseFrameResult {
         let keypoints = PoseKeypoint.names.map { name -> PoseKeypoint in
             if let seed = seeds[name] {
