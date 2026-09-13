@@ -98,6 +98,23 @@ struct VideoGalleryView: View {
                 }
             }
         }
+        // The grid announces its count when VoiceOver enters it — a VoiceOver user
+        // otherwise has no sense of how many videos they're swiping through. The
+        // ScrollView must be declared an accessibility container: a label on a
+        // non-element container is never announced on entry.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(gridAccessibilityLabel)
+        .accessibilityIdentifier("video-grid")
+    }
+
+    /// "1 video" / "N videos", announced on entering the grid. Kept as a separate property
+    /// (rather than inline) so the singular/plural branch is visible and greppable.
+    private var gridAccessibilityLabel: String {
+        let count = viewModel.videos.count
+        if count == 1 {
+            return String(localized: "1 video")
+        }
+        return String(localized: "\(count) videos")
     }
 
     private var emptyState: some View {
@@ -132,10 +149,12 @@ private struct LimitedAccessBanner: View {
             Spacer()
             Button("Select More…", action: selectMore)
                 .font(.footnote.weight(.semibold))
+                .accessibilityIdentifier("select-more-videos")
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(.bar)
+        .accessibilityIdentifier("limited-access-banner")
     }
 }
 
@@ -158,9 +177,11 @@ private struct ResolutionBanner: View {
             }
             Spacer()
             Button("Cancel", role: .cancel, action: cancel)
+                .accessibilityIdentifier("cancel-video-resolution")
         }
         .padding()
         .background(.bar)
+        .accessibilityIdentifier("resolution-banner")
     }
 }
 
@@ -190,10 +211,12 @@ struct PhotosAccessDeniedView: View {
                 Link("Open Settings", destination: settingsURL)
                     .buttonStyle(.borderedProminent)
                     .padding(.top, 8)
+                    .accessibilityIdentifier("open-settings")
             }
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("photos-access-denied")
     }
 }
 
