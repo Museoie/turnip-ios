@@ -257,6 +257,17 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/derived-data" \
             -resultBundlePath screenshots.xcresult
 
+      - name: Debug xcresult bundle structure
+        run: |
+          echo "=== Bundle exists? ==="
+          ls -ld screenshots.xcresult || echo "NOT FOUND"
+          echo "=== Top-level contents ==="
+          find screenshots.xcresult -maxdepth 2 | head -40
+          echo "=== All files by extension ==="
+          find screenshots.xcresult -type f | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -20
+          echo "=== Total files ==="
+          find screenshots.xcresult -type f | wc -l
+
       - name: Extract screenshot PNGs from xcresult
         id: extract
         run: |
