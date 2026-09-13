@@ -16,7 +16,27 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Detect UI-relevant changes so the screenshots job only runs when needed.
+  # macOS runners bill at 10x Linux minutes, so this stays off PRs that only
+  # touch non-UI code. Runs on ubuntu (cheap) and finishes in seconds.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dorny/paths-filter@15192bc058cc28a13dbf6cde61f19e18988b7af6 # v3
+        id: filter
+        with:
+          filters: |
+            ui:
+              - 'Turnip/**'
+              - 'TurnipUITests/**'
+              - 'project.yml'
+              - '.github/workflows/ci.yml'
+
   build-and-test:
+    needs: changes
     runs-on: macos-26
     env:
       BUNDLE_PATH: vendor/bundle
@@ -90,7 +110,8 @@ jobs:
           xcodebuild build \
             -workspace Turnip.xcworkspace \
             -scheme Turnip \
-            -destination "generic/platform=iOS Simulator"
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "$RUNNER_TEMP/derived-data"
 
       # Resolve a simulator device at run time (ci_scripts/resolve-simulator.sh);
       # the script labels a missing runtime as an infrastructure failure, not a
@@ -103,4 +124,170 @@ jobs:
           xcodebuild test \
             -workspace Turnip.xcworkspace \
             -scheme Turnip \
-            -destination "id=$SIMULATOR_UDID"
+            -destination "id=$SIMULATOR_UDID" \
+            -derivedDataPath "$RUNNER_TEMP/derived-data"
+
+      # Build the UITest bundle for the screenshots job (below) to reuse via
+      # test-without-building. Only runs on UI-change PRs; the products are
+      # uploaded as an artifact so the screenshots job skips recompiling.
+      - name: Build for UI testing
+        if: needs.changes.outputs.ui == 'true'
+        run: |
+          xcodebuild build-for-testing \
+            -workspace Turnip.xcworkspace \
+            -scheme Turnip \
+            -destination "generic/platform=iOS Simulator" \
+            -only-testing:TurnipUITests \
+            -derivedDataPath "$RUNNER_TEMP/derived-data"
+
+      - name: Upload build products for screenshots
+        if: needs.changes.outputs.ui == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: build-products
+          path: ${{ runner.temp }}/derived-data/Build/Products
+          retention-days: 1
+
+  # Captures simulator screenshots for UI-change PRs (CONTRIBUTING.md asks for
+  # screenshots on UI changes) so nobody needs a local simulator to produce them.
+  # Reuses the build products from build-and-test via test-without-building —
+  # it does NOT recompile the app.
+  screenshots:
+    needs: [changes, build-and-test]
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      BUNDLE_PATH: vendor/bundle
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Cache CocoaPods
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            Pods
+            ~/Library/Caches/CocoaPods
+          key: pods-${{ runner.os }}-${{ hashFiles('Podfile.lock') }}
+          restore-keys: |
+            pods-${{ runner.os }}-
+
+      - name: Cache Bundler gems
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: vendor/bundle
+          key: gems-${{ runner.os }}-${{ hashFiles('Gemfile.lock') }}
+          restore-keys: |
+            gems-${{ runner.os }}-
+
+      - name: Select Xcode 26.3
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+      - name: Install XcodeGen
+        run: |
+          ci_scripts/install-xcodegen.sh "$HOME/.local"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Install CocoaPods 1.17.0 (via Gemfile)
+        run: bundle install
+
+      - name: Resolve CocoaPods dependencies
+        run: bundle exec pod install
+
+      # The build products (app + UITest bundle) come from build-and-test;
+      # this job never compiles.
+      - name: Download build products
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: build-products
+          path: ${{ runner.temp }}/derived-data/Build/Products
+
+      # The macos-26 fleet occasionally hands out a VM whose iOS simulator
+      # runtime was never installed; xcodebuild then dies with "Unable to
+      # find a device matching the provided destination specifier". Detect
+      # that up front: create the device from an installed iOS runtime when
+      # one exists, otherwise fail with a re-run hint instead of a cryptic
+      # xcodebuild error.
+      - name: Ensure iPhone 17 simulator exists
+        run: |
+          set -euo pipefail
+          # Anchor the match to the exact "iPhone 17" device name: an
+          # unanchored grep also matches "iPhone 17 Pro" lines, so a VM with
+          # only the Pro would pass this preflight and then die in xcodebuild
+          # with the cryptic "unable to find a device" error below.
+          if xcrun simctl list devices available 2>/dev/null | grep -qE "^\s*iPhone 17 \("; then
+            echo "iPhone 17 simulator is available."
+            exit 0
+          fi
+          RUNTIME="$(xcrun simctl list runtimes --json | python3 -c "
+          import json, sys
+          runtimes = json.load(sys.stdin).get('runtimes', [])
+          ios = [r for r in runtimes if 'iOS' in r.get('name', '') or r.get('platform') == 'iOS']
+          ios.sort(key=lambda r: r.get('version', ''), reverse=True)
+          print(ios[0]['identifier'] if ios else '')
+          ")"
+          if [[ -z "$RUNTIME" ]]; then
+            echo "::error::No iOS simulator runtime installed on this runner VM - re-run the job to land on a healthy VM."
+            exit 1
+          fi
+          DEVTYPE="$(xcrun simctl list devicetypes --json | python3 -c "
+          import json, sys
+          dts = json.load(sys.stdin).get('devicetypes', [])
+          m = [d for d in dts if d.get('name') == 'iPhone 17']
+          print(m[0]['identifier'] if m else '')
+          ")"
+          if [[ -z "$DEVTYPE" ]]; then
+            echo "::error::No iPhone 17 device type in this Xcode - re-run or update the destination."
+            exit 1
+          fi
+          xcrun simctl create "iPhone 17" "$DEVTYPE" "$RUNTIME"
+          echo "Created iPhone 17 simulator from $RUNTIME."
+
+      - name: Run screenshot UI tests (no rebuild)
+        run: |
+          xcodebuild test-without-building \
+            -workspace Turnip.xcworkspace \
+            -scheme Turnip \
+            -destination "platform=iOS Simulator,name=iPhone 17" \
+            -only-testing:TurnipUITests \
+            -derivedDataPath "$RUNNER_TEMP/derived-data" \
+            -resultBundlePath screenshots.xcresult 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+          echo "=== Screenshot lines in log ==="
+          grep -c "TURNIP_SCREENSHOT:" "$RUNNER_TEMP/xcodebuild.log" || echo "No screenshots in log"
+
+      - name: Collect screenshot PNGs
+        id: extract
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/screenshots"
+          mkdir -p "$OUT"
+          # Tests print TURNIP_SCREENSHOT:<name>:<base64> to stdout; decode them here.
+          (grep "TURNIP_SCREENSHOT:" "$RUNNER_TEMP/xcodebuild.log" 2>/dev/null || true) | while IFS= read -r line; do
+            # Extract name and base64 (format: ...TURNIP_SCREENSHOT:<name>:<base64>)
+            payload="${line##*TURNIP_SCREENSHOT:}"
+            name="${payload%%:*}"
+            b64="${payload#*:}"
+            if [[ -n "$name" && -n "$b64" ]]; then
+              echo "$b64" | base64 -d > "$OUT/${name}.png"
+              echo "Decoded $name.png ($(wc -c < "$OUT/${name}.png") bytes)"
+            fi
+          done
+          count="$(find "$OUT" -name '*.png' | wc -l | tr -d ' ')"
+          echo "Collected $count screenshot(s):"
+          ls -la "$OUT" || true
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::No screenshot PNGs found in test output."
+            exit 1
+          fi
+          echo "dir=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr-screenshots
+          path: ${{ steps.extract.outputs.dir }}
+          retention-days: 14
