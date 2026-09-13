@@ -340,9 +340,30 @@ jobs:
           echo "Extracted $count screenshot(s):"
           ls -la "$OUT"
           if [[ "$count" -eq 0 ]]; then
-            echo "::error::No screenshot PNGs found in the test summary."
+            echo "No PNGs via xcresulttool JSON; falling back to direct bundle scan."
             echo "Attachment-like nodes (up to 12):"
             echo "$SUMMARY_JSON" | jq -c '[.. | objects | select(has("payloadRef") or has("attachment")) | {type: (._type._name // "?"), keys: keys, filename: (.filename._value // .filename // ""), name: (.name._value // .name // ""), uti: (.uniformTypeIdentifier._value // .uniformTypeIdentifier // "")}] | .[0:12]' || true
+            # xcresult bundles store attachments as files under Data/; the JSON
+            # summary doesn't always reference them (e.g. test-without-building).
+            # Scan for PNGs directly by file signature.
+            find screenshots.xcresult -type f | while IFS= read -r f; do
+              if head -c 8 "$f" 2>/dev/null | od -An -tx1 | grep -q "89 50 4e 47 0d 0a 1a 0a"; then
+                safe="screenshot-$(basename "$f" | tr -c 'A-Za-z0-9' '_').png"
+                dest="$OUT/$safe"
+                n=2
+                while [[ -e "$dest" ]]; do
+                  dest="$OUT/screenshot-$n.png"
+                  n=$((n + 1))
+                done
+                cp "$f" "$dest"
+                echo "Copied $f -> $dest"
+              fi
+            done
+            count="$(find "$OUT" -name '*.png' | wc -l | tr -d ' ')"
+            echo "After bundle scan: $count screenshot(s)."
+          fi
+          if [[ "$count" -eq 0 ]]; then
+            echo "::error::No screenshot PNGs found via xcresulttool or bundle scan."
             echo "All _type names present (up to 30):"
             echo "$SUMMARY_JSON" | jq -c '[.. | objects | ._type._name // empty] | unique | .[0:30]' || true
             exit 1
