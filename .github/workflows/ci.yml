@@ -151,7 +151,14 @@ jobs:
   # Captures simulator screenshots for UI-change PRs (CONTRIBUTING.md asks for
   # screenshots on UI changes) so nobody needs a local simulator to produce them.
   # Reuses the build products from build-and-test via test-without-building —
-  # it does NOT recompile the app.
+  # it does NOT recompile the app. The PNGs are uploaded as the pr-screenshots
+  # artifact; the screenshots-comment workflow (triggered by workflow_run,
+  # which runs with full permissions, unlike fork pull_request runs) posts
+  # them as a PR comment: inline markdown images when the
+  # SCREENSHOTS_PUSH_TOKEN secret is set (fine-grained PAT with
+  # contents:write on Museoie/turnip-screenshots), artifact links otherwise.
+  # PNGs live in the dedicated screenshots repo so the dev repo's fetch
+  # history stays clean.
   screenshots:
     needs: [changes, build-and-test]
     if: needs.changes.outputs.ui == 'true'
