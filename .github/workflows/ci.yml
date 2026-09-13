@@ -259,14 +259,13 @@ jobs:
 
       - name: Debug xcresult bundle structure
         run: |
-          echo "=== Bundle exists? ==="
-          ls -ld screenshots.xcresult || echo "NOT FOUND"
-          echo "=== Top-level contents ==="
-          find screenshots.xcresult -maxdepth 2 | head -40
-          echo "=== All files by extension ==="
-          find screenshots.xcresult -type f | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -20
-          echo "=== Total files ==="
-          find screenshots.xcresult -type f | wc -l
+          echo "=== Data file types (first 5) ==="
+          find screenshots.xcresult/Data -name "data.0~*" -type f | head -5 | while IFS= read -r f; do
+            echo "File: $(basename "$f" | cut -c1-40)..."
+            echo "  Size: $(wc -c < "$f") bytes"
+            echo "  First 16 bytes (hex): $(head -c 16 "$f" | od -An -tx1 | tr -d ' \n')"
+            echo "  file output: $(file -b "$f" 2>/dev/null || echo 'file cmd failed')"
+          done
 
       - name: Extract screenshot PNGs from xcresult
         id: extract
