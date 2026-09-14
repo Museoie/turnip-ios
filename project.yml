@@ -9,6 +9,11 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.0
+    # Strict-concurrency checking for code that has already adopted concurrency
+    # (Sendable, @MainActor, actors) — see issue #75. Under Swift 5 language
+    # mode these arrive as warnings, so this is diagnostic-only until the
+    # warnings-as-errors question is settled. Follow-up: raise to `complete`.
+    SWIFT_STRICT_CONCURRENCY: targeted
     IPHONEOS_DEPLOYMENT_TARGET: "16.0"
     MARKETING_VERSION: 0.1.0
     CURRENT_PROJECT_VERSION: 1
