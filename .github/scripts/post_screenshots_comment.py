@@ -9,9 +9,14 @@ the PNGs nor post the comment. `workflow_run` runs in the base-repo
 context with full permissions and secrets, so this script can do both.
 
 Reads PNGs from SCREENSHOTS_DIR (the downloaded `pr-screenshots`
-artifact). PR_NUMBER may be omitted, in which case it is resolved from
-HEAD_OWNER/HEAD_BRANCH via the pulls API (reliable for fork PRs), falling
-back to HEAD_SHA via the commits API.
+artifact). Artifact content comes from the PR's own CI run, so it is
+sanitized before anything else touches it: names must match NAME_RE,
+bytes must carry the PNG magic number, each file is capped at
+MAX_PNG_BYTES, and at most MAX_SCREENSHOTS files are published. Skipped
+files are reported in the comment so a silently-empty table never
+passes as "no screenshots". PR_NUMBER may be omitted, in which case it
+is resolved from HEAD_OWNER/HEAD_BRANCH via the pulls API (reliable for
+fork PRs), falling back to HEAD_SHA via the commits API.
 
 Two modes:
   Inline images (preferred): when SCREENSHOTS_PUSH_TOKEN is set -- a
@@ -31,6 +36,7 @@ Uses only the standard library so it runs on a stock runner.
 import base64
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -40,6 +46,26 @@ import urllib.error
 MARKER = "<!-- turnip-ui-screenshots -->"
 BRANCH = "screenshots"
 PUSH_ATTEMPTS = 5
+
+# --- Untrusted-artifact hardening ------------------------------------------
+# Everything under SCREENSHOTS_DIR comes from the PR's own CI run, which a
+# fork PR fully controls -- every artifact name and every byte. workflow_run
+# runs in the base-repo context with secrets (the PAT that pushes to the
+# public screenshots repo) and posts as github-actions[bot], so this script
+# must treat artifact content as data, never as trusted input (issue #93):
+#
+# - names must match a strict allowlist: no path separators (traversal is
+#   impossible), and none of the markdown-special characters (`]`, `(`, `)`
+#   `` ` ``, `|`) that could break out of the alt text or table cells in the
+#   bot comment;
+# - bytes must start with the PNG magic number, not just end in ".png";
+# - per-file size is capped, and at most MAX_SCREENSHOTS files are
+#   published, so a PR cannot turn the screenshots repo into unbounded
+#   free hosting under a maintainer-owned org.
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,64}\.png")
+MAX_SCREENSHOTS = 20
+MAX_PNG_BYTES = 2 * 1024 * 1024
 
 
 class GitHubApiError(RuntimeError):
@@ -232,6 +258,46 @@ def find_bot_comment(token, base_repo, pr_number):
         page += 1
 
 
+def collect_pngs(shots_dir):
+    """Read and validate the screenshots artifact directory.
+
+    Returns (pngs, skipped): pngs is [(name, bytes)] of validated files;
+    skipped counts rejected files by reason ("invalid_name", "not_png",
+    "too_large", "over_cap"). Every rejection path is a deliberate
+    security boundary, not a silent drop -- callers report the counts.
+    """
+    pngs = []
+    skipped = {"invalid_name": 0, "not_png": 0, "too_large": 0,
+               "over_cap": 0}
+    if not os.path.isdir(shots_dir):
+        return pngs, skipped
+    for name in sorted(os.listdir(shots_dir)):
+        if not NAME_RE.fullmatch(name):
+            # Not a benign name: anything markdown-special, any path
+            # separator, or simply not a lowercase .png.
+            skipped["invalid_name"] += 1
+            continue
+        path = os.path.join(shots_dir, name)
+        if not os.path.isfile(path):
+            skipped["invalid_name"] += 1
+            continue
+        # Size is checked on disk first so a hostile multi-GB "PNG" is
+        # never loaded into memory.
+        if os.path.getsize(path) > MAX_PNG_BYTES:
+            skipped["too_large"] += 1
+            continue
+        with open(path, "rb") as f:
+            data = f.read()
+        if not data.startswith(PNG_MAGIC):
+            skipped["not_png"] += 1
+            continue
+        if len(pngs) >= MAX_SCREENSHOTS:
+            skipped["over_cap"] += 1
+            continue
+        pngs.append((name, data))
+    return pngs, skipped
+
+
 def main():
     token = os.environ["GITHUB_TOKEN"]
     base_repo = os.environ["BASE_REPO"]
@@ -250,36 +316,49 @@ def main():
     pr_number = (os.environ.get("PR_NUMBER") or by_head
                  or resolve_pr_number(token, base_repo, sha))
 
-    pngs = []
-    if os.path.isdir(shots_dir):
-        for name in sorted(os.listdir(shots_dir)):
-            if name.lower().endswith(".png"):
-                with open(os.path.join(shots_dir, name), "rb") as f:
-                    pngs.append((name, f.read()))
+    pngs, skipped = collect_pngs(shots_dir)
+    total_skipped = sum(skipped.values())
+    if total_skipped:
+        print("Skipped %d invalid file(s) in %s: %s"
+              % (total_skipped, shots_dir, skipped))
     if not pngs:
-        # No screenshots (non-UI run, or the artifact was missing): nothing
-        # to comment, and not a failure worth reddening CI over.
-        print("No PNGs in %s; skipping comment." % shots_dir)
+        # No screenshots (non-UI run, the artifact was missing, or every
+        # file failed validation): nothing to comment, and not a failure
+        # worth reddening CI over.
+        print("No valid PNGs in %s; skipping comment." % shots_dir)
         return 0
+    skipped_note = ""
+    if total_skipped:
+        skipped_note = (
+            "\n\n_%d file(s) in the artifact were skipped by validation "
+            "(invalid names: %d, not PNG data: %d, over 2 MB: %d, over the "
+            "%d-file cap: %d); only validated PNGs are published._"
+            % (total_skipped, skipped["invalid_name"], skipped["not_png"],
+               skipped["too_large"], MAX_SCREENSHOTS, skipped["over_cap"]))
 
     pat = os.environ.get("SCREENSHOTS_PUSH_TOKEN")
     if pat:
         urls = push_to_shots_repo(pat, shots_repo, pr_number, run_id, pngs)
+        # Names are allowlisted to [A-Za-z0-9._-], so they cannot close the
+        # code span or the image alt text early; URLs are percent-quoted in
+        # push_to_shots_repo.
         header = " | ".join("`%s`" % n for n, _ in pngs)
         sep = " | ".join("---" for _ in pngs)
         cells = " | ".join("![%s](%s)" % (n, urls[n]) for n, _ in pngs)
         body = ("%s\n## \U0001F4F8 UI Screenshots\n\n"
                 "%d screenshot(s) captured from `%s` ([run](%s)):\n\n"
-                "| %s |\n| %s |\n| %s |\n"
-                % (MARKER, len(pngs), sha[:7], run_url, header, sep, cells))
+                "| %s |\n| %s |\n| %s |%s\n"
+                % (MARKER, len(pngs), sha[:7], run_url, header, sep, cells,
+                   skipped_note))
     else:
         names = ", ".join("`%s`" % n for n, _ in pngs)
         body = ("%s\n## \U0001F4F8 UI Screenshots\n\n"
                 "%d screenshot(s) captured from `%s`: %s\n\n"
                 "[Download the PNGs from the workflow run artifacts](%s).\n\n"
                 "_Inline images need a `SCREENSHOTS_PUSH_TOKEN` repo secret "
-                "(fine-grained PAT with contents:write on the screenshots repo)._"
-                % (MARKER, len(pngs), sha[:7], names, run_url))
+                "(fine-grained PAT with contents:write on the screenshots "
+                "repo)._%s"
+                % (MARKER, len(pngs), sha[:7], names, run_url, skipped_note))
 
     comment_id = find_bot_comment(token, base_repo, pr_number)
     if comment_id:
