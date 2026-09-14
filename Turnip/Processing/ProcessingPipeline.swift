@@ -128,9 +128,6 @@ struct ProcessingPipeline: Sendable {
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw ProcessingError.assetHasNoVideoTrack
         }
-        // Pose keypoints are reported in the encoded frame's space (see FramePreprocessor),
-        // so the crop rect is computed against the encoded pixel size, not the displayed one.
-        let naturalSize = try await videoTrack.load(.naturalSize)
         let totalFrames = await Self.estimatedSampledFrames(of: videoTrack)
 
         let infer = try await makeInference()
@@ -142,7 +139,7 @@ struct ProcessingPipeline: Sendable {
                 frameIndex: frame.frameIndex,
                 timestamp: frame.timestamp,
                 keypoints: keypoints
-            ))
+            ), renderSize: frame.renderSize)
             if await reportClock.shouldReport() {
                 await onProgress(ProcessingProgress(frame: processed, totalFrames: totalFrames))
             }
@@ -150,7 +147,15 @@ struct ProcessingPipeline: Sendable {
 
         let frames = await accumulator.frames
         let windows = windowDetector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
-        let clips = buildClips(windows: windows, frames: frames, naturalSize: naturalSize)
+        // Pose keypoints are measured in the composition's display-orientation space (see
+        // SampledFrame.renderSize), so the crop rect is computed against the frames' renderSize,
+        // not the track's encoded naturalSize: on a rotated (portrait phone) clip naturalSize
+        // transposes the dimensions and the aspect-ratio snap lands on a wrongly-proportioned
+        // rect (issue #89). No sampled frames means no keypoints, so the size is unused there —
+        // `.zero` marks it unknown, which the calculator treats as unlocatable and buildClips
+        // turns into the full-frame fallback.
+        let renderedPixelSize = await accumulator.renderSize ?? .zero
+        let clips = buildClips(windows: windows, frames: frames, renderedPixelSize: renderedPixelSize)
         return ProcessingResult(clips: clips, asset: asset)
     }
 
@@ -161,13 +166,14 @@ struct ProcessingPipeline: Sendable {
     func buildClips(
         windows: [TrickWindow],
         frames: [PoseFrameResult],
-        naturalSize: CGSize
+        renderedPixelSize: CGSize
     ) -> [ProcessedClip] {
         windows.map { window in
             let inWindow = frames.filter {
                 $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
             }
-            let cropRect = cropRectCalculator.cropRect(for: inWindow, renderedPixelSize: naturalSize)
+            let cropRect = cropRectCalculator.cropRect(
+                for: inWindow, renderedPixelSize: renderedPixelSize)
                 ?? NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
             return ProcessedClip(window: window, cropRect: cropRect)
         }
@@ -204,10 +210,20 @@ extension ProcessingPipeline: ProcessingRunning {}
 /// off the main actor, so the accumulation point is an actor rather than a captured `var`.
 private actor FrameAccumulator {
     private(set) var frames: [PoseFrameResult] = []
+    /// The composition grid the run's frames were rendered onto, in display orientation. The
+    /// sampler builds one composition per run, so the first frame's size stands for all of
+    /// them; pose keypoints are measured in this space, so the crop math denormalizes against
+    /// it rather than the track's encoded `naturalSize` (issue #89). Nil when the sampler
+    /// produced no frame.
+    private(set) var renderSize: CGSize?
 
-    /// Appends the frame and returns the 1-based processed count for progress reporting.
-    func append(_ frame: PoseFrameResult) -> Int {
-        frames.append(frame)
+    /// Appends the frame's inference result and returns the 1-based processed count for
+    /// progress reporting. Records the run's render size from the first frame.
+    func append(_ result: PoseFrameResult, renderSize: CGSize) -> Int {
+        if self.renderSize == nil {
+            self.renderSize = renderSize
+        }
+        frames.append(result)
         return frames.count
     }
 }
