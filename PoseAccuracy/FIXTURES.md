@@ -42,7 +42,7 @@ sha256/size-verified exactly like CI does (or pass `--candidate-model`).
 ```bash
 python PoseAccuracy/rebuild_fixtures.py \
   --local-dir /path/to/videos \
-  --clips IMG_9229:backflip IMG_9420:"back tuck" IMG_9437:gainer \
+  --clips IMG_9229:"double cartfull" IMG_9420:"hook - scoot - gainer - cartfull (combo)" IMG_9437:corkscrew \
   --sha256 IMG_9229:0556... IMG_9420:8fc5... IMG_9437:fecd... \
   --work-dir /tmp/rebuild-work
 ```
@@ -81,8 +81,9 @@ regenerated consistently; do not hand-edit the manifest or baseline.
 ## Naming / label conventions
 
 - Clip id: the filename stem, uppercase (`IMG_9229`). One id per file.
-- Label: the trick, short and lowercase (`backflip`, `back tuck`,
-  `gainer`). No colons (the `--clips` syntax uses `:` as a separator).
+- Label: the trick, short and lowercase (`double cartfull`,
+  `hook - scoot - gainer - cartfull (combo)`, `corkscrew`). No colons (the
+  `--clips` syntax uses `:` as a separator).
 - Keep the original filename and container in the manifest (`file`).
 - Manifest clips are sorted by id.
 
@@ -117,7 +118,7 @@ or `CLOUDFLARE_R2_TOKEN`:
 python PoseAccuracy/rebuild_fixtures.py \
   --r2-account <account-id> --r2-bucket turnip-storage \
   --r2-prefix turnip-ios-ci-fixtures/ \
-  --clips IMG_9229:backflip:IMG_9229.mov ... \
+  --clips IMG_9229:"double cartfull":IMG_9229.mov ... \
   --work-dir /tmp/rebuild-work
 ```
 

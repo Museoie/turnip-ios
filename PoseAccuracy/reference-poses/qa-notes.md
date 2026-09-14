@@ -6,12 +6,12 @@ frame by frame via skeleton-overlay montages (every kept frame inspected).
 
 ## Clips
 
-- `IMG_9229` (backflip), IMG_9229.mov — 61 labeled frames, candidate score 39.9938.
-  Outdoor trampoline backflip.
-- `IMG_9420` (back tuck), IMG_9420.mov — 69 labeled frames, candidate score 31.5320.
-  Indoor gym tucked flip.
-- `IMG_9437` (gainer), IMG_9437.mov — 41 labeled frames, candidate score 42.2844.
-  Indoor gym run-up gainer.
+- `IMG_9229` (double cartfull), IMG_9229.mov — 61 labeled frames, candidate score 39.9938.
+  Indoor gym double cartfull.
+- `IMG_9420` (hook - scoot - gainer - cartfull combo), IMG_9420.mov — 69 labeled frames,
+  candidate score 31.5320. Indoor gym combo: hook, scoot, gainer, cartfull.
+- `IMG_9437` (corkscrew), IMG_9437.mov — 41 labeled frames, candidate score 42.2844.
+  Indoor gym corkscrew off the trampoline.
 
 ## Method
 

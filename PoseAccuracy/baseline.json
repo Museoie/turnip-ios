@@ -1,5 +1,5 @@
 {
-  "fixture_manifest_sha256": "0badeb85d4bf5dcc0d4efded9544e736dfd2f095cfcae6de2ea842f1c51fc05a",
+  "fixture_manifest_sha256": "6923330a49121534fcc4f1229096e2684851f3c22fbd639b3f93c7ba2b3c7c59",
   "model_id": "movenet-thunder-int8/kaggle-singlepose-thunder-tflite-int8-1/sha256:b72fed22707cd6fb94b5a248b9bddb9c062b9f445471b4fa263407cf6d222011",
   "n_clips": 3,
   "per_clip": {
