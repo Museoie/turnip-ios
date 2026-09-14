@@ -26,13 +26,10 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.isKept = isKept
     }
 
-    /// "2.4s"-style duration label for the card. Integer math pins exactly one decimal
-    /// place: string-interpolating the `Double` would lean on `Double.description`'s
-    /// shortest-round-trip rendering for the trailing `.0`, and the decimal separator
-    /// must never follow the device locale (a German-locale "2,4s" would read as a list
-    /// separator next to the clip count).
+    /// "2.4s"-style duration label for the card, via the one shared clip-duration
+    /// formatter — the triage card, the editor, and the export confirmation row must
+    /// render the same window identically.
     var durationLabel: String {
-        let tenths = Int(((window.endTime - window.startTime) * 10).rounded())
-        return "\(tenths / 10).\(tenths % 10)s"
+        ClipDurationFormatter.string(from: window.endTime - window.startTime)
     }
 }

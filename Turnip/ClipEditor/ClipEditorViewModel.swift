@@ -69,17 +69,11 @@ final class ClipEditorViewModel: ObservableObject {
         ClipEditorResult(window: window, cropRect: cropRect, isKept: isKept)
     }
 
-    /// "2.4s"-style duration of the draft window, via the shared timestamp formatter.
+    /// "2.4s"-style duration of the draft window, via the one shared clip-duration
+    /// formatter — the same window must read the same on the triage card and the
+    /// export confirmation row.
     var durationLabel: String {
-        Self.timeLabel(window.endTime - window.startTime)
-    }
-
-    /// "1.2s"-style timestamp, built by hand so the decimal separator can't follow the
-    /// device locale. Shared by the duration label and the slider's labels so the two
-    /// copies can't drift apart.
-    nonisolated static func timeLabel(_ time: TimeInterval) -> String {
-        let tenths = (time * 10).rounded() / 10
-        return "\(tenths)s"
+        ClipDurationFormatter.string(from: window.endTime - window.startTime)
     }
 
     /// The timeline's visible range: the draft window plus context on both sides, so the
