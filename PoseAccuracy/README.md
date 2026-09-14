@@ -2,7 +2,7 @@
 
 Every PR that touches pose estimation (`Turnip/Pose/**`), the harness itself
 (`PoseAccuracy/**`), or the gate workflow gets a **pose-accuracy score**: the
-app's MoveNet Thunder model is run over six fixed fixture clips (Hoie's
+app's MoveNet Thunder model is run over three fixed fixture clips (Hoie's
 tricking footage) and compared against hand-QA'd reference poses. The
 deterministic 0–100 score must stay within `POSE_TOLERANCE` (0.5 pts) of
 `baseline.json`, or the check fails.
@@ -11,16 +11,16 @@ deterministic 0–100 score must stay within `POSE_TOLERANCE` (0.5 pts) of
 
 | Path | Purpose |
 |---|---|
-| `baseline.json` | Locked baseline: score **35.7360**, model id + SHA, manifest SHA, per-clip breakdown |
-| `fixture-manifest.json` | The six fixture clips (id, label, sha256, duration, fps, dimensions). Videos are **not** committed |
-| `reference-poses/reference.json` | Hand-QA'd reference poses (497 frames, COCO-17, normalized xy + confidence) |
+| `baseline.json` | Locked baseline: score **37.9367**, model id + SHA, manifest SHA, per-clip breakdown |
+| `fixture-manifest.json` | The three fixture clips (id, label, sha256, duration, fps, dimensions). Videos are **not** committed |
+| `reference-poses/reference.json` | Hand-QA'd reference poses (171 frames, COCO-17, normalized xy + confidence) |
 | `reference-poses/dropped-frames.json` | Frames excluded from scoring (no-detection / QA failures), per clip |
-| `reference-poses/qa-notes.md` | How the labels were made and QA'd, including the double-full relabeling |
+| `reference-poses/qa-notes.md` | How the labels were made and QA'd |
 | `movenet_infer.py` | Candidate extraction: samples frames, runs MoveNet Thunder int8, writes poses |
 | `sample_frames.py` | Frame sampling shared by the harness (10 samples/s, every 3rd frame at 30fps) |
 | `scorer.py` | Deterministic 0–100 scorer (validated on synthetic perturbations) |
 | `requirements.txt` | Pinned Python deps (determinism: dep drift must not move the score) |
-| `ci/fetch_fixture.py` | Downloads fixture clips from `POSE_FIXTURE_URLS`, verifies sha256 |
+| `ci/fetch_fixture.py` | Downloads fixture clips from `POSE_FIXTURE_URLS` (or R2), verifies sha256 |
 | `ci/check_gate.py` | Compares a score against the baseline, enforces the tolerance |
 
 ## Running locally
@@ -62,8 +62,8 @@ or both not). Scores are averaged over joints, then frames, then clips
 byte-identical on re-run.
 
 The reference defines the task: **pose of the tricking subject**. If the
-candidate tracks a bystander instead, that counts against it — the low
-full-swing clip score (9.6) is honest model behavior, not a fixture bug.
+candidate tracks a bystander instead, that counts against it — that is
+honest model behavior, verified by visual QA, not a fixture bug.
 
 ## Override policy
 
@@ -75,12 +75,18 @@ code by itself.
 
 ## Fixture storage
 
-The fixture videos are Hoie's personal Instagram footage and are **not**
-committed to this repo. CI pulls them from his private Cloudflare R2 bucket
-(`turnip-storage`, prefix `turnip-ios-ci-fixtures/`): `ci/fetch_fixture.py`
-downloads each manifest clip as `s3://<bucket>/<prefix><file>` with the
-runner's `aws` CLI and sha256-verifies it. Credentials come from the
-`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_ENDPOINT` repo secrets
-(an Object-Read-only token scoped to that bucket). The legacy
-`POSE_FIXTURE_URLS` variable still works if set. If neither source is
-configured, the job fails loudly — it never silently passes.
+The fixture videos are Hoie's personal iPhone footage and are **not**
+committed to this repo. They live in his Cloudflare R2 bucket
+(`turnip-storage`, prefix `turnip-ios-ci-fixtures/`) behind a public
+r2.dev URL. CI downloads each clip over plain HTTPS from
+`POSE_FIXTURE_URLS` — a repo **variable** (one URL per clip, in manifest
+order) — and sha256-verifies every download against the manifest. Variables,
+unlike secrets, are visible to fork-PR workflows, so the gate works on PRs
+from forks with no credentials. `ci/fetch_fixture.py` also supports a
+private-R2 source (`POSE_FIXTURE_R2_BUCKET` + `R2_ENDPOINT` /
+`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets) for setups that
+don't want public fixture URLs. If neither source is configured, the job
+fails loudly — it never silently passes.
+
+To rebuild the fixture set (add/remove clips), run
+`PoseAccuracy/rebuild_fixtures.py` — see `PoseAccuracy/FIXTURES.md`.
