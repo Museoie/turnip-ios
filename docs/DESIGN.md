@@ -62,7 +62,8 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
 - **Pipeline** (per input video):
   1. Decode frames at native fps, applying the track's rotation transform
   2. Sample ~10 frames/sec of footage — stride derived from the track's nominal frame rate
-     (3 at 30 fps, 24 at 240 fps slo-mo) — downsampling each kept frame to 480p
+     (3 at 30 fps, 24 at 240 fps slo-mo) — scaling each kept frame straight to the model's own
+     input size (256x256 for Thunder), letterboxed so the frame's aspect ratio survives
   3. Run pose detection, extract hip-midpoint per frame
   4. Motion signal = frame-to-frame hip displacement, smoothed (3-sample moving average)
   5. Peak detection with sustained-above-threshold logic → list of trick windows
@@ -112,6 +113,8 @@ Output: list of `(start_time, end_time)` in seconds.
 Static crop (one rect per clip) is Rev 1's choice — simpler, works well when the athlete stays roughly in one area. Dynamic crop (Ken Burns-style, rect changes per frame) is a v2 nice-to-have.
 
 Everything above is ~150 lines of Swift on top of the pose output. The pose model does the heavy lifting; this code just interprets it.
+
+Steps 4, 5 and 6 are implemented in `Turnip/TrickDetection/` as `MotionSignalBuilder`, `TrickWindowDetector` and `CropRectCalculator`, each with a test file under `TurnipTests/`. The types are library code and not yet driven by a screen, so start from them rather than from the prose above.
 
 ### Model escalation ladder
 

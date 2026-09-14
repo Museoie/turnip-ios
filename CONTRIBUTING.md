@@ -14,8 +14,9 @@ that names areas most open to new contributors.
   generated project. If that happens on a version at or above 15, it's
   worth an issue
 - **iOS 16** minimum deployment target
-- An A11 Bionic device or later (iPhone 8/X+) if you want to test Neural
-  Engine acceleration; the simulator works for everything else
+- No particular device. Pose inference runs on the CPU through TensorFlow
+  Lite with no Core ML or Metal delegate configured, so the simulator and
+  any iOS 16 device run the same code path
 
 The project uses [XcodeGen](https://github.com/yonaskolb/XcodeGen) to
 generate the `.xcodeproj` from `project.yml` (kept as plain, diffable YAML
@@ -178,11 +179,19 @@ ci_scripts/check-repo-settings.sh
 Run the test suite with:
 
 ```
+UDID=$(ci_scripts/resolve-simulator.sh | tail -1)
 xcodebuild test -workspace Turnip.xcworkspace -scheme Turnip \
-  -destination 'platform=iOS Simulator,name=iPhone 15'
+  -destination "id=$UDID"
 ```
 
 or Cmd+U in Xcode with the `Turnip` scheme selected.
+
+`ci_scripts/resolve-simulator.sh` picks an available iPhone device from
+the newest installed iOS runtime, and is the same script CI runs before
+its own test step — so the destination is resolved by one rule instead of
+a device name here that can drift from the one CI uses. Run outside CI it
+prints the device it chose and then the UDID on its own line, hence the
+`tail -1`.
 
 ## Lint
 

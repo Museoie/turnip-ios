@@ -34,13 +34,19 @@ as an explicit opt-in, and the privacy story will be updated then.
 
 ## Status
 
-Very early. As of 2026-09-06 the repo has initial app scaffolding: the
+Very early. As of 2026-09-13 the repo has initial app scaffolding: the
 Home screen (a grid of every video in your Photos library — the first of
 the v1 screens in [`docs/UIUX.md`](docs/UIUX.md)) and a pose-detection
 diagnostic screen (tap a video, run MoveNet Thunder on it, log per-frame
 confidence + keypoint count) — the latter is the design doc's "empirical
-test" first work item, not the auto-edit pipeline itself. See
-[`docs/DESIGN.md`](docs/DESIGN.md) for the full architecture plan
+test" first work item, not the auto-edit pipeline itself.
+
+Steps 4-6 of the pipeline — turning pose keypoints into trick windows and
+a crop rect — are library code under `Turnip/TrickDetection/`, unit-tested
+but not yet driven by a screen. Tapping a video on Home still opens the
+diagnostic, so the later v1 screens are not reachable from Home yet.
+
+See [`docs/DESIGN.md`](docs/DESIGN.md) for the full architecture plan
 including the community labeling + continuous ML training that will
 follow the standalone MVP, and [`CONTRIBUTING.md`](CONTRIBUTING.md) for
 dev setup.
@@ -51,8 +57,11 @@ dev setup.
   Vision framework body-pose API technically landed in iOS 14, but
   targeting iOS 16 drops the iOS 14/15 back-compat surface with
   negligible device-coverage cost)
-- A11 Bionic or later gives Neural Engine acceleration
-  (iPhone 8/X and newer — all iOS 16-capable devices qualify)
+- No particular chip. Pose inference runs on the CPU through TensorFlow
+  Lite — no Core ML or Metal delegate is configured — so every iOS 16
+  device and the simulator run the same code path. Neural Engine
+  delegation is a possible future option, not a requirement; see
+  [`docs/DESIGN.md`](docs/DESIGN.md)
 - Xcode 26.3 for building from source — the version CI verifies. Xcode 15
   is the nominal minimum but is not covered by CI; see
   [`CONTRIBUTING.md`](CONTRIBUTING.md)

@@ -50,22 +50,18 @@ flowchart TD
   Processing for that video.
 - No account, no settings required for v1 — nothing in `DESIGN.md`'s v1 scope
   needs either.
-- **Technical implication worth flagging**: this is a different permission
-  model from what's already built. The pose-diagnostic screen
-  (`Turnip/PoseDiagnostic/PoseDiagnosticViewModel.swift`) uses
-  `PhotosPickerItem` / `PHPickerViewController`, which runs out-of-process
-  and needs **no** Photos permission at all. A gallery grid needs to
-  enumerate every video `PHAsset` up front to render tiles, which means:
-  - Full Photos library read access (`NSPhotoLibraryUsageDescription`),
-    requested on first launch.
-  - Handling **limited** library access (iOS lets the user grant only a
-    subset of their library) — the grid should show just the granted
-    videos plus a way to grant more, not silently look empty.
-  - Handling **denied** access — an empty state pointing at Settings, since
-    there's no picker fallback once Home itself is the gallery.
-  - Thumbnail loading/caching (`PHCachingImageManager`) and pagination for
-    libraries with hundreds of videos, so the grid stays scrollable and
-    doesn't stall on first load.
+- **Permission model** (shipped, in `Turnip/Home/`): because Home *is* the
+  gallery, it enumerates video `PHAsset`s itself rather than delegating to
+  an out-of-process picker, so it needs real Photos access. As built:
+  - Read/write authorization (`NSPhotoLibraryUsageDescription`) requested
+    on first launch, via `PHPhotoLibrary.requestAuthorization(for:)`.
+  - **Limited** access shows the granted videos plus a banner opening
+    `presentLimitedLibraryPicker`, rather than looking empty.
+  - **Denied** or restricted access shows an empty state pointing at
+    Settings, since there is no picker fallback once Home is the gallery.
+  - Thumbnails come from a `PHCachingImageManager` prefetching around the
+    visible rows, over 60-asset pages, so a library with hundreds of
+    videos scrolls without stalling on first load.
 
 ### 2. Processing
 
