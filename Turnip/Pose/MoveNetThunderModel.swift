@@ -27,12 +27,74 @@ actor MoveNetThunderModel {
     private let preprocessor: FramePreprocessor
     private let ciContext = CIContext()
 
+    /// The version of the model shipped in the app bundle: the Kaggle
+    /// `singlepose-thunder-tflite-int8` instance 1 (see
+    /// Turnip/Models/README.md for provenance). The OTA loader uses it as the
+    /// floor — a staged file shadows the bundled one only when its manifest
+    /// version is strictly newer, so an older staged file can't pin the app
+    /// to a worse model, and a newer app build's bundled model isn't shadowed
+    /// by a stale OTA file.
+    static let bundledModelVersion = ModelVersion("1")
+
     /// Loads the bundled model off the main thread. A `nonisolated async` function runs on the
     /// generic executor regardless of the caller's isolation, so the `Interpreter` construction and
     /// `allocateTensors()` inside `init` happen there. This is paid once per diagnostic run, not
     /// once per launch — every "Run diagnostic" tap builds a fresh model — so it must not block UI.
+    ///
+    /// OTA wiring (issue #96): a staged model shadows the bundled one only when its manifest
+    /// version is newer than `bundledModelVersion`. A staged file that fails to load or to
+    /// validate as the Thunder int8 variant falls back to the bundled model rather than leaving
+    /// the app without pose estimation.
     nonisolated static func load() async throws -> MoveNetThunderModel {
-        try MoveNetThunderModel()
+        let bundledPath = try Self.bundledModelPath()
+        let store = ModelUpdateStore.production
+        let candidate = resolveModelPath(
+            bundledPath: bundledPath,
+            stagedVersion: store?.activeVersion(),
+            stagedPath: store?.activeModelURL()?.path)
+        do {
+            return try MoveNetThunderModel(modelPath: candidate)
+        } catch {
+            // The staged file failed: retry with the bundled model before
+            // giving up. When the candidate already *is* the bundled model,
+            // there is nothing left to fall back to.
+            if candidate == bundledPath { throw }
+            return try MoveNetThunderModel(modelPath: bundledPath)
+        }
+    }
+
+    /// Picks the model file to load: the staged OTA file only when its
+    /// manifest version is strictly newer than the bundled one — never merely
+    /// because a staged file exists. A staged version with no bytes on disk
+    /// is treated the same as no staged model, so metadata-without-bytes can
+    /// never redirect the loader at a file that isn't there.
+    ///
+    /// Pure over its inputs so the version-floor rule is unit-testable without
+    /// touching the real Application Support directory.
+    static func resolveModelPath(
+        bundledPath: String,
+        stagedVersion: ModelVersion?,
+        stagedPath: String?
+    ) -> String {
+        if let stagedVersion, let stagedPath,
+            stagedVersion > bundledModelVersion
+        {
+            return stagedPath
+        }
+        return bundledPath
+    }
+
+    /// The bundled model's path. The .tflite is copied into a "Models/" subfolder of the bundle because project.yml
+    /// references Turnip/Models as a folder reference, not a group — so look it up there,
+    /// not at the bundle root.
+    private static func bundledModelPath() throws -> String {
+        guard let modelPath = Bundle.main.path(
+            forResource: "movenet_thunder_int8", ofType: "tflite",
+            inDirectory: "Models"
+        ) else {
+            throw PoseError.modelNotFound
+        }
+        return modelPath
     }
 
     /// The input shape the MoveNet Thunder singlepose int8 variant reports, in the tensor's
@@ -62,16 +124,7 @@ actor MoveNetThunderModel {
         }
     }
 
-    private init() throws {
-        // The .tflite is copied into a "Models/" subfolder of the bundle because project.yml
-        // references Turnip/Models as a folder reference, not a group — so look it up there,
-        // not at the bundle root.
-        guard let modelPath = Bundle.main.path(
-            forResource: "movenet_thunder_int8", ofType: "tflite", inDirectory: "Models"
-        ) else {
-            throw PoseError.modelNotFound
-        }
-
+    private init(modelPath: String) throws {
         do {
             interpreter = try Interpreter(modelPath: modelPath)
             try interpreter.allocateTensors()

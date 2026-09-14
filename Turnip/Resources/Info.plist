@@ -34,5 +34,11 @@
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
+	<!-- OTA model updates (issue #96): turnip-farm does not exist yet, so the
+	     endpoint stays empty and the update service is inert — nothing leaves
+	     the device. Set this to the deployment's https base URL (e.g. via an
+	     xcconfig) to activate; https is enforced by ModelUpdateConfiguration. -->
+	<key>TURNIP_MODEL_UPDATE_ENDPOINT</key>
+	<string></string>
 </dict>
 </plist>

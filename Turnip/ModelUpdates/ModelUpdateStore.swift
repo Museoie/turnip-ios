@@ -21,6 +21,11 @@ struct ModelUpdateStore: Sendable {
     /// the first stage — a store that never stages anything leaves no trace.
     let baseURL: URL
 
+    /// The sidecar file name, hoisted so `stage()` can reject it: staging a
+    /// model *under* this name would let the metadata write overwrite the
+    /// model bytes it just staged (or vice versa), corrupting the store.
+    private static let metadataFileName = "active-model.json"
+
     init(baseURL: URL) {
         self.baseURL = baseURL
     }
@@ -44,10 +49,14 @@ struct ModelUpdateStore: Sendable {
         // Reject hostile file names before touching the filesystem: the name
         // must be a single path component (no slashes, not empty, not "." or
         // "..") so a malicious manifest can't stage outside the store dir.
+        // The store's own sidecar name is rejected too — staging a model as
+        // "active-model.json" would collide with the metadata file written
+        // right after the bytes.
         guard !fileName.isEmpty,
               !fileName.contains("/"),
               fileName != ".",
-              fileName != ".." else {
+              fileName != "..",
+              fileName != Self.metadataFileName else {
             throw ModelUpdateError.invalidManifest
         }
         try FileManager.default.createDirectory(
@@ -60,7 +69,7 @@ struct ModelUpdateStore: Sendable {
     }
 
     private var metadataURL: URL {
-        baseURL.appendingPathComponent("active-model.json")
+        baseURL.appendingPathComponent(Self.metadataFileName)
     }
 
     private func readRecord() throws -> StoredModel? {
@@ -77,4 +86,23 @@ struct ModelUpdateStore: Sendable {
 private struct StoredModel: Codable {
     var version: String
     var fileName: String
+}
+
+extension ModelUpdateStore {
+    /// The store the app actually wires: `<Application Support>/ModelUpdates`.
+    /// The directory is not created until the first stage — a device that
+    /// never receives an update leaves no trace on disk.
+    ///
+    /// Optional because `urls(for:in:)` can theoretically return nothing; the
+    /// loader and the lifecycle hook both treat a missing directory the way
+    /// they treat an empty store (nothing staged, nothing to do).
+    static var production: ModelUpdateStore? {
+        FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first.map {
+            ModelUpdateStore(
+                baseURL: $0.appendingPathComponent(
+                    "ModelUpdates", isDirectory: true))
+        }
+    }
 }
