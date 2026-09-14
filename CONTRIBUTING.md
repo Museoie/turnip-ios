@@ -153,6 +153,20 @@ files are committed; they change together.
   PR's test plan regardless, since CI doesn't cover UI/manual testing
 - Be responsive to review feedback — if a thread goes quiet, a ping is fine
 
+The setting behind *CI must pass before merge* — a required `build-and-test`
+check on `main` — is repository configuration rather than a file, as is the
+private reporting route [`SECURITY.md`](SECURITY.md) offers alongside email.
+Neither shows up in a diff, so
+[`ci_scripts/check-repo-settings.sh`](ci_scripts/check-repo-settings.sh)
+compares both against what these documents say — weekly from
+[`.github/workflows/repo-settings-check.yml`](.github/workflows/repo-settings-check.yml),
+which opens a tracking issue while one is missing and closes it once both are
+in place. The same check runs locally:
+
+```
+ci_scripts/check-repo-settings.sh
+```
+
 ## Testing guidance
 
 - New logic (clip detection, crop-rect math, pose-signal processing) should
