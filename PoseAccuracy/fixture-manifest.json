@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "target_fps": 10.0,
+  "clips": [
+    {
+      "id": "17924553528368727",
+      "label": "TDR + cork",
+      "file": "17924553528368727.mp4",
+      "sha256": "b7b2f53d3fd69925723a0379ffba6794dd016dc9c1fd4209f2dfa994413067b6",
+      "duration_s": 16.901,
+      "fps": 30.0,
+      "width": 720,
+      "height": 1280,
+      "source": "Hoie's Instagram story highlights (personal footage; NOT committed to git)"
+    },
+    {
+      "id": "17931395055382674",
+      "label": "double full",
+      "file": "17931395055382674.mp4",
+      "sha256": "f14fab05b34028d20584b88c5ca140366bf6a090c1143527ea6d2d69a3a793d3",
+      "duration_s": 15.972,
+      "fps": 30.0,
+      "width": 720,
+      "height": 1280,
+      "source": "Hoie's Instagram story highlights (personal footage; NOT committed to git)"
+    },
+    {
+      "id": "17974812225063566",
+      "label": "TDR + gainer",
+      "file": "17974812225063566.mp4",
+      "sha256": "fb02728c18e682b9acca1d29582f1e618e28d57645d551297d7e34a1823d1497",
+      "duration_s": 4.688,
+      "fps": 30.0,
+      "width": 720,
+      "height": 1280,
+      "source": "Hoie's Instagram story highlights (personal footage; NOT committed to git)"
+    },
+    {
+      "id": "17975344427923074",
+      "label": "floor work",
+      "file": "17975344427923074.mp4",
+      "sha256": "2d4eaf4e0cec2b3ccc3ed86d31e1c5f95dff59c06a2cbba59499f11d3513916a",
+      "duration_s": 7.799,
+      "fps": 30.0,
+      "width": 720,
+      "height": 1280,
+      "source": "Hoie's Instagram story highlights (personal footage; NOT committed to git)"
+    },
+    {
+      "id": "18198525943370276",
+      "label": "full swing",
+      "file": "18198525943370276.mp4",
+      "sha256": "f9058dda875c691d2e73d108914b56292eedefedfdfb9e1b74ddb88f7b3a5bc7",
+      "duration_s": 6.081,
+      "fps": 30.0,
+      "width": 720,
+      "height": 1280,
+      "source": "Hoie's Instagram story highlights (personal footage; NOT committed to git)"
+    },
+    {
+      "id": "18346724083172551",
+      "label": "side flip",
+      "file": "18346724083172551.mp4",
+      "sha256": "df5bbbacf33bf67518a409f8facf47e0197026e335ed81aa5b6738698e227a31",
+      "duration_s": 3.898,
+      "fps": 30.0,
+      "width": 720,
+      "height": 1280,
+      "source": "Hoie's Instagram story highlights (personal footage; NOT committed to git)"
+    }
+  ]
+}
