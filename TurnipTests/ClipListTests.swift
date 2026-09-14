@@ -125,22 +125,35 @@ final class ClipListTests: XCTestCase {
     }
 
     func testDisplayedCropRectMapsARotatedTrackIntoDisplayedSpace() {
-        // Full encoded frame must become the portrait displayed frame.
+        // Full frame must become the portrait displayed frame.
         let full = ClipThumbnailLoader.displayedCropRect(
             cropRect: fullFrame,
             naturalSize: CGSize(width: 1920, height: 1080),
             preferredTransform: rotate90)
         XCTAssertEqual(full, CGRect(x: 0, y: 0, width: 1080, height: 1920))
 
-        // The encoded left half (x in 0..<960) maps through (x, y) -> (1080 - y, x) onto
-        // the displayed top half. A transform applied in the wrong space would land the
-        // crop on the wrong half — this is the discriminating case.
+        // The crop rect is normalized in display orientation, so the displayed left half
+        // maps straight onto the displayed left half. The old buggy mapping —
+        // denormalize in the encoded size, then map through preferredTransform —
+        // landed it on the displayed top half instead: (0, 0, 1080, 960).
         let leftHalf = NormalizedRect(minX: 0, maxX: 0.5, minY: 0, maxY: 1)
         let rect = ClipThumbnailLoader.displayedCropRect(
             cropRect: leftHalf,
             naturalSize: CGSize(width: 1920, height: 1080),
             preferredTransform: rotate90)
-        XCTAssertEqual(rect, CGRect(x: 0, y: 0, width: 1080, height: 960))
+        XCTAssertEqual(rect, CGRect(x: 0, y: 0, width: 540, height: 1920))
+    }
+
+    func testDisplayedCropRectUsesTheDisplayedSizeForPartialRects() {
+        // A partial rect discriminates the encoded-vs-displayed denormalization: with the
+        // old (buggy) denormalize-in-encoded-size + map-through-transform, this
+        // display-normalized rect lands at (0, 480, 1080, 960) instead of (270, 0, 540, 1920).
+        let rect = ClipThumbnailLoader.displayedCropRect(
+            cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0, maxY: 1),
+            naturalSize: CGSize(width: 1920, height: 1080),
+            preferredTransform: rotate90)
+
+        XCTAssertEqual(rect, CGRect(x: 270, y: 0, width: 540, height: 1920))
     }
 
     func testDisplayedCropRectReturnsNilForDegenerateInputs() {
@@ -170,10 +183,11 @@ final class ClipListTests: XCTestCase {
             4.0) // 100 wide x 25 tall
     }
 
-    func testDisplayedAspectRatioSwapsOnARotatedTrack() {
-        // Portrait phone video: 8:9 portrait crop in encoded space, 9:8 landscape in
-        // displayed space. The encoded-space ratio (the old placeholder behavior) would
-        // be 8/9 — this is the discriminating case for the triage reflow fix.
+    func testDisplayedAspectRatioUsesTheDisplayedSizeOnARotatedTrack() {
+        // Portrait phone video: the crop rect is normalized in display orientation, so a
+        // (0.25..<0.75, 0..<1) rect is a 9:32 portrait crop of the 1080x1920 displayed
+        // frame. The old buggy mapping read it as an 8:9 encoded-space crop and reported
+        // 9:8 (1.125) — the placeholder reserved the wrong shape, off by 4x.
         let crop = NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0, maxY: 1)
 
         XCTAssertEqual(
@@ -181,7 +195,7 @@ final class ClipListTests: XCTestCase {
                 cropRect: crop,
                 naturalSize: CGSize(width: 1920, height: 1080),
                 preferredTransform: rotate90),
-            9.0 / 8.0, // 1080 wide x 960 tall displayed
+            9.0 / 32.0, // 540 wide x 1920 tall displayed
             accuracy: 1e-6)
     }
 

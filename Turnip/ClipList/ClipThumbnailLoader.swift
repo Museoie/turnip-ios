@@ -68,10 +68,11 @@ actor ClipThumbnailLoader {
     /// returns, so this only caps memory.
     static let defaultMaxPixelSize = CGSize(width: 512, height: 912)
 
-    /// Maps the crop rect from the encoded frame's pixel space (top-left origin, no
-    /// `preferredTransform` applied — the space `NormalizedRect` and the pose keypoints
-    /// live in) into the displayed frame's space, matching what `AVAssetImageGenerator`
-    /// returns with `appliesPreferredTrackTransform`. `nil` for degenerate inputs.
+    /// Maps the crop rect from `NormalizedRect`'s space contract — the decoded frames'
+    /// normalized space (display orientation, y down from the top), matching the pose
+    /// keypoints it is built from — into displayed pixel space, matching what
+    /// `AVAssetImageGenerator` returns with `appliesPreferredTrackTransform`.
+    /// `nil` for degenerate inputs.
     ///
     /// Pure so the geometry is unit-testable without an asset; the 90°-rotation test is the
     /// discriminating case, since it fails if the transform is applied in the wrong space
@@ -82,9 +83,13 @@ actor ClipThumbnailLoader {
         preferredTransform: CGAffineTransform
     ) -> CGRect? {
         guard naturalSize.width > 0, naturalSize.height > 0 else { return nil }
-        let encoded = cropRect.denormalized(in: naturalSize)
-        guard encoded.width > 0, encoded.height > 0 else { return nil }
-        return boundingBox(of: encoded.corners.map { $0.applying(preferredTransform) })
+        // cropRect is already normalized in display orientation, so denormalize in the
+        // displayed size directly — no trip through preferredTransform needed.
+        let displayedSize = Self.displayedFrameSize(
+            naturalSize: naturalSize, preferredTransform: preferredTransform)
+        let displayed = cropRect.denormalized(in: displayedSize)
+        guard displayed.width > 0, displayed.height > 0 else { return nil }
+        return displayed
     }
 
     /// The aspect ratio (width / height) of `cropRect` in the displayed frame's
