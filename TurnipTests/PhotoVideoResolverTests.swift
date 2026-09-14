@@ -37,6 +37,78 @@ private final class SilentImageManager: PHImageManager, @unchecked Sendable {
     }
 }
 
+/// A `PHImageManager` that behaves like PhotoKit for an iCloud-only slow-mo clip: one download
+/// tick, then an `AVComposition` (no URL to hand back), then a failed export session — so the
+/// test observes the full `.downloading` → `.exporting` event sequence on the failure path.
+private final class CompositionImageManager: PHImageManager, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _exportRequested = false
+    var exportRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return _exportRequested
+    }
+
+    override func requestAVAsset(
+        forVideo asset: PHAsset,
+        options: PHVideoRequestOptions?,
+        resultHandler: @escaping (AVAsset?, AVAudioMix?, [AnyHashable: Any]?) -> Void
+    ) -> PHImageRequestID {
+        // The iCloud download finishing, then Photos handing back a composition.
+        var stop = ObjCBool(false)
+        options?.progressHandler?(0.5, nil, &stop, nil)
+        resultHandler(AVMutableComposition(), nil, nil)
+        return 7
+    }
+
+    override func requestExportSession(
+        forVideo asset: PHAsset,
+        options: PHVideoRequestOptions?,
+        exportPreset: String,
+        resultHandler: @escaping (AVAssetExportSession?, [AnyHashable: Any]?) -> Void
+    ) -> PHImageRequestID {
+        lock.lock()
+        _exportRequested = true
+        lock.unlock()
+        // No session: the export fails the way a genuinely failed export does.
+        resultHandler(nil, nil)
+        return 8
+    }
+}
+
+/// A `PHImageManager` that behaves like PhotoKit for an iCloud plain recording: one download
+/// tick, then the `AVURLAsset` itself — the path that must never report an export phase.
+private final class DirectURLImageManager: PHImageManager, @unchecked Sendable {
+    override func requestAVAsset(
+        forVideo asset: PHAsset,
+        options: PHVideoRequestOptions?,
+        resultHandler: @escaping (AVAsset?, AVAudioMix?, [AnyHashable: Any]?) -> Void
+    ) -> PHImageRequestID {
+        var stop = ObjCBool(false)
+        options?.progressHandler?(0.5, nil, &stop, nil)
+        resultHandler(AVURLAsset(url: URL(filePath: "/tmp/turnip-test-direct.mov")), nil, nil)
+        return 9
+    }
+}
+
+/// Collects `ResolutionProgress` events from the resolver's `@Sendable` progress closure; PhotoKit
+/// makes no thread promise for its own callback, so the log guards the array.
+private final class ProgressEventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _events: [ResolutionProgress] = []
+    var events: [ResolutionProgress] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _events
+    }
+
+    func append(_ event: ResolutionProgress) {
+        lock.lock()
+        _events.append(event)
+        lock.unlock()
+    }
+}
+
 final class PhotoVideoResolverTests: XCTestCase {
     private enum Outcome {
         case finished(Result<AVURLAsset, Error>)
@@ -85,6 +157,50 @@ final class PhotoVideoResolverTests: XCTestCase {
         }
         XCTAssertTrue(error is CancellationError, "expected CancellationError, got \(error)")
         XCTAssertEqual(manager.cancelledIDs, [SilentImageManager.requestID])
+    }
+
+    // MARK: - Resolution progress phases
+
+    /// The composition path emits `.downloading` for the iCloud phase and `.exporting` immediately
+    /// before the export starts — and `.exporting` still arrives when the export itself fails, so
+    /// a failed export can't leave the UI parked on the download bar either.
+    func testResolveEmitsDownloadingThenExportingForCompositionAsset() async {
+        let manager = CompositionImageManager()
+        let resolver = PhotoVideoResolver(imageManager: manager)
+        let log = ProgressEventLog()
+
+        do {
+            _ = try await resolver.resolve(PHAsset()) { log.append($0) }
+            XCTFail("expected the export to fail")
+        } catch let error as VideoResolutionError {
+            guard case .exportFailed = error else {
+                return XCTFail("expected exportFailed, got \(error)")
+            }
+        } catch {
+            return XCTFail("expected VideoResolutionError, got \(error)")
+        }
+
+        XCTAssertEqual(log.events, [.downloading(0.5), .exporting])
+        XCTAssertTrue(manager.exportRequested, "the export must actually run after .exporting")
+    }
+
+    /// Assets that resolve to a URL never take the export path, so no `.exporting` event may be
+    /// emitted for them — the determinate download bar belongs to the download alone.
+    func testResolveNeverEmitsExportingForDirectURLAsset() async throws {
+        let resolver = PhotoVideoResolver(imageManager: DirectURLImageManager())
+        let log = ProgressEventLog()
+
+        let asset = try await resolver.resolve(PHAsset()) { log.append($0) }
+
+        XCTAssertEqual(asset.url.lastPathComponent, "turnip-test-direct.mov")
+        XCTAssertEqual(log.events, [.downloading(0.5)])
+    }
+
+    /// The view model renders a nil fraction as its indeterminate "Preparing video…" state, so the
+    /// `.exporting` → nil mapping is the whole fix: pin it directly.
+    func testExportingPhaseMapsToNoDownloadFraction() {
+        XCTAssertEqual(ResolutionProgress.downloading(0.5).downloadFraction, 0.5)
+        XCTAssertNil(ResolutionProgress.exporting.downloadFraction)
     }
 
     // MARK: - Temporary export cleanup

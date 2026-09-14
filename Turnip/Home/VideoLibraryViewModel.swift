@@ -9,7 +9,9 @@ import UIKit
 @MainActor
 final class VideoLibraryViewModel: ObservableObject {
     /// A tile tap in progress. `downloadProgress` is nil until PhotoKit reports the first iCloud
-    /// progress callback — local assets resolve without ever setting it.
+    /// progress callback — local assets resolve without ever setting it — and returns to nil when
+    /// the composition-export phase starts, so both progress surfaces fall back to their
+    /// indeterminate "Preparing video…" state for a phase that isn't a download.
     struct Resolution: Equatable {
         let assetIdentifier: String
         var downloadProgress: Double?
@@ -193,8 +195,8 @@ final class VideoLibraryViewModel: ObservableObject {
         resolution?.assetIdentifier == asset.localIdentifier
     }
 
-    /// iCloud download progress for `asset`, or nil if it isn't the one being resolved or hasn't
-    /// started downloading.
+    /// iCloud download progress for `asset`, or nil if it isn't the one being resolved, hasn't
+    /// started downloading, or has moved past the download into the composition-export phase.
     func downloadProgress(for asset: PHAsset) -> Double? {
         isResolving(asset) ? resolution?.downloadProgress : nil
     }
@@ -217,7 +219,11 @@ final class VideoLibraryViewModel: ObservableObject {
                         // A cancelled request can still emit a tick or two; don't let a stale one
                         // paint a download ring on whatever the user tapped next.
                         if self.resolution?.assetIdentifier == identifier {
-                            self.resolution?.downloadProgress = progress
+                            // `.exporting` maps to nil: the determinate download bar must not
+                            // linger at 100% through the composition export, and nil is the state
+                            // both progress surfaces already render as indeterminate
+                            // "Preparing video…".
+                            self.resolution?.downloadProgress = progress.downloadFraction
                         }
                     }
                 }
