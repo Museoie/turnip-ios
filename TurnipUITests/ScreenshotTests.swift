@@ -36,6 +36,29 @@ final class ScreenshotTests: XCTestCase {
         addScreenshot(named: "export-confirmation-summary")
     }
 
+    /// The Share action on a saved clip opens the system share sheet — the whole of
+    /// issue 12's publish story. Drives the real affordance (tap the row's Share
+    /// button), not a direct presentation, and screenshots the sheet.
+    func testExportConfirmationShareSheet() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotExportConfirmationFinished"]
+        app.launch()
+        let shareButton = app.buttons["Share"].firstMatch
+        XCTAssertTrue(shareButton.waitForExistence(timeout: 15))
+        // A Share action over a missing file disables itself, so an enabled button is
+        // also the assertion that the run left a real file behind for it.
+        XCTAssertTrue(shareButton.isEnabled)
+        shareButton.tap()
+
+        // `UIActivityViewController` exposes its container as `ActivityListView`.
+        // The fallback covers the identifier changing under us: the sheet is modal,
+        // so the button that opened it stops being hittable once it is up.
+        let activitySheet = app.otherElements["ActivityListView"]
+        let sheetIsUp = activitySheet.waitForExistence(timeout: 15) || !shareButton.isHittable
+        XCTAssertTrue(sheetIsUp, "tapping Share did not present the system share sheet")
+        addScreenshot(named: "export-confirmation-share-sheet")
+    }
+
     private func addScreenshot(named name: String) {
         let screenshot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)

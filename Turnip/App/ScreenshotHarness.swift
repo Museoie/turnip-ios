@@ -24,7 +24,7 @@ struct ScreenshotHarness: View {
                         cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1))
                 ],
                 asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
-                exportClip: { _, _, _, _, progress in
+                exportClip: { _, _, _, directory, progress in
                     if finishImmediately {
                         progress(1.0)
                     } else {
@@ -33,7 +33,14 @@ struct ScreenshotHarness: View {
                         progress(0.5)
                         try await Task.sleep(for: .seconds(60))
                     }
-                    return URL(fileURLWithPath: "/tmp/screenshot-clip.mp4")
+                    // A real (empty) file rather than a fabricated path: the Share
+                    // action disables itself for a URL with nothing behind it, so a
+                    // fake path would screenshot every row's action greyed out and
+                    // leave the share sheet unreachable from the UI test.
+                    let url = directory.appendingPathComponent(
+                        "screenshot-clip-\(UUID().uuidString).mp4")
+                    _ = FileManager.default.createFile(atPath: url.path, contents: Data())
+                    return url
                 },
                 saveToPhotos: { _ in }
             )

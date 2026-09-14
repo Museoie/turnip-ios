@@ -6,8 +6,10 @@ import SwiftUI
 /// Reached from the clip list's "Export N clips" action with the kept clips. Starts the
 /// export on appear, shows per-clip progress as each clip exports and saves to Photos,
 /// and ends in a summary — "N of M clips saved to Photos" with per-clip failures named
-/// individually. `Done` dismisses back to the list; per the design doc there is no further
-/// action, the user starts over from Home. The Share Sheet hooks in here in v2.
+/// individually. Every clip whose export produced a file also carries a Share action
+/// handing that file to the system share sheet (`docs/DESIGN.md` § "Publishing to social
+/// media (iOS Share Sheet)"). `Done` dismisses back to the list; per the design doc there
+/// is no further action, the user starts over from Home.
 ///
 /// This view deliberately declares no `NavigationStack` of its own — it lives on the
 /// flow's shared stack, like the clip list.
@@ -61,7 +63,11 @@ struct ExportConfirmationView: View {
             viewModel.start()
         }
         .onDisappear {
-            viewModel.cancel()
+            // The screen going away is what ends the exported files — they outlive
+            // their run so the Share action can hand them off. A presented share
+            // sheet is a modal over this view, not a disappearance of it, so this
+            // can't pull a file out from under an open sheet.
+            viewModel.tearDown()
         }
     }
 
@@ -112,6 +118,25 @@ private struct ClipStatusRow: View {
     let clip: ExportConfirmationViewModel.ClipState
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // The combine stays scoped to the status half: applied to the whole row it
+            // would fold the Share button into one element too, leaving VoiceOver no
+            // way to reach the action.
+            status
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(clip.title), \(phaseDescription)")
+            if let shareURL = clip.shareURL {
+                ClipShareButton(fileURL: shareURL, clipTitle: clip.title)
+                    .font(.subheadline)
+                    // Without this a List row with a button makes the entire row one
+                    // tap target, so a tap anywhere on the row would open the sheet.
+                    .buttonStyle(.borderless)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var status: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(clip.title)
@@ -135,8 +160,6 @@ private struct ClipStatusRow: View {
                 EmptyView()
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(clip.title), \(phaseDescription)")
     }
 
     @ViewBuilder
@@ -189,10 +212,15 @@ private struct ClipStatusRow: View {
             // and ScreenshotHarness). Previews don't execute in CI, but the safe
             // form avoids anyone copy-pasting the crashing one into a test.
             asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
-            exportClip: { _, _, _, _, progress in
+            exportClip: { _, _, _, directory, progress in
                 progress(0.5)
                 progress(1.0)
-                return URL(fileURLWithPath: "/tmp/preview-clip.mp4")
+                // A real (empty) file: the Share action disables itself for a URL
+                // with nothing behind it, so a fake path would preview every row in
+                // the disabled state.
+                let url = directory.appendingPathComponent("preview-clip.mp4")
+                _ = FileManager.default.createFile(atPath: url.path, contents: Data())
+                return url
             },
             saveToPhotos: { _ in }
         )

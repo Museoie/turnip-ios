@@ -66,18 +66,18 @@ typealias SaveOneClipToPhotos = @Sendable (URL) async throws -> Void
 /// parent folder is left alone.
 let exportDirectoryNamePrefix = "turnip-export-"
 
-/// The scratch directory for one export run: a fresh UUID-named folder under the app's
-/// temp directory, so repeated runs never share outputs. The run deletes it in
-/// `start()`'s `defer`, whatever ended the run. Internal so tests can pass their own
-/// directory and assert on the lifecycle without touching the real tmp dir.
+/// The scratch directory for one export screen: a fresh UUID-named folder under the
+/// app's temp directory, so repeated visits never share outputs. The screen deletes it
+/// in `tearDown()`. Internal so tests can pass their own directory and assert on the
+/// lifecycle without touching the real tmp dir.
 func defaultExportDirectory() -> URL {
     FileManager.default.temporaryDirectory
         .appendingPathComponent("\(exportDirectoryNamePrefix)\(UUID().uuidString)", isDirectory: true)
 }
 
-/// Best-effort sweep of orphaned export scratch directories. A killed run never
-/// executes `start()`'s cleanup `defer`, so its scratch directory is left behind;
-/// each new run removes those stale siblings before making its own. Skips
+/// Best-effort sweep of orphaned export scratch directories. A killed screen never
+/// executes `tearDown()`, so its scratch directory is left behind; each new screen
+/// removes those stale siblings before making its own. Skips
 /// `excluding` (this run's about-to-be-created directory), touches only
 /// directories whose name carries `exportDirectoryNamePrefix`, and swallows every
 /// failure — leftover scratch is untidy but bounded (the OS purges tmp under
@@ -103,7 +103,10 @@ func sweepStaleExportDirectories(in parentDirectory: URL, excluding current: URL
 /// the view shows live progress, and ends in a summary: "N of M clips saved to Photos"
 /// with any per-clip failures named individually rather than folded into a count. One
 /// clip's failure never aborts the rest — a bad window in a multi-trick recording must
-/// not cost the clips around it.
+/// not cost the clips around it. Each exported clip's file URL is published alongside its
+/// phase so the screen can offer it to the system share sheet (`docs/DESIGN.md`
+/// § "Publishing to social media (iOS Share Sheet)"); the scratch directory's lifetime is
+/// therefore the screen's, not the run's.
 ///
 /// `@MainActor` throughout: the published phases are read by SwiftUI on the main thread,
 /// and the run task inherits that isolation, so the injected closures start on the main
@@ -123,6 +126,27 @@ final class ExportConfirmationViewModel: ObservableObject {
         /// "Clip 1 · 2.4s" — the number is the export order, the duration the window's.
         let title: String
         var phase: Phase
+        /// Where the export wrote this clip, once the export step succeeded. Kept
+        /// rather than discarded after the Photos save because the share sheet hands
+        /// the system the file itself: the URL has to stay valid for as long as the
+        /// row can be shared.
+        var fileURL: URL?
+
+        /// The URL the row's Share action hands to the system share sheet, or `nil`
+        /// when there is nothing to hand off.
+        ///
+        /// A clip whose Photos save failed still offers it: the file exists, and
+        /// sharing it to Messages or AirDrop is the way out of a revoked Photos
+        /// permission. A clip still exporting or saving does not — the file is only
+        /// complete once the export step returns.
+        var shareURL: URL? {
+            switch phase {
+            case .saved, .failed:
+                return fileURL
+            case .pending, .exporting, .saving:
+                return nil
+            }
+        }
     }
 
     /// The per-clip export phase. `.saving` covers the Photos write, which reports no
@@ -167,6 +191,12 @@ final class ExportConfirmationViewModel: ObservableObject {
     private let exportClip: ExportOneClip
     private let saveToPhotos: SaveOneClipToPhotos
     private let makeDirectory: @Sendable () -> URL
+    /// The screen's scratch directory, made on the first run and reused by a restart.
+    /// `nil` until a run has prepared it, and again after `tearDown()`.
+    private var directory: URL?
+    /// The teardown's deletion, held rather than discarded so the removal is
+    /// awaitable — it only runs once the cancelled run has drained.
+    private(set) var cleanupTask: Task<Void, Never>?
     private var runTask: Task<Void, Never>?
     /// Set by `cancel()` and cleared when a run actually ends or a newer run starts:
     /// distinguishes "a run is in flight" from "a cancelled run is still draining", so
@@ -237,6 +267,10 @@ final class ExportConfirmationViewModel: ObservableObject {
         wasCancelled = false
         for index in clips.indices where clips[index].phase != .saved {
             clips[index].phase = .pending
+            // This clip is about to be exported again, so its previous output is
+            // superseded: drop the URL rather than offer a Share action for a file
+            // the new run is replacing.
+            clips[index].fileURL = nil
         }
         // The run task inherits `@MainActor` isolation, so the run — including the
         // injected closures — starts on the main actor's executor. The closures must
@@ -255,24 +289,7 @@ final class ExportConfirmationViewModel: ObservableObject {
         // effect — means two runs never interleave exports or Photos writes, so the
         // skip-`.saved` check below can't race the old run's in-flight save.
         await previousRun?.value
-        let directory = makeDirectory()
-        // A killed run never executes the cleanup `defer` below, orphaning its
-        // scratch directory: sweep stale `turnip-export-*` siblings before making
-        // this run's directory, so repeated kills can't accumulate temp dirs.
-        sweepStaleExportDirectories(
-            in: directory.deletingLastPathComponent(), excluding: directory)
-        // The exporter writes into this directory; it must exist before the first
-        // export session starts. A failure here surfaces per clip from the export
-        // step — tmp creation all but never fails, so there is no dedicated state
-        // for it.
-        try? FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true)
-        defer {
-            // Whatever ended the run, the scratch files go with it. The exporter
-            // leaves failed outputs in place for debugging, but this screen owns the
-            // directory and the sandbox must not accumulate them.
-            try? FileManager.default.removeItem(at: directory)
-        }
+        let directory = prepareDirectory()
         var runWasCancelled = false
         for (index, item) in items.enumerated() {
             let shouldContinue = await exportClipItem(
@@ -285,6 +302,29 @@ final class ExportConfirmationViewModel: ObservableObject {
             }
         }
         finishRun(generation: runGeneration, wasCancelled: runWasCancelled)
+    }
+
+    /// The screen's scratch directory, created on first use.
+    ///
+    /// One directory per screen rather than per run: a restart exporting into the
+    /// same directory is what keeps an already-saved clip's file — and so its Share
+    /// action — alive across the restart. `tearDown()` deletes it.
+    private func prepareDirectory() -> URL {
+        if let directory { return directory }
+        let directory = makeDirectory()
+        // A killed screen never executes `tearDown()`, orphaning its scratch
+        // directory: sweep stale `turnip-export-*` siblings before making this
+        // one, so repeated kills can't accumulate temp dirs.
+        sweepStaleExportDirectories(
+            in: directory.deletingLastPathComponent(), excluding: directory)
+        // The exporter writes into this directory; it must exist before the first
+        // export session starts. A failure here surfaces per clip from the export
+        // step — tmp creation all but never fails, so there is no dedicated state
+        // for it.
+        try? FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+        self.directory = directory
+        return directory
     }
 
     /// Drives one clip through export → Photos save, publishing its phases.
@@ -309,6 +349,7 @@ final class ExportConfirmationViewModel: ObservableObject {
                     await self?.reportExportProgress(index: index, fraction: fraction)
                 }
             }
+            setFileURL(at: index, to: fileURL)
             setPhase(at: index, to: .saving)
             try await saveToPhotos(fileURL)
             setPhase(at: index, to: .saved)
@@ -333,11 +374,35 @@ final class ExportConfirmationViewModel: ObservableObject {
         runTask = nil
     }
 
-    /// Cancels the run. Cooperative: the in-flight step stops on its own, remaining clips
-    /// stay `.pending`, and the scratch directory is still cleaned up by `start()`'s
-    /// `defer`. The handle is kept rather than nilled so a subsequent `start()` can wait
-    /// for the drain before restarting; the view calls this on disappear, so a run never
-    /// outlives its screen.
+    /// Ends the screen: cancels the run and deletes the scratch directory once the
+    /// cancelled run has drained. The view calls this on disappear.
+    ///
+    /// Deleting here rather than when the run ends is what makes the Share action
+    /// possible — the share sheet hands the system a file URL, so every exported file
+    /// has to outlive its run and stay on disk while its row is on screen. Waiting for
+    /// the drain means the deletion never races an export still writing into the
+    /// directory, and the URLs are cleared first so no row offers a file that is on its
+    /// way out.
+    func tearDown() {
+        cancel()
+        let draining = runTask
+        let removing = directory
+        directory = nil
+        for index in clips.indices {
+            clips[index].fileURL = nil
+        }
+        cleanupTask = Task.detached {
+            await draining?.value
+            guard let removing else { return }
+            try? FileManager.default.removeItem(at: removing)
+        }
+    }
+
+    /// Cancels the run. Cooperative: the in-flight step stops on its own and remaining
+    /// clips stay `.pending`. The handle is kept rather than nilled so a subsequent
+    /// `start()` can wait for the drain before restarting. Leaves the scratch directory
+    /// alone — a cancelled run's already-exported clips stay shareable until the screen
+    /// itself goes away (`tearDown()`).
     func cancel() {
         cancelRequested = true
         runTask?.cancel()
@@ -353,6 +418,11 @@ final class ExportConfirmationViewModel: ObservableObject {
               case .exporting(let current) = clips[index].phase
         else { return }
         clips[index].phase = .exporting(fraction: max(current, min(max(fraction, 0), 1)))
+    }
+
+    private func setFileURL(at index: Int, to fileURL: URL) {
+        guard clips.indices.contains(index) else { return }
+        clips[index].fileURL = fileURL
     }
 
     private func setPhase(at index: Int, to phase: Phase) {

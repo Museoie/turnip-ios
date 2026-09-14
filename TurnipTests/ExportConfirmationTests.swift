@@ -53,6 +53,9 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         var exportCalls: [(window: TrickWindow, cropRect: NormalizedRect)] = []
         var savedURLs: [URL] = []
         var directoryExistedAtCall: [Bool] = []
+        /// The directory each export was handed, in call order — the seam a test
+        /// reads to tell "one scratch directory per screen" from "one per run".
+        var directoriesAtCall: [URL] = []
         var exportResults: [Result<URL, Error>]
         var saveResults: [Result<Void, Error>]
         /// Fractions the fake reports through the progress handler, in order.
@@ -63,6 +66,10 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         var stashProgressHandler = false
         var stashedProgressHandlers: [@Sendable (Double) -> Void] = []
         var gateNextExport = false
+        /// Export call indices (0-based) to park. A set rather than the one-shot
+        /// `gateNextExport` flag so a test can park a later call without having to
+        /// arm the gate mid-run, which races the call it means to park.
+        var gatedExportCalls: Set<Int> = []
         var gateNextSave = false
         /// Parked gates in arrival order. A FIFO, not a single slot: tests park more
         /// than one export at a time, and a single slot lets the second park
@@ -85,7 +92,9 @@ final class ExportConfirmationViewModelTests: XCTestCase {
             _ directory: URL,
             _ progress: @escaping @Sendable (Double) -> Void
         ) async throws -> URL {
+            let callIndex = exportCalls.count
             exportCalls.append((window, cropRect))
+            directoriesAtCall.append(directory)
             directoryExistedAtCall.append(
                 FileManager.default.fileExists(atPath: directory.path))
             if stashProgressHandler {
@@ -96,8 +105,9 @@ final class ExportConfirmationViewModelTests: XCTestCase {
                     progress(fraction)
                 }
             }
-            if gateNextExport {
+            if gateNextExport || gatedExportCalls.contains(callIndex) {
                 gateNextExport = false
+                gatedExportCalls.remove(callIndex)
                 await withCheckedContinuation { gates.append($0) }
             }
             guard !exportResults.isEmpty else {
@@ -266,9 +276,13 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.summaryText, "Export cancelled — 1 of 2 clips saved to Photos")
     }
 
-    func testScratchDirectoryIsCreatedForTheRunAndRemovedAfter() async {
+    /// The exported files outlive their run: the share sheet hands the system a file
+    /// URL, so the summary can only offer a Share action for files that are still on
+    /// disk. The screen going away — `tearDown()` — is what removes them.
+    func testScratchDirectorySurvivesTheRunAndIsRemovedOnTeardown() async {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("turnip-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
         let fake = FakeExport(exportResults: Self.exportSuccesses(1))
         let viewModel = viewModel(
             items: [item()], fake: fake, makeDirectory: { directory })
@@ -278,7 +292,160 @@ final class ExportConfirmationViewModelTests: XCTestCase {
 
         let directoryExisted = await fake.directoryExistedAtCall
         XCTAssertEqual(directoryExisted, [true])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.path))
+        XCTAssertNotNil(viewModel.clips[0].shareURL)
+
+        viewModel.tearDown()
+        await viewModel.cleanupTask?.value
+
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+        // The rows stop offering files that are on their way out, rather than
+        // pointing the share sheet at a path the teardown just deleted.
+        XCTAssertNil(viewModel.clips[0].fileURL)
+        XCTAssertNil(viewModel.clips[0].shareURL)
+    }
+
+    func testExportedFileIsOfferedToTheShareSheet() async {
+        let exported = URL(fileURLWithPath: "/tmp/fake-export-1.mp4")
+        let fake = FakeExport(exportResults: [.success(exported)])
+        let viewModel = viewModel(items: [item()], fake: fake)
+
+        viewModel.start()
+        await Self.waitUntilFinished(viewModel)
+
+        XCTAssertEqual(viewModel.clips[0].phase, .saved)
+        XCTAssertEqual(viewModel.clips[0].shareURL, exported)
+    }
+
+    /// Nothing is shareable before the export step returns: the file is still being
+    /// written, and a share sheet over a half-written video fails at every
+    /// destination.
+    func testClipIsNotShareableWhileItIsStillExporting() async {
+        let fake = FakeExport(exportResults: Self.exportSuccesses(1))
+        await fake.setGateNextExport()
+        let viewModel = viewModel(items: [item()], fake: fake)
+
+        viewModel.start()
+        await Self.waitForFullExportProgress(viewModel)
+        XCTAssertNil(viewModel.clips[0].shareURL)
+
+        await fake.openGate()
+        await Self.waitUntilFinished(viewModel)
+        XCTAssertNotNil(viewModel.clips[0].shareURL)
+    }
+
+    /// The Photos write is the one in-flight step where the file URL is already
+    /// recorded, so this discriminates the phase gate rather than the absence of a
+    /// URL: dropping `.saving` from the unshareable side leaves this failing.
+    func testClipIsNotShareableWhileThePhotosWriteRuns() async {
+        let fake = FakeExport(exportResults: Self.exportSuccesses(1))
+        await fake.setGateNextSave()
+        let viewModel = viewModel(items: [item()], fake: fake)
+
+        viewModel.start()
+        await Self.waitForPhase(viewModel, .saving)
+        XCTAssertNotNil(viewModel.clips[0].fileURL)
+        XCTAssertNil(viewModel.clips[0].shareURL)
+
+        await fake.openGate()
+        await Self.waitUntilFinished(viewModel)
+        XCTAssertNotNil(viewModel.clips[0].shareURL)
+    }
+
+    /// A Photos-save failure leaves a perfectly good file on disk. Sharing it to
+    /// Messages or AirDrop is the way out of a revoked Photos permission, so the
+    /// failed row keeps its Share action.
+    func testPhotosSaveFailureStillOffersTheFileForSharing() async {
+        let exported = URL(fileURLWithPath: "/tmp/fake-export-1.mp4")
+        let fake = FakeExport(
+            exportResults: [.success(exported)],
+            saveResults: [.failure(ExportConfirmationError.photosSaveFailed(reason: "denied"))])
+        let viewModel = viewModel(items: [item()], fake: fake)
+
+        viewModel.start()
+        await Self.waitUntilFinished(viewModel)
+
+        XCTAssertEqual(
+            viewModel.clips[0].phase,
+            .failed(reason: "Couldn't save to Photos — denied"))
+        XCTAssertEqual(viewModel.clips[0].shareURL, exported)
+    }
+
+    /// An export that never produced a file has nothing to hand off — the failed row
+    /// must not offer a Share action over a file that was never written.
+    func testExportFailureOffersNothingToShare() async {
+        let fake = FakeExport(
+            exportResults: [.failure(ExportConfirmationError.exportFailed(reason: "boom"))])
+        let viewModel = viewModel(items: [item()], fake: fake)
+
+        viewModel.start()
+        await Self.waitUntilFinished(viewModel)
+
+        XCTAssertEqual(viewModel.clips[0].phase, .failed(reason: "Export failed — boom"))
+        XCTAssertNil(viewModel.clips[0].fileURL)
+        XCTAssertNil(viewModel.clips[0].shareURL)
+    }
+
+    /// A restart re-exports every unfinished clip, so a clip that exported but failed
+    /// its Photos write has its URL dropped at the reset rather than left pointing at
+    /// the output the new run is about to replace. Asserted on `fileURL`, not
+    /// `shareURL`: a clip mid-restart is unshareable either way, so only the stored
+    /// URL discriminates the reset.
+    func testRestartDropsTheSupersededFileURL() async {
+        let first = URL(fileURLWithPath: "/tmp/fake-export-1.mp4")
+        let second = URL(fileURLWithPath: "/tmp/fake-export-2.mp4")
+        let third = URL(fileURLWithPath: "/tmp/fake-export-3.mp4")
+        let fake = FakeExport(
+            exportResults: [.success(first), .success(second), .success(third)],
+            saveResults: [.failure(ExportConfirmationError.photosSaveFailed(reason: "denied"))])
+        // Park the second export — the run is only restartable while it is still
+        // draining, and clip 1 must have finished failing before that.
+        await fake.setGatedExportCalls([1])
+        let viewModel = viewModel(items: [item(), item(start: 9, end: 11.5)], fake: fake)
+
+        viewModel.start()
+        await Self.waitForFullExportProgress(viewModel, index: 1)
+        XCTAssertEqual(viewModel.clips[0].fileURL, first)
+
+        viewModel.cancel()
+        viewModel.start(userInitiated: true)
+        XCTAssertEqual(viewModel.clips[0].phase, .pending)
+        XCTAssertNil(viewModel.clips[0].fileURL)
+
+        await fake.openGate()
+        await Self.waitUntilFinished(viewModel)
+        XCTAssertEqual(viewModel.clips[0].phase, .saved)
+        XCTAssertEqual(viewModel.clips[0].fileURL, third)
+    }
+
+    /// One scratch directory per screen, not per run: a restart writing into a fresh
+    /// directory would strand the files the earlier run already exported, and their
+    /// rows go on offering a Share action for them.
+    func testRestartExportsIntoTheSameScratchDirectory() async {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("turnip-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let fake = FakeExport(exportResults: Self.exportSuccesses(2))
+        await fake.setGateNextExport()
+        let viewModel = viewModel(
+            items: [item(), item(start: 9, end: 11.5)], fake: fake,
+            // A fresh directory per call, so the assertion below discriminates: with
+            // a per-run directory the two exports land in different folders.
+            makeDirectory: {
+                parent.appendingPathComponent(
+                    "\(exportDirectoryNamePrefix)\(UUID().uuidString)", isDirectory: true)
+            })
+
+        viewModel.start()
+        await Self.waitForFullExportProgress(viewModel)
+        viewModel.cancel()
+        viewModel.start(userInitiated: true)
+        await fake.openGate()
+        await Self.waitUntilFinished(viewModel)
+
+        let directories = await fake.directoriesAtCall
+        XCTAssertEqual(directories.count, 2)
+        XCTAssertEqual(Set(directories).count, 1)
     }
 
     /// A killed run never executes `start()`'s cleanup `defer`, orphaning its
@@ -450,4 +617,5 @@ private extension ExportConfirmationViewModelTests.FakeExport {
     func setGateNextSave() { gateNextSave = true }
     func setProgressFractions(_ fractions: [Double]) { progressFractions = fractions }
     func setStashProgressHandler() { stashProgressHandler = true }
+    func setGatedExportCalls(_ indices: Set<Int>) { gatedExportCalls = indices }
 }
