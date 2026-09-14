@@ -1,5 +1,6 @@
 #if DEBUG
 import AVFoundation
+import CoreVideo
 import SwiftUI
 
 /// UI-test screenshot harness for the export confirmation screen.
@@ -44,6 +45,206 @@ struct ScreenshotHarness: View {
                 },
                 saveToPhotos: { _ in }
             )
+        }
+    }
+}
+
+// MARK: - Home
+
+/// Home's Photos-denied empty state (`-screenshotHome`).
+///
+/// The only Home state scriptable without the Photos library: the gallery grid needs
+/// real `PHAsset`s, which have no public initializer, and launching the real `HomeView`
+/// would raise the system permission prompt in the simulator. The denied state is pure
+/// SwiftUI and deterministic.
+struct ScreenshotHomeHarness: View {
+    var body: some View {
+        NavigationStack {
+            PhotosAccessDeniedView(restricted: false)
+                .navigationTitle("Turnip")
+        }
+    }
+}
+
+// MARK: - Clip list
+
+/// Clip list triage (`-screenshotClipList`): three detected windows, one discarded.
+/// Thumbnails render as their placeholder tiles — `/dev/null` decodes nothing, and
+/// the loader fails gracefully to the placeholder (the honest fallback).
+struct ScreenshotClipListHarness: View {
+    var body: some View {
+        NavigationStack {
+            ClipListView(
+                items: [
+                    ClipListItem(
+                        window: TrickWindow(startTime: 2, endTime: 5),
+                        cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)),
+                    ClipListItem(
+                        window: TrickWindow(startTime: 9, endTime: 11.5),
+                        cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)),
+                    ClipListItem(
+                        window: TrickWindow(startTime: 20, endTime: 22.4),
+                        cropRect: NormalizedRect(minX: 0.1, maxX: 0.9, minY: 0.2, maxY: 0.8),
+                        isKept: false)
+                ],
+                asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")))
+        }
+    }
+}
+
+// MARK: - Clip editor
+
+/// Clip editor (`-screenshotClipEditor`): the trimmed clip looping with its live crop
+/// rect, the trim slider, and the keep toggle.
+///
+/// The editor needs real media — `/dev/null` isn't one, so `prepare()` takes the
+/// load-failure path and the screenshot would show "Couldn't load this clip", which
+/// reads as a broken screen. The harness writes a tiny generated sample movie (six
+/// seconds of solid-color frames) so it renders the real editor UI instead. Same
+/// `AVAssetWriter` pattern as the `ClipEditorView` preview. If generation fails the
+/// URL falls back to `/dev/null` and the harness degrades to the (deterministic)
+/// load-failure state instead of crashing.
+struct ScreenshotClipEditorHarness: View {
+    /// Generated once per process: `prepare()` needs the file to exist before the
+    /// view appears, and re-encoding on every body evaluation would be wasteful.
+    /// `static let` is lazily initialized and thread-safe.
+    private static let sampleMovieURL: URL = makeScreenshotSampleMovie()
+
+    var body: some View {
+        NavigationStack {
+            ClipEditorView(
+                source: ClipEditorSource(
+                    window: TrickWindow(startTime: 2, endTime: 5),
+                    cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.25, maxY: 0.75),
+                    isKept: true,
+                    asset: AVURLAsset(url: Self.sampleMovieURL),
+                    poseFrames: []),
+                onCommit: { _ in })
+        }
+    }
+}
+
+/// Writes the sample movie for `ScreenshotClipEditorHarness`: six seconds of
+/// solid-color H.264 frames at 320x568. Synchronous — the write is a few hundred
+/// local frames, so the bounded spin below finishes in well under a second.
+private func makeScreenshotSampleMovie() -> URL {
+    let url = URL.temporaryDirectory.appending(path: "ScreenshotSample-\(UUID().uuidString).mov")
+    do {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let width = 320
+        let height = 568
+        let fps: Int32 = 30
+        let input = AVAssetWriterInput(
+            mediaType: .video,
+            outputSettings: [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height
+            ])
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height
+            ])
+        guard writer.canAdd(input), writer.startWriting() else {
+            throw ScreenshotMovieError.setupFailed
+        }
+        writer.add(input)
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<(6 * Int(fps)) {
+            // Bounded on writer status: if the writer fails mid-write,
+            // `isReadyForMoreMediaData` never becomes true, and without the status
+            // check the loop would spin with no cause.
+            var spins = 0
+            while !input.isReadyForMoreMediaData, writer.status == .writing, spins < 500 {
+                Thread.sleep(forTimeInterval: 0.002)
+                spins += 1
+            }
+            guard let pool = adaptor.pixelBufferPool else {
+                throw ScreenshotMovieError.setupFailed
+            }
+            var pixelBuffer: CVPixelBuffer?
+            let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+            guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
+                throw ScreenshotMovieError.setupFailed
+            }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let base = CVPixelBufferGetBaseAddress(buffer) {
+                let bytes = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
+                // Vary the fill per frame so the encoder emits real (non-skipped) frames.
+                memset(base, Int32(frame % 255), bytes)
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            let time = CMTime(value: CMTimeValue(frame), timescale: fps)
+            guard adaptor.append(buffer, withPresentationTime: time) else {
+                throw ScreenshotMovieError.appendFailed
+            }
+        }
+        input.markAsFinished()
+        let finished = DispatchSemaphore(value: 0)
+        // The completion handler runs off the main thread, so waiting here can't deadlock.
+        writer.finishWriting { finished.signal() }
+        finished.wait()
+        guard writer.status == .completed else { throw ScreenshotMovieError.finishFailed }
+        return url
+    } catch {
+        try? FileManager.default.removeItem(at: url)
+        return URL(fileURLWithPath: "/dev/null")
+    }
+}
+
+private enum ScreenshotMovieError: Error {
+    case setupFailed, appendFailed, finishFailed
+}
+
+// MARK: - Processing
+
+/// Processing mid-run (`-screenshotProcessing`): the stub runner reports one progress
+/// report ("Analyzing frame 400 of 1200") and then holds the run open so the UI test
+/// screenshots the progress state — the test runner kills the app before the hold
+/// expires. No inference, no model, no video file.
+struct ScreenshotProcessingHarness: View {
+    var body: some View {
+        NavigationStack {
+            ProcessingView(
+                video: SelectedVideo(
+                    assetIdentifier: "screenshot",
+                    asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
+                    duration: 60),
+                runner: ScreenshotProcessingRunner(),
+                destination: { _ in EmptyView() })
+        }
+    }
+}
+
+/// Scripted `ProcessingRunning` for the harness: one mid-run progress report, then hold.
+private struct ScreenshotProcessingRunner: ProcessingRunning {
+    func run(
+        video: SelectedVideo,
+        onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
+    ) async throws -> ProcessingResult {
+        await onProgress(ProcessingProgress(frame: 400, totalFrames: 1200))
+        try await Task.sleep(for: .seconds(60))
+        throw CancellationError()
+    }
+}
+
+// MARK: - Pose diagnostic
+
+/// Pose diagnostic before a run (`-screenshotPoseDiagnostic`): the video length and
+/// the "Run diagnostic" button. No inference runs until the button is tapped, so the
+/// initial state needs neither the model nor a real video file.
+struct ScreenshotPoseDiagnosticHarness: View {
+    var body: some View {
+        NavigationStack {
+            PoseDiagnosticView(
+                video: SelectedVideo(
+                    assetIdentifier: "screenshot",
+                    asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
+                    duration: 12))
         }
     }
 }

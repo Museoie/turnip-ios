@@ -22,6 +22,16 @@ struct TurnipApp: App {
                     ScreenshotHarness(finishImmediately: true)
                 } else if CommandLine.arguments.contains("-screenshotExportConfirmation") {
                     ScreenshotHarness(finishImmediately: false)
+                } else if CommandLine.arguments.contains("-screenshotHome") {
+                    ScreenshotHomeHarness()
+                } else if CommandLine.arguments.contains("-screenshotClipList") {
+                    ScreenshotClipListHarness()
+                } else if CommandLine.arguments.contains("-screenshotClipEditor") {
+                    ScreenshotClipEditorHarness()
+                } else if CommandLine.arguments.contains("-screenshotProcessing") {
+                    ScreenshotProcessingHarness()
+                } else if CommandLine.arguments.contains("-screenshotPoseDiagnostic") {
+                    ScreenshotPoseDiagnosticHarness()
                 } else {
                     ContentView()
                 }
