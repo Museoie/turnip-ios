@@ -7,34 +7,33 @@ movenet_thunder_int8.tflite
 ```
 
 This file is **not committed to the repo** (see the root `.gitignore`) — it's a ~7 MB binary
-ML artifact, and downloading it automatically without a human confirming provenance/license/
-variant isn't something the tooling does on your behalf. The app builds and runs without it;
+ML artifact. Release builds (Xcode Cloud → TestFlight) download and checksum-verify it in
+`ci_scripts/ci_post_clone.sh`, so it is always inside the archived app bundle. For local
+development, fetch it yourself with the steps below. The app builds and runs without it;
 the pose diagnostic screen will just show a "model not found" error until it's in place.
 
 ## Getting the file
 
-The model is the `singlepose-thunder-tflite-int8` instance of `google/movenet` — a TF Lite
-int8 build of `google/movenet/singlepose/thunder/4`, published under **Apache 2.0**, which is
-the licensing `docs/DESIGN.md` assumes when it bundles the weights. Its page is:
+The model is the TF Lite int8 build of `google/movenet/singlepose/thunder/4`, published
+under **Apache 2.0**, which is the licensing `docs/DESIGN.md` assumes when it bundles the
+weights. Download it from TF Hub — no account needed, and the URL serves the raw `.tflite`
+directly. From the repo root:
 
 ```
-https://www.kaggle.com/models/google/movenet/tfLite/singlepose-thunder-tflite-int8
+$ curl -L -o Turnip/Models/movenet_thunder_int8.tflite \
+    "https://tfhub.dev/google/lite-model/movenet/singlepose/thunder/tflite/int8/4?lite-format=tflite"
+$ shasum -a 256 Turnip/Models/movenet_thunder_int8.tflite
 ```
 
-Downloading needs no account. From the repo root:
+The second command must print the checksum recorded below — run it, because the load-time
+check in `MoveNetThunderModel` cannot tell the float16 build apart from this one, so the
+checksum is what separates them (see "Checking you got the right file").
 
-```
-$ curl -L -o /tmp/movenet.tar.gz \
-    https://www.kaggle.com/api/v1/models/google/movenet/tfLite/singlepose-thunder-tflite-int8/1/download
-$ tar xzf /tmp/movenet.tar.gz -C /tmp
-$ mv /tmp/4.tflite Turnip/Models/movenet_thunder_int8.tflite
-```
-
-The archive holds a single file named for the source model version (`4.tflite`); the `mv`
-gives it the name the bundle lookup expects.
-
-Provenance last checked **2026-09-10**: page live, instance version 1, license Apache 2.0, and
-the downloaded bytes match the checksum below.
+Provenance last checked **2026-09-14**: the TF Hub URL serves bytes matching the checksum
+below. (The Kaggle model page,
+`https://www.kaggle.com/models/google/movenet/tfLite/singlepose-thunder-tflite-int8`, is
+still live under Apache 2.0, but its API download endpoint now returns 404, so TF Hub is
+the fetch path.)
 
 ## Checking you got the right file
 
