@@ -9,9 +9,10 @@ import Foundation
 /// atomically stage them. The running session never hot-swaps models
 /// mid-inference — staging only affects what the next launch loads.
 ///
-/// An actor for two reasons: the check is `async` throughout (network, disk),
-/// and `lastError` is written from the check's continuation, so actor
-/// isolation keeps the read in tests data-race-free without manual locking.
+/// An actor for three reasons: the check is `async` throughout (network,
+/// disk), `lastError` is written from the check's continuation, and the
+/// single-flight guard needs its try-acquire to be atomic. Actor isolation
+/// keeps all three data-race-free without manual locking.
 ///
 /// The service never throws: every failure is recorded on `lastError` and the
 /// previously staged model keeps serving. A failed update must be silent to
@@ -33,6 +34,12 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
     /// boxed at the catch site.
     private(set) var lastError: ModelUpdateError?
 
+    /// Whether a check is currently in flight. Set before the first await and
+    /// cleared in `defer`, so the try-acquire in `checkForUpdates` is atomic
+    /// under actor isolation: the first caller wins and every overlapping
+    /// caller is suppressed rather than queued.
+    private var isChecking = false
+
     init(baseURL: URL?, client: Client, store: ModelUpdateStore) {
         self.baseURL = baseURL
         self.client = client
@@ -40,6 +47,17 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
     }
 
     func checkForUpdates() async {
+        // didBecomeActive fires on every foreground transition and each
+        // firing spawns its own detached task, so two firings in quick
+        // succession (app-switcher bounce, notification shade) would each
+        // fetch the manifest and download the ~7MB model bytes — and two
+        // stages of different versions racing leave the loser's bytes
+        // orphaned in Application Support. Try-acquire, not queued: the
+        // in-flight check already covers what the duplicate wanted.
+        guard !isChecking else { return }
+        isChecking = true
+        defer { isChecking = false }
+
         lastError = nil
         guard let baseURL else { return }
 

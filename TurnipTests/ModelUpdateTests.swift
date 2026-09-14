@@ -250,6 +250,36 @@ final class ModelUpdateTests: XCTestCase {
         XCTAssertNil(lastError)
     }
 
+    /// Two overlapping checks must not both hit the network: the second is
+    /// suppressed while the first is in flight, so one foreground-bounce
+    /// costs a single manifest fetch instead of two downloads racing. Fails
+    /// against the old implementation, which ran every call to completion.
+    func testOverlappingChecksAreSuppressed() async throws {
+        let store = makeStore()
+        let client = MockModelUpdateClient()
+        let bytes = Data("fake-model-bytes".utf8)
+        await client.setManifest(makeManifest(version: "2026.09.10-1", bytes: bytes))
+        await client.setDownloadBytes(bytes)
+        let service = makeService(client: client, store: store)
+
+        let first = Task.detached { await service.checkForUpdates() }
+        // Spin until the first check has entered its manifest fetch: the
+        // in-flight flag is set before the first await, so from here on the
+        // second check is guaranteed to overlap it.
+        var spins = 0
+        while await client.fetchedEndpoints.isEmpty, spins < 100_000 {
+            spins += 1
+            await Task.yield()
+        }
+        XCTAssertFalse(await client.fetchedEndpoints.isEmpty)
+
+        await service.checkForUpdates() // must be suppressed, not queued
+        await first.value
+
+        let fetched = await client.fetchedEndpoints
+        XCTAssertEqual(fetched.count, 1)
+    }
+
     /// A manifest whose fileName tries to escape the OTA directory must be
     /// rejected before anything is written.
     func testUnsafeFileNameIsRejected() async throws {
