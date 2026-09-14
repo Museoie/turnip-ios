@@ -75,7 +75,7 @@ actor ClipThumbnailLoader {
     /// `nil` for degenerate inputs.
     ///
     /// Pure so the geometry is unit-testable without an asset; the 90°-rotation test is the
-    /// discriminating case, since it fails if the transform is applied in the wrong space
+    /// discriminating case, since it fails if the rect is denormalized in the wrong space
     /// (encoded vs. displayed).
     static func displayedCropRect(
         cropRect: NormalizedRect,
