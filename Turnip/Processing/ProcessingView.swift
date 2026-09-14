@@ -9,9 +9,9 @@ import SwiftUI
 /// stay on this screen with a way back. Like the other pushed screens, it declares no
 /// `NavigationStack` of its own.
 ///
-/// The success destination is injected rather than hardcoded to the clip list, whose type
-/// does not exist on `main` yet: Home wires
-/// `ProcessingView(video:) { result in ClipListView(...) }` once it lands.
+/// The success destination is injected rather than hardcoded to the clip list, so
+/// `Processing` never depends on `ClipList`'s view type (`ClipListView`): the screen
+/// that pushes this one supplies `destination`.
 struct ProcessingView<Destination: View>: View {
     let video: SelectedVideo
     let destination: (ProcessingResult) -> Destination
