@@ -4,8 +4,9 @@ import Foundation
 
 /// The clip editor's state (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
-/// Holds the draft trim window, the live crop rect, and the keep/discard decision; the view
-/// commits `result` on back-navigation — no separate save step, per the design doc.
+/// Holds the draft trim window, the live crop rect, the keep/discard decision, and the
+/// preview framing (cropped export framing vs. full frame); the view commits `result`
+/// on back-navigation — no separate save step, per the design doc.
 /// Trimming re-derives the crop rect from the pose frames in play via `CropRectCalculator`:
 /// the rect is a function of the window, so it has to follow the handles. Playback loops
 /// the draft window; dragging a handle pauses and seeks to the handle so the preview shows
@@ -24,6 +25,11 @@ final class ClipEditorViewModel: ObservableObject {
     @Published private(set) var window: TrickWindow
     @Published private(set) var cropRect: NormalizedRect
     @Published var isKept: Bool
+    /// Whether the preview shows the cropped export framing (default) or the full
+    /// landscape frame with the crop rect overlaid. `docs/UIUX.md` § "Clip Detail /
+    /// Editor" records the decision (issue #88): what the user sees by default is what
+    /// the export produces.
+    @Published var showsCroppedPreview = true
     @Published private(set) var duration: TimeInterval?
     @Published private(set) var playbackTime: TimeInterval = 0
 
@@ -150,6 +156,12 @@ final class ClipEditorViewModel: ObservableObject {
         isKept.toggle()
     }
 
+    /// Flips the preview between the cropped export framing and the full frame with
+    /// the crop rect overlaid (issue #88).
+    func togglePreviewFraming() {
+        showsCroppedPreview.toggle()
+    }
+
     /// Drags the start handle to `time`, clamped into `[0, end - minimumClipDuration]`.
     /// Pauses and seeks to the handle so the preview shows the frame being trimmed to. A
     /// no-op until `prepare()` has loaded the duration.
@@ -227,6 +239,22 @@ final class ClipEditorViewModel: ObservableObject {
         let displayed = cropRect.denormalized(in: displayedSize)
         guard displayed.width > 0, displayed.height > 0 else { return nil }
         return displayed
+    }
+
+    /// The zoom-and-shift that renders the cropped preview from the full-frame layout:
+    /// scale the frame (laid out at `containerWidth` wide, `hole` in the same points)
+    /// so the crop hole fills the container's width, then shift the hole's top-left to
+    /// the container's origin. The view applies the zoom about the top-leading corner,
+    /// so the shift is the hole's scaled origin negated. Pure so the layout math is
+    /// unit-testable.
+    nonisolated static func croppedPreviewLayout(
+        hole: CGRect, containerWidth: CGFloat
+    ) -> (zoom: CGFloat, offset: CGSize) {
+        guard hole.width > 0 else { return (zoom: 1, offset: .zero) }
+        let zoom = containerWidth / hole.width
+        return (
+            zoom: zoom,
+            offset: CGSize(width: -hole.minX * zoom, height: -hole.minY * zoom))
     }
 
     /// The frame size as the player shows it: the encoded frame's corners through

@@ -89,10 +89,11 @@ flowchart TD
 
 - The piece missing from #11 as currently scoped. Full-screen, one clip at a
   time:
-  - Video player showing the trimmed clip looping, with the live crop rect drawn over
-    the displayed frame: the dimmed surround marks what export cuts away. The preview
-    stays uncropped — the full frame is the better editing affordance, keeping the trim
-    handles' surrounding context visible.
+  - Video player showing the trimmed clip looping, cropped to the 9:16 export framing
+    by default — what the user sees is what the export produces (issue #88). A "Show
+    full frame" toggle switches to the whole landscape frame with the live crop rect
+    drawn over it; the dimmed surround marks what export cuts away, for surrounding
+    context while trimming.
   - Scrub bar with drag handles on start/end (adjusts the trick window from
     issue #8's output; live-updates the crop rect per issue #9 if the window
     changes, since the crop rect is a function of which frames are in play).
@@ -144,3 +145,12 @@ Resolved 2026-09-04.
    in #21), and users will background or leave the screen anyway — a clean
    cancel beats a stuck screen. The flow diagram's `Processing → Home` edge
    covers this path.
+4. **Preview framing → Cropped by default, with a full-frame toggle.** Recorded
+   2026-09-14 (issue #88), answering the orientation note on issue #18
+   (2026-09-05): the editor's player shows the cropped 9:16 framing by default,
+   since most v1 footage is landscape from tripod-mounted phones and judging the
+   export through the uncropped preview's narrow crop hole hid what the auto-crop
+   cut away. A toggle shows the full landscape frame with the crop rect overlaid
+   for surrounding context while trimming. *Reopen if:* real-footage testing (#2)
+   shows users trim more accurately with the full frame up front, or the extra
+   tap costs more certainty than it buys.
