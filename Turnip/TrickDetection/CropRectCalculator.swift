@@ -43,21 +43,37 @@ struct CropRectCalculator: Sendable {
     /// Fraction of the athlete's bounding box added to each of its four sides, covering both
     /// breathing room and the pose model's tendency to undershoot limbs at the frame edge.
     let paddingFraction: Float
+    /// Minimum extent of the athlete's bounding box, as a fraction of the rendered frame's
+    /// shorter axis. Applied to the raw box before padding: a box smaller than this is not a
+    /// located athlete — one confident keypoint, or a tight face-only cluster — and without
+    /// a floor it collapses to a zero-area (or near-zero-area) rect that every later stage
+    /// preserves, exporting a clip upscaled from a sliver of source pixels. The floor grows
+    /// the box around its own center, so weakly-posed output still yields a clip instead of
+    /// a degenerate rect. Measured against the shorter axis so it means the same pixel size
+    /// on both orientations.
+    let minimumExtentFraction: Float
 
-    init(targetAspectRatio: Float = 9.0 / 16.0, paddingFraction: Float = 0.25) {
+    init(targetAspectRatio: Float = 9.0 / 16.0, paddingFraction: Float = 0.25,
+         minimumExtentFraction: Float = 0.05) {
         precondition(targetAspectRatio > 0, "targetAspectRatio is width over height and must be positive")
         precondition(paddingFraction >= 0, "paddingFraction adds to each side and cannot be negative")
+        precondition(minimumExtentFraction >= 0, "minimumExtentFraction floors the box extent and cannot be negative")
         self.targetAspectRatio = targetAspectRatio
         self.paddingFraction = paddingFraction
+        self.minimumExtentFraction = minimumExtentFraction
     }
 
     /// `nil` when the window holds no keypoint above the confidence threshold, or when the
     /// rendered-frame dimensions are unknown — in either case the athlete cannot be located in pixels.
+    /// A box smaller than `minimumExtentFraction` of the shorter rendered axis is grown to
+    /// that floor before padding: a one-keypoint or tight-cluster window is not a located
+    /// athlete, but it still yields a clip rather than a degenerate rect.
     func cropRect(for frames: [PoseFrameResult], renderedPixelSize: CGSize) -> NormalizedRect? {
         guard renderedPixelSize.width > 0, renderedPixelSize.height > 0,
               let athlete = boundingBox(across: frames) else { return nil }
 
-        let paddedBox = padded(athlete)
+        let flooredBox = flooredToMinimumExtent(athlete, renderedPixelSize: renderedPixelSize)
+        let paddedBox = padded(flooredBox)
         return fittedInFrame(snappedToTargetRatio(paddedBox, renderedPixelSize: renderedPixelSize))
     }
 
@@ -77,6 +93,25 @@ struct CropRectCalculator: Sendable {
                 maxY: max(box.maxY, keypoint.y)
             )
         }
+    }
+
+    /// Grows a degenerate or near-coincident box around its own center until both axes clear
+    /// the minimum extent, so a one-keypoint or tight-cluster window keeps a clip instead of
+    /// collapsing to a zero-area rect. Measured against the shorter rendered axis so the floor
+    /// means the same pixel size on both orientations.
+    private func flooredToMinimumExtent(
+        _ box: NormalizedRect, renderedPixelSize: CGSize
+    ) -> NormalizedRect {
+        let shorterAxis = Float(min(renderedPixelSize.width, renderedPixelSize.height))
+        guard minimumExtentFraction > 0 else { return box }
+        let minPixels = minimumExtentFraction * shorterAxis
+        let minWidth = minPixels / Float(renderedPixelSize.width)
+        let minHeight = minPixels / Float(renderedPixelSize.height)
+
+        var grown = box
+        if grown.width < minWidth { grown = grown.resizedHorizontally(to: minWidth) }
+        if grown.height < minHeight { grown = grown.resizedVertically(to: minHeight) }
+        return grown
     }
 
     private func padded(_ box: NormalizedRect) -> NormalizedRect {

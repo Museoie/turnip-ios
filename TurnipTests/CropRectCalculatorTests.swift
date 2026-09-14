@@ -175,10 +175,32 @@ final class CropRectCalculatorTests: XCTestCase {
         XCTAssertNil(CropRectCalculator().cropRect(for: frames, renderedPixelSize: .zero))
     }
 
-    func testSingleConfidentKeypointProducesAFiniteRect() {
+    func testSingleConfidentKeypointIsFlooredToMinimumExtent() {
         let frames = [frame(confident([(x: 0.5, y: 0.5)]))]
 
-        assertRect(CropRectCalculator().cropRect(for: frames, renderedPixelSize: square),
-                   minX: 0.5, maxX: 0.5, minY: 0.5, maxY: 0.5)
+        let rect = CropRectCalculator().cropRect(for: frames, renderedPixelSize: square)
+
+        // One keypoint is a zero-area box, not a located athlete: the 5%-of-shorter-axis floor
+        // grows it to 0.05 x 0.05 around the center before padding and the aspect snap.
+        assertRect(rect, minX: 0.4625, maxX: 0.5375, minY: 0.4333333, maxY: 0.5666667)
+        // The old suite pinned (0.5, 0.5, 0.5, 0.5) here as "finite"; a zero-area rect that
+        // every later stage preserves is exactly what the floor exists to prevent.
+        let pixels = rect!.denormalized(in: square)
+        XCTAssertGreaterThan(pixels.width, 0, "crop width must be positive")
+        XCTAssertGreaterThan(pixels.height, 0, "crop height must be positive")
+    }
+
+    func testNearCoincidentClusterIsFlooredToMinimumExtent() throws {
+        let portrait = CGSize(width: 1080, height: 1920)
+        // Nose + one eye, 0.01 apart in x and 0.005 in y: without the floor this exports a
+        // 16.2 x 28.8-pixel clip upscaled to the full output size.
+        let frames = [frame(confident([(x: 0.495, y: 0.4975), (x: 0.505, y: 0.5025)]))]
+
+        let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: portrait))
+
+        // The 5%-of-1080 floor grows the 0.01 x 0.005 box to 0.05 x 0.028125 around its
+        // center; padding and the 9:16 snap then give a 0.075 x 0.075 normalized rect.
+        assertRect(rect, minX: 0.4625, maxX: 0.5375, minY: 0.4625, maxY: 0.5375)
+        assertPixelRect(rect.denormalized(in: portrait), x: 499.5, y: 888, width: 81, height: 144)
     }
 }
