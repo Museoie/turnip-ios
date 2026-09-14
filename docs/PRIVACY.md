@@ -74,6 +74,19 @@ require a manifest/signature. If a dependency is added, check both.
   never accumulates files. `TurnipApp` sweeps orphans left by crashed sessions
   at launch. The prefix is what makes both the delete and the sweep recognize
   only our files.
+- **Clip exports.** The export-confirmation screen stages each exported clip in
+  a fresh `tmp/turnip-export-<uuid>/` scratch directory and hands it to Photos
+  through `ClipPhotosSaver` (add-only); the whole directory is deleted when the
+  screen goes away (`ExportConfirmationViewModel.tearDown()` waits for the run
+  to drain first) — so a staged temp URL is removed after its Photos save
+  succeeds *and* after it fails (verified, issue #81). Removal waits for screen
+  dismissal rather than happening per clip right after the save, because the
+  Share action hands the system the file itself: a saved clip stays shareable
+  while its row is on screen, and a clip whose Photos save failed deliberately
+  keeps its file — sharing to Messages or AirDrop is the way out of a revoked
+  Photos permission. A screen killed before `tearDown()` is swept by the next
+  screen (`sweepStaleExportDirectories`); the `turnip-export-` prefix is what
+  makes the sweep recognize only our directories.
 - **Thumbnails** are in-memory only (`PHCachingImageManager`), in both
   the Home grid and the clip-list work — there is no on-disk thumbnail
   cache. If one ever lands, it belongs in `Caches/`, never `Documents/`,
@@ -98,6 +111,3 @@ introduced.
 - Analytics / crash-reporting consent — `docs/DESIGN.md` decision #7:
   none in v1; crash/hang metrics arrive Apple-mediated under the user's
   own opt-in.
-- Temp-export cleanup for the clip-export path (issue #10, PR #55):
-  exported clips staged at a temp URL must be deleted after the Photos
-  save succeeds or fails — tracked in issue #81, verified when #55 merges.
