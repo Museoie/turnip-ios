@@ -56,4 +56,4 @@ jobs:
         if: steps.check.outputs.drifted == 'false' && steps.tracker.outputs.number != ''
         env:
           TRACKER: ${{ steps.tracker.outputs.number }}
-        run: gh issue close "$TRACKER" --comment "Both pins are current again."
+        run: gh issue close "$TRACKER" --comment "All three pins are current again."
