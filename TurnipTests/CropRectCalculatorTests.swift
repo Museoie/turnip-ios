@@ -203,4 +203,19 @@ final class CropRectCalculatorTests: XCTestCase {
         assertRect(rect, minX: 0.4625, maxX: 0.5375, minY: 0.4625, maxY: 0.5375)
         assertPixelRect(rect.denormalized(in: portrait), x: 499.5, y: 888, width: 81, height: 144)
     }
+
+    func testFloorMeansTheSamePixelSizeOnLandscape() throws {
+        let landscape = CGSize(width: 1920, height: 1080)
+        // The floor is measured against the shorter axis (1080 here), so a single keypoint on
+        // a landscape source lands on the same 81 x 144-pixel rect as the portrait fixture —
+        // only the normalized shape differs (0.0421875 x 0.1333333) because the normalized
+        // unit is a fraction of each axis. A regression that floored against the wrong axis
+        // (e.g. height for both) would produce 144 x 256 pixels here instead.
+        let frames = [frame(confident([(x: 0.5, y: 0.5)]))]
+
+        let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: landscape))
+
+        assertRect(rect, minX: 0.4789063, maxX: 0.5210938, minY: 0.4333333, maxY: 0.5666667)
+        assertPixelRect(rect.denormalized(in: landscape), x: 919.5, y: 468, width: 81, height: 144)
+    }
 }
