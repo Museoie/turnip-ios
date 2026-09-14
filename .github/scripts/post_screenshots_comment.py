@@ -10,7 +10,8 @@ context with full permissions and secrets, so this script can do both.
 
 Reads PNGs from SCREENSHOTS_DIR (the downloaded `pr-screenshots`
 artifact). PR_NUMBER may be omitted, in which case it is resolved from
-HEAD_SHA via the commits API.
+HEAD_OWNER/HEAD_BRANCH via the pulls API (reliable for fork PRs), falling
+back to HEAD_SHA via the commits API.
 
 Two modes:
   Inline images (preferred): when SCREENSHOTS_PUSH_TOKEN is set -- a
@@ -191,7 +192,11 @@ def push_to_shots_repo(pat, shots_repo, pr_number, run_id, pngs,
 
 
 def resolve_pr_number(token, base_repo, head_sha):
-    """Find the (open) PR whose head is head_sha."""
+    """Find the (open) PR whose head is head_sha.
+
+    NB: the commits API only indexes commits present in the base repo, so
+    this misses fork PRs -- resolve_pr_by_head is preferred.
+    """
     prs = api(token, "GET",
               "/repos/%s/commits/%s/pulls" % (base_repo, head_sha))
     for pr in prs:
@@ -200,6 +205,16 @@ def resolve_pr_number(token, base_repo, head_sha):
     if prs:
         return prs[0]["number"]
     raise RuntimeError("No PR found for commit %s in %s" % (head_sha, base_repo))
+
+
+def resolve_pr_by_head(token, base_repo, head_owner, head_branch):
+    """Find the open PR whose head is owner:branch."""
+    head = "%s:%s" % (head_owner, head_branch)
+    prs = api(token, "GET", "/repos/%s/pulls?head=%s&state=open"
+              % (base_repo, urllib.parse.quote(head, safe="")))
+    if prs:
+        return prs[0]["number"]
+    raise RuntimeError("No open PR for head %s in %s" % (head, base_repo))
 
 
 def find_bot_comment(token, base_repo, pr_number):
@@ -225,8 +240,15 @@ def main():
     sha = os.environ["HEAD_SHA"]
     run_url = "https://github.com/%s/actions/runs/%s" % (base_repo, run_id)
     shots_dir = os.environ["SCREENSHOTS_DIR"]
-    pr_number = os.environ.get("PR_NUMBER") or resolve_pr_number(
-        token, base_repo, sha)
+    # Prefer resolving by head owner:branch: the workflow passes
+    # HEAD_OWNER/HEAD_BRANCH for exactly this, since the commits API only
+    # indexes commits present in the base repo and misses fork PRs by SHA.
+    head_owner = os.environ.get("HEAD_OWNER")
+    head_branch = os.environ.get("HEAD_BRANCH")
+    by_head = (resolve_pr_by_head(token, base_repo, head_owner, head_branch)
+               if head_owner and head_branch else None)
+    pr_number = (os.environ.get("PR_NUMBER") or by_head
+                 or resolve_pr_number(token, base_repo, sha))
 
     pngs = []
     if os.path.isdir(shots_dir):
