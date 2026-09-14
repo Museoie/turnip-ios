@@ -37,7 +37,7 @@ enum VideoResolutionError: LocalizedError {
 /// Where a `PhotoVideoResolver.resolve(_:onProgress:)` call currently is, so the UI can label
 /// each phase honestly instead of branching on whether a bare download fraction happens to be
 /// non-nil.
-enum ResolutionProgress: Equatable {
+enum ResolutionProgress: Equatable, Sendable {
     /// An iCloud download is in flight, with PhotoKit's 0…1 fraction. Only assets PhotoKit
     /// actually downloads ever report this; a local asset resolves without a single event.
     case downloading(Double)
