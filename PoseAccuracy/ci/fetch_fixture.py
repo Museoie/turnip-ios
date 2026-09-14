@@ -35,7 +35,7 @@ def sha256_file(path: str) -> str:
 def fetch_url(url: str, dest: str) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": "turnip-pose-harness/1.0"})
     with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
+        for chunk in iter(lambda: r.read(1 << 20), b""):
             f.write(chunk)
 
 

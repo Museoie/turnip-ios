@@ -1,8 +1,9 @@
 """Shared deterministic frame sampler for the pose-accuracy harness.
 
 Replicates the app's VideoFrameSampler cadence (~10 samples/sec) on this Linux
-box: given a video, yields (frame_index, timestamp_sec, bgr_frame) for the
-deterministically chosen sample indices. Both reference-label generation and
+box: given a video, returns (results, metadata) where results is a list of
+(frame_index, timestamp_sec, bgr_frame) for the deterministically chosen
+sample indices. Both reference-label generation and
 MoveNet candidate extraction MUST use this function so frames stay aligned.
 """
 from __future__ import annotations
@@ -36,6 +37,8 @@ def iter_samples(video_path: str, target_fps: float = TARGET_FPS):
         raise RuntimeError(f"cannot open {video_path}")
     n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     plan = sample_plan(n, fps, target_fps)
     want = {idx for idx, _ in plan}
     idx = 0
@@ -50,6 +53,4 @@ def iter_samples(video_path: str, target_fps: float = TARGET_FPS):
         idx += 1
     cap.release()
     results.sort(key=lambda r: r[0])
-    return results, {"n_frames": n, "fps": fps,
-                     "w": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                     "h": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}
+    return results, {"n_frames": n, "fps": fps, "w": w, "h": h}
