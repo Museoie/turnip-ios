@@ -28,12 +28,15 @@ enum ModelUpdateLifecycle {
     /// Concurrent firings are coalesced: when a check is already running, this
     /// returns immediately — the in-flight check already covers it.
     ///
-    /// Off the main actor by contract: callers must dispatch it from a
-    /// detached task, since the manifest fetch, hashing, and atomic stage must
-    /// not contend with UI work.
-    static func checkForUpdates() async {
-        // nil when there is no Application Support directory — the same
-        // no-op as before, now without allocating a service per firing.
-        await service?.checkForUpdates()
+    /// Synchronous and safe to call from the main actor: the detached
+    /// utility-QoS task is spawned here, so the manifest fetch, hashing, and
+    /// atomic stage structurally cannot run on the main actor, and the QoS /
+    /// off-actor guarantee can't be lost by a future call site.
+    static func checkForUpdates() {
+        Task.detached(priority: .utility) {
+            // nil when there is no Application Support directory — the same
+            // no-op as before, now without allocating a service per firing.
+            await service?.checkForUpdates()
+        }
     }
 }
