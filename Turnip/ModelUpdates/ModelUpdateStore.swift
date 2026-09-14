@@ -17,6 +17,14 @@ import Foundation
 /// the full weights — the exact cost the "cheap manifest fetch per launch"
 /// requirement exists to prevent.
 struct ModelUpdateStore: Sendable {
+    /// Name of the sidecar file the store reserves for its own metadata. It
+    /// is never a valid staged-model name: `stage` rejects it so the model
+    /// bytes and the metadata record can never collide on one path. Compared
+    /// case-insensitively, because the store also runs on case-insensitive
+    /// filesystems (macOS test runners), where `ACTIVE-MODEL.JSON` would hit
+    /// the same path.
+    private static let metadataFileName = "active-model.json"
+
     /// Directory holding the staged model and its metadata. Not created until
     /// the first stage — a store that never stages anything leaves no trace.
     let baseURL: URL
@@ -44,10 +52,14 @@ struct ModelUpdateStore: Sendable {
         // Reject hostile file names before touching the filesystem: the name
         // must be a single path component (no slashes, not empty, not "." or
         // "..") so a malicious manifest can't stage outside the store dir.
+        // The store's own metadata name is reserved too: staging it would
+        // make the model bytes and the metadata record collide on one path,
+        // with the record overwriting the bytes it is meant to describe.
         guard !fileName.isEmpty,
               !fileName.contains("/"),
               fileName != ".",
-              fileName != ".." else {
+              fileName != "..",
+              fileName.lowercased() != Self.metadataFileName else {
             throw ModelUpdateError.invalidManifest
         }
         try FileManager.default.createDirectory(
@@ -60,7 +72,7 @@ struct ModelUpdateStore: Sendable {
     }
 
     private var metadataURL: URL {
-        baseURL.appendingPathComponent("active-model.json")
+        baseURL.appendingPathComponent(Self.metadataFileName)
     }
 
     private func readRecord() throws -> StoredModel? {

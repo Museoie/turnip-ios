@@ -296,6 +296,36 @@ final class ModelUpdateTests: XCTestCase {
         }
     }
 
+    /// The store's own metadata name is reserved: staging a model as
+    /// `active-model.json` must throw `invalidManifest` and leave the store
+    /// untouched. This test fails against the unfixed implementation, which
+    /// wrote the model bytes onto the sidecar path and then let the metadata
+    /// record overwrite them, so the store reported the JSON sidecar as the
+    /// staged model.
+    func testStoreStageRejectsMetadataFileName() throws {
+        let store = makeStore()
+        let version = ModelVersion("2026.09.10-1")
+        for fileName in ["active-model.json", "ACTIVE-MODEL.JSON"] {
+            do {
+                try store.stage(
+                    modelData: Data("fake-model-bytes".utf8),
+                    version: version, fileName: fileName)
+                XCTFail("expected invalidManifest for '\(fileName)'")
+            } catch ModelUpdateError.invalidManifest {
+                // expected
+            } catch {
+                XCTFail("expected invalidManifest, got \(error)")
+            }
+            XCTAssertNil(
+                store.activeVersion(), "nothing staged for '\(fileName)'")
+            XCTAssertNil(
+                store.activeModelURL(), "no model reported for '\(fileName)'")
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: store.baseURL.path),
+            "store directory untouched by rejected stages")
+    }
+
     // MARK: - Client
 
     /// Model bytes are trust material: the client refuses to fetch or download
