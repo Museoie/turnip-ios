@@ -76,7 +76,11 @@ code by itself.
 ## Fixture storage
 
 The fixture videos are Hoie's personal Instagram footage and are **not**
-committed to this repo. CI reads them from `POSE_FIXTURE_URLS` (repo
-Settings → Variables or Secrets): whitespace-separated download URLs, one
-per clip, in `fixture-manifest.json` order. If unset, the job fails loudly —
-it never silently passes. Storage location is still Hoie's call.
+committed to this repo. CI pulls them from his private Cloudflare R2 bucket
+(`turnip-storage`, prefix `turnip-ios-ci-fixtures/`): `ci/fetch_fixture.py`
+downloads each manifest clip as `s3://<bucket>/<prefix><file>` with the
+runner's `aws` CLI and sha256-verifies it. Credentials come from the
+`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, and `R2_ENDPOINT` repo secrets
+(an Object-Read-only token scoped to that bucket). The legacy
+`POSE_FIXTURE_URLS` variable still works if set. If neither source is
+configured, the job fails loudly — it never silently passes.

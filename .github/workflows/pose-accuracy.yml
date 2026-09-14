@@ -98,13 +98,21 @@ jobs:
           echo "::notice::pose-accuracy gate overridden (${{ steps.override.outputs.info }}). Skipping fixture run."
 
       # The fixture videos are Hoie's personal footage and are not committed.
-      # Configure POSE_FIXTURE_URLS (repo Settings > Variables or Secrets): one
-      # download URL per clip, whitespace-separated, in fixture-manifest.json
-      # order. Absent -> the job FAILS loudly (never silently passes).
+      # They live in his private Cloudflare R2 bucket (zero egress fees, so
+      # the per-run downloads cost nothing): fetch_fixture.py pulls each
+      # manifest clip as s3://<bucket>/<prefix><file> with the runner's
+      # preinstalled `aws` CLI and sha256-verifies it. The legacy
+      # POSE_FIXTURE_URLS variable still works if set. With neither source
+      # configured, the job FAILS loudly (never silently passes).
       - name: Fetch fixture clips
         if: steps.override.outputs.overridden != 'true'
         env:
-          POSE_FIXTURE_URLS: ${{ vars.POSE_FIXTURE_URLS }}
+          POSE_FIXTURE_R2_BUCKET: turnip-storage
+          POSE_FIXTURE_R2_PREFIX: turnip-ios-ci-fixtures/
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_REGION: auto
         run: |
           python PoseAccuracy/ci/fetch_fixture.py \
             PoseAccuracy/fixture-manifest.json "$RUNNER_TEMP/fixture"
