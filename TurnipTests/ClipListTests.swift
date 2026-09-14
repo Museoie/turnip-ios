@@ -109,6 +109,75 @@ final class ClipListTests: XCTestCase {
         XCTAssertTrue(viewModel.keptItems.isEmpty)
     }
 
+    // MARK: - Editor and export destinations
+
+    @MainActor
+    func testApplyEditorResultReplacesTheMatchingItem() {
+        let target = makeItem()
+        let other = makeItem()
+        let viewModel = ClipListViewModel(items: [other, target], asset: dummyAsset())
+
+        let result = ClipEditorResult(
+            window: TrickWindow(startTime: 1, endTime: 4),
+            cropRect: NormalizedRect(minX: 0.1, maxX: 0.9, minY: 0.1, maxY: 0.9),
+            isKept: false)
+        viewModel.applyEditorResult(result, to: target.id)
+
+        // The editor's commit lands on the tapped item — window, crop rect, and
+        // keep/discard — and leaves the rest of the list alone.
+        let updated = viewModel.items[1]
+        XCTAssertEqual(updated.id, target.id)
+        XCTAssertEqual(updated.window, result.window)
+        XCTAssertEqual(updated.cropRect, result.cropRect)
+        XCTAssertFalse(updated.isKept)
+        XCTAssertEqual(viewModel.items[0], other)
+    }
+
+    @MainActor
+    func testApplyEditorResultIgnoresUnknownIds() {
+        let item = makeItem()
+        let viewModel = ClipListViewModel(items: [item], asset: dummyAsset())
+
+        viewModel.applyEditorResult(
+            ClipEditorResult(
+                window: TrickWindow(startTime: 1, endTime: 4),
+                cropRect: fullFrame,
+                isKept: false),
+            to: makeItem().id)
+
+        XCTAssertEqual(viewModel.items, [item])
+    }
+
+    @MainActor
+    func testEditorSourceCarriesTheItemAndAsset() {
+        let asset = dummyAsset()
+        let item = makeItem()
+        let viewModel = ClipListViewModel(items: [item], asset: asset)
+
+        let source = viewModel.editorSource(for: item)
+
+        XCTAssertEqual(source.window, item.window)
+        XCTAssertEqual(source.cropRect, item.cropRect)
+        XCTAssertEqual(source.isKept, item.isKept)
+        XCTAssertTrue(source.asset === asset)
+    }
+
+    @MainActor
+    func testExportConfirmationItemsMapsOnlyKeptItems() {
+        let kept = makeItem()
+        let discarded = makeItem(isKept: false)
+        let viewModel = ClipListViewModel(items: [discarded, kept], asset: dummyAsset())
+
+        let items = viewModel.exportConfirmationItems
+
+        // Only the kept clip reaches the confirmation screen, carrying the id,
+        // window, and crop rect it exports with.
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].id, kept.id)
+        XCTAssertEqual(items[0].window, kept.window)
+        XCTAssertEqual(items[0].cropRect, kept.cropRect)
+    }
+
     // MARK: - ClipThumbnailLoader.displayedCropRect
 
     func testDisplayedCropRectWithIdentityTransformIsUnchanged() {
