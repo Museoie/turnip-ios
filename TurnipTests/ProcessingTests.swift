@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreVideo
 import Foundation
 import XCTest
 @testable import Turnip
@@ -114,7 +115,7 @@ final class ProcessingPipelineClipTests: XCTestCase {
             TrickWindow(startTime: 1.15, endTime: 1.65)
         ]
 
-        let clips = pipeline.buildClips(windows: windows, frames: frames, naturalSize: size)
+        let clips = pipeline.buildClips(windows: windows, frames: frames, renderedPixelSize: size)
 
         XCTAssertEqual(clips.count, 2)
         XCTAssertEqual(clips.map(\.window), windows)
@@ -137,7 +138,7 @@ final class ProcessingPipelineClipTests: XCTestCase {
         let clips = ProcessingPipeline().buildClips(
             windows: [TrickWindow(startTime: 0, endTime: 1)],
             frames: frames,
-            naturalSize: size
+            renderedPixelSize: size
         )
 
         // The trick was still detected from the motion signal — it stays visible for triage
@@ -147,8 +148,88 @@ final class ProcessingPipelineClipTests: XCTestCase {
     }
 
     func testBuildClipsWithNoWindowsReturnsNoClips() {
-        let clips = ProcessingPipeline().buildClips(windows: [], frames: frames, naturalSize: size)
+        let clips = ProcessingPipeline().buildClips(windows: [], frames: frames, renderedPixelSize: size)
         XCTAssertTrue(clips.isEmpty)
+    }
+}
+
+/// A scripted `FrameSampling` that emits canned frames with a fixed `renderSize`, ignoring the
+/// asset: the regression test below needs frames whose display-orientation size differs from
+/// the video track's encoded size, which the fixture file alone cannot produce (it is written
+/// unrotated on purpose, so its track carries the landscape size).
+private struct ScriptedSampler: FrameSampling, Sendable {
+    let renderSize: CGSize
+    let results: [PoseFrameResult]
+
+    func sampleFrames(
+        from asset: AVURLAsset,
+        handler: @Sendable (SampledFrame) async throws -> Void
+    ) async throws {
+        for (index, result) in results.enumerated() {
+            var pixelBuffer: CVPixelBuffer?
+            let status = CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                Int(renderSize.width), Int(renderSize.height),
+                kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
+            guard status == kCVReturnSuccess, let pixelBuffer else {
+                throw PoseError.videoLoadFailed(underlying: nil)
+            }
+            try await handler(SampledFrame(
+                frameIndex: index,
+                timestamp: result.timestamp,
+                pixelBuffer: pixelBuffer,
+                renderSize: renderSize
+            ))
+        }
+    }
+}
+
+/// Regression tests for issue #89: `run()` must compute crop rects against the sampled frames'
+/// display-orientation `renderSize`, not the track's encoded `naturalSize`.
+final class ProcessingPipelineRunTests: XCTestCase {
+    /// The track is landscape-encoded (64x48) while the scripted sampler reports the portrait
+    /// renderSize (48x64) the frames were actually decoded at — the iPhone portrait-recording
+    /// shape where the old code transposed the aspect-ratio snap.
+    func testRunComputesCropRectsAgainstTheFramesRenderSize() async throws {
+        let videoURL = try await TestVideoWriter.writeTestVideo(
+            frameCount: 35, width: 64, height: 48, fps: 30)
+        defer { try? FileManager.default.removeItem(at: videoURL) }
+
+        // Vertical slide: 15 quiet frames, 6 moving, 14 quiet — the detector's single-peak
+        // fixture rotated 90°, so the window's athlete box is narrow in x and the aspect snap
+        // has room to discriminate the two sizes instead of clamping to the full frame in both.
+        let yPositions = PoseFixture.slide(
+            quietFrames: 15, from: 0.2, perFrame: 0.1, movingFrames: 6, tailFrames: 14)
+        let fixtures = yPositions.enumerated().map { index, y in
+            PoseFixture.frame(index: index, hip: (x: 0.5, y: y))
+        }
+        let sampler = ScriptedSampler(renderSize: CGSize(width: 48, height: 64), results: fixtures)
+        let makeInference: ProcessingPipeline.InferenceFactory = {
+            { frame in fixtures[frame.frameIndex].keypoints }
+        }
+
+        let pipeline = ProcessingPipeline(sampler: sampler, makeInference: makeInference)
+        let video = SelectedVideo(
+            assetIdentifier: "test",
+            asset: AVURLAsset(url: videoURL),
+            duration: 3.5
+        )
+        let result = try await pipeline.run(video: video) { _ in }
+
+        XCTAssertEqual(result.clips.count, 1, "expected the single-peak fixture to yield one window")
+        let window = result.clips[0].window
+        let inWindow = fixtures.filter {
+            $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
+        }
+        let calculator = CropRectCalculator()
+        let expected = calculator.cropRect(for: inWindow, renderedPixelSize: CGSize(width: 48, height: 64))
+        // The buggy answer: the same frames snapped against the track's encoded size. Asserting
+        // the two differ proves the fixture discriminates — without it the test would pass on
+        // the buggy code too.
+        let buggy = calculator.cropRect(for: inWindow, renderedPixelSize: CGSize(width: 64, height: 48))
+        XCTAssertNotNil(expected)
+        XCTAssertNotEqual(expected, buggy, "fixture does not discriminate the size mixup")
+        XCTAssertEqual(result.clips[0].cropRect, expected)
     }
 }
 
