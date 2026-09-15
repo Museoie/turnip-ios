@@ -404,6 +404,30 @@ final class ModelUpdateTests: XCTestCase {
             bundled)
     }
 
+    /// A missing bundled model doesn't abort resolution before the staged
+    /// file is consulted (inline review on #117): with no bundled path, a
+    /// newer staged model is still the candidate; with no staged model either,
+    /// resolution yields nil and the loader reports `modelNotFound`.
+    func testResolveModelPathWithMissingBundledModelConsultsStaged() {
+        let staged = "/support/ModelUpdates/movenet_thunder_int8.tflite"
+        XCTAssertEqual(
+            MoveNetThunderModel.resolveModelPath(
+                bundledPath: nil,
+                stagedVersion: ModelVersion("2026.09.10-1"),
+                stagedPath: staged),
+            staged)
+        XCTAssertNil(
+            MoveNetThunderModel.resolveModelPath(
+                bundledPath: nil, stagedVersion: nil, stagedPath: nil))
+        // A stale staged version still can't pin a missing bundle to a worse
+        // model: the version floor applies even with no bundled path.
+        XCTAssertNil(
+            MoveNetThunderModel.resolveModelPath(
+                bundledPath: nil,
+                stagedVersion: ModelVersion("0"),
+                stagedPath: staged))
+    }
+
     // MARK: - Store
 
     /// Staging a model under the store's own sidecar name must throw

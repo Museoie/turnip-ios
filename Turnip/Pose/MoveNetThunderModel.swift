@@ -44,21 +44,37 @@ actor MoveNetThunderModel {
     /// OTA wiring (issue #96): a staged model shadows the bundled one only when its manifest
     /// version is newer than `bundledModelVersion`. A staged file that fails to load or to
     /// validate as the Thunder int8 variant falls back to the bundled model rather than leaving
-    /// the app without pose estimation.
+    /// the app without pose estimation. Conversely, a *missing* bundled model (e.g. the #123
+    /// TestFlight failure) no longer aborts loading before the staged file is consulted: the
+    /// candidate is resolved through the store first and the bundled path is only required when
+    /// the candidate *is* the bundled one — `modelNotFound` is thrown only when neither source
+    /// yields a loadable model.
     nonisolated static func load() async throws -> MoveNetThunderModel {
-        let bundledPath = try Self.bundledModelPath()
+        let bundledPath: String?
+        do {
+            bundledPath = try Self.bundledModelPath()
+        } catch PoseError.modelNotFound {
+            // The bundled model is missing, but a staged OTA file may still
+            // rescue loading — fall through to the staged path instead of
+            // aborting here.
+            bundledPath = nil
+        }
         let store = ModelUpdateStore.production
         let candidate = resolveModelPath(
             bundledPath: bundledPath,
             stagedVersion: store?.activeVersion(),
             stagedPath: store?.activeModelURL()?.path)
+        guard let candidate else {
+            throw PoseError.modelNotFound
+        }
         do {
             return try MoveNetThunderModel(modelPath: candidate)
         } catch {
             // The staged file failed: retry with the bundled model before
-            // giving up. When the candidate already *is* the bundled model,
-            // there is nothing left to fall back to.
-            if candidate == bundledPath { throw }
+            // giving up. When the candidate already *is* the bundled model —
+            // or there is no bundled model to fall back to — there is nothing
+            // left to try.
+            guard let bundledPath, candidate != bundledPath else { throw }
             return try MoveNetThunderModel(modelPath: bundledPath)
         }
     }
@@ -69,13 +85,19 @@ actor MoveNetThunderModel {
     /// is treated the same as no staged model, so metadata-without-bytes can
     /// never redirect the loader at a file that isn't there.
     ///
+    /// `bundledPath` is nil when the bundled model is missing from the app
+    /// bundle: the staged model is still consulted, so a missing bundled model
+    /// doesn't abort loading before the staged file is tried. Returns nil when
+    /// neither source yields a candidate, in which case the loader reports
+    /// `modelNotFound`.
+    ///
     /// Pure over its inputs so the version-floor rule is unit-testable without
     /// touching the real Application Support directory.
     static func resolveModelPath(
-        bundledPath: String,
+        bundledPath: String?,
         stagedVersion: ModelVersion?,
         stagedPath: String?
-    ) -> String {
+    ) -> String? {
         if let stagedVersion, let stagedPath,
             stagedVersion > bundledModelVersion {
             return stagedPath
