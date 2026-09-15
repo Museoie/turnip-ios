@@ -4,7 +4,8 @@ import CoreVideo
 import SwiftUI
 
 /// The per-clip editor (`docs/UIUX.md` § "Clip Detail / Editor"): full-screen,
-/// one clip at a time — the trimmed clip looping with its live crop rect drawn over it, a
+/// one clip at a time — the trimmed clip looping in its cropped export framing
+/// (toggleable to the full frame with the live crop rect drawn over it), a
 /// scrub bar with start/end drag handles, and the keep/discard toggle.
 ///
 /// Back-navigation commits the edits: `onCommit` fires with the final state when the view
@@ -25,6 +26,7 @@ struct ClipEditorView: View {
     var body: some View {
         VStack(spacing: 16) {
             previewSection
+            previewFramingToggle
             TrimSliderView(viewModel: viewModel)
             keepToggle
             Spacer(minLength: 0)
@@ -41,31 +43,18 @@ struct ClipEditorView: View {
         }
     }
 
-    /// The trimmed clip, looping, with the live crop rect drawn over the displayed frame:
-    /// the dimmed surround is what the export cuts away. Sized to the displayed frame's
-    /// aspect ratio so the overlay maps 1:1 onto the video.
+    /// The trimmed clip, looping. Cropped to the export framing by default — what the
+    /// user sees is what the export produces — with a toggle below for the full frame
+    /// with the live crop rect drawn over it. See `docs/UIUX.md` § "Clip Detail /
+    /// Editor" and the preview-framing decision (issue #88).
     private var previewSection: some View {
         Group {
             if let overlay = viewModel.previewOverlay, overlay.videoSize.width > 0 {
-                GeometryReader { proxy in
-                    let scale = proxy.size.width / overlay.videoSize.width
-                    let hole = CGRect(
-                        x: overlay.cropRect.minX * scale,
-                        y: overlay.cropRect.minY * scale,
-                        width: overlay.cropRect.width * scale,
-                        height: overlay.cropRect.height * scale)
-                    ZStack {
-                        VideoPlayer(player: viewModel.player)
-                        CropOverlayShape(hole: hole)
-                            .fill(.black.opacity(0.55), style: FillStyle(eoFill: true))
-                        Rectangle()
-                            .stroke(.white, lineWidth: 2)
-                            .frame(width: hole.width, height: hole.height)
-                            .position(x: hole.midX, y: hole.midY)
-                    }
+                if viewModel.showsCroppedPreview {
+                    croppedPreview(overlay: overlay)
+                } else {
+                    fullFramePreview(overlay: overlay)
                 }
-                .aspectRatio(overlay.videoSize, contentMode: .fit)
-                .accessibilityLabel("Clip preview with crop area")
             } else if viewModel.failedToLoad {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
@@ -87,6 +76,77 @@ struct ClipEditorView: View {
                     .overlay { ProgressView() }
             }
         }
+    }
+
+    /// The cropped export framing: the video zoomed so the crop rect exactly fills the
+    /// preview — this is the frame the export writes, with no dimmed surround. The zoom
+    /// is applied about the top-leading corner and the crop hole shifted to the
+    /// container's origin, per `ClipEditorViewModel.croppedPreviewLayout`.
+    private func croppedPreview(overlay: (videoSize: CGSize, cropRect: CGRect)) -> some View {
+        let aspect = overlay.cropRect.width / overlay.cropRect.height
+        return GeometryReader { proxy in
+            let containerWidth = proxy.size.width
+            let scale = containerWidth / overlay.videoSize.width
+            let hole = CGRect(
+                x: overlay.cropRect.minX * scale,
+                y: overlay.cropRect.minY * scale,
+                width: overlay.cropRect.width * scale,
+                height: overlay.cropRect.height * scale)
+            let layout = ClipEditorViewModel.croppedPreviewLayout(
+                hole: hole, containerWidth: containerWidth)
+            ZStack {
+                VideoPlayer(player: viewModel.player)
+            }
+            .frame(width: containerWidth, height: overlay.videoSize.height * scale)
+            .scaleEffect(layout.zoom, anchor: .topLeading)
+            .offset(layout.offset)
+            .frame(
+                width: containerWidth, height: containerWidth / aspect,
+                alignment: .topLeading)
+            .clipped()
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .accessibilityLabel("Clip preview, cropped to the export framing")
+    }
+
+    /// The full landscape frame with the live crop rect drawn over it: the dimmed
+    /// surround marks what export cuts away. Sized to the displayed frame's aspect ratio
+    /// so the overlay maps 1:1 onto the video.
+    private func fullFramePreview(overlay: (videoSize: CGSize, cropRect: CGRect)) -> some View {
+        GeometryReader { proxy in
+            let scale = proxy.size.width / overlay.videoSize.width
+            let hole = CGRect(
+                x: overlay.cropRect.minX * scale,
+                y: overlay.cropRect.minY * scale,
+                width: overlay.cropRect.width * scale,
+                height: overlay.cropRect.height * scale)
+            ZStack {
+                VideoPlayer(player: viewModel.player)
+                CropOverlayShape(hole: hole)
+                    .fill(.black.opacity(0.55), style: FillStyle(eoFill: true))
+                Rectangle()
+                    .stroke(.white, lineWidth: 2)
+                    .frame(width: hole.width, height: hole.height)
+                    .position(x: hole.midX, y: hole.midY)
+            }
+        }
+        .aspectRatio(overlay.videoSize, contentMode: .fit)
+        .accessibilityLabel("Clip preview with crop area")
+    }
+
+    /// Switches the preview between the cropped export framing and the full frame with
+    /// the crop rect overlaid (issue #88).
+    private var previewFramingToggle: some View {
+        Button {
+            viewModel.togglePreviewFraming()
+        } label: {
+            Label(
+                viewModel.showsCroppedPreview ? "Show full frame" : "Show cropped preview",
+                systemImage: viewModel.showsCroppedPreview
+                    ? "arrow.up.left.and.arrow.down.right" : "crop")
+        }
+        .buttonStyle(.bordered)
+        .accessibilityHint("Switches the preview between the exported crop and the full frame")
     }
 
     private var keepToggle: some View {

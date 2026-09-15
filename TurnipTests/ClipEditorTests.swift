@@ -359,6 +359,46 @@ final class ClipEditorTests: XCTestCase {
             preferredTransform: .identity))
     }
 
+    // MARK: - Preview framing
+
+    @MainActor
+    func testPreviewDefaultsToCroppedFraming() {
+        let viewModel = makeViewModel()
+
+        // Issue #88: the orientation note asked for the cropped export framing by
+        // default, so the user judges what the export will actually produce.
+        XCTAssertTrue(viewModel.showsCroppedPreview)
+    }
+
+    @MainActor
+    func testTogglePreviewFramingFlips() {
+        let viewModel = makeViewModel()
+
+        viewModel.togglePreviewFraming()
+        XCTAssertFalse(viewModel.showsCroppedPreview)
+        viewModel.togglePreviewFraming()
+        XCTAssertTrue(viewModel.showsCroppedPreview)
+    }
+
+    func testCroppedPreviewLayoutFillsContainerWithHole() {
+        // 200x100 landscape source; the crop hole sits at (50, 25, 100x50) in the
+        // container's points. Zooming 2x about the top-leading corner and shifting the
+        // hole's scaled origin back puts the hole exactly over a 200x100 container.
+        let layout = ClipEditorViewModel.croppedPreviewLayout(
+            hole: CGRect(x: 50, y: 25, width: 100, height: 50), containerWidth: 200)
+
+        XCTAssertEqual(layout.zoom, 2)
+        XCTAssertEqual(layout.offset, CGSize(width: -100, height: -50))
+    }
+
+    func testCroppedPreviewLayoutDegenerateHoleIsIdentity() {
+        let layout = ClipEditorViewModel.croppedPreviewLayout(
+            hole: .zero, containerWidth: 200)
+
+        XCTAssertEqual(layout.zoom, 1)
+        XCTAssertEqual(layout.offset, .zero)
+    }
+
     // MARK: - Load failure
 
     /// `/dev/null` isn't a video, so the track loads fail: `prepare()` must surface
