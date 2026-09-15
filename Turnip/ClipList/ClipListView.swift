@@ -26,9 +26,9 @@ struct ClipListView: View {
     /// pipeline step 7 (`ClipExporter`): trims the source video to the window,
     /// crops to its rect, and writes an `.mp4` into the screen's scratch
     /// directory. Failures surface as `ExportConfirmationError.exportFailed`
-    /// so the screen's per-clip callout names the step; cancellation
-    /// propagates untouched so the screen stops the run instead of failing
-    /// the clip.
+    /// so the screen's per-clip callout names the step; cancellation — including
+    /// the exporter's own cancelled error — propagates as `CancellationError`
+    /// so the screen stops the run instead of failing the clip (issue #132).
     private static let exportOneClip: ExportOneClip = { window, cropRect, asset, directory, progress in
         do {
             let exported = try await ClipExporter().export(
@@ -39,6 +39,10 @@ struct ClipListView: View {
             return exported.fileURL
         } catch {
             if error is CancellationError { throw error }
+            // The export session resumes with its own cancelled error, not
+            // `CancellationError` — forward it as cancellation so the error
+            // type and the cancelled task stop disagreeing (issue #132).
+            if (error as? ClipExportError) == .cancelled { throw CancellationError() }
             throw ExportConfirmationError.exportFailed(reason: error.localizedDescription)
         }
     }

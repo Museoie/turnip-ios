@@ -286,6 +286,31 @@ final class ExportConfirmationViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.summaryText, "Export cancelled — 1 of 2 clips saved to Photos")
     }
 
+    func testCancelWhileExportThrowsResetsTheInFlightClipToPending() async {
+        // Issue #132: the real exporter throws its own cancelled error when the
+        // run is cancelled — not `CancellationError` — which the adapter wraps as
+        // `exportFailed`. The gate holds the export open so `cancel()` lands
+        // first, then the throw exercises the path that used to leave the
+        // in-flight clip stuck at `Exporting… N%`.
+        let fake = FakeExport(exportResults: [
+            .failure(ExportConfirmationError.exportFailed(reason: "cancelled"))
+        ])
+        await fake.setGateNextExport()
+        let viewModel = viewModel(items: [item()], fake: fake)
+
+        viewModel.start()
+        await Self.waitForFullExportProgress(viewModel)
+        viewModel.cancel()
+        await fake.openGate()
+        await Self.waitUntilFinished(viewModel)
+
+        // Discriminating: without the reset this fails — the in-flight clip
+        // stays `.exporting(fraction: 1.0)` forever.
+        XCTAssertEqual(viewModel.clips[0].phase, .pending)
+        XCTAssertTrue(viewModel.wasCancelled)
+        XCTAssertEqual(viewModel.summaryText, "Export cancelled — 0 of 1 clip saved to Photos")
+    }
+
     /// The exported files outlive their run: the share sheet hands the system a file
     /// URL, so the summary can only offer a Share action for files that are still on
     /// disk. The screen going away — `tearDown()` — is what removes them.

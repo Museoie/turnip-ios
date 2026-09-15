@@ -331,10 +331,11 @@ final class ExportConfirmationViewModel: ObservableObject {
 
     /// Drives one clip through export → Photos save, publishing its phases.
     /// Returns false when the run must stop: the task was cancelled, either before
-    /// the clip started or by whatever the in-flight step threw (the export session
-    /// resumes with its own cancelled error, not `CancellationError`, so the
-    /// cancelled task — not the error type — decides). Any other error fails just
-    /// this clip and the run continues with the next one.
+    /// the clip started or by whatever the in-flight step threw. The cancelled
+    /// task — not the error type — decides, so the in-flight clip goes back to
+    /// `.pending` instead of keeping a dead `Exporting… N%` progress bar on the
+    /// finished summary (issue #132). Any other error fails just this clip and the
+    /// run continues with the next one.
     private func exportClipItem(
         at index: Int, item: ExportConfirmationItem, directory: URL
     ) async -> Bool {
@@ -356,7 +357,15 @@ final class ExportConfirmationViewModel: ObservableObject {
             try await saveToPhotos(fileURL)
             setPhase(at: index, to: .saved)
         } catch {
-            if Task.isCancelled { return false }
+            if Task.isCancelled {
+                // The run was cancelled while this clip was in flight: the clip
+                // was never written, so `.pending` — not `.failed` — is the
+                // honest phase, matching the contract that cancelled runs keep
+                // clips pending. Reset before returning so the finished summary
+                // doesn't keep a dead `Exporting… N%` progress bar (issue #132).
+                setPhase(at: index, to: .pending)
+                return false
+            }
             setPhase(at: index, to: .failed(reason: Self.reason(for: error)))
         }
         return true
