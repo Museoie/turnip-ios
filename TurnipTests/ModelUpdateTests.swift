@@ -302,7 +302,7 @@ final class ModelUpdateTests: XCTestCase {
     func testNonASCIIFileNameIsRejectedAtBothGates() async throws {
         let cyrillicName = "мodel.tflite" // first scalar is U+043C CYRILLIC SMALL LETTER EM
         XCTAssertFalse(
-            cyrillicName.unicodeScalars.first!.properties.isASCII,
+            cyrillicName.unicodeScalars.first!.isASCII,
             "test setup: first scalar must be non-ASCII")
 
         // Pre-download gate: no download, invalidManifest recorded.
