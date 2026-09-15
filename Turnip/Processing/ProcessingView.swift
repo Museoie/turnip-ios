@@ -20,6 +20,11 @@ struct ProcessingView<Destination: View>: View {
 
     @StateObject private var viewModel: ProcessingViewModel
     @Environment(\.dismiss) private var dismiss
+    /// The last announced phase: the `.processing` case updates with every progress
+    /// frame, so the announcement keys on the phase (the state case ignoring its
+    /// payload), not on the raw state — or "Analyzing video" would repeat
+    /// continuously through the whole run.
+    @State private var announcedPhase: AnnouncementPhase?
 
     init(
         video: SelectedVideo,
@@ -59,6 +64,7 @@ struct ProcessingView<Destination: View>: View {
                         viewModel.cancel()
                         dismiss()
                     }
+                    .accessibilityIdentifier("processing-cancel")
                 }
             }
         }
@@ -71,6 +77,25 @@ struct ProcessingView<Destination: View>: View {
             if autostart {
                 viewModel.start(video: video)
             }
+        }
+        .onChange(of: viewModel.state) { newState in
+            // `.idle` arms the next run's announcement: without this, cancelling
+            // and restarting in the same screen instance would keep the stale
+            // phase and swallow the next "Analyzing video".
+            if case .idle = newState {
+                announcedPhase = nil
+                return
+            }
+            // VoiceOver users can't see the screen change state behind the progress
+            // bar, so each transition gets a spoken announcement. Gated on
+            // VoiceOver running: unprompted speech when VoiceOver is off would be
+            // the app talking through the speaker at nobody.
+            guard UIAccessibility.isVoiceOverRunning,
+                  let phase = AnnouncementPhase(state: newState),
+                  announcedPhase != phase
+            else { return }
+            announcedPhase = phase
+            UIAccessibility.post(notification: .announcement, argument: phase.announcement)
         }
         .onDisappear {
             viewModel.cancel()
@@ -112,6 +137,7 @@ struct ProcessingView<Destination: View>: View {
             Button("Back to Home") { dismiss() }
                 .buttonStyle(.borderedProminent)
                 .padding(.top, 8)
+                .accessibilityIdentifier("processing-back-home")
         }
         .padding()
     }
@@ -130,9 +156,49 @@ struct ProcessingView<Destination: View>: View {
             Button("Retry") { viewModel.retry(video: video) }
                 .buttonStyle(.borderedProminent)
                 .padding(.top, 8)
+                .accessibilityIdentifier("processing-retry")
             Button("Back to Home", role: .cancel) { dismiss() }
+                .accessibilityIdentifier("processing-back-home")
         }
         .padding()
+    }
+}
+
+/// The processing screen's announceable phases, for the VoiceOver state-transition
+/// announcement (`ProcessingView`). Ignores the `.processing` progress payload so the
+/// announcement fires once per true transition instead of once per progress frame.
+private enum AnnouncementPhase: Equatable {
+    case analyzing
+    case succeeded
+    case empty
+    case failed(message: String)
+
+    init?(state: ProcessingViewModel.State) {
+        switch state {
+        case .idle:
+            return nil
+        case .processing:
+            self = .analyzing
+        case .succeeded:
+            self = .succeeded
+        case .empty:
+            self = .empty
+        case .failed(let message):
+            self = .failed(message: message)
+        }
+    }
+
+    var announcement: String {
+        switch self {
+        case .analyzing:
+            return String(localized: "Analyzing video")
+        case .succeeded:
+            return String(localized: "Analysis complete")
+        case .empty:
+            return String(localized: "No tricks found")
+        case .failed(let message):
+            return String(localized: "Couldn't analyze this video. \(message)")
+        }
     }
 }
 

@@ -61,8 +61,11 @@ struct ClipListView: View {
                 columns: [GridItem(.flexible()), GridItem(.flexible())],
                 spacing: 16
             ) {
-                ForEach(viewModel.items) { item in
-                    ClipCardView(item: item, viewModel: viewModel)
+                // Enumerated for the card's announced index: VoiceOver counts cards
+                // from one, so the 0-based index is shifted to 1-based at the
+                // call site.
+                ForEach(Array(viewModel.items.enumerated()), id: \.element.id) { index, item in
+                    ClipCardView(index: index + 1, item: item, viewModel: viewModel)
                 }
             }
             .padding()
@@ -97,6 +100,7 @@ struct ClipListView: View {
                 .frame(maxWidth: .infinity)
                 .padding()
                 .background(.thinMaterial)
+                .accessibilityIdentifier("export-clips")
         }
     }
 }
@@ -117,7 +121,13 @@ private enum ClipListDestination: Hashable {
 /// The toggle sits *outside* the `NavigationLink` as a `ZStack` overlay so tapping it
 /// never triggers the card's navigation to the editor — the issue calls the toggle a
 /// quick action that must not require opening detail.
-private struct ClipCardView: View {
+///
+/// Internal (not `private`) so tests can assert on the static `accessibilityLabel` —
+/// the card's VoiceOver wording is the accessibility contract, and a regression there
+/// is silent (nothing crashes, VoiceOver just announces the wrong thing).
+struct ClipCardView: View {
+    /// The card's 1-based position in the list, for the announced label.
+    let index: Int
     let item: ClipListItem
     @ObservedObject var viewModel: ClipListViewModel
     @State private var thumbnail: CGImage?
@@ -132,6 +142,19 @@ private struct ClipCardView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                // The card announces as one element — index, spoken duration, kept
+                // state — so VoiceOver reads it in a single swipe. Scoped to the
+                // link's content, NOT the outer ZStack: the keep/discard toggle is
+                // a separate quick action and must stay separately reachable.
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Self.accessibilityLabel(
+                    index: index,
+                    spokenDuration: ClipDurationFormatter.accessibilityString(
+                        from: item.window.endTime - item.window.startTime),
+                    isKept: item.isKept))
+                // Stable identifier for a future UI-test target: the item id
+                // survives reordering, unlike the announced index.
+                .accessibilityIdentifier("clip-card-\(item.id.uuidString)")
             }
             .buttonStyle(.plain)
             .opacity(item.isKept ? 1 : 0.45)
@@ -144,8 +167,12 @@ private struct ClipCardView: View {
                 }
             )
             .buttonStyle(.plain)
-            .padding(8)
+            // 44pt minimum touch target: the icon alone is ~34pt, so the frame
+            // pads the hit area out while the glyph stays centered.
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(Rectangle())
             .accessibilityLabel(item.isKept ? "Discard clip" : "Keep clip")
+            .accessibilityIdentifier("clip-toggle-\(item.id.uuidString)")
         }
         .task {
             // Fetch the displayed-space placeholder ratio alongside the thumbnail. The
@@ -157,6 +184,22 @@ private struct ClipCardView: View {
             placeholderRatio = await ratio
             thumbnail = await image
         }
+    }
+
+    /// The VoiceOver label for a card, as one localized string: "Clip 1, 2.4
+    /// seconds, kept". The duration is the spoken form (`ClipDurationFormatter`'s
+    /// `accessibilityString`), not the "2.4s" badge — a screen reader mangles the
+    /// badge's compact form.
+    ///
+    /// Static and pure so tests can assert the exact announced wording without
+    /// constructing a `ClipListItem`. One interpolated string (rather than joined
+    /// parts) so a translator can reorder the whole announcement for their
+    /// language's word order.
+    static func accessibilityLabel(index: Int, spokenDuration: String, isKept: Bool) -> String {
+        if isKept {
+            return String(localized: "Clip \(index), \(spokenDuration), kept")
+        }
+        return String(localized: "Clip \(index), \(spokenDuration), discarded")
     }
 
     @ViewBuilder

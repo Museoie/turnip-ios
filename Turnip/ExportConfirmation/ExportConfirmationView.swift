@@ -47,6 +47,7 @@ struct ExportConfirmationView: View {
             if viewModel.isRunning {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { viewModel.cancel() }
+                        .accessibilityIdentifier("export-cancel")
                 }
             }
         }
@@ -57,10 +58,21 @@ struct ExportConfirmationView: View {
                     .frame(maxWidth: .infinity)
                     .padding()
                     .background(.thinMaterial)
+                    .accessibilityIdentifier("export-done")
             }
         }
         .task {
             viewModel.start()
+        }
+        .onChange(of: viewModel.isFinished) { isFinished in
+            // VoiceOver users can't watch the per-clip rows fill in, so the finished
+            // summary is announced. Gated on VoiceOver running: the summary is
+            // already on screen for sighted users, and unprompted speech when
+            // VoiceOver is off would be the app talking through the speaker at nobody.
+            guard isFinished, UIAccessibility.isVoiceOverRunning else { return }
+            UIAccessibility.post(
+                notification: .announcement,
+                argument: viewModel.summaryText ?? String(localized: "Export finished"))
         }
         .onDisappear {
             // The screen going away is what ends the exported files — they outlive
@@ -131,6 +143,11 @@ private struct ClipStatusRow: View {
                     // Without this a List row with a button makes the entire row one
                     // tap target, so a tap anywhere on the row would open the sheet.
                     .buttonStyle(.borderless)
+                    // Stable per-clip identifier from the row's UUID, not the display
+                    // title: titles can repeat across clips. Placed on the call site
+                    // rather than inside ClipShareButton so that view keeps its
+                    // standalone contract (it compiles without Turnip imports).
+                    .accessibilityIdentifier("clip-share-\(clip.id.uuidString)")
             }
         }
     }

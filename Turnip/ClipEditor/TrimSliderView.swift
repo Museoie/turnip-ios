@@ -81,10 +81,12 @@ struct TrimSliderView: View {
                     at: viewModel.window.startTime, in: range, width: width,
                     label: "Trim start",
                     trim: { viewModel.trimStart(to: $0) })
+                .accessibilityIdentifier("trim-start-handle")
                 handle(
                     at: viewModel.window.endTime, in: range, width: width,
                     label: "Trim end",
                     trim: { viewModel.trimEnd(to: $0) })
+                .accessibilityIdentifier("trim-end-handle")
             }
             .frame(height: 56)
             .contentShape(Rectangle())
@@ -148,9 +150,12 @@ struct TrimSliderView: View {
                 .fill(Color.accentColor)
                 .frame(width: 12, height: 48)
         }
-        .frame(width: 32, height: 56)
+        // The drawn grip stays 12pt, but the interactive frame is 44pt wide — the
+        // minimum touch target — so fat-finger drags and VoiceOver taps land it.
+        // The offset recenters the handle on its timeline position: half of 44.
+        .frame(width: 44, height: 56)
         .contentShape(Rectangle())
-        .offset(x: position(of: time, in: range, width: width) - 16)
+        .offset(x: position(of: time, in: range, width: width) - 22)
         .accessibilityLabel(label)
         .accessibilityValue(ClipDurationFormatter.string(from: time))
         .accessibilityAdjustableAction { direction in

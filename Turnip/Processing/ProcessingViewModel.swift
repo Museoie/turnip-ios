@@ -10,7 +10,10 @@ import Foundation
 /// repainting the screen the user just left.
 @MainActor
 final class ProcessingViewModel: ObservableObject {
-    enum State {
+    /// Equatable so the view can `.onChange(of: state)`: the processing screen
+    /// announces each state transition to VoiceOver, and comparing associated
+    /// values lets it skip the processing→processing progress-frame updates.
+    enum State: Equatable {
         case idle
         case processing(ProcessingProgress)
         case succeeded

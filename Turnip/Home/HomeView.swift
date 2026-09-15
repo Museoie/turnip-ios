@@ -179,6 +179,9 @@ private struct ResolutionBanner: View {
                     Text("Downloading from iCloud…")
                         .font(.subheadline)
                     ProgressView(value: progress)
+                        // VoiceOver otherwise announces a bare progress bar with no
+                        // context; the banner's text sits in a separate element.
+                        .accessibilityLabel("Download progress")
                 } else {
                     Text("Preparing video…")
                         .font(.subheadline)

@@ -47,6 +47,13 @@ final class ClipEditorViewModel: ObservableObject {
     private var naturalSize: CGSize?
     private var preferredTransform = CGAffineTransform.identity
 
+    /// Whether the preview loops the draft window. `false` when the user opted out of
+    /// looping video — Reduce Motion on, or video autoplay disabled in Settings — in
+    /// which case the preview plays past the window end instead of seeking back to
+    /// the start: a looping video is exactly the motion they opted out of. The view
+    /// sets this from the accessibility environment; `tick` gates the loop-back on it.
+    var previewPlaybackLoops = true
+
     /// True while a handle drag is in flight. The drag's programmatic seek lands exactly on
     /// the moved handle, and without this guard the periodic time observer would read that
     /// jump as the loop point and bounce the preview back to the window start.
@@ -304,10 +311,12 @@ final class ClipEditorViewModel: ObservableObject {
     /// One preview tick: follows the playhead and loops the draft window. The loop-back
     /// is suppressed while a handle drag is in flight — the drag's seek lands exactly on
     /// the moved handle, which would otherwise read as the loop point and bounce the
-    /// preview back to the window start.
+    /// preview back to the window start — and when `previewPlaybackLoops` is false (the
+    /// reduce-motion / no-autoplay case): there the preview keeps playing past the end.
     private func tick(at time: TimeInterval) {
         playbackTime = time
-        if Self.shouldLoopBack(at: time, window: window, isTrimming: isTrimming) {
+        if previewPlaybackLoops,
+           Self.shouldLoopBack(at: time, window: window, isTrimming: isTrimming) {
             seek(to: window.startTime)
         }
     }

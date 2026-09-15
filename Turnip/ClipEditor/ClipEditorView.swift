@@ -12,6 +12,7 @@ import SwiftUI
 /// disappears — no separate save step, per the design doc.
 struct ClipEditorView: View {
     @StateObject private var viewModel: ClipEditorViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The final editor state, committed when the view disappears. Note: `onDisappear`
     /// fires for *any* disappearance — including a sheet presented over the editor —
     /// so this view must not present sheets, or a sheet would commit a half-edited
@@ -36,11 +37,24 @@ struct ClipEditorView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await viewModel.prepare()
+            applyPlaybackLooping()
+        }
+        .onChange(of: reduceMotion) { _ in
+            applyPlaybackLooping()
         }
         .onDisappear {
             onCommit(viewModel.result)
             viewModel.teardown()
         }
+    }
+
+    /// Sets the preview's looping from the accessibility environment: Reduce Motion on
+    /// or video autoplay disabled means the trimmed clip must not loop — playback
+    /// continues past the window end instead. Applied on appear and whenever Reduce
+    /// Motion changes mid-session.
+    private func applyPlaybackLooping() {
+        viewModel.previewPlaybackLoops =
+            !reduceMotion && UIAccessibility.isVideoAutoplayEnabled
     }
 
     /// The trimmed clip, looping. Cropped to the export framing by default — what the
@@ -147,6 +161,7 @@ struct ClipEditorView: View {
         }
         .buttonStyle(.bordered)
         .accessibilityHint("Switches the preview between the exported crop and the full frame")
+        .accessibilityIdentifier("preview-framing-toggle")
     }
 
     private var keepToggle: some View {
@@ -159,6 +174,7 @@ struct ClipEditorView: View {
         }
         .buttonStyle(.bordered)
         .accessibilityLabel(viewModel.isKept ? "Discard clip" : "Keep clip")
+        .accessibilityIdentifier("clip-editor-keep-toggle")
     }
 }
 
