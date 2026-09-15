@@ -15,7 +15,7 @@ struct TurnipApp: App {
         #if DEBUG
         if CommandLine.arguments.contains("-screenshotClipEditor") {
             // Start the harness's sample-movie encode before any view appears, on
-            // a background queue, so the first render never stalls on it.
+            // a background queue, so the first render usually doesn't stall on it.
             ScreenshotClipEditorHarness.warmUpSampleMovie()
         }
         #endif

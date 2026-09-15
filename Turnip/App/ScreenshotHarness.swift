@@ -115,7 +115,10 @@ struct ScreenshotClipEditorHarness: View {
 
     /// Starts the sample-movie encode on a background queue ahead of first use.
     /// Called from `TurnipApp.init()` when the `-screenshotClipEditor` launch arg
-    /// is present, so the first render never stalls on the encode.
+    /// is present, so the first render usually doesn't stall on the encode. (If
+    /// the encode hasn't finished when `body` first touches `sampleMovieURL`,
+    /// the main thread still blocks on the lazy initializer until it completes —
+    /// the warm-up makes that rare, not impossible.)
     static func warmUpSampleMovie() {
         DispatchQueue.global(qos: .userInitiated).async {
             _ = Self.sampleMovieURL
