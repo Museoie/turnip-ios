@@ -74,12 +74,18 @@ final class ScreenshotTests: XCTestCase {
 
     /// Clip list triage: three detected windows, one discarded, thumbnails as
     /// placeholder tiles (the /dev/null asset decodes nothing; the loader falls
-    /// back to the placeholder).
+    /// back to the placeholder — the test waits for the placeholder's
+    /// accessibility element, so it guards the fallback and not just the
+    /// navigation bar appearing).
     func testClipListTriage() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipList"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        let placeholder = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Thumbnail placeholder'"))
+            .firstMatch
+        XCTAssertTrue(placeholder.waitForExistence(timeout: 15))
         addScreenshot(named: "clip-list-triage")
     }
 
