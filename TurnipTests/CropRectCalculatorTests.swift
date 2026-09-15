@@ -175,17 +175,17 @@ final class CropRectCalculatorTests: XCTestCase {
         XCTAssertNil(CropRectCalculator().cropRect(for: frames, renderedPixelSize: .zero))
     }
 
-    func testSingleConfidentKeypointIsFlooredToMinimumExtent() {
+    func testSingleConfidentKeypointIsFlooredToMinimumExtent() throws {
         let frames = [frame(confident([(x: 0.5, y: 0.5)]))]
 
-        let rect = CropRectCalculator().cropRect(for: frames, renderedPixelSize: square)
+        let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: square))
 
         // One keypoint is a zero-area box, not a located athlete: the 5%-of-shorter-axis floor
         // grows it to 0.05 x 0.05 around the center before padding and the aspect snap.
         assertRect(rect, minX: 0.4625, maxX: 0.5375, minY: 0.4333333, maxY: 0.5666667)
         // The old suite pinned (0.5, 0.5, 0.5, 0.5) here as "finite"; a zero-area rect that
         // every later stage preserves is exactly what the floor exists to prevent.
-        let pixels = rect!.denormalized(in: square)
+        let pixels = rect.denormalized(in: square)
         XCTAssertGreaterThan(pixels.width, 0, "crop width must be positive")
         XCTAssertGreaterThan(pixels.height, 0, "crop height must be positive")
     }
