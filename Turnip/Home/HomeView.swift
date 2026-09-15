@@ -21,16 +21,17 @@ struct HomeView: View {
                     ProcessingView(
                         video: video,
                         autostart: false,
-                        popToRoot: { viewModel.path = [] }
-                    ) { result, popToRoot in
-                        ClipListView(
-                            items: result.clips.map {
-                                ClipListItem(window: $0.window, cropRect: $0.cropRect)
-                            },
-                            asset: result.asset,
-                            popToRoot: popToRoot
-                        )
-                    }
+                        popToRoot: { viewModel.path = [] },
+                        destination: { result, popToRoot in
+                            ClipListView(
+                                items: result.clips.map {
+                                    ClipListItem(window: $0.window, cropRect: $0.cropRect)
+                                },
+                                asset: result.asset,
+                                popToRoot: popToRoot
+                            )
+                        }
+                    )
                 }
         }
         .task { await viewModel.start() }
