@@ -47,16 +47,26 @@ final class PrivacyComplianceTests: XCTestCase {
             "popping the SelectedVideo must delete its temp export")
     }
 
-    /// The path-shrink cleanup must leave ordinary Photos videos alone: the asset points into
-    /// the Photos container, and `deleteTemporaryExport` discriminates on the tmp/ prefix.
+    /// The path-shrink cleanup must not touch a file that merely *looks* like a composition
+    /// export: this one carries `temporaryExportFilenamePrefix` but lives outside tmp/, so the
+    /// directory half of `deleteTemporaryExport`'s guard is what spares it. Deleting the guard
+    /// (or checking only the prefix) makes this go red — the file is real, so the assertion can
+    /// actually observe the deletion.
     @MainActor
-    func testPoppingSelectedVideoIgnoresPhotosContainerAsset() {
-        let url = URL(filePath: "/dev/null")
+    func testPoppingSelectedVideoKeepsPrefixedFileOutsideTemporaryDirectory() {
+        let dir = URL.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appending(
+            path: "\(PhotoVideoResolver.temporaryExportFilenamePrefix)\(UUID().uuidString).mov")
+        XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: Data("x".utf8)))
+
         let viewModel = VideoLibraryViewModel()
         viewModel.path = [SelectedVideo(assetIdentifier: "test", asset: AVURLAsset(url: url), duration: 1)]
 
         viewModel.path = []
-        // Nothing to assert on the filesystem for /dev/null — the point is the pop path
-        // runs without touching non-export assets (no throw, no delete attempt).
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: url.path),
+            "popping the SelectedVideo must not delete a prefixed file outside tmp/")
     }
 }
