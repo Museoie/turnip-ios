@@ -95,13 +95,14 @@ Everything this project pins has a named updater, so no pin rots unnoticed:
 | CocoaPods and the gems it resolves | `Gemfile.lock` | Dependabot (`bundler`, weekly) |
 | `TensorFlowLiteSwift` | `Podfile.lock` | `dependency-check.yml` (weekly) |
 | XcodeGen and its archive checksum | `ci_scripts/install-xcodegen.sh` | `dependency-check.yml` (weekly) |
+| SwiftLint and its archive checksum | `ci_scripts/install-swiftlint.sh` | `dependency-check.yml` (weekly) |
 
 Dependabot has no CocoaPods ecosystem, and no notion of a shell script that
-downloads a release asset, so the last two are watched by
+downloads a release asset, so the last three are watched by
 [`.github/workflows/dependency-check.yml`](.github/workflows/dependency-check.yml)
-instead. It runs `ci_scripts/check-unwatched-pins.sh`, which compares both pins
+instead. It runs `ci_scripts/check-unwatched-pins.sh`, which compares the three pins
 against the newest published release and opens a tracking issue when one has
-moved — refreshing that issue's body on later runs, and closing it once both
+moved — refreshing that issue's body on later runs, and closing it once all three
 pins are current again. The same check runs locally:
 
 ```
@@ -124,6 +125,21 @@ shasum -a 256 /tmp/xcodegen.zip
 
 The setup steps above pin the same version for local development; update those
 too, and re-run `xcodegen generate` to confirm the emitted project still opens.
+
+### Bumping SwiftLint
+
+`VERSION` and `SHA256` in `ci_scripts/install-swiftlint.sh` are the only copies
+CI reads. Regenerate the checksum from the asset the new release publishes,
+since the version in the URL pins a name and the checksum pins the bytes:
+
+```
+curl -fsSL -o /tmp/swiftlint.zip \
+  https://github.com/realm/SwiftLint/releases/download/<version>/portable_swiftlint.zip
+shasum -a 256 /tmp/swiftlint.zip
+```
+
+`swiftlint lint --strict` is a hard merge gate, so install the new version
+locally and confirm the repo still lints clean before pushing the bump.
 
 ### Bumping TensorFlowLiteSwift
 
