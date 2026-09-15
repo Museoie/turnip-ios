@@ -11,9 +11,18 @@ struct HomeView: View {
             content
                 .navigationTitle("Turnip")
                 .navigationDestination(for: SelectedVideo.self) { video in
-                    // The pose diagnostic is the only consumer of a picked video today. This is
-                    // the one place to swap in the Processing screen.
-                    PoseDiagnosticView(video: video)
+                    // The Processing screen runs the real detection pipeline and pushes the
+                    // clip list on success. This was the pose diagnostic's only entry
+                    // point; that screen is a throwaway measurement tool and loses its
+                    // entry point here.
+                    ProcessingView(video: video) { result in
+                        ClipListView(
+                            items: result.clips.map {
+                                ClipListItem(window: $0.window, cropRect: $0.cropRect)
+                            },
+                            asset: result.asset
+                        )
+                    }
                 }
         }
         .task { await viewModel.start() }
