@@ -17,7 +17,6 @@ import SwiftUI
 struct ClipListView: View {
     @StateObject private var viewModel: ClipListViewModel
     @State private var showingExport = false
-    @State private var editorDestination: ClipListDestination?
     let popToRoot: () -> Void
 
     init(
@@ -71,10 +70,7 @@ struct ClipListView: View {
                 spacing: 16
             ) {
                 ForEach(viewModel.items) { item in
-                    ClipCardView(
-                        item: item,
-                        viewModel: viewModel,
-                        onEdit: { editorDestination = .editor(item.id) })
+                    ClipCardView(item: item, viewModel: viewModel)
                 }
             }
             .padding()
@@ -104,7 +100,7 @@ struct ClipListView: View {
                 }
             }
         }
-        .navigationDestination(item: $editorDestination) { destination in
+        .navigationDestination(for: ClipListDestination.self) { destination in
             switch destination {
             case .editor(let id):
                 // The editor's commit writes back into the list by id so
@@ -161,7 +157,6 @@ private enum ClipListDestination: Hashable {
 private struct ClipCardView: View {
     let item: ClipListItem
     @ObservedObject var viewModel: ClipListViewModel
-    let onEdit: () -> Void
     @State private var thumbnail: CGImage?
     @State private var placeholderRatio: CGFloat?
     @State private var duration: TimeInterval?
@@ -179,7 +174,11 @@ private struct ClipCardView: View {
                 .accessibilityLabel("Play clip")
 
                 HStack(spacing: 0) {
-                    Button(action: onEdit) {
+                    // A real NavigationLink (not a Button driving state): the
+                    // list's `.navigationDestination(for:)` below is the iOS 16
+                    // entry point — the iOS 17 `item:` variant can't be used
+                    // with this target.
+                    NavigationLink(value: ClipListDestination.editor(item.id)) {
                         Image(systemName: "pencil.circle")
                             .font(.title2)
                     }
