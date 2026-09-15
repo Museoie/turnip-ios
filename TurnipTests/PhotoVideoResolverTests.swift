@@ -70,6 +70,11 @@ private final class CompositionImageManager: PHImageManager, @unchecked Sendable
         lock.lock()
         _exportRequested = true
         lock.unlock()
+        // PhotoKit reuses the same request options — progress handler included — for the export
+        // session request, so a download tick can arrive *after* `.exporting` was already
+        // emitted. The resolver forwards it faithfully; the view model owns the phase policy.
+        var stop = ObjCBool(false)
+        options?.progressHandler?(0.9, nil, &stop, nil)
         // No session: the export fails the way a genuinely failed export does.
         resultHandler(nil, nil)
         return 8
@@ -163,7 +168,10 @@ final class PhotoVideoResolverTests: XCTestCase {
 
     /// The composition path emits `.downloading` for the iCloud phase and `.exporting` immediately
     /// before the export starts — and `.exporting` still arrives when the export itself fails, so
-    /// a failed export can't leave the UI parked on the download bar either.
+    /// a failed export can't leave the UI parked on the download bar either. A download tick that
+    /// PhotoKit reports for the export request itself arrives after `.exporting`; the resolver
+    /// forwards it untouched — the view model, not the resolver, owns the phase policy (see
+    /// `testResolutionDropsDownloadingEventsAfterExporting`).
     func testResolveEmitsDownloadingThenExportingForCompositionAsset() async {
         let manager = CompositionImageManager()
         let resolver = PhotoVideoResolver(imageManager: manager)
@@ -180,7 +188,7 @@ final class PhotoVideoResolverTests: XCTestCase {
             return XCTFail("expected VideoResolutionError, got \(error)")
         }
 
-        XCTAssertEqual(log.events, [.downloading(0.5), .exporting])
+        XCTAssertEqual(log.events, [.downloading(0.5), .exporting, .downloading(0.9)])
         XCTAssertTrue(manager.exportRequested, "the export must actually run after .exporting")
     }
 
@@ -201,6 +209,24 @@ final class PhotoVideoResolverTests: XCTestCase {
     func testExportingPhaseMapsToNoDownloadFraction() {
         XCTAssertEqual(ResolutionProgress.downloading(0.5).downloadFraction, 0.5)
         XCTAssertNil(ResolutionProgress.exporting.downloadFraction)
+    }
+
+    /// The phase is monotonic at the view-model layer: once `.exporting` lands, a late
+    /// `.downloading` tick — the reused request options reporting for the export request, or a
+    /// `Task` hop landing out of order — must not flip the rendered fraction back to a
+    /// determinate bar. Against the old per-event overwrite this sequence renders
+    /// `[0.5, nil, 0.9]`; with the fix it stays `[0.5, nil, nil]` and the banner stays on
+    /// "Preparing video…" for the rest of the export.
+    func testResolutionDropsDownloadingEventsAfterExporting() {
+        var resolution = VideoLibraryViewModel.Resolution(
+            assetIdentifier: "asset-1", downloadProgress: nil)
+        var fractions: [Double?] = []
+        for event in [ResolutionProgress.downloading(0.5), .exporting, .downloading(0.9)] {
+            resolution.apply(event)
+            fractions.append(resolution.downloadProgress)
+        }
+
+        XCTAssertEqual(fractions, [0.5, nil, nil])
     }
 
     // MARK: - Temporary export cleanup

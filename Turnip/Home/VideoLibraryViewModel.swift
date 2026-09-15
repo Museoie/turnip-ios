@@ -11,10 +11,36 @@ final class VideoLibraryViewModel: ObservableObject {
     /// A tile tap in progress. `downloadProgress` is nil until PhotoKit reports the first iCloud
     /// progress callback — local assets resolve without ever setting it — and returns to nil when
     /// the composition-export phase starts, so both progress surfaces fall back to their
-    /// indeterminate "Preparing video…" state for a phase that isn't a download.
+    /// indeterminate "Preparing video…" state for a phase that isn't a download. The phase is
+    /// monotonic: once `.exporting` has landed, `isExporting` stays set and later `.downloading`
+    /// events are dropped (see `apply(_:)`).
     struct Resolution: Equatable {
         let assetIdentifier: String
         var downloadProgress: Double?
+        /// Set once the composition-export phase starts. Guards against a `.downloading` event
+        /// arriving *after* `.exporting`: PhotoKit can report download progress for the export
+        /// request itself — the same `PHVideoRequestOptions` carries its progress handler into
+        /// `requestExportSession` — and the per-event `Task { @MainActor in }` hop has no
+        /// ordering guarantee, so without this the banner could flip back to
+        /// "Downloading from iCloud…" for the rest of the export.
+        var isExporting = false
+
+        /// Applies one progress event, keeping the phase monotonic: `.exporting` maps to nil —
+        /// the determinate download bar must not linger at 100% through the composition export —
+        /// and wins over any `.downloading` tick that arrives later, whichever order the `Task`
+        /// hops land in. Nil is the state both progress surfaces already render as indeterminate
+        /// "Preparing video…".
+        mutating func apply(_ progress: ResolutionProgress) {
+            switch progress {
+            case .exporting:
+                isExporting = true
+                downloadProgress = nil
+            case .downloading(let fraction) where !isExporting:
+                downloadProgress = fraction
+            case .downloading:
+                break
+            }
+        }
     }
 
     /// How many assets to materialize per page. The grid only ever holds a prefix of the fetch
@@ -219,11 +245,10 @@ final class VideoLibraryViewModel: ObservableObject {
                         // A cancelled request can still emit a tick or two; don't let a stale one
                         // paint a download ring on whatever the user tapped next.
                         if self.resolution?.assetIdentifier == identifier {
-                            // `.exporting` maps to nil: the determinate download bar must not
-                            // linger at 100% through the composition export, and nil is the state
-                            // both progress surfaces already render as indeterminate
-                            // "Preparing video…".
-                            self.resolution?.downloadProgress = progress.downloadFraction
+                            // The phase is monotonic by construction: once `.exporting` has
+                            // landed, a late `.downloading` tick must not flip the banner back
+                            // to a determinate download bar for the rest of the export.
+                            self.resolution?.apply(progress)
                         }
                     }
                 }
