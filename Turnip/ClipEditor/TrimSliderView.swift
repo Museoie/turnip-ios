@@ -39,18 +39,18 @@ struct TrimSliderView: View {
             VStack(spacing: 4) {
                 timeline(range: drawRange)
                 HStack {
-                    Text(ClipEditorViewModel.timeLabel(viewModel.window.startTime))
+                    Text(ClipDurationFormatter.string(from: viewModel.window.startTime))
                     Spacer()
                     Text(viewModel.durationLabel)
                     Spacer()
-                    Text(ClipEditorViewModel.timeLabel(viewModel.window.endTime))
+                    Text(ClipDurationFormatter.string(from: viewModel.window.endTime))
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
-                    "Trim range \(ClipEditorViewModel.timeLabel(viewModel.window.startTime)) to "
-                        + ClipEditorViewModel.timeLabel(viewModel.window.endTime))
+                    "Trim range \(ClipDurationFormatter.string(from: viewModel.window.startTime)) to "
+                        + ClipDurationFormatter.string(from: viewModel.window.endTime))
             }
         } else {
             ProgressView()
@@ -152,7 +152,7 @@ struct TrimSliderView: View {
         .contentShape(Rectangle())
         .offset(x: position(of: time, in: range, width: width) - 16)
         .accessibilityLabel(label)
-        .accessibilityValue(ClipEditorViewModel.timeLabel(time))
+        .accessibilityValue(ClipDurationFormatter.string(from: time))
         .accessibilityAdjustableAction { direction in
             // Tenth-second steps for VoiceOver.
             trim(time + (direction == .increment ? 0.1 : -0.1))

@@ -218,9 +218,11 @@ final class ExportConfirmationViewModel: ObservableObject {
     ) {
         self.items = items
         self.clips = items.enumerated().map { index, item in
-            ClipState(
+            let duration = ClipDurationFormatter.string(
+                from: item.window.endTime - item.window.startTime)
+            return ClipState(
                 id: item.id,
-                title: "Clip \(index + 1) · \(Self.durationLabel(for: item.window))",
+                title: "Clip \(index + 1) · \(duration)",
                 phase: .pending)
         }
         self.asset = asset
@@ -441,18 +443,5 @@ final class ExportConfirmationViewModel: ObservableObject {
         default:
             return error.localizedDescription
         }
-    }
-
-    /// "2.4s"-style duration, built by hand so the decimal separator can't follow the
-    /// device locale — a German-locale "2,4s" would read as a list separator next to the
-    /// clip number.
-    private static func durationLabel(for window: TrickWindow) -> String {
-        let tenths = ((window.endTime - window.startTime) * 10).rounded() / 10
-        // Whole seconds render as "3s", not "3.0s" — the fractional form reads like
-        // a precision claim next to the "2.4s"-style labels elsewhere.
-        if tenths == tenths.rounded() {
-            return "\(Int(tenths))s"
-        }
-        return "\(tenths)s"
     }
 }

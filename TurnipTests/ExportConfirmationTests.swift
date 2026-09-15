@@ -153,6 +153,16 @@ final class ExportConfirmationViewModelTests: XCTestCase {
             makeDirectory: makeDirectory ?? defaultExportDirectory)
     }
 
+    func testClipTitlesShareTheOneDecimalDurationFormat() {
+        // Issue #90: the export row rendered whole seconds as "3s" while the triage
+        // card and the editor rendered "3.0s" — all three now share one formatter.
+        let fake = FakeExport(exportResults: [])
+        let items = [item(start: 2, end: 5), item(start: 1, end: 3.35)]
+        let viewModel = viewModel(items: items, fake: fake)
+
+        XCTAssertEqual(viewModel.clips.map(\.title), ["Clip 1 · 3.0s", "Clip 2 · 2.4s"])
+    }
+
     func testExportsEveryClipInOrderAndSummarizes() async {
         let fake = FakeExport(exportResults: Self.exportSuccesses(3))
         let items = [item(start: 2, end: 5), item(start: 9, end: 11.5), item(start: 20, end: 22)]
