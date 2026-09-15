@@ -57,16 +57,18 @@ final class MoveNetThunderModelTests: XCTestCase {
         )
     }
 
-    /// The failure must be the typed diagnostic error naming the expected shape, so the
-    /// contributor sees *which* variant to fetch rather than a bare mismatch.
+    /// The failure must be the typed wrong-variant error naming the expected shape, so the
+    /// contributor sees *which* variant to fetch rather than a bare mismatch — and so
+    /// `load()` can evict a bad staged record without dropping a good one on a transient
+    /// load failure.
     func testValidateInputShapeErrorNamesTheExpectedShape() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
                 [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape, named: "input"
             )
         ) { error in
-            guard case PoseError.inferenceFailed(let message) = error else {
-                return XCTFail("expected PoseError.inferenceFailed, got \(error)")
+            guard case PoseError.wrongModelVariant(let message) = error else {
+                return XCTFail("expected PoseError.wrongModelVariant, got \(error)")
             }
             XCTAssertTrue(
                 message.contains("[1, 256, 256, 3]"),

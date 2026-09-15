@@ -8,6 +8,12 @@ enum PoseError: LocalizedError {
     case modelNotFound
     case videoLoadFailed(underlying: Error?)
     case inferenceFailed(String)
+    /// The model file loaded but failed the variant check (e.g. a Lightning
+    /// 192x192 file where Thunder 256x256 was expected). Typed separately from
+    /// `inferenceFailed` so the OTA loader can discriminate a bad *file*
+    /// (which should evict the staged record) from a transient load failure
+    /// (which must not drop a good staged model).
+    case wrongModelVariant(String)
 
     var errorDescription: String? {
         switch self {
@@ -18,7 +24,7 @@ enum PoseError: LocalizedError {
                 return "Failed to load the selected video: \(underlying.localizedDescription)"
             }
             return "Failed to load the selected video."
-        case .inferenceFailed(let message):
+        case .inferenceFailed(let message), .wrongModelVariant(let message):
             return "Pose inference failed: \(message)"
         }
     }

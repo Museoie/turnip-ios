@@ -68,6 +68,23 @@ struct ModelUpdateStore: Sendable {
         try payload.write(to: metadataURL, options: .atomic)
     }
 
+    /// Evicts the staged record — metadata and bytes — so the next update check re-stages
+    /// from the manifest instead of reusing a file the loader has already proven bad. The
+    /// service short-circuits re-downloads while a record with an older-or-equal version
+    /// exists, so without eviction a wrong-variant publish would repeat the wasted staged
+    /// load on every run until a newer manifest ships.
+    ///
+    /// Best-effort: a failure to delete is swallowed because eviction always runs on an
+    /// already-failing load path, where a second error would only mask the first. Only ever
+    /// called for content/shape failures (see `MoveNetThunderModel.load()`), never transient
+    /// ones — dropping a good model on an OOM would be worse than the retry.
+    func clearActive() {
+        guard let record = try? readRecord() else { return }
+        try? FileManager.default.removeItem(
+            at: baseURL.appendingPathComponent(record.fileName))
+        try? FileManager.default.removeItem(at: metadataURL)
+    }
+
     private var metadataURL: URL {
         baseURL.appendingPathComponent(Self.metadataFileName)
     }

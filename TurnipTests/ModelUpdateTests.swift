@@ -476,6 +476,34 @@ final class ModelUpdateTests: XCTestCase {
         }
     }
 
+    /// A staged record the loader proves wrong-variant must be evictable:
+    /// after `clearActive()` the store reports no staged version and no
+    /// staged file, so the next update check re-stages from the manifest
+    /// (the service short-circuits re-downloads while a record exists).
+    func testStoreClearActiveEvictsStagedRecord() throws {
+        let store = makeStore()
+        try store.stage(
+            modelData: Data("fake-model-bytes".utf8),
+            version: ModelVersion("2026.09.10-1"),
+            fileName: "model.tflite")
+        XCTAssertNotNil(store.activeVersion())
+        XCTAssertNotNil(store.activeModelURL())
+
+        store.clearActive()
+
+        XCTAssertNil(store.activeVersion())
+        XCTAssertNil(store.activeModelURL())
+    }
+
+    /// Evicting an empty store is a no-op, not an error — the loader calls it
+    /// defensively whenever a staged candidate fails the variant check.
+    func testStoreClearActiveOnEmptyStoreIsNoOp() {
+        let store = makeStore()
+        store.clearActive()
+        XCTAssertNil(store.activeVersion())
+        XCTAssertNil(store.activeModelURL())
+    }
+
     // MARK: - Client
 
     /// Model bytes are trust material: the client refuses to fetch or download

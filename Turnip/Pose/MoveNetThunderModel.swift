@@ -44,7 +44,9 @@ actor MoveNetThunderModel {
     /// OTA wiring (issue #96): a staged model shadows the bundled one only when its manifest
     /// version is newer than `bundledModelVersion`. A staged file that fails to load or to
     /// validate as the Thunder int8 variant falls back to the bundled model rather than leaving
-    /// the app without pose estimation. Conversely, a *missing* bundled model (e.g. the #123
+    /// the app without pose estimation. A staged file that fails the *variant* check is evicted
+    /// from the store first, so the next update check re-stages cleanly instead of repeating the
+    /// wasted staged load on every run. Conversely, a *missing* bundled model (e.g. the #123
     /// TestFlight failure) no longer aborts loading before the staged file is consulted: the
     /// candidate is resolved through the store first and the bundled path is only required when
     /// the candidate *is* the bundled one — `modelNotFound` is thrown only when neither source
@@ -70,6 +72,15 @@ actor MoveNetThunderModel {
         do {
             return try MoveNetThunderModel(modelPath: candidate)
         } catch {
+            // When the staged file fails the variant check (checksum passed but the bytes are
+            // the wrong model), evict the staged record before falling back: the update service
+            // short-circuits re-downloads while a record with an older-or-equal version exists,
+            // so without eviction every diagnostic run would repeat this wasted staged load
+            // until a newer manifest ships. Only content/shape failures evict — a transient
+            // failure (e.g. an allocateTensors OOM) must not drop a good staged model.
+            if case PoseError.wrongModelVariant = error, candidate != bundledPath {
+                store?.clearActive()
+            }
             // The staged file failed: retry with the bundled model before
             // giving up. When the candidate already *is* the bundled model —
             // or there is no bundled model to fall back to — there is nothing
@@ -135,11 +146,13 @@ actor MoveNetThunderModel {
     /// Throws unless the bundled model's tensor matches `expected`. Checked at load so a
     /// wrong variant fails with a visible error instead of silently worse keypoints: TFLite
     /// still loads and allocates a wrong-variant file, and emits output the keypoint parser
-    /// accepts. Pure so it can be tested without the gitignored `.tflite` — see
+    /// accepts. Throws `PoseError.wrongModelVariant` (not `inferenceFailed`) so `load()` can
+    /// evict a bad staged record without dropping a good one on a transient load failure.
+    /// Pure so it can be tested without the gitignored `.tflite` — see
     /// `MoveNetThunderModelTests`.
     static func validateShape(_ shape: [Int], expected: [Int], named tensorName: String) throws {
         guard shape == expected else {
-            throw PoseError.inferenceFailed(
+            throw PoseError.wrongModelVariant(
                 "Bundled model \(tensorName) is \(shape), expected \(expected) for MoveNet Thunder "
                     + "singlepose int8 — the file is probably the wrong variant. "
                     + "See Turnip/Models/README.md for how to get the right one."
