@@ -97,6 +97,25 @@ final class ModelUpdateTests: XCTestCase {
         XCTAssertFalse(ModelVersion("2026.09.10-1") < ModelVersion("2026.09.10"))
     }
 
+    /// `isWellFormed` is the gate the service's manifest validation uses:
+    /// only dotted-numeric versions with an optional `-N` build suffix order
+    /// predictably under `<`. Anything else would fall back to lexicographic
+    /// comparison, so these shapes must be rejected before they can reach
+    /// the loader's version floor.
+    func testVersionWellFormednessMatchesTheOrderingContract() {
+        for wellFormed in ["1", "0", "2026.09.10", "2026.09.10-1", "10.0.0-12"] {
+            XCTAssertTrue(
+                ModelVersion(wellFormed).isWellFormed,
+                "\(wellFormed) should be well-formed")
+        }
+        for malformed in ["", "v2", "2026-09-10", "1.2.", ".1", "1..2", "1.2-",
+                          "1.2-a", "-1", "1.2.3-", "1.2.3-4-5", "1. 2"] {
+            XCTAssertFalse(
+                ModelVersion(malformed).isWellFormed,
+                "\(malformed) should be malformed")
+        }
+    }
+
     // MARK: - Manifest decoding
 
     /// The manifest must decode from the exact JSON shape turnip-farm will
@@ -294,6 +313,29 @@ final class ModelUpdateTests: XCTestCase {
         await service.checkForUpdates()
 
         XCTAssertNil(store.activeModelURL())
+        let lastError = await service.lastError
+        guard case .invalidManifest? = lastError else {
+            return XCTFail("expected invalidManifest, got \(String(describing: lastError))")
+        }
+    }
+
+    /// A manifest with a malformed version must be rejected before anything
+    /// is downloaded: `ModelVersion`'s `Comparable` falls back to
+    /// lexicographic order for non-numeric components, so e.g. `"v2"` would
+    /// beat the bundled `"1"` and pin the client to a staged file the
+    /// version floor was meant to reject.
+    func testMalformedVersionIsRejected() async throws {
+        let store = makeStore()
+        let client = MockModelUpdateClient()
+        let bytes = Data("fake-model-bytes".utf8)
+        await client.setManifest(makeManifest(version: "v2", bytes: bytes))
+        await client.setDownloadBytes(bytes)
+
+        let service = makeService(client: client, store: store)
+        await service.checkForUpdates()
+
+        XCTAssertNil(store.activeModelURL())
+        XCTAssertTrue(await client.downloadRequests.isEmpty)
         let lastError = await service.lastError
         guard case .invalidManifest? = lastError else {
             return XCTFail("expected invalidManifest, got \(String(describing: lastError))")

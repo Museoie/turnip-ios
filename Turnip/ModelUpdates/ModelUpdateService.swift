@@ -103,11 +103,19 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
         }
     }
 
-    /// Rejects a manifest whose `fileName` could escape the OTA directory.
+    /// Rejects a manifest whose `fileName` could escape the OTA directory, or
+    /// whose `version` is not well-formed dotted-numeric.
     /// A positive allowlist (`[A-Za-z0-9._-]`, non-empty, not `.`/`..`) rather
     /// than a blacklist of known-bad spellings: the dangerous class here is
     /// *additions* (new traversal spellings), which a blacklist can never
     /// enumerate. Checked before any download, so hostile bytes never move.
+    /// The version check is load-bearing for the loader's version floor:
+    /// `ModelVersion`'s `Comparable` falls back to lexicographic order for
+    /// non-numeric components, so a malformed version (e.g. `"v2"`,
+    /// `"2026-09-10"`) would compare unpredictably against the bundled
+    /// version and could pin clients to a staged file the floor was meant to
+    /// reject. Rejecting the shape here keeps every version that can reach
+    /// the loader inside the ordering the floor guarantees.
     private static func validate(_ manifest: ModelUpdateManifest) throws {
         let fileName = manifest.fileName
         let allowed = CharacterSet.alphanumerics
@@ -117,6 +125,9 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
             && fileName != ".."
             && fileName.unicodeScalars.allSatisfy(allowed.contains)
         guard isSafe else {
+            throw ModelUpdateError.invalidManifest
+        }
+        guard manifest.version.isWellFormed else {
             throw ModelUpdateError.invalidManifest
         }
     }

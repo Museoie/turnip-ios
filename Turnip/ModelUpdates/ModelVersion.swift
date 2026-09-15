@@ -45,6 +45,31 @@ struct ModelVersion: Codable, Comparable, Hashable, Sendable {
         return (left.build ?? 0) < (right.build ?? 0)
     }
 
+    /// Whether the version is well-formed dotted-numeric with an optional
+    /// trailing `-N` build suffix (e.g. `"2026.09.10-1"`) — the only shape
+    /// `<` orders predictably. A component counts as numeric exactly when the
+    /// `<` implementation treats it numerically (`Int` parses it), so every
+    /// version that passes this check compares without the lexicographic
+    /// fallback. The service rejects malformed versions at
+    /// manifest-validation time; without that gate a typo'd `"2026-09-10"`
+    /// or `"v2"` would compare unpredictably against the bundled version
+    /// and could pin clients to a staged file the version floor was meant
+    /// to reject.
+    var isWellFormed: Bool {
+        var rest = rawValue[...]
+        if let dash = rest.lastIndex(of: "-") {
+            let suffix = rest[rest.index(after: dash)...]
+            guard Self.isNumericComponent(suffix) else { return false }
+            rest = rest[..<dash]
+        }
+        return rest.split(separator: ".", omittingEmptySubsequences: false)
+            .allSatisfy(Self.isNumericComponent)
+    }
+
+    private static func isNumericComponent(_ part: Substring) -> Bool {
+        !part.isEmpty && Int(part) != nil
+    }
+
     /// Splits `"2026.09.10-1"` into dotted parts `["2026", "09", "10"]` plus a
     /// build number. Only a trailing `-<digits>` is treated as a build suffix;
     /// anything else stays inside the dotted components it came with.
