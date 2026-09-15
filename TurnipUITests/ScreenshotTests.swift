@@ -59,6 +59,76 @@ final class ScreenshotTests: XCTestCase {
         addScreenshot(named: "export-confirmation-share-sheet")
     }
 
+    /// Home's Photos-denied empty state: the only Home state scriptable without the
+    /// Photos library (the grid needs real PHAssets, which have no public
+    /// initializer, and the real HomeView would raise the system permission prompt).
+    func testHomeAccessDenied() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotHome"]
+        app.launch()
+        XCTAssertTrue(
+            app.staticTexts["Turnip needs access to your videos"]
+                .waitForExistence(timeout: 15))
+        addScreenshot(named: "home-access-denied")
+    }
+
+    /// Clip list triage: three detected windows, one discarded, thumbnails as
+    /// placeholder tiles (the /dev/null asset decodes nothing; the loader falls
+    /// back to the placeholder — the test waits for the placeholder's
+    /// accessibility element, so it guards the fallback and not just the
+    /// navigation bar appearing).
+    func testClipListTriage() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipList"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        let placeholder = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Thumbnail placeholder'"))
+            .firstMatch
+        XCTAssertTrue(placeholder.waitForExistence(timeout: 15))
+        addScreenshot(named: "clip-list-triage")
+    }
+
+    /// Clip editor over a generated sample movie: the preview with the live crop
+    /// rect, the trim slider, and the keep toggle. The trim range's accessibility
+    /// label ("Trim range 2.0s to 5.0s") only appears once the movie's duration
+    /// loads, so it also proves the editor reached its loaded state.
+    func testClipEditor() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipEditor"]
+        app.launch()
+        let trimRange = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Trim range 2.0s to 5.0s'"))
+            .firstMatch
+        XCTAssertTrue(trimRange.waitForExistence(timeout: 15))
+        addScreenshot(named: "clip-editor")
+    }
+
+    /// Processing mid-run: the stub runner reports "Analyzing frame 400 of 1200"
+    /// and holds the run open (the test runner kills the app before the hold
+    /// expires). No inference, no model, no video file.
+    func testProcessingProgress() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotProcessing"]
+        app.launch()
+        let progress = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Analysis progress'"))
+            .firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 15))
+        addScreenshot(named: "processing-progress")
+    }
+
+    /// Pose diagnostic before a run: the video length and the "Run diagnostic"
+    /// button. No inference runs until the button is tapped, so the initial state
+    /// needs neither the model nor a real video file.
+    func testPoseDiagnosticInitial() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotPoseDiagnostic"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Run diagnostic"].waitForExistence(timeout: 15))
+        addScreenshot(named: "pose-diagnostic")
+    }
+
     private func addScreenshot(named name: String) {
         let screenshot = XCUIScreen.main.screenshot()
         let attachment = XCTAttachment(screenshot: screenshot)

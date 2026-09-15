@@ -173,6 +173,10 @@ private struct ClipCardView: View {
                 .fill(.quaternary)
                 .aspectRatio(placeholderRatio ?? encodedSpaceRatio, contentMode: .fit)
                 .overlay { ProgressView() }
+                // The UI-test screenshot harness waits on this label to prove the
+                // thumbnail fallback actually engaged (the nav bar alone appears
+                // whether or not the decode failed).
+                .accessibilityLabel("Thumbnail placeholder")
         }
     }
 
