@@ -154,21 +154,40 @@ private func makeScreenshotSampleMovie() -> URL {
             throw ScreenshotMovieError.setupFailed
         }
         writer.add(input)
-        writer.startSession(atSourceTime: .zero)
-        for frame in 0..<(6 * Int(fps)) {
-            try appendSolidFrame(adaptor: adaptor, input: input, writer: writer, frame: frame, fps: fps)
-        }
-        input.markAsFinished()
-        let finished = DispatchSemaphore(value: 0)
-        // The completion handler runs off the main thread, so waiting here can't deadlock.
-        writer.finishWriting { finished.signal() }
-        finished.wait()
-        guard writer.status == .completed else { throw ScreenshotMovieError.finishFailed }
-        return url
+        try appendSampleFrames(writer: writer, adaptor: adaptor, input: input, fps: fps)
+        return try finishSampleMovieWriting(writer: writer, to: url)
     } catch {
         try? FileManager.default.removeItem(at: url)
         return URL(fileURLWithPath: "/dev/null")
     }
+}
+
+/// Starts the writer session and encodes the solid-color frames, then marks the
+/// input finished. Extracted from `makeScreenshotSampleMovie()` so each function
+/// stays under the repo's SwiftLint `function_body_length` limit.
+private func appendSampleFrames(
+    writer: AVAssetWriter,
+    adaptor: AVAssetWriterInputPixelBufferAdaptor,
+    input: AVAssetWriterInput,
+    fps: Int32
+) throws {
+    writer.startSession(atSourceTime: .zero)
+    for frame in 0 ..< (6 * Int(fps)) {
+        try appendSolidFrame(adaptor: adaptor, input: input, writer: writer, frame: frame, fps: fps)
+    }
+    input.markAsFinished()
+}
+
+/// Waits for the writer to finish and returns the movie URL on success, throwing
+/// on failure. Extracted from `makeScreenshotSampleMovie()` so each function stays
+/// under the repo's SwiftLint `function_body_length` limit.
+private func finishSampleMovieWriting(writer: AVAssetWriter, to url: URL) throws -> URL {
+    let finished = DispatchSemaphore(value: 0)
+    // The completion handler runs off the main thread, so waiting here can't deadlock.
+    writer.finishWriting { finished.signal() }
+    finished.wait()
+    guard writer.status == .completed else { throw ScreenshotMovieError.finishFailed }
+    return url
 }
 
 /// Encodes one solid-color frame into the sample movie. The fill varies per frame so
