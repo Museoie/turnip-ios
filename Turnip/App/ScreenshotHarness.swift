@@ -107,8 +107,20 @@ struct ScreenshotClipListHarness: View {
 struct ScreenshotClipEditorHarness: View {
     /// Generated once per process: `prepare()` needs the file to exist before the
     /// view appears, and re-encoding on every body evaluation would be wasteful.
-    /// `static let` is lazily initialized and thread-safe.
+    /// `static let` is lazily initialized and thread-safe, but it initializes on
+    /// the accessing thread — so `warmUpSampleMovie()` starts it on a background
+    /// queue from `TurnipApp.init()` (when the `-screenshotClipEditor` launch arg
+    /// is present) before any view appears, keeping the encode off the UI thread.
     private static let sampleMovieURL: URL = makeScreenshotSampleMovie()
+
+    /// Starts the sample-movie encode on a background queue ahead of first use.
+    /// Called from `TurnipApp.init()` when the `-screenshotClipEditor` launch arg
+    /// is present, so the first render never stalls on the encode.
+    static func warmUpSampleMovie() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = Self.sampleMovieURL
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -125,11 +137,16 @@ struct ScreenshotClipEditorHarness: View {
 }
 
 /// Writes the sample movie for `ScreenshotClipEditorHarness`: six seconds of
-/// solid-color H.264 frames at 320x568. Synchronous — the write is a few hundred
-/// local frames, so it finishes in well under a second. Falls back to `/dev/null`
+/// solid-color H.264 frames at 320x568. Synchronous; `warmUpSampleMovie()` starts
+/// it on a background queue before any view appears, so the main thread never
+/// stalls on the encode. Re-created at a fixed filename each run, so screenshot
+/// runs never litter tmp/ with orphaned sample movies. Falls back to `/dev/null`
 /// (the deterministic load-failure state) if anything fails, instead of crashing.
 private func makeScreenshotSampleMovie() -> URL {
-    let url = URL.temporaryDirectory.appending(path: "ScreenshotSample-\(UUID().uuidString).mov")
+    // Fixed filename: each run replaces the previous file rather than adding one.
+    let url = URL.temporaryDirectory.appending(path: "ScreenshotSample.mov")
+    // A stale file from a killed run would make the writer's creation fail.
+    try? FileManager.default.removeItem(at: url)
     do {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let width = 320

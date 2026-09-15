@@ -12,6 +12,13 @@ struct TurnipApp: App {
         Task.detached(priority: .utility) {
             PhotoVideoResolver.deleteOrphanedTemporaryExports(olderThan: launchDate)
         }
+        #if DEBUG
+        if CommandLine.arguments.contains("-screenshotClipEditor") {
+            // Start the harness's sample-movie encode before any view appears, on
+            // a background queue, so the first render never stalls on it.
+            ScreenshotClipEditorHarness.warmUpSampleMovie()
+        }
+        #endif
     }
 
     var body: some Scene {
