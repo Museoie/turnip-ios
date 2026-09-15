@@ -209,8 +209,9 @@ final class CropRectCalculatorTests: XCTestCase {
         // The floor is measured against the shorter axis (1080 here), so a single keypoint on
         // a landscape source lands on the same 81 x 144-pixel rect as the portrait fixture —
         // only the normalized shape differs (0.0421875 x 0.1333333) because the normalized
-        // unit is a fraction of each axis. A regression that floored against the wrong axis
-        // (e.g. height for both) would produce 144 x 256 pixels here instead.
+        // unit is a fraction of each axis. A regression that floored each axis against its
+        // own axis (minWidth = 5% of the width, minHeight = 5% of the height) would pad the
+        // single keypoint to 144 x 81 pixels, snap to 144 x 256, and fail this test.
         let frames = [frame(confident([(x: 0.5, y: 0.5)]))]
 
         let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: landscape))
