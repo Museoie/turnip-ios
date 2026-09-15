@@ -73,8 +73,10 @@ actor MoveNetThunderModel {
             // The staged file failed: retry with the bundled model before
             // giving up. When the candidate already *is* the bundled model —
             // or there is no bundled model to fall back to — there is nothing
-            // left to try.
-            guard let bundledPath, candidate != bundledPath else { throw }
+            // left to try, so rethrow the load failure. (`throw error` rather
+            // than bare `throw`: a bare `throw` doesn't compile nested inside
+            // this `guard-else`.)
+            guard let bundledPath, candidate != bundledPath else { throw error }
             return try MoveNetThunderModel(modelPath: bundledPath)
         }
     }
