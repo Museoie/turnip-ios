@@ -290,7 +290,8 @@ final class ModelUpdateTests: XCTestCase {
             spins += 1
             await Task.yield()
         }
-        XCTAssertFalse(await client.fetchedEndpoints.isEmpty)
+        let fetchedEndpoints = await client.fetchedEndpoints
+        XCTAssertFalse(fetchedEndpoints.isEmpty)
 
         await service.checkForUpdates() // must be suppressed, not queued
         await first.value
@@ -335,7 +336,8 @@ final class ModelUpdateTests: XCTestCase {
         await service.checkForUpdates()
 
         XCTAssertNil(store.activeModelURL())
-        XCTAssertTrue(await client.downloadRequests.isEmpty)
+        let downloadRequests = await client.downloadRequests
+        XCTAssertTrue(downloadRequests.isEmpty)
         let lastError = await service.lastError
         guard case .invalidManifest? = lastError else {
             return XCTFail("expected invalidManifest, got \(String(describing: lastError))")
