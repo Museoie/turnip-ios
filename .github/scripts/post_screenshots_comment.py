@@ -11,7 +11,9 @@ context with full permissions and secrets, so this script can do both.
 Reads PNGs from SCREENSHOTS_DIR (the downloaded `pr-screenshots`
 artifact). PR_NUMBER may be omitted, in which case it is resolved from
 HEAD_OWNER/HEAD_BRANCH via the pulls API (reliable for fork PRs), falling
-back to HEAD_SHA via the commits API.
+back to HEAD_SHA via the commits API. When resolving by head ref, a
+`head.sha == HEAD_SHA` check keeps a superseded run from commenting on a
+newer head.
 
 Two modes:
   Inline images (preferred): when SCREENSHOTS_PUSH_TOKEN is set -- a
@@ -207,14 +209,25 @@ def resolve_pr_number(token, base_repo, head_sha):
     raise RuntimeError("No PR found for commit %s in %s" % (head_sha, base_repo))
 
 
-def resolve_pr_by_head(token, base_repo, head_owner, head_branch):
-    """Find the open PR whose head is owner:branch."""
+def resolve_pr_by_head(token, base_repo, head_owner, head_branch, head_sha):
+    """Find the open PR whose head is owner:branch.
+
+    Returns the PR number, or None when the PR's head has moved past
+    head_sha. A workflow_run can sit queued while the PR gains new
+    commits; without this check the superseded run would overwrite the
+    newer run's comment (the bot comment is updated in place) with stale
+    screenshots. The newer run's own workflow_run posts the fresh
+    comment, so the stale run skipping is correct, not a failure.
+    """
     head = "%s:%s" % (head_owner, head_branch)
     prs = api(token, "GET", "/repos/%s/pulls?head=%s&state=open"
               % (base_repo, urllib.parse.quote(head, safe="")))
-    if prs:
-        return prs[0]["number"]
-    raise RuntimeError("No open PR for head %s in %s" % (head, base_repo))
+    if not prs:
+        raise RuntimeError("No open PR for head %s in %s" % (head, base_repo))
+    pr = prs[0]
+    if pr["head"]["sha"] != head_sha:
+        return None
+    return pr["number"]
 
 
 def find_bot_comment(token, base_repo, pr_number):
@@ -245,10 +258,18 @@ def main():
     # indexes commits present in the base repo and misses fork PRs by SHA.
     head_owner = os.environ.get("HEAD_OWNER")
     head_branch = os.environ.get("HEAD_BRANCH")
-    by_head = (resolve_pr_by_head(token, base_repo, head_owner, head_branch)
-               if head_owner and head_branch else None)
-    pr_number = (os.environ.get("PR_NUMBER") or by_head
-                 or resolve_pr_number(token, base_repo, sha))
+    pr_number = os.environ.get("PR_NUMBER")
+    if not pr_number and head_owner and head_branch:
+        pr_number = resolve_pr_by_head(token, base_repo, head_owner,
+                                       head_branch, sha)
+        if pr_number is None:
+            # The PR gained new commits while this run's workflow_run was
+            # queued: these screenshots are stale. Skip instead of
+            # overwriting the newer run's comment; that run posts its own.
+            print("PR head moved past %s; skipping stale comment." % sha[:7])
+            return 0
+    if not pr_number:
+        pr_number = resolve_pr_number(token, base_repo, sha)
 
     pngs = []
     if os.path.isdir(shots_dir):
