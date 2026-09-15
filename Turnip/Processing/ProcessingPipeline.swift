@@ -44,8 +44,9 @@ struct ProcessingProgress: Equatable, Sendable {
 /// computed from the window's pose keypoints (docs/DESIGN.md steps 5-6).
 ///
 /// This is the processing screen's output contract. It deliberately mirrors — rather than
-/// reuses — `ClipListItem`, whose type does not exist on `main` yet; the home flow maps each
-/// clip with `ClipListItem(window: clip.window, cropRect: clip.cropRect)` when it wires the two.
+/// reuses — `ClipListItem` (Turnip/ClipList/ClipListItem.swift): a screen's output contract
+/// should not be its neighbour's view model, so the home flow maps each clip with
+/// `ClipListItem(window: clip.window, cropRect: clip.cropRect)` when it wires the two.
 struct ProcessedClip: Equatable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
