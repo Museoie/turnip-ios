@@ -23,7 +23,8 @@ enum ClipPhotosSaveError: Error, Equatable {
 /// goes from the app's sandbox to the on-device library.
 struct ClipPhotosSaver: Sendable {
     /// Resolves the add-only Photos authorization, collapsed onto the app's
-    /// authorization model (`PhotoLibraryAuthorization`, shared with Home's gallery).
+    /// shared Photos-domain authorization model (`PhotoLibraryAuthorization`,
+    /// also used by the Home gallery).
     /// Injected so tests can drive the denial paths without a system prompt; production
     /// passes the live add-only request.
     var authorization: @Sendable () async -> PhotoLibraryAuthorization = {
