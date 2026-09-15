@@ -105,6 +105,7 @@ Output: list of `(start_time, end_time)` in seconds.
 **Step 6 (crop rect):** for each trick window, compute the tightest rect containing the athlete across the whole window:
 - Per-frame bounding box = min/max of confidence-filtered (`> 0.3`) keypoints
 - Union across all frames in the window
+- Grow a box smaller than 5% of the rendered frame's shorter axis around its own center: a one-keypoint or tight-cluster window is not a located athlete, and without the floor it collapses to a zero-area (or near-zero-area) rect the export then upscales to the full output size
 - Expand 25% each side for breathing room + pose undershoot at edges
 - Snap to target aspect ratio (9:16 for Reels default): grow the shorter axis around the box center. The ratio is measured on the box's *pixel* size, not its normalized size — a normalized unit is a fraction of its own axis, so a normalized 9:16 rect on a 1080x1920 source is 9:16 twice over
 - Slide back inside `[0, 1]` if expansion pushes past a frame edge, which keeps the ratio; an axis longer than the frame takes the frame's full extent instead and the clip letterboxes on that axis rather than cropping tighter
