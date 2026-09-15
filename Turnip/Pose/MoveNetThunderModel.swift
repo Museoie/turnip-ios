@@ -77,8 +77,7 @@ actor MoveNetThunderModel {
         stagedPath: String?
     ) -> String {
         if let stagedVersion, let stagedPath,
-            stagedVersion > bundledModelVersion
-        {
+            stagedVersion > bundledModelVersion {
             return stagedPath
         }
         return bundledPath
