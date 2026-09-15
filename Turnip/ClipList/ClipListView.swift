@@ -6,9 +6,8 @@ import SwiftUI
 /// "Export N clips" action.
 ///
 /// The processing screen pushes this with the pipeline's output. Card taps navigate
-/// to the clip editor and the export action to export confirmation; both destinations
-/// are placeholders owned by the follow-up screen PRs (see
-/// `ClipListPlaceholders.swift`). This view deliberately
+/// to the clip editor and the export action to export confirmation.
+/// This view deliberately
 /// declares no `NavigationStack` of its own — it lives on the flow's shared stack.
 struct ClipListView: View {
     @StateObject private var viewModel: ClipListViewModel
@@ -21,6 +20,39 @@ struct ClipListView: View {
     ) {
         _viewModel = StateObject(wrappedValue: ClipListViewModel(
             items: items, asset: asset, loader: loader))
+    }
+
+    /// The export-confirmation screen's per-clip export, wired to the real
+    /// pipeline step 7 (`ClipExporter`): trims the source video to the window,
+    /// crops to its rect, and writes an `.mp4` into the screen's scratch
+    /// directory. Failures surface as `ExportConfirmationError.exportFailed`
+    /// so the screen's per-clip callout names the step; cancellation
+    /// propagates untouched so the screen stops the run instead of failing
+    /// the clip.
+    private static let exportOneClip: ExportOneClip = { window, cropRect, asset, directory, progress in
+        do {
+            let exported = try await ClipExporter().export(
+                ClipSpec(window: window, cropRect: cropRect),
+                from: asset,
+                to: directory,
+                progress: progress)
+            return exported.fileURL
+        } catch {
+            if error is CancellationError { throw error }
+            throw ExportConfirmationError.exportFailed(reason: error.localizedDescription)
+        }
+    }
+
+    /// The export-confirmation screen's Photos save, wired to `ClipPhotosSaver`
+    /// (add-only authorization). Failures surface as
+    /// `ExportConfirmationError.photosSaveFailed` so the per-clip callout names
+    /// the step.
+    private static let saveOneClipToPhotos: SaveOneClipToPhotos = { url in
+        do {
+            try await ClipPhotosSaver().saveVideo(at: url)
+        } catch {
+            throw ExportConfirmationError.photosSaveFailed(reason: error.localizedDescription)
+        }
     }
 
     var body: some View {
@@ -39,15 +71,24 @@ struct ClipListView: View {
         .navigationDestination(for: ClipListDestination.self) { destination in
             switch destination {
             case .editor(let id):
-                // The editor binds back into the list so keep/discard changes commit
-                // on back-navigation (docs/UIUX.md § "Clip Detail / Editor").
+                // The editor's commit writes back into the list by id so
+                // trim/crop edits commit on back-navigation (docs/UIUX.md
+                // § "Clip Detail / Editor").
                 if let item = viewModel.binding(for: id) {
-                    ClipEditorPlaceholderView(item: item)
+                    ClipEditorView(
+                        source: viewModel.editorSource(for: item.wrappedValue),
+                        onCommit: { result in
+                            viewModel.applyEditorResult(result, to: id)
+                        })
                 }
             }
         }
         .navigationDestination(isPresented: $showingExport) {
-            ExportConfirmationPlaceholderView(items: viewModel.keptItems)
+            ExportConfirmationView(
+                items: viewModel.exportConfirmationItems,
+                asset: viewModel.sourceAsset,
+                exportClip: Self.exportOneClip,
+                saveToPhotos: Self.saveOneClipToPhotos)
         }
         .safeAreaInset(edge: .bottom) {
             Button(viewModel.exportTitle) { showingExport = true }

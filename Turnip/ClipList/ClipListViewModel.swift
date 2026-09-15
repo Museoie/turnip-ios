@@ -51,6 +51,52 @@ final class ClipListViewModel: ObservableObject {
         !keptItems.isEmpty
     }
 
+    /// The analyzed asset, shared with the editor and export-confirmation
+    /// destinations so they preview and export from the same source the list's
+    /// thumbnails were decoded from.
+    var sourceAsset: AVAsset { asset }
+
+    /// The export action's input as the confirmation screen takes it: one entry
+    /// per kept clip, carrying the id, window, and crop rect it exports with.
+    var exportConfirmationItems: [ExportConfirmationItem] {
+        keptItems.map {
+            ExportConfirmationItem(id: $0.id, window: $0.window, cropRect: $0.cropRect)
+        }
+    }
+
+    /// Builds the editor's input for one list item: its window, crop rect, and
+    /// keep/discard state plus the analyzed asset.
+    ///
+    /// `poseFrames` is empty — the pipeline's sampled frames don't reach the
+    /// list yet (the Home → Processing wiring threads them through when it
+    /// lands), so the editor keeps the pipeline-computed crop rect instead of
+    /// re-deriving it when a trim handle drags outward past the original
+    /// window. Trimming, the live crop preview, and keep/discard all work;
+    /// only the re-derivation for newly included frames waits on the frames.
+    func editorSource(for item: ClipListItem) -> ClipEditorSource {
+        ClipEditorSource(
+            window: item.window,
+            cropRect: item.cropRect,
+            isKept: item.isKept,
+            asset: asset,
+            poseFrames: [])
+    }
+
+    /// Applies the editor's commit to the item with the given id: the window,
+    /// crop rect, and keep/discard decision the user left the editor with
+    /// replace the list entry's, so trim/crop edits commit on back-navigation
+    /// (docs/UIUX.md § "Clip Detail / Editor"). A no-op for unknown ids — the
+    /// item may have been removed by a re-run of detection while the editor
+    /// was open.
+    func applyEditorResult(_ result: ClipEditorResult, to id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index] = ClipListItem(
+            id: id,
+            window: result.window,
+            cropRect: result.cropRect,
+            isKept: result.isKept)
+    }
+
     /// The per-card keep/discard quick action. A no-op for unknown ids — the card that
     /// fired it may have been removed by a re-run of detection.
     func toggleKeep(_ item: ClipListItem) {
