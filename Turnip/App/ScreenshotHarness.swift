@@ -126,7 +126,8 @@ struct ScreenshotClipEditorHarness: View {
 
 /// Writes the sample movie for `ScreenshotClipEditorHarness`: six seconds of
 /// solid-color H.264 frames at 320x568. Synchronous — the write is a few hundred
-/// local frames, so the bounded spin below finishes in well under a second.
+/// local frames, so it finishes in well under a second. Falls back to `/dev/null`
+/// (the deterministic load-failure state) if anything fails, instead of crashing.
 private func makeScreenshotSampleMovie() -> URL {
     let url = URL.temporaryDirectory.appending(path: "ScreenshotSample-\(UUID().uuidString).mov")
     do {
@@ -155,33 +156,7 @@ private func makeScreenshotSampleMovie() -> URL {
         writer.add(input)
         writer.startSession(atSourceTime: .zero)
         for frame in 0..<(6 * Int(fps)) {
-            // Bounded on writer status: if the writer fails mid-write,
-            // `isReadyForMoreMediaData` never becomes true, and without the status
-            // check the loop would spin with no cause.
-            var spins = 0
-            while !input.isReadyForMoreMediaData, writer.status == .writing, spins < 500 {
-                Thread.sleep(forTimeInterval: 0.002)
-                spins += 1
-            }
-            guard let pool = adaptor.pixelBufferPool else {
-                throw ScreenshotMovieError.setupFailed
-            }
-            var pixelBuffer: CVPixelBuffer?
-            let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
-            guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-                throw ScreenshotMovieError.setupFailed
-            }
-            CVPixelBufferLockBaseAddress(buffer, [])
-            if let base = CVPixelBufferGetBaseAddress(buffer) {
-                let bytes = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
-                // Vary the fill per frame so the encoder emits real (non-skipped) frames.
-                memset(base, Int32(frame % 255), bytes)
-            }
-            CVPixelBufferUnlockBaseAddress(buffer, [])
-            let time = CMTime(value: CMTimeValue(frame), timescale: fps)
-            guard adaptor.append(buffer, withPresentationTime: time) else {
-                throw ScreenshotMovieError.appendFailed
-            }
+            try appendSolidFrame(adaptor: adaptor, input: input, writer: writer, frame: frame, fps: fps)
         }
         input.markAsFinished()
         let finished = DispatchSemaphore(value: 0)
@@ -193,6 +168,45 @@ private func makeScreenshotSampleMovie() -> URL {
     } catch {
         try? FileManager.default.removeItem(at: url)
         return URL(fileURLWithPath: "/dev/null")
+    }
+}
+
+/// Encodes one solid-color frame into the sample movie. The fill varies per frame so
+/// the encoder emits real (non-skipped) frames.
+private func appendSolidFrame(
+    adaptor: AVAssetWriterInputPixelBufferAdaptor,
+    input: AVAssetWriterInput,
+    writer: AVAssetWriter,
+    frame: Int,
+    fps: Int32
+) throws {
+    // Bounded on writer status: if the writer fails mid-write,
+    // `isReadyForMoreMediaData` never becomes true, and without the status
+    // check the loop would spin with no cause. Finishes in well under a second
+    // for the few hundred local frames.
+    var spins = 0
+    while !input.isReadyForMoreMediaData, writer.status == .writing, spins < 500 {
+        Thread.sleep(forTimeInterval: 0.002)
+        spins += 1
+    }
+    guard let pool = adaptor.pixelBufferPool else {
+        throw ScreenshotMovieError.setupFailed
+    }
+    var pixelBuffer: CVPixelBuffer?
+    let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
+    guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
+        throw ScreenshotMovieError.setupFailed
+    }
+    CVPixelBufferLockBaseAddress(buffer, [])
+    if let base = CVPixelBufferGetBaseAddress(buffer) {
+        let bytes = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
+        // Vary the fill per frame so the encoder emits real (non-skipped) frames.
+        memset(base, Int32(frame % 255), bytes)
+    }
+    CVPixelBufferUnlockBaseAddress(buffer, [])
+    let time = CMTime(value: CMTimeValue(frame), timescale: fps)
+    guard adaptor.append(buffer, withPresentationTime: time) else {
+        throw ScreenshotMovieError.appendFailed
     }
 }
 
