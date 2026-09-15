@@ -10,17 +10,25 @@ struct HomeView: View {
         NavigationStack(path: $viewModel.path) {
             content
                 .navigationTitle("Turnip")
+                .navigationBarTitleDisplayMode(.inline)
                 .navigationDestination(for: SelectedVideo.self) { video in
-                    // The Processing screen runs the real detection pipeline and pushes the
-                    // clip list on success. This was the pose diagnostic's only entry
-                    // point; that screen is a throwaway measurement tool and loses its
-                    // entry point here.
-                    ProcessingView(video: video) { result in
+                    // The Processing screen shows the picked video and runs the real
+                    // detection pipeline on the user's tap, then pushes the clip list
+                    // on success — analysis never auto-starts (docs/UIUX.md
+                    // § "Processing"). `popToRoot` threads the flow's "back to Home"
+                    // action through the pushed screens so their back chevrons return
+                    // here instead of stepping back through the flow.
+                    ProcessingView(
+                        video: video,
+                        autostart: false,
+                        popToRoot: { viewModel.path = [] }
+                    ) { result, popToRoot in
                         ClipListView(
                             items: result.clips.map {
                                 ClipListItem(window: $0.window, cropRect: $0.cropRect)
                             },
-                            asset: result.asset
+                            asset: result.asset,
+                            popToRoot: popToRoot
                         )
                     }
                 }

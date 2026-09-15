@@ -25,6 +25,11 @@ final class ClipListViewModel: ObservableObject {
         (naturalSize: CGSize, preferredTransform: CGAffineTransform)?, Never
     >?
 
+    /// The asset's duration in seconds, loaded once per asset and shared by every
+    /// card's inline trim timeline. `nil` when the asset can't be read — the timeline
+    /// then hides itself rather than guessing a scale.
+    private var durationTask: Task<TimeInterval?, Never>?
+
     init(
         items: [ClipListItem],
         asset: AVAsset,
@@ -104,6 +109,41 @@ final class ClipListViewModel: ObservableObject {
         items[index].isKept.toggle()
     }
 
+    /// True when every clip is kept (and there is at least one). Drives the toolbar's
+    /// "Select All" / "Deselect All" label.
+    var allKept: Bool {
+        !items.isEmpty && items.allSatisfy(\.isKept)
+    }
+
+    /// Marks every clip kept — the toolbar's "Select All" action.
+    func selectAll() {
+        for index in items.indices {
+            items[index].isKept = true
+        }
+    }
+
+    /// Clears every clip's keep flag — the toolbar's "Deselect All" action, shown when
+    /// everything is already kept.
+    func deselectAll() {
+        for index in items.indices {
+            items[index].isKept = false
+        }
+    }
+
+    /// Replaces the window of the item with the given id — the card's inline trim
+    /// timeline writes through this. The crop rect and keep/discard decision are
+    /// preserved; only the window moves. A no-op for unknown ids, same convention as
+    /// `toggleKeep`.
+    func setWindow(_ window: TrickWindow, for id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let current = items[index]
+        items[index] = ClipListItem(
+            id: id,
+            window: window,
+            cropRect: current.cropRect,
+            isKept: current.isKept)
+    }
+
     /// A write-through binding to one item, for a destination that edits a clip in place.
     /// Keyed by id on both ends rather than closing over an index: get and set resolve
     /// the item from the current list. `nil` when the id is no longer in the list.
@@ -152,6 +192,21 @@ final class ClipListViewModel: ObservableObject {
         }
         guard let task = trackGeometryTask else { return nil }
         return await task.value
+    }
+
+    /// Loads the asset's duration once per asset; concurrent callers share the single
+    /// in-flight task. `@MainActor`-serialized, so the check-then-set is race-free
+    /// (same pattern as `trackGeometry` above).
+    func assetDuration() async -> TimeInterval? {
+        if durationTask == nil {
+            durationTask = Task { [asset] in
+                guard let duration = try? await asset.load(.duration) else { return nil }
+                let seconds = duration.seconds
+                return seconds.isFinite && seconds > 0 ? seconds : nil
+            }
+        }
+        guard let durationTask else { return nil }
+        return await durationTask.value
     }
 
     /// The card thumbnail, loading lazily. Idempotent and safe to call from every card's

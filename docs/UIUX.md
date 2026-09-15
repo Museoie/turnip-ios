@@ -35,11 +35,14 @@ flowchart TD
     B -->|cancel| A
     E1 -->|back to Home| A
     E2 -->|retry / back to Home| A
-    C -->|tap a clip| D[Clip Detail / Editor]
+    C -->|tap a clip's thumbnail| P[Clip Player]
+    P -->|close| C
+    C -->|tap a clip's Edit button| D[Clip Detail / Editor]
     D -->|save changes| C
     D -->|discard| C
     C -->|export kept clips| F[Export Confirmation]
-    F -->|done| A
+    F -->|done / back| A
+    C -->|back| A
 ```
 
 ### 1. Home / Video Gallery
@@ -48,6 +51,8 @@ flowchart TD
   video in the device's Photos library, not a button that opens a picker
   sheet. Tapping a tile is the "pick video" action and goes straight to
   Processing for that video.
+- The "Turnip" title renders inline (centered), Photos-app style — like every
+  title in the flow.
 - No account, no settings required for v1 — nothing in `DESIGN.md`'s v1 scope
   needs either.
 - **Permission model** (shipped, in `Turnip/Home/`): because Home *is* the
@@ -65,7 +70,11 @@ flowchart TD
 
 ### 2. Processing
 
-- Shown while the full pipeline runs: frame sampling → pose inference →
+- Does not auto-start. The screen shows the picked video large with native
+  playback controls and a "Start analysis" button — black background, no title,
+  Photos-app look, back chevron to Home. The user plays the video, or starts
+  analysis when ready.
+- Once started, shows the full pipeline run: frame sampling → pose inference →
   motion signal → peak detection → crop rect (per issues
   [#8](https://github.com/hoiekim/turnip-ios/issues/8)–[#9](https://github.com/hoiekim/turnip-ios/issues/9)).
   This is not instant for a multi-minute input video, so needs real progress
@@ -79,10 +88,18 @@ flowchart TD
 ### 3. Clip List (triage)
 
 - One card per detected trick window: thumbnail (frame at the window's
-  midpoint, per the computed crop rect), duration, keep/discard toggle.
-- Tapping a card opens Clip Detail; the keep/discard toggle itself is a
-  quick action that doesn't require opening detail.
+  midpoint, per the computed crop rect), an inline trim timeline with draggable
+  start/end handles bound to the clip's window (same visual language as the
+  editor's scrub bar), duration, keep/discard toggle.
+- Tapping a card's thumbnail plays the clip full-screen (plays the window, stops
+  at its end); the keep/discard toggle itself is a quick action that doesn't
+  start playback. A per-card Edit button opens Clip Detail — the editor still
+  owns crop.
+- A "Select All" / "Deselect All" toolbar button at the top marks every clip
+  kept or clears every keep flag.
 - A visible "Export N clips" action, enabled once at least one clip is kept.
+- The back chevron pops to Home, not to Processing; the title sits centered
+  inline on the same line as the chevron, Photos-app style.
 - This is the part of current issue #11 that's genuinely a list/grid screen.
 
 ### 4. Clip Detail / Editor
@@ -112,6 +129,9 @@ flowchart TD
 - Final state: "N of M clips saved to Photos" with any per-clip failures
   called out individually, not just a total count. No further action
   required — user can start over from Home.
+- The back chevron pops to Home, not to the clip list; Done pops to Home too —
+  the flow is finished and the list state is stale after export. The title sits
+  centered inline on the same line as the chevron, Photos-app style.
 
 ## Out of scope for this doc
 

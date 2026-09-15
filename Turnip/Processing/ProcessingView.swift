@@ -1,34 +1,47 @@
 import AVFoundation
+import AVKit
 import SwiftUI
 
 /// The pipeline progress screen (`docs/UIUX.md` § "Processing").
 ///
-/// Pushed onto the flow's shared `NavigationStack` when a video is picked: it starts the
-/// pipeline on appear, shows real per-frame progress ("Analyzing frame 400 of 1,200"), and
-/// on success navigates to `destination` with the detected clips. Empty and error states
-/// stay on this screen with a way back. Like the other pushed screens, it declares no
-/// `NavigationStack` of its own.
+/// Pushed onto the flow's shared `NavigationStack` when a video is picked. It does *not*
+/// start the pipeline on appear: the idle state shows the picked video with native
+/// playback controls and a manual "Start analysis" button — black background, no title,
+/// Photos-app look. Once started it shows real per-frame progress ("Analyzing frame 400
+/// of 1,200"), and on success navigates to `destination` with the detected clips. Empty
+/// and error states stay on this screen with a way back. Like the other pushed screens,
+/// it declares no `NavigationStack` of its own.
 ///
 /// The success destination is injected rather than hardcoded to the clip list, so
 /// `Processing` never depends on `ClipList`'s view type (`ClipListView`): the screen
-/// that pushes this one supplies `destination`.
+/// that pushes this one supplies `destination`. The destination also receives
+/// `popToRoot` — the flow's "back to Home" action — so its back button can skip this
+/// screen instead of stepping back through the flow.
 struct ProcessingView<Destination: View>: View {
     let video: SelectedVideo
-    let destination: (ProcessingResult) -> Destination
+    let destination: (ProcessingResult, @escaping () -> Void) -> Destination
     /// `false` in previews, which would otherwise kick off a real pipeline run on appear.
+    /// Home passes `false` too: analysis starts from the idle state's button, never
+    /// automatically.
     let autostart: Bool
+    /// Pops the flow's navigation stack back to Home. Threaded into the success
+    /// destination so its back button returns to the start of the flow.
+    let popToRoot: () -> Void
 
     @StateObject private var viewModel: ProcessingViewModel
+    @State private var player: AVPlayer?
     @Environment(\.dismiss) private var dismiss
 
     init(
         video: SelectedVideo,
         runner: any ProcessingRunning = ProcessingPipeline(),
         autostart: Bool = true,
-        destination: @escaping (ProcessingResult) -> Destination
+        popToRoot: @escaping () -> Void = {},
+        destination: @escaping (ProcessingResult, @escaping () -> Void) -> Destination
     ) {
         self.video = video
         self.autostart = autostart
+        self.popToRoot = popToRoot
         self.destination = destination
         _viewModel = StateObject(wrappedValue: ProcessingViewModel(runner: runner))
     }
@@ -37,23 +50,22 @@ struct ProcessingView<Destination: View>: View {
         Group {
             switch viewModel.state {
             case .idle:
-                ProgressView("Preparing…")
+                idleState
             case .processing(let progress):
                 processingState(progress)
-            case .succeeded:
-                // Covered by the pushed destination; only visible when navigating back here.
-                Text("Analysis complete.")
-                    .foregroundStyle(.secondary)
             case .empty:
                 emptyState
             case .failed(let message):
                 errorState(message: message)
+            case .succeeded:
+                // Covered by the pushed destination; only visible when navigating back here.
+                Text("Analysis complete.")
+                    .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("Analyzing video")
-        .navigationBarBackButtonHidden(viewModel.isRunning)
+        .navigationBarBackButtonHidden(isAnalyzing)
         .toolbar {
-            if viewModel.isRunning {
+            if isAnalyzing {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         viewModel.cancel()
@@ -64,10 +76,13 @@ struct ProcessingView<Destination: View>: View {
         }
         .navigationDestination(isPresented: $viewModel.isShowingClips) {
             if let result = viewModel.result {
-                destination(result)
+                destination(result, popToRoot)
             }
         }
         .task {
+            if player == nil {
+                player = AVPlayer(playerItem: AVPlayerItem(asset: video.asset))
+            }
             if autostart {
                 viewModel.start(video: video)
             }
@@ -75,6 +90,42 @@ struct ProcessingView<Destination: View>: View {
         .onDisappear {
             viewModel.cancel()
         }
+    }
+
+    /// Back/Cancel track the *processing* state rather than `viewModel.isRunning`: idle is
+    /// this screen's resting state now (analysis starts manually), so it keeps the default
+    /// back chevron to Home. `isRunning` still counts idle as running — the pipeline's
+    /// tests lean on that — so it can't drive this.
+    private var isAnalyzing: Bool {
+        if case .processing = viewModel.state { return true }
+        return false
+    }
+
+    /// The resting state: the picked video, large, with native playback controls, and a
+    /// manual "Start analysis" button below it. Black background, no title — the Photos
+    /// app look; the back chevron (to Home) is the only chrome.
+    private var idleState: some View {
+        VStack(spacing: 20) {
+            if let player {
+                VideoPlayer(player: player)
+                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.quaternary)
+                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                    .overlay { ProgressView() }
+            }
+            Text("Play the video, or start analysis when ready.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Start analysis") { viewModel.start(video: video) }
+                .buttonStyle(.borderedProminent)
+            Spacer()
+        }
+        .padding()
+        .background(Color.black.ignoresSafeArea())
     }
 
     private func processingState(_ progress: ProcessingProgress) -> some View {
@@ -145,7 +196,7 @@ struct ProcessingView<Destination: View>: View {
                 duration: 12
             ),
             autostart: false,
-            destination: { result in
+            destination: { result, _ in
                 Text("\(result.clips.count) clips")
             }
         )

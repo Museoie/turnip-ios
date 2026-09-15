@@ -8,26 +8,35 @@ import SwiftUI
 /// and ends in a summary — "N of M clips saved to Photos" with per-clip failures named
 /// individually. Every clip whose export produced a file also carries a Share action
 /// handing that file to the system share sheet (`docs/DESIGN.md` § "Publishing to social
-/// media (iOS Share Sheet)"). `Done` dismisses back to the list; per the design doc there
-/// is no further action, the user starts over from Home.
+/// media (iOS Share Sheet)"). `Done` pops back to Home — the flow is finished and the
+/// list state is stale after export; per the design doc there is no further action, the
+/// user starts over from Home.
+///
+/// The back chevron pops to Home too, not to the clip list: like the clip list, this
+/// screen draws its own chevron (Photos-style, chevron only, no text label) and hides
+/// the default back button.
 ///
 /// This view deliberately declares no `NavigationStack` of its own — it lives on the
 /// flow's shared stack, like the clip list.
 struct ExportConfirmationView: View {
     @StateObject private var viewModel: ExportConfirmationViewModel
-    @Environment(\.dismiss) private var dismiss
+    /// Pops the flow's navigation stack back to Home. Supplied by the screen that
+    /// presents this one.
+    let popToRoot: () -> Void
 
     init(
         items: [ExportConfirmationItem],
         asset: AVAsset,
         exportClip: @escaping ExportOneClip,
-        saveToPhotos: @escaping SaveOneClipToPhotos
+        saveToPhotos: @escaping SaveOneClipToPhotos,
+        popToRoot: @escaping () -> Void = {}
     ) {
         _viewModel = StateObject(wrappedValue: ExportConfirmationViewModel(
             items: items,
             asset: asset,
             exportClip: exportClip,
             saveToPhotos: saveToPhotos))
+        self.popToRoot = popToRoot
     }
 
     var body: some View {
@@ -42,17 +51,29 @@ struct ExportConfirmationView: View {
             }
         }
         .navigationTitle("Export")
-        .navigationBarBackButtonHidden(viewModel.isRunning)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
             if viewModel.isRunning {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { viewModel.cancel() }
                 }
+            } else {
+                // The default back chevron would return to the clip list; the flow is
+                // finished, so back goes home — the same chevron the clip list draws.
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        popToRoot()
+                    } label: {
+                        Image(systemName: "chevron.backward")
+                    }
+                    .accessibilityLabel("Back to Home")
+                }
             }
         }
         .safeAreaInset(edge: .bottom) {
             if viewModel.isFinished {
-                Button("Done") { dismiss() }
+                Button("Done") { popToRoot() }
                     .buttonStyle(.borderedProminent)
                     .frame(maxWidth: .infinity)
                     .padding()
