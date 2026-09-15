@@ -80,4 +80,70 @@ final class MoveNetThunderModelTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - resolveModelPath version floor
+
+    /// A malformed staged version must not shadow the bundled model, even when
+    /// `ModelVersion.<`'s lexicographic fallback would rank it newer than the
+    /// bundled `"1"` — this is the defense-in-depth gate the manifest-validation
+    /// service can't guarantee for store records written before it existed.
+    func testResolveModelPathRejectsMalformedStagedVersion() {
+        XCTAssertEqual(
+            MoveNetThunderModel.resolveModelPath(
+                bundledPath: "/bundled/movenet.tflite",
+                stagedVersion: ModelVersion("v2"),
+                stagedPath: "/staged/movenet.tflite"
+            ),
+            "/bundled/movenet.tflite"
+        )
+    }
+
+    /// A malformed staged version with no bundled model to fall back to yields
+    /// no candidate — `load()` then reports `modelNotFound` instead of
+    /// pointing the loader at the untrusted file.
+    func testResolveModelPathRejectsMalformedStagedVersionWithoutBundled() {
+        XCTAssertNil(
+            MoveNetThunderModel.resolveModelPath(
+                bundledPath: nil,
+                stagedVersion: ModelVersion("v2"),
+                stagedPath: "/staged/movenet.tflite"
+            )
+        )
+    }
+
+    /// A well-formed staged version newer than the bundled one still shadows it.
+    func testResolveModelPathPrefersNewerWellFormedStagedVersion() {
+        XCTAssertEqual(
+            MoveNetThunderModel.resolveModelPath(
+                bundledPath: "/bundled/movenet.tflite",
+                stagedVersion: ModelVersion("2"),
+                stagedPath: "/staged/movenet.tflite"
+            ),
+            "/staged/movenet.tflite"
+        )
+    }
+
+    /// A well-formed but older-or-equal staged version doesn't shadow the bundled one.
+    func testResolveModelPathKeepsBundledWhenStagedVersionIsOlder() {
+        XCTAssertEqual(
+            MoveNetThunderModel.resolveModelPath(
+                bundledPath: "/bundled/movenet.tflite",
+                stagedVersion: ModelVersion("0.9"),
+                stagedPath: "/staged/movenet.tflite"
+            ),
+            "/bundled/movenet.tflite"
+        )
+    }
+
+    /// No staged version leaves the bundled model as the candidate.
+    func testResolveModelPathKeepsBundledWithoutStagedVersion() {
+        XCTAssertEqual(
+            MoveNetThunderModel.resolveModelPath(
+                bundledPath: "/bundled/movenet.tflite",
+                stagedVersion: nil,
+                stagedPath: nil
+            ),
+            "/bundled/movenet.tflite"
+        )
+    }
 }

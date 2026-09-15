@@ -93,8 +93,13 @@ actor MoveNetThunderModel {
     }
 
     /// Picks the model file to load: the staged OTA file only when its
-    /// manifest version is strictly newer than the bundled one — never merely
-    /// because a staged file exists. A staged version with no bytes on disk
+    /// manifest version is well-formed and strictly newer than the bundled
+    /// one — never merely because a staged file exists. The well-formedness
+    /// gate defends the version-floor comparison: a malformed stored version
+    /// (e.g. a store record written before the manifest-validation gate
+    /// existed) would otherwise fall through `ModelVersion.<`'s lexicographic
+    /// fallback and could pin the loader to a staged file the floor was meant
+    /// to reject. A staged version with no bytes on disk
     /// is treated the same as no staged model, so metadata-without-bytes can
     /// never redirect the loader at a file that isn't there.
     ///
@@ -112,7 +117,7 @@ actor MoveNetThunderModel {
         stagedPath: String?
     ) -> String? {
         if let stagedVersion, let stagedPath,
-            stagedVersion > bundledModelVersion {
+            stagedVersion.isWellFormed, stagedVersion > bundledModelVersion {
             return stagedPath
         }
         return bundledPath
