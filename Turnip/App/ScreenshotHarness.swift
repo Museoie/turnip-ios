@@ -167,10 +167,12 @@ private func makeScreenshotSampleMovie() -> URL {
                 kCVPixelBufferWidthKey as String: width,
                 kCVPixelBufferHeightKey as String: height
             ])
-        guard writer.canAdd(input), writer.startWriting() else {
-            throw ScreenshotMovieError.setupFailed
-        }
+        // Inputs go in before writing starts: `add(_:)` raises an uncaught NSException
+        // once the writer is in `.writing`, which no `catch` here can turn into the
+        // `/dev/null` fallback.
+        guard writer.canAdd(input) else { throw ScreenshotMovieError.setupFailed }
         writer.add(input)
+        guard writer.startWriting() else { throw ScreenshotMovieError.setupFailed }
         try appendSampleFrames(writer: writer, adaptor: adaptor, input: input, fps: fps)
         return try finishSampleMovieWriting(writer: writer, to: url)
     } catch {
