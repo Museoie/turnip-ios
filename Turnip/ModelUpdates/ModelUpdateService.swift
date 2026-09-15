@@ -86,21 +86,12 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
     }
 
     /// Rejects a manifest whose `fileName` could escape the OTA directory.
-    /// A positive allowlist (`[A-Za-z0-9._-]`, non-empty, not `.`/`..`) rather
-    /// than a blacklist of known-bad spellings: the dangerous class here is
-    /// *additions* (new traversal spellings), which a blacklist can never
-    /// enumerate. Checked before any download, so hostile bytes never move.
+    /// Delegates to `ModelUpdateStore.validate(fileName:)` — one owner, one
+    /// rule — so this pre-download gate and the store's write-time gate can
+    /// never disagree on a name. Checked before any download, so hostile
+    /// bytes never move.
     private static func validate(_ manifest: ModelUpdateManifest) throws {
-        let fileName = manifest.fileName
-        let allowed = CharacterSet.alphanumerics
-            .union(CharacterSet(charactersIn: "._-"))
-        let isSafe = !fileName.isEmpty
-            && fileName != "."
-            && fileName != ".."
-            && fileName.unicodeScalars.allSatisfy(allowed.contains)
-        guard isSafe else {
-            throw ModelUpdateError.invalidManifest
-        }
+        try ModelUpdateStore.validate(fileName: manifest.fileName)
     }
 
     private func sha256Hex(_ data: Data) -> String {

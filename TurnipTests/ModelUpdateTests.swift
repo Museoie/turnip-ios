@@ -270,6 +270,72 @@ final class ModelUpdateTests: XCTestCase {
         }
     }
 
+    /// The store's reserved metadata name must be rejected by the
+    /// *pre-download* gate, not discovered after the full weights have moved:
+    /// a manifest naming `active-model.json` records `invalidManifest` and
+    /// makes no download request, so a hostile manifest can't force a
+    /// per-launch model download that the store will discard.
+    func testReservedFileNameIsRejectedBeforeDownload() async throws {
+        let store = makeStore()
+        let client = MockModelUpdateClient()
+        let bytes = Data("fake-model-bytes".utf8)
+        await client.setManifest(
+            makeManifest(version: "2026.09.10-1", bytes: bytes, fileName: "active-model.json"))
+        await client.setDownloadBytes(bytes)
+
+        let service = makeService(client: client, store: store)
+        await service.checkForUpdates()
+
+        XCTAssertNil(store.activeModelURL())
+        let downloads = await client.downloadRequests
+        XCTAssertTrue(downloads.isEmpty, "no bytes should move for a reserved name")
+        let lastError = await service.lastError
+        guard case .invalidManifest? = lastError else {
+            return XCTFail("expected invalidManifest, got \(String(describing: lastError))")
+        }
+    }
+
+    /// The documented allowlist is ASCII (`[A-Za-z0-9._-]`), but
+    /// `CharacterSet.alphanumerics` is Unicode-wide: a Cyrillic lookalike
+    /// (`"мodel.tflite"`, Cyrillic `м`) must be rejected at both gates — the
+    /// service's pre-download gate and the store's write-time gate.
+    func testNonASCIIFileNameIsRejectedAtBothGates() async throws {
+        let cyrillicName = "мodel.tflite" // first scalar is U+043C CYRILLIC SMALL LETTER EM
+        XCTAssertFalse(
+            cyrillicName.unicodeScalars.first!.properties.isASCII,
+            "test setup: first scalar must be non-ASCII")
+
+        // Pre-download gate: no download, invalidManifest recorded.
+        let store = makeStore()
+        let client = MockModelUpdateClient()
+        let bytes = Data("fake-model-bytes".utf8)
+        await client.setManifest(
+            makeManifest(version: "2026.09.10-1", bytes: bytes, fileName: cyrillicName))
+        await client.setDownloadBytes(bytes)
+
+        let service = makeService(client: client, store: store)
+        await service.checkForUpdates()
+
+        let downloads = await client.downloadRequests
+        XCTAssertTrue(downloads.isEmpty, "no bytes should move for a non-ASCII name")
+        let lastError = await service.lastError
+        guard case .invalidManifest? = lastError else {
+            return XCTFail("expected invalidManifest, got \(String(describing: lastError))")
+        }
+
+        // Write-time gate: staging directly also throws.
+        do {
+            try store.stage(
+                modelData: bytes, version: ModelVersion("2026.09.10-1"),
+                fileName: cyrillicName)
+            XCTFail("expected invalidManifest for '\(cyrillicName)'")
+        } catch ModelUpdateError.invalidManifest {
+            // expected
+        } catch {
+            XCTFail("expected invalidManifest, got \(error)")
+        }
+    }
+
     // MARK: - Store
 
     /// The store enforces the fileName allowlist itself: staging directly with
