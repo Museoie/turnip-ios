@@ -109,6 +109,43 @@ final class ClipListTests: XCTestCase {
         XCTAssertTrue(viewModel.keptItems.isEmpty)
     }
 
+    // MARK: - Trim rule (shared with ClipEditorViewModel)
+
+    func testListTrimStartStopsAtEndMinusMinimumDuration() {
+        // Mirrors ClipEditorTests' trim-clamping tests: the list's inline trim
+        // timeline and the editor's slider share the same clamp helpers, so the
+        // same drag must produce the same window on both surfaces.
+        let window = ClipEditorViewModel.trimmedStart(
+            TrickWindow(startTime: 2, endTime: 5), to: 4.9)
+
+        XCTAssertEqual(window.startTime, 4.5, accuracy: 0.0001)
+        XCTAssertEqual(window.endTime, 5, accuracy: 0.0001)
+    }
+
+    func testListTrimStartClampsToZero() {
+        let window = ClipEditorViewModel.trimmedStart(
+            TrickWindow(startTime: 2, endTime: 5), to: -5)
+
+        XCTAssertEqual(window.startTime, 0, accuracy: 0.0001)
+        XCTAssertEqual(window.endTime, 5, accuracy: 0.0001)
+    }
+
+    func testListTrimEndStopsAtStartPlusMinimumDuration() {
+        let window = ClipEditorViewModel.trimmedEnd(
+            TrickWindow(startTime: 2, endTime: 5), to: 2.1, duration: 10)
+
+        XCTAssertEqual(window.startTime, 2, accuracy: 0.0001)
+        XCTAssertEqual(window.endTime, 2.5, accuracy: 0.0001)
+    }
+
+    func testListTrimEndClampsToDuration() {
+        let window = ClipEditorViewModel.trimmedEnd(
+            TrickWindow(startTime: 2, endTime: 5), to: 600, duration: 10)
+
+        XCTAssertEqual(window.startTime, 2, accuracy: 0.0001)
+        XCTAssertEqual(window.endTime, 10, accuracy: 0.0001)
+    }
+
     // MARK: - Editor and export destinations
 
     @MainActor

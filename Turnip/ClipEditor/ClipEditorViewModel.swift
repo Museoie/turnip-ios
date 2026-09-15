@@ -161,13 +161,12 @@ final class ClipEditorViewModel: ObservableObject {
     /// no-op until `prepare()` has loaded the duration.
     func trimStart(to time: TimeInterval) {
         guard duration != nil else { return }
-        let latestStart = max(window.endTime - Self.minimumClipDuration, 0)
-        let newStart = min(max(time, 0), latestStart)
-        guard newStart != window.startTime else { return }
+        let newWindow = Self.trimmedStart(window, to: time)
+        guard newWindow != window else { return }
         isTrimming = true
         player.pause()
-        window = TrickWindow(startTime: newStart, endTime: window.endTime)
-        seek(to: newStart)
+        window = newWindow
+        seek(to: newWindow.startTime)
         recomputeCropRect()
     }
 
@@ -175,13 +174,12 @@ final class ClipEditorViewModel: ObservableObject {
     /// duration]`. Same pause-and-seek behavior as the start handle.
     func trimEnd(to time: TimeInterval) {
         guard let duration else { return }
-        let earliestEnd = min(window.startTime + Self.minimumClipDuration, duration)
-        let newEnd = max(min(time, duration), earliestEnd)
-        guard newEnd != window.endTime else { return }
+        let newWindow = Self.trimmedEnd(window, to: time, duration: duration)
+        guard newWindow != window else { return }
         isTrimming = true
         player.pause()
-        window = TrickWindow(startTime: window.startTime, endTime: newEnd)
-        seek(to: newEnd)
+        window = newWindow
+        seek(to: newWindow.endTime)
         recomputeCropRect()
     }
 
@@ -211,6 +209,30 @@ final class ClipEditorViewModel: ObservableObject {
         let endTime = min(max(window.endTime, 0), duration)
         let startTime = min(max(window.startTime, 0), max(endTime - minimumClipDuration, 0))
         return TrickWindow(startTime: startTime, endTime: endTime)
+    }
+
+    /// Drags the start handle of `window` to `time`, clamped into `[0, end -
+    /// minimumClipDuration]`. Pure so the trim rule is shared with the clip list's
+    /// inline trim timeline (`ClipWindowTrimView`) and unit-testable from both
+    /// surfaces — the two used to reimplement this rule separately, and a rule
+    /// fixed in one place would silently diverge from the other.
+    nonisolated static func trimmedStart(
+        _ window: TrickWindow, to time: TimeInterval
+    ) -> TrickWindow {
+        let latestStart = max(window.endTime - minimumClipDuration, 0)
+        let newStart = min(max(time, 0), latestStart)
+        return TrickWindow(startTime: newStart, endTime: window.endTime)
+    }
+
+    /// Drags the end handle of `window` to `time`, clamped into `[start +
+    /// minimumClipDuration, duration]`. Pure for the same shared-rule reason as
+    /// `trimmedStart(_:to:)`.
+    nonisolated static func trimmedEnd(
+        _ window: TrickWindow, to time: TimeInterval, duration: TimeInterval
+    ) -> TrickWindow {
+        let earliestEnd = min(window.startTime + minimumClipDuration, duration)
+        let newEnd = max(min(time, duration), earliestEnd)
+        return TrickWindow(startTime: window.startTime, endTime: newEnd)
     }
 
     /// Maps the crop rect from `NormalizedRect`'s space contract — the decoded frames'

@@ -125,23 +125,20 @@ struct ClipWindowTrimView: View {
         abs(time - window.startTime) <= abs(time - window.endTime) ? .start : .end
     }
 
-    /// Drags the start handle to `time`, clamped into `[0, end - minimumClipDuration]` —
-    /// the editor's trim rule, via the shared constant.
+    /// Drags the start handle to `time` — the editor's trim rule via the shared
+    /// pure helper, so the two surfaces can never diverge silently.
     private func trimStart(to time: TimeInterval) {
-        let latestStart = max(window.endTime - ClipEditorViewModel.minimumClipDuration, 0)
-        let newStart = min(max(time, 0), latestStart)
-        guard newStart != window.startTime else { return }
-        window = TrickWindow(startTime: newStart, endTime: window.endTime)
+        let newWindow = ClipEditorViewModel.trimmedStart(window, to: time)
+        guard newWindow.startTime != window.startTime else { return }
+        window = newWindow
     }
 
-    /// Drags the end handle to `time`, clamped into `[start + minimumClipDuration,
-    /// duration]` — the editor's trim rule, via the shared constant.
+    /// Drags the end handle to `time` — the same shared rule.
     private func trimEnd(to time: TimeInterval) {
-        let earliestEnd = min(
-            window.startTime + ClipEditorViewModel.minimumClipDuration, duration)
-        let newEnd = max(min(time, duration), earliestEnd)
-        guard newEnd != window.endTime else { return }
-        window = TrickWindow(startTime: window.startTime, endTime: newEnd)
+        let newWindow = ClipEditorViewModel.trimmedEnd(
+            window, to: time, duration: duration)
+        guard newWindow.endTime != window.endTime else { return }
+        window = newWindow
     }
 
     private func handle(

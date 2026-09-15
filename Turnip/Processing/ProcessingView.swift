@@ -120,8 +120,14 @@ struct ProcessingView<Destination: View>: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Start analysis") { viewModel.start(video: video) }
-                .buttonStyle(.borderedProminent)
+            // Pause the idle player before the `VideoPlayer` leaves the hierarchy:
+            // nothing would call `pause()` on it afterwards, so its audio would
+            // keep playing behind the progress UI and the clip list.
+            Button("Start analysis") {
+                player?.pause()
+                viewModel.start(video: video)
+            }
+            .buttonStyle(.borderedProminent)
             Spacer()
         }
         .padding()
