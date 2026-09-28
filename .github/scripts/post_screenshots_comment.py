@@ -57,7 +57,7 @@ PROJECT_PREFIX = "turnip-ios"
 # fork PR fully controls -- every artifact name and every byte. workflow_run
 # runs in the base-repo context with secrets (the PAT that pushes to the
 # public screenshots repo) and posts as github-actions[bot], so this script
-# must treat artifact content as data, never as trusted input (issue #93):
+# must treat artifact content as data, never as trusted input:
 #
 # - names must match a strict allowlist: no path separators (traversal is
 #   impossible), and none of the markdown-special characters (`]`, `(`, `)`
@@ -243,13 +243,31 @@ def resolve_pr_number(token, base_repo, head_sha):
 
 
 def resolve_pr_by_head(token, base_repo, head_owner, head_branch):
-    """Find the open PR whose head is owner:branch."""
+    """Find the open PR whose head is owner:branch, or None if there isn't one.
+
+    Returns the raw PR object (not just its number) so the caller can check
+    its head sha against the sha this workflow_run actually built -- a
+    branch-name lookup can resolve to a PR that has since moved past the
+    commit this run is reporting on (two pushes to the same PR in quick
+    succession can have their workflow_run events complete out of order).
+    Unlike resolve_pr_number below, a miss here is not exceptional: the
+    branch may simply have no open PR (yet, or anymore).
+    """
     head = "%s:%s" % (head_owner, head_branch)
     prs = api(token, "GET", "/repos/%s/pulls?head=%s&state=open"
               % (base_repo, urllib.parse.quote(head, safe="")))
-    if prs:
-        return prs[0]["number"]
-    raise RuntimeError("No open PR for head %s in %s" % (head, base_repo))
+    return prs[0] if prs else None
+
+
+def is_stale_head(pr, sha):
+    """Whether `pr` (from resolve_pr_by_head, or None) has moved past `sha`.
+
+    Pure and separated from main() so this decision is unit-testable
+    without mocking the GitHub API. None never counts as stale -- the
+    caller has nothing to compare against and falls through to another
+    resolution path instead.
+    """
+    return pr is not None and pr["head"]["sha"] != sha
 
 
 def find_bot_comment(token, base_repo, pr_number):
@@ -315,15 +333,39 @@ def main():
     sha = os.environ["HEAD_SHA"]
     run_url = "https://github.com/%s/actions/runs/%s" % (base_repo, run_id)
     shots_dir = os.environ["SCREENSHOTS_DIR"]
-    # Prefer resolving by head owner:branch: the workflow passes
-    # HEAD_OWNER/HEAD_BRANCH for exactly this, since the commits API only
-    # indexes commits present in the base repo and misses fork PRs by SHA.
-    head_owner = os.environ.get("HEAD_OWNER")
-    head_branch = os.environ.get("HEAD_BRANCH")
-    by_head = (resolve_pr_by_head(token, base_repo, head_owner, head_branch)
-               if head_owner and head_branch else None)
-    pr_number = (os.environ.get("PR_NUMBER") or by_head
-                 or resolve_pr_number(token, base_repo, sha))
+    pr_number_override = os.environ.get("PR_NUMBER")
+    if pr_number_override:
+        pr_number = pr_number_override
+    elif os.environ.get("HEAD_OWNER") and os.environ.get("HEAD_BRANCH"):
+        # Prefer resolving by head owner:branch: the workflow passes
+        # HEAD_OWNER/HEAD_BRANCH for exactly this, since the commits API
+        # only indexes commits present in the base repo and misses fork
+        # PRs by SHA.
+        head_owner = os.environ["HEAD_OWNER"]
+        head_branch = os.environ["HEAD_BRANCH"]
+        by_head = resolve_pr_by_head(token, base_repo, head_owner, head_branch)
+        if by_head is None:
+            # No open PR for this branch -- most likely merged or closed
+            # while this run was in flight. Falling through to
+            # resolve_pr_number here would hit the exact fork-indexing gap
+            # HEAD_OWNER/HEAD_BRANCH exists to route around, misreporting
+            # "no PR found for this commit" when the real story is "no
+            # OPEN PR for this branch".
+            print("No open PR for %s:%s; skipping." % (head_owner, head_branch))
+            return 0
+        if is_stale_head(by_head, sha):
+            # A later push has already moved this branch's PR past the
+            # commit this run built. Posting now could race a newer run's
+            # screenshots-comment finishing first and silently overwrite
+            # the correct, current comment with a stale one. Not a
+            # failure -- the run for the newer head handles (or already
+            # handled) the comment correctly.
+            print("PR head has moved past %s (now %s); skipping stale comment."
+                  % (sha, by_head["head"]["sha"]))
+            return 0
+        pr_number = by_head["number"]
+    else:
+        pr_number = resolve_pr_number(token, base_repo, sha)
 
     pngs, skipped = collect_pngs(shots_dir)
     total_skipped = sum(skipped.values())

@@ -51,6 +51,12 @@ jobs:
       - name: Check the documented directory list against the tree
         run: ci_scripts/check-directory-list.sh
 
+      # screenshots-comment.yml runs on workflow_run against main, so a pull
+      # request can never exercise post_screenshots_comment.py end to end —
+      # this stdlib-only suite is the script's only pre-merge verification.
+      - name: Test the screenshots-comment script
+        run: python3 .github/scripts/test_post_screenshots_comment.py
+
       - name: Cache CocoaPods
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
