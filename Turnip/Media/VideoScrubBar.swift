@@ -6,13 +6,20 @@ import SwiftUI
 /// controls of its own (`docs/UIUX.md` § "Processing").
 struct VideoScrubBar: View {
     let player: AVPlayer
+    /// Reports every scrub start/end to the caller — `ProcessingView` uses it to keep its own
+    /// swipe-to-browse gesture from also acting on a drag that's scrubbing this track.
+    var onScrubbingChanged: ((Bool) -> Void)? = nil
 
     @State private var isPlaying = false
     @State private var isMuted = false
     @State private var duration: TimeInterval = 0
     @State private var currentTime: TimeInterval = 0
     @State private var isScrubbing = false
+    /// Whether the player was actually playing (`player.rate != 0`, not the possibly-stale
+    /// `isPlaying`) the instant a scrub began, so letting go resumes only when it should.
+    @State private var wasPlayingBeforeScrub = false
     @State private var timeObserver: Any?
+    @State private var didEndObserver: NSObjectProtocol?
 
     fileprivate static let trackHeight: CGFloat = 3
 
@@ -38,20 +45,35 @@ struct VideoScrubBar: View {
                 Capsule().fill(.white).frame(width: width * fraction)
             }
             .contentShape(Rectangle().inset(by: -10)) // Widens the drag target past the thin visual track.
-            // `.highPriorityGesture`, not `.gesture`: `ProcessingView` wraps this whole bar in
-            // its own `.highPriorityGesture` for swipe-to-browse-videos, and SwiftUI resolves a
-            // priority tie between an ancestor and a descendant both using `.highPriorityGesture`
-            // in the descendant's favor — this stays the one place a horizontal drag scrubs
-            // instead of browsing, without `ProcessingView` needing to carve this view out.
+            // `.highPriorityGesture`, not `.gesture`: this needs to fire regardless of
+            // `ProcessingView`'s own swipe gesture on an ancestor, which runs simultaneously
+            // with this one rather than competing for it (see that gesture's own doc comment).
+            // A 0pt `minimumDistance`, well under the ancestor's 20pt, is what lets
+            // `onScrubbingChanged(true)` reach it before its gesture would otherwise act.
             .highPriorityGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        isScrubbing = true
+                        if !isScrubbing {
+                            isScrubbing = true
+                            wasPlayingBeforeScrub = player.rate != 0
+                            if wasPlayingBeforeScrub {
+                                player.pause()
+                                isPlaying = false
+                            }
+                            onScrubbingChanged?(true)
+                        }
                         let scrubbedFraction = min(max(value.location.x / width, 0), 1)
                         currentTime = scrubbedFraction * duration
                         seek(to: currentTime)
                     }
-                    .onEnded { _ in isScrubbing = false }
+                    .onEnded { _ in
+                        isScrubbing = false
+                        if wasPlayingBeforeScrub {
+                            player.play()
+                            isPlaying = true
+                        }
+                        onScrubbingChanged?(false)
+                    }
             )
         }
     }
@@ -82,6 +104,16 @@ struct VideoScrubBar: View {
             guard !isScrubbing else { return }
             currentTime = time.seconds
         }
+        // Reaching the end pauses the player (`AVPlayer`'s default `actionAtItemEnd`) rather
+        // than looping on its own — restart it from the top, Photos-app style, instead of
+        // leaving the last frame frozen.
+        didEndObserver = NotificationCenter.default.addObserver(
+            forName: AVPlayerItem.didPlayToEndTimeNotification, object: player.currentItem, queue: .main
+        ) { _ in
+            player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+            player.play()
+            isPlaying = true
+        }
     }
 
     private func detach() {
@@ -89,6 +121,10 @@ struct VideoScrubBar: View {
             player.removeTimeObserver(timeObserver)
         }
         timeObserver = nil
+        if let didEndObserver {
+            NotificationCenter.default.removeObserver(didEndObserver)
+        }
+        didEndObserver = nil
     }
 }
 
