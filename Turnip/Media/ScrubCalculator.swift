@@ -48,8 +48,8 @@ enum ScrubCalculator {
     static func calculateNormalized(horizontal x: Double, vertical y: Double) -> Double {
         guard y > 0 else { return x }
 
-        let b = x + y + 2
-        let discriminant = max(0, b * b - 8 * x)
-        return max(0, (b - discriminant.squareRoot()) / 2)
+        let bCoefficient = x + y + 2
+        let discriminant = max(0, bCoefficient * bCoefficient - 8 * x)
+        return max(0, (bCoefficient - discriminant.squareRoot()) / 2)
     }
 }

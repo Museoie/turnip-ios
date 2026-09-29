@@ -94,16 +94,16 @@ final class ScrubCalculatorTests: XCTestCase {
 
     func testPointsOnTheConstantTLinesReturnThatT() {
         for eighths in 1...7 {
-            let t = Double(eighths) / 8
-            let slope = (2 - t) / t
-            let intercept = -(2 - t)
-            for x in stride(from: t + 0.05, through: 2.0, by: 0.2) {
+            let expectedT = Double(eighths) / 8
+            let slope = (2 - expectedT) / expectedT
+            let intercept = -(2 - expectedT)
+            for x in stride(from: expectedT + 0.05, through: 2.0, by: 0.2) {
                 let y = slope * x + intercept
                 guard y > 0 else { continue }
                 let calculated = ScrubCalculator.calculateNormalized(horizontal: x, vertical: y)
                 XCTAssertEqual(
-                    calculated, t, accuracy: 1e-6,
-                    "x=\(x) y=\(y) expected t=\(t) got \(calculated)")
+                    calculated, expectedT, accuracy: 1e-6,
+                    "x=\(x) y=\(y) expected t=\(expectedT) got \(calculated)")
             }
         }
     }

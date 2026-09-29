@@ -8,7 +8,7 @@ struct VideoScrubBar: View {
     let player: AVPlayer
     /// Reports every scrub start/end to the caller — `ProcessingView` uses it to keep its own
     /// swipe-to-browse gesture from also acting on a drag that's scrubbing this track.
-    var onScrubbingChanged: ((Bool) -> Void)? = nil
+    var onScrubbingChanged: ((Bool) -> Void)?
 
     @State private var isPlaying = false
     @State private var isMuted = false
