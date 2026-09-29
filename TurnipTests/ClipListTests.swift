@@ -275,8 +275,8 @@ final class ClipListTests: XCTestCase {
 
     /// Regression for the clip list's live preview player showing the raw, un-cropped,
     /// un-adjusted source regardless of the item's crop rect or manual adjustment:
-    /// `videoComposition(cropRect:cropAdjustment:)` — what `ClipCardView.startPlayback()`
-    /// attaches to its `AVPlayerItem` before looping — must render at the crop's own
+    /// `videoComposition(cropRect:cropAdjustment:)` — what a tile's loop attaches to its
+    /// `AVPlayerItem` before looping — must render at the crop's own
     /// size, not the source's, with the crop AND the adjustment actually wired into the
     /// layer instruction, not just the render size. A half-width crop discriminates
     /// `renderSize`: an un-composed player would report the full 64px width. A non-
@@ -327,7 +327,7 @@ final class ClipListTests: XCTestCase {
 
     /// `dummyAsset()` resolves to nothing, so the track load `videoComposition(cropRect:
     /// cropAdjustment:)` depends on fails — this must return `nil` rather than throw or
-    /// hang, so `startPlayback()`'s caller can fall back to an uncomposed player.
+    /// hang, so a tile's loop can fall back to an uncomposed player.
     @MainActor
     func testVideoCompositionIsNilWhenTheTrackCannotBeLoaded() async {
         let item = makeItem()

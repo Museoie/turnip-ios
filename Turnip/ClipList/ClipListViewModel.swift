@@ -357,10 +357,10 @@ final class ClipListViewModel: ObservableObject {
     /// showing nothing.
     ///
     /// Takes the crop rect/adjustment directly rather than a `ClipListItem`: the caller
-    /// (`ClipCardView.startPlayback()`) already has to read its target crop geometry off
-    /// a `@State` mirror rather than the (possibly stale-`self`) item, and threading a
-    /// whole `ClipListItem` through here would tempt a caller into rereading `item`
-    /// itself for these two fields instead of passing the mirror it already resolved.
+    /// (`ClipCardPlayback`) already resolves its target geometry away from the (possibly
+    /// stale-`self`) item, and threading a whole `ClipListItem` through here would tempt a
+    /// caller into rereading `item` itself for these two fields instead of passing the
+    /// geometry it already resolved.
     func videoComposition(
         cropRect: NormalizedRect, cropAdjustment: CropAdjustment
     ) async -> AVVideoComposition? {
