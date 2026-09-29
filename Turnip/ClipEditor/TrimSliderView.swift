@@ -8,16 +8,13 @@ import SwiftUI
 /// The timeline spans the whole asset (`ClipEditorViewModel.visibleRange`), not a
 /// zoomed-in range around the window — so a tile's position always reads as "roughly
 /// this part of the video." That makes the handles sub-pixel-precise on a multi-minute
-/// video, so dragging maps vertical distance from the track to precision the way a
-/// photo/video trim tool commonly does: near the track, each increment of finger
-/// movement moves the handle by the same amount; drag away from the track (up or down)
-/// and the same finger movement moves the handle a smaller fraction as far, for fine
-/// control. This damps the *rate* of movement, not the handle's position directly — so
-/// dragging straight up or down, with no further horizontal movement, never moves the
-/// handle sideways on its own. Dragging anywhere on the timeline grabs the nearer
-/// handle, and the drag's time mapping is frozen for the gesture so the draft window's
-/// own growth can't shift the scale mid-drag. Handle drags report through the view
-/// model, so the crop rect re-derives live.
+/// video, so dragging maps vertical drag distance to precision via `ScrubCalculator`
+/// (`docs/SCRUB_DESIGN.md`): dragging straight horizontal moves the handle 1:1; dragging
+/// upward makes the same horizontal movement move the handle a smaller amount, for fine
+/// control; dragging downward is neutral. Dragging anywhere on the timeline grabs the
+/// nearer handle, and the drag's time mapping is frozen for the gesture so the draft
+/// window's own growth can't shift the scale mid-drag. Handle drags report through the
+/// view model, so the crop rect re-derives live.
 struct TrimSliderView: View {
     @ObservedObject var viewModel: ClipEditorViewModel
     @GestureState private var drag: TimelineDrag?
@@ -26,11 +23,17 @@ struct TrimSliderView: View {
     // Control Center) — so the in-flight drag's presence, not its callbacks, is the
     // reliable signal that a trim interaction is over.
 
-    /// The touch's x position as of the last `onChanged`, so each update can measure
-    /// *this frame's* incremental movement rather than the raw distance from wherever
-    /// the drag began. `nil` between drags (and defensively cleared alongside the trim
-    /// latch — see the `onChange(of: drag != nil)` below).
-    @State private var lastTouchX: CGFloat?
+    /// The grabbed handle's own time as of the drag's first touch (after the
+    /// grab-anywhere jump below), so `ScrubCalculator` is applied relative to where the
+    /// handle stood rather than by accumulating each tick's delta onto the last
+    /// (`docs/SCRUB_DESIGN.md` "Gesture State"). `nil` between drags (and defensively
+    /// cleared alongside the trim latch — see the `onChange(of: drag != nil)` below).
+    @State private var dragStartTime: TimeInterval?
+    /// The gesture's cumulative `translation` at the moment `dragStartTime` was captured,
+    /// so later ticks can measure movement *since the jump* rather than since the raw
+    /// touch-down that produced it — `DragGesture.translation` only ever accumulates from
+    /// touch-down.
+    @State private var dragStartTranslation: CGSize?
 
     private enum ActiveHandle {
         case start, end
@@ -43,30 +46,8 @@ struct TrimSliderView: View {
         let width: CGFloat
     }
 
-    /// Vertical distance from the track, in points, within which a drag tracks the
-    /// touch at full speed (1:1).
-    private static let precisionFullSpeedDistance: CGFloat = 16
-    /// Vertical distance beyond which a drag moves at the slowest rate.
-    private static let precisionMinSpeedDistance: CGFloat = 200
-    /// The slowest rate, as a fraction of full speed, once dragged past
-    /// `precisionMinSpeedDistance` — small but non-zero, so the handle can still be
-    /// walked all the way across a long timeline without lifting the finger.
-    private static let precisionMinSpeedFactor: CGFloat = 0.05
-    /// The timeline row's height — also the reference for "distance from the track,"
-    /// measured from the row's vertical center in the gesture's own coordinate space.
+    /// The timeline row's height.
     private static let rowHeight: CGFloat = 56
-
-    /// How much of the distance between `originTime` and the touch's raw mapped time a
-    /// drag actually covers, based on how far the touch has moved vertically from the
-    /// track. 1.0 right at the track (full speed), decaying linearly to
-    /// `precisionMinSpeedFactor` by `precisionMinSpeedDistance`.
-    private static func precisionFactor(forVerticalDistance distance: CGFloat) -> CGFloat {
-        guard distance > precisionFullSpeedDistance else { return 1 }
-        let span = precisionMinSpeedDistance - precisionFullSpeedDistance
-        guard span > 0 else { return precisionMinSpeedFactor }
-        let progress = min((distance - precisionFullSpeedDistance) / span, 1)
-        return 1 - progress * (1 - precisionMinSpeedFactor)
-    }
 
     var body: some View {
         if let range = viewModel.visibleRange {
@@ -127,7 +108,7 @@ struct TrimSliderView: View {
             }
             .frame(height: Self.rowHeight)
             .contentShape(Rectangle())
-            .gesture(timelineGesture(range: range, width: width))
+            .gesture(timelineGesture(range: range, viewportSize: proxy.size))
         }
         .frame(height: Self.rowHeight)
         .onChange(of: drag != nil) { isDragging in
@@ -138,7 +119,8 @@ struct TrimSliderView: View {
             // of the session. The call is idempotent (clear + seek + play), so this
             // can't fight the normal `onEnded` path — whichever fires first wins.
             if !isDragging {
-                lastTouchX = nil
+                dragStartTime = nil
+                dragStartTranslation = nil
                 if viewModel.isTrimming {
                     viewModel.finishTrim()
                 }
@@ -150,15 +132,11 @@ struct TrimSliderView: View {
     /// builder stays within the function-body length limit.
     ///
     /// The very first update of a drag jumps the grabbed handle straight to the touch
-    /// (grab-anywhere-on-the-timeline, same as before precision damping existed).
-    /// Every update after that moves the handle by *this frame's* horizontal finger
-    /// movement scaled by the current precision factor, added to wherever the handle
-    /// currently sits — an incremental/rate scheme, not a blend toward a fixed anchor.
-    /// That's the difference that keeps a vertical-only drag from also moving the
-    /// handle sideways: with no horizontal movement there's no increment to scale,
-    /// regardless of how the vertical distance (and so the factor) changes.
-    private func timelineGesture(range: ClosedRange<TimeInterval>, width: CGFloat) -> some Gesture {
-        DragGesture()
+    /// (grab-anywhere-on-the-timeline). Every update after that re-derives the handle's
+    /// time from `ScrubCalculator`, applied to the movement since that jump.
+    private func timelineGesture(range: ClosedRange<TimeInterval>, viewportSize: CGSize) -> some Gesture {
+        let width = viewportSize.width
+        return DragGesture()
             .updating($drag) { value, state, _ in
                 if state == nil {
                     let touched = self.time(at: value.location.x, in: range, width: width)
@@ -168,25 +146,29 @@ struct TrimSliderView: View {
             }
             .onChanged { value in
                 guard let drag else { return }
-                guard let previousX = lastTouchX else {
+                guard let dragStartTime else {
                     // First sample of this drag: grab-anywhere jumps straight to the
-                    // touch; precision damping only governs movement after this.
+                    // touch; ScrubCalculator governs movement after this, relative to
+                    // the handle's resulting (possibly clamped) time.
                     let touched = self.time(at: value.location.x, in: drag.range, width: drag.width)
                     apply(touched, to: drag.handle)
-                    lastTouchX = value.location.x
+                    dragStartTime = drag.handle == .start ? viewModel.window.startTime : viewModel.window.endTime
+                    dragStartTranslation = value.translation
                     return
                 }
-                lastTouchX = value.location.x
-                let verticalDistance = abs(value.location.y - Self.rowHeight / 2)
-                let factor = Self.precisionFactor(forVerticalDistance: verticalDistance)
-                let deltaTime = self.timeDelta(
-                    forPixelDelta: (value.location.x - previousX) * factor,
-                    in: drag.range, width: drag.width)
-                let current = drag.handle == .start ? viewModel.window.startTime : viewModel.window.endTime
-                apply(current + deltaTime, to: drag.handle)
+                let origin = dragStartTranslation ?? .zero
+                let translationSinceJump = CGSize(
+                    width: value.translation.width - origin.width,
+                    height: value.translation.height - origin.height)
+                let result = ScrubCalculator.calculate(
+                    translation: translationSinceJump, viewportSize: viewportSize)
+                let rangeSpan = drag.range.upperBound - drag.range.lowerBound
+                let newTime = dragStartTime + result.timelineDelta / 2 * rangeSpan
+                apply(newTime, to: drag.handle)
             }
             .onEnded { _ in
-                lastTouchX = nil
+                dragStartTime = nil
+                dragStartTranslation = nil
                 viewModel.finishTrim()
             }
     }
@@ -243,16 +225,5 @@ struct TrimSliderView: View {
         let span = range.upperBound - range.lowerBound
         guard width > 0 else { return range.lowerBound }
         return range.lowerBound + TimeInterval(x / width) * span
-    }
-
-    /// The time-axis equivalent of a pixel offset, at the same scale as `time(at:in:width:)`
-    /// — used to turn one frame's incremental (already precision-scaled) finger movement
-    /// into a time delta, rather than remapping an absolute x position.
-    private func timeDelta(
-        forPixelDelta deltaX: CGFloat, in range: ClosedRange<TimeInterval>, width: CGFloat
-    ) -> TimeInterval {
-        let span = range.upperBound - range.lowerBound
-        guard width > 0 else { return 0 }
-        return TimeInterval(deltaX / width) * span
     }
 }

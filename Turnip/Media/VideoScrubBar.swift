@@ -18,6 +18,11 @@ struct VideoScrubBar: View {
     /// Whether the player was actually playing (`player.rate != 0`, not the possibly-stale
     /// `isPlaying`) the instant a scrub began, so letting go resumes only when it should.
     @State private var wasPlayingBeforeScrub = false
+    /// `currentTime` as of the drag's first touch, so the scrub is computed relative to
+    /// where playback stood rather than by accumulating each tick's delta onto the last
+    /// (`docs/SCRUB_DESIGN.md` "Gesture State") — that would compound floating-point error
+    /// and feed back into itself as `seek` lands slightly off each frame.
+    @State private var dragStartTime: TimeInterval?
     @State private var timeObserver: Any?
     @State private var didEndObserver: NSObjectProtocol?
 
@@ -60,14 +65,19 @@ struct VideoScrubBar: View {
                                 player.pause()
                                 isPlaying = false
                             }
+                            dragStartTime = currentTime
                             onScrubbingChanged?(true)
                         }
-                        let scrubbedFraction = min(max(value.location.x / width, 0), 1)
-                        currentTime = scrubbedFraction * duration
+                        guard let dragStartTime else { return }
+                        let result = ScrubCalculator.calculate(
+                            translation: value.translation, viewportSize: proxy.size)
+                        let newTime = dragStartTime + result.timelineDelta / 2 * duration
+                        currentTime = min(max(newTime, 0), duration)
                         seek(to: currentTime)
                     }
                     .onEnded { _ in
                         isScrubbing = false
+                        dragStartTime = nil
                         if wasPlayingBeforeScrub {
                             player.play()
                             isPlaying = true

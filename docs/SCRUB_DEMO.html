@@ -124,13 +124,13 @@
 <body>
 
   <div class="container">
-    <h2>iOS Scrub Gesture Calculation Demo</h2>
+    <h2>Scrub Gesture Calculation Demo</h2>
 
     <div class="card">
       <div class="instructions">
         Click/touch and drag inside the box below.<br>
-        • Horizontal drag maps across <strong>0 &lt; x &lt; 2</strong>.<br>
-        • Vertical upward drag maps across <strong>0 &lt; y &lt; 4</strong>.<br>
+        • Horizontal drag maps across <strong>-2 &lt; x &lt; 2</strong>, either direction.<br>
+        • Vertical upward drag maps across <strong>0 &lt; y &lt; 4</strong>; downward is ignored.<br>
         • When <strong>y = 0</strong>, moving edge-to-edge makes <strong>t</strong> go from <strong>0</strong> to <strong>2</strong>.
       </div>
     </div>
@@ -213,8 +213,8 @@
         t = magX; // Direct horizontal drag when y <= 0
       } else {
         // Upward drag: quadratic formula for smaller root
-        const b = magX + magY + 1;
-        const discriminant = b * b - 4 * magX;
+        const b = magX + magY + 2;
+        const discriminant = b * b - 8 * magX;
 
         if (discriminant >= 0) {
           t = (b - Math.sqrt(discriminant)) / 2;
@@ -237,9 +237,11 @@
       const deltaPixelY = startY - clientY; // Screen Y is inverted (up is positive)
 
       // Direct Mapping to requested scale:
-      // Dragging full width -> x changes by 2
+      // Dragging full width -> x changes by 2 (either direction)
       // Dragging full height -> y changes by 4
-      currentX = Math.max(0, Math.min(2, (deltaPixelX / rect.width) * 2));
+      const xDirection = deltaPixelX < 0 ? -1 : 1;
+      const xMagnitude = Math.min(2, Math.abs(deltaPixelX / rect.width) * 2);
+      currentX = xDirection * xMagnitude;
       currentY = Math.max(0, Math.min(4, (deltaPixelY / rect.height) * 4));
 
       const t = calculateScrub(currentX, currentY);
@@ -288,8 +290,10 @@
 
       if (!isDragging) return;
 
-      // Draw Current Touch Point (x, y)
-      const px = (x / 2) * w;
+      // Draw Current Touch Point (x, y). The graph only depicts the x >= 0 branch — the
+      // calculation is symmetric in x (see calculateScrub's magX), so a leftward drag
+      // mirrors onto the same curve rather than running off the canvas.
+      const px = (Math.abs(x) / 2) * w;
       const py = h - (y / 4) * h;
 
       ctx.fillStyle = '#007aff';
@@ -298,14 +302,14 @@
       ctx.fill();
 
       // Draw Isoline passing through current t
-      if (calculatedT > 0 && calculatedT < 1) {
+      if (calculatedT > 0 && calculatedT < 2) {
         ctx.strokeStyle = '#ff9500';
         ctx.lineWidth = 2;
         ctx.beginPath();
 
-        // Line equation: y = ((1 - t) / t) * x - (1 - t)
-        const slope = (1 - calculatedT) / calculatedT;
-        const intercept = -(1 - calculatedT);
+        // Line equation: y = ((2 - t) / t) * x - (2 - t)
+        const slope = (2 - calculatedT) / calculatedT;
+        const intercept = -(2 - calculatedT);
 
         // Calculate endpoints on box boundary
         const x1 = 0;

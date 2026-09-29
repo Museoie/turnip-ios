@@ -26,11 +26,12 @@ translation: CGSize
 viewportSize: CGSize
 ```
 
-normalize both axes using the viewport width:
+normalize both axes using half the viewport width — not the full width — so that a
+single edge-to-edge drag across the viewport reaches `x = 2`, not `x = 1`:
 
 ```text
-x = translation.width / viewportWidth
-y = -translation.height / viewportWidth
+x = translation.width / (viewportWidth / 2)
+y = -translation.height / (viewportWidth / 2)
 ```
 
 The negative sign on `y` converts SwiftUI screen coordinates into the mathematical coordinate system:
@@ -52,10 +53,11 @@ Therefore:
 - `y > 0`: dragged upward
 - `y < 0`: dragged downward
 
-Using viewport width as the normalization unit means:
+Using half the viewport width as the normalization unit means:
 
-- `x = 1` = one screen-width horizontal drag
-- `y = 1` = one screen-width vertical drag
+- `x = 1` = half a screen-width horizontal drag
+- `x = 2` = one full screen-width horizontal drag (edge-to-edge)
+- `y = 1` = half a screen-width vertical drag
 
 The caller should not perform this normalization.
 
@@ -166,34 +168,34 @@ Therefore the same calculation works for either direction.
 
 ![notes](./SCRUB_NOTES.png)
 
-For upward dragging, the original design defines the relationship:
+For upward dragging, the design defines the relationship:
 
 ```text
-y = ((1 - t) / t) * x - (1 - t)
+y = ((2 - t) / t) * x - (2 - t)
 ```
 
 Rearranging:
 
 ```text
-ty = (1 - t)(x - t)
+ty = (2 - t)(x - t)
 ```
 
 Expanding:
 
 ```text
-ty = x - xt - t + t²
+ty = 2x - 2t - xt + t²
 ```
 
 Therefore:
 
 ```text
-t² - (x + y + 1)t + x = 0
+t² - (x + y + 2)t + 2x = 0
 ```
 
 Applying the quadratic formula:
 
 ```text
-t = ((x + y + 1) ± sqrt((x + y + 1)² - 4x)) / 2
+t = ((x + y + 2) ± sqrt((x + y + 2)² - 8x)) / 2
 ```
 
 There are therefore two mathematical solutions.
@@ -203,9 +205,9 @@ There are therefore two mathematical solutions.
 The two roots represent two different mathematical branches.
 
 ```text
-t₋ = ((x + y + 1) - sqrt((x + y + 1)² - 4x)) / 2
+t₋ = ((x + y + 2) - sqrt((x + y + 2)² - 8x)) / 2
 
-t₊ = ((x + y + 1) + sqrt((x + y + 1)² - 4x)) / 2
+t₊ = ((x + y + 2) + sqrt((x + y + 2)² - 8x)) / 2
 ```
 
 For the intended upward-scrubbing behavior, use the smaller root:
@@ -230,7 +232,7 @@ dt/dy > 0
 
 which would make upward dragging increase the scrub amount. That is contrary to the intended UX.
 
-## Why `t = 1` Is Not a Scrubbing Limit
+## Why `t = 2` Is Not a Scrubbing Limit
 
 The equation has two roots because the line equation describes two mathematical branches.
 
@@ -243,13 +245,13 @@ y = 0
 the equation becomes:
 
 ```text
-0 = (1 - t)(x/t - 1)
+0 = (2 - t)(x/t - 1)
 ```
 
 which gives:
 
 ```text
-t = 1
+t = 2
 ```
 
 or:
@@ -261,7 +263,7 @@ t = x
 For:
 
 ```text
-0 <= x <= 1
+0 <= x <= 2
 ```
 
 the smaller root is:
@@ -273,7 +275,7 @@ t = x
 For:
 
 ```text
-x > 1
+x > 2
 ```
 
 the `t = x` solution becomes the larger root.
@@ -281,20 +283,20 @@ the `t = x` solution becomes the larger root.
 The larger-root branch corresponds to:
 
 ```text
-slope = (1 - t) / t < 0
+slope = (2 - t) / t < 0
 ```
 
-when `t > 1`.
+when `t > 2`.
 
 Those negative-slope lines are intentionally not used for upward scrubbing.
 
-This does not mean that `t > 1` is invalid.
+This does not mean that `t > 2` is invalid.
 
 Instead:
 
 - `y <= 0`: `t = x`, allowing `t` to go all the way to `2`
 - `y > 0`: use the smaller-root branch
-- the negative-slope `t > 1` branch is ignored
+- the negative-slope `t > 2` branch is ignored
 
 ## Piecewise Definition
 
@@ -307,8 +309,8 @@ The complete current mathematical behavior is:
 t(x, y) =
     x                                                if y <= 0
 
-    (x + y + 1
-       - sqrt((x + y + 1)² - 4x)) / 2               if y > 0
+    (x + y + 2
+       - sqrt((x + y + 2)² - 8x)) / 2               if y > 0
 ```
 
 Then restore the horizontal direction:
@@ -330,7 +332,7 @@ There is one intentional mathematical discontinuity in the current model.
 For:
 
 ```text
-x > 1
+x > 2
 ```
 
 at exactly:
@@ -348,22 +350,22 @@ t = x
 For example:
 
 ```text
-x = 1.5
+x = 2.5
 y = 0
 
-t = 1.5
+t = 2.5
 ```
 
-But immediately after entering the upward region, the smaller-root branch approaches `t = 1`:
+But immediately after entering the upward region, the smaller-root branch approaches `t = 2`:
 
 ```text
-x = 1.5
+x = 2.5
 y → 0+
 
-t → 1
+t → 2
 ```
 
-Therefore the current model has a discontinuity when crossing from `y <= 0` to `y > 0` for `x > 1`.
+Therefore the current model has a discontinuity when crossing from `y <= 0` to `y > 0` for `x > 2`.
 
 This is a known property of the chosen mathematical model, not a numerical implementation bug.
 
@@ -405,7 +407,7 @@ let result = ScrubCalculator.calculate(
 The caller should not need to know:
 
 - how coordinates are normalized
-- that the viewport width is used as the normalization unit
+- that half the viewport width is used as the normalization unit
 - that `y` is inverted
 - that `abs(x)` is used
 - that a quadratic equation is involved
@@ -441,9 +443,11 @@ enum ScrubCalculator {
             return ScrubResult(timelineDelta: 0)
         }
 
-        // Normalize both axes using screen width.
-        let rawX = translation.width / viewportSize.width
-        let rawY = -translation.height / viewportSize.width
+        // Normalize both axes using half the screen width, so an edge-to-edge drag
+        // reaches the full ±maximumTimelineDelta rather than half of it.
+        let unit = viewportSize.width / 2
+        let rawX = translation.width / unit
+        let rawY = -translation.height / unit
 
         let direction: Double = rawX < 0 ? -1 : 1
         let x = abs(rawX)
@@ -478,8 +482,8 @@ enum ScrubCalculator {
         vertical y: Double
     ) -> Double {
 
-        let b = x + y + 1
-        let discriminant = b * b - 4 * x
+        let b = x + y + 2
+        let discriminant = b * b - 8 * x
 
         // Floating-point protection.
         guard discriminant >= -discriminantEpsilon else {
@@ -600,9 +604,9 @@ The mathematical behavior should be heavily unit-tested independently of SwiftUI
 ### Basic normalization
 
 ```swift
-func testOneScreenRight() {
+func testHalfScreenRight() {
     let result = ScrubCalculator.calculate(
-        translation: CGSize(width: 1000, height: 0),
+        translation: CGSize(width: 500, height: 0),
         viewportSize: CGSize(width: 1000, height: 800)
     )
 
@@ -614,12 +618,12 @@ func testOneScreenRight() {
 }
 ```
 
-### Two screens right
+### One full screen right
 
 ```swift
-func testTwoScreensRight() {
+func testOneScreenRight() {
     let result = ScrubCalculator.calculate(
-        translation: CGSize(width: 2000, height: 0),
+        translation: CGSize(width: 1000, height: 0),
         viewportSize: CGSize(width: 1000, height: 800)
     )
 
@@ -702,7 +706,7 @@ The original diagram defines:
 
 ```text
 t = 1/8
-y = 7x - 7/8
+y = 15x - 15/8
 ```
 
 Pick several points on that line and verify that the calculator returns approximately `1/8`.
