@@ -74,6 +74,9 @@ final class ClipCardPlayback: ObservableObject {
     typealias LoadComposition = @MainActor (
         _ cropRect: NormalizedRect, _ cropAdjustment: CropAdjustment
     ) async -> AVVideoComposition?
+    /// Loads the source asset's real duration, for clamping a window before it reaches the
+    /// looper. `nil` when it can't be read — the window then builds unclamped.
+    typealias LoadDuration = @MainActor () async -> TimeInterval?
     /// Builds a loop showing `geometry` of `asset` through `videoComposition`.
     typealias MakeLoop = @MainActor (
         _ asset: AVAsset, _ geometry: ClipCardPlaybackGeometry,
@@ -91,6 +94,7 @@ final class ClipCardPlayback: ObservableObject {
     private let asset: AVAsset
     private let mayAutoplayLoops: @MainActor () -> Bool
     private let loadComposition: LoadComposition
+    private let loadDuration: LoadDuration
     private let makeLoop: MakeLoop
     private var isSuspended = false
     private var geometry: ClipCardPlaybackGeometry?
@@ -114,6 +118,7 @@ final class ClipCardPlayback: ObservableObject {
                 isReduceMotionEnabled: UIAccessibility.isReduceMotionEnabled)
         },
         loadComposition: @escaping LoadComposition,
+        loadDuration: @escaping LoadDuration = { nil },
         makeLoop: @escaping MakeLoop = {
             AVPlayerLoop(asset: $0, geometry: $1, videoComposition: $2)
         }
@@ -121,6 +126,7 @@ final class ClipCardPlayback: ObservableObject {
         self.asset = asset
         self.mayAutoplayLoops = mayAutoplayLoops
         self.loadComposition = loadComposition
+        self.loadDuration = loadDuration
         self.makeLoop = makeLoop
     }
 
@@ -204,17 +210,45 @@ final class ClipCardPlayback: ObservableObject {
         let token = UUID()
         buildToken = token
         buildTask = Task { @MainActor [self] in
-            let composition = await loadComposition(target.cropRect, target.cropAdjustment)
+            async let compositionLoad = loadComposition(target.cropRect, target.cropAdjustment)
+            async let durationLoad = loadDuration()
+            let composition = await compositionLoad
+            let duration = await durationLoad
+            // Both loads are awaited before this check, not between them: a suspension
+            // point after the guard would let a teardown/suspend that lands during the
+            // second await slip past it, assigning a loop behind the editor's cover.
             guard !Task.isCancelled, !isSuspended else {
                 releaseBuildSlot(token)
                 return
             }
-            let built = makeLoop(asset, target, composition)
+            let clamped = Self.clampedForLoop(target, to: duration)
+            let built = makeLoop(asset, clamped, composition)
             loop = built
             loopGeometry = target
             releaseBuildSlot(token)
             built.play()
         }
+    }
+
+    /// Clamps `target`'s window into `[0, duration]` right before it reaches the looper.
+    /// The detector's trailing buffer can leave a trick window's `endTime` past the asset's
+    /// real duration (`TrickWindowDetector`'s own doc comment), most often on the LAST
+    /// detected trick, whose landing tends to sit closest to when recording stopped. An
+    /// `AVPlayerLooper` built from a `CMTimeRange` past the asset's duration never surfaces
+    /// an error — it just never queues a playable item, so the tile is stuck showing its
+    /// poster forever. `loopGeometry` still records the unclamped `target`: the rebuild
+    /// check above compares against what the item actually carries, not what got built.
+    /// Reuses `ClipEditorViewModel.clamped(window:to:)` rather than re-deriving the same
+    /// bound a third time — the export path clamps this exact overshoot too
+    /// (`ClipExporter.trimmedRange`).
+    private static func clampedForLoop(
+        _ target: ClipCardPlaybackGeometry, to duration: TimeInterval?
+    ) -> ClipCardPlaybackGeometry {
+        guard let duration else { return target }
+        let clampedWindow = ClipEditorViewModel.clamped(window: target.window, to: duration)
+        guard clampedWindow != target.window else { return target }
+        return ClipCardPlaybackGeometry(
+            window: clampedWindow, cropRect: target.cropRect, cropAdjustment: target.cropAdjustment)
     }
 
     /// Clears the in-flight slot only if `token` still owns it: a later attempt for the

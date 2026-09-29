@@ -41,6 +41,7 @@ private final class LoopRecorder {
 
     var isVideoAutoplayEnabled = true
     var isReduceMotionEnabled = false
+    var duration: TimeInterval?
     var loops: [FakeLoop] = []
     var compositionRequests: [CompositionRequest] = []
 }
@@ -90,6 +91,7 @@ final class ClipCardPlaybackTests: XCTestCase {
                         cropRect: cropRect, cropAdjustment: cropAdjustment))
                 return nil
             },
+            loadDuration: { recorder.duration },
             makeLoop: { _, geometry, _ in
                 let loop = FakeLoop(geometry: geometry)
                 recorder.loops.append(loop)
@@ -459,5 +461,72 @@ final class ClipCardPlaybackTests: XCTestCase {
         XCTAssertEqual(recorder.loops.count, 2)
         XCTAssertEqual(recorder.loops[1].geometry.window, editedWindow)
         XCTAssertEqual(recorder.loops[1].playCount, 1)
+    }
+
+    // MARK: - Clamping a window that overshoots the asset's duration
+
+    /// The detector's trailing buffer can leave `endTime` past the asset's real duration —
+    /// most often on the last detected trick, whose landing tends to sit closest to when
+    /// recording stopped. `AVPlayerLooper` never surfaces a failure for an out-of-bounds
+    /// range; it just never queues a playable item, so the build has to clamp before
+    /// handing the range to `makeLoop`.
+    func testStartClampsAWindowThatOvershootsTheLoadedDuration() async {
+        let recorder = LoopRecorder()
+        recorder.duration = 4
+        let overshooting = TrickWindow(startTime: 2, endTime: 5)
+        let playback = makePlayback(recorder)
+
+        playback.start(geometry: geometry(window: overshooting), isSuspended: false)
+        await settle(playback)
+
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(
+            recorder.loops[0].geometry.window,
+            ClipEditorViewModel.clamped(window: overshooting, to: 4))
+    }
+
+    /// A window already inside the duration builds unchanged — the clamp is a no-op, not a
+    /// second source of truth that could disagree with the item's own window.
+    func testStartWithAWindowInsideTheDurationBuildsItUnchanged() async {
+        let recorder = LoopRecorder()
+        recorder.duration = 10
+        let playback = makePlayback(recorder)
+
+        playback.start(geometry: geometry(), isSuspended: false)
+        await settle(playback)
+
+        XCTAssertEqual(recorder.loops[0].geometry.window, window)
+    }
+
+    /// The rebuild check compares the item's own (unclamped) geometry, not the clamped one
+    /// the loop was actually built with — otherwise every later resume of an overshooting
+    /// clip would see its stored `loopGeometry` disagree with the item's window and
+    /// rebuild forever instead of just resuming.
+    func testRepeatedStartOfAnOvershootingWindowResumesRatherThanRebuilding() async {
+        let recorder = LoopRecorder()
+        recorder.duration = 4
+        let overshooting = TrickWindow(startTime: 2, endTime: 5)
+        let playback = makePlayback(recorder)
+
+        playback.start(geometry: geometry(window: overshooting), isSuspended: false)
+        await settle(playback)
+        playback.start(geometry: geometry(window: overshooting), isSuspended: false)
+        await settle(playback)
+
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].playCount, 2)
+    }
+
+    /// The duration can't be read at all (`nil`, not merely pending — the build already
+    /// awaits it): builds the raw window unclamped rather than refusing to play.
+    func testStartWithAnUnreadableDurationBuildsTheRawWindow() async {
+        let recorder = LoopRecorder()
+        let overshooting = TrickWindow(startTime: 2, endTime: 5)
+        let playback = makePlayback(recorder)
+
+        playback.start(geometry: geometry(window: overshooting), isSuspended: false)
+        await settle(playback)
+
+        XCTAssertEqual(recorder.loops[0].geometry.window, overshooting)
     }
 }

@@ -210,7 +210,8 @@ private struct ClipCardView: View {
                 loadComposition: { [viewModel] cropRect, cropAdjustment in
                     await viewModel.videoComposition(
                         cropRect: cropRect, cropAdjustment: cropAdjustment)
-                }))
+                },
+                loadDuration: { [viewModel] in await viewModel.assetDuration() }))
     }
 
     var body: some View {
