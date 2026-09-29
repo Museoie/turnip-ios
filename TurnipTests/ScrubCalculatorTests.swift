@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import Turnip
 
@@ -89,7 +90,7 @@ final class ScrubCalculatorTests: XCTestCase {
     // MARK: - Mathematical line tests
     //
     // The design doc's diagram defines, for the upward branch, lines of constant t:
-    //   y = ((2 - t) / t) * x - (2 - t)
+    //   y³ = ((2 - t) / t) * x - (2 - t)
     // Each line only enters the upward branch (y > 0) where x > t; points are chosen there.
 
     func testPointsOnTheConstantTLinesReturnThatT() {
@@ -98,8 +99,9 @@ final class ScrubCalculatorTests: XCTestCase {
             let slope = (2 - expectedT) / expectedT
             let intercept = -(2 - expectedT)
             for x in stride(from: expectedT + 0.05, through: 2.0, by: 0.2) {
-                let y = slope * x + intercept
-                guard y > 0 else { continue }
+                let yCubed = slope * x + intercept
+                guard yCubed > 0 else { continue }
+                let y = cbrt(yCubed)
                 let calculated = ScrubCalculator.calculateNormalized(horizontal: x, vertical: y)
                 XCTAssertEqual(
                     calculated, expectedT, accuracy: 1e-6,

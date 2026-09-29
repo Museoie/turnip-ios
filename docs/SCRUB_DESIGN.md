@@ -171,31 +171,45 @@ Therefore the same calculation works for either direction.
 For upward dragging, the design defines the relationship:
 
 ```text
-y = ((2 - t) / t) * x - (2 - t)
+y³ = ((2 - t) / t) * x - (2 - t)
 ```
+
+Cubing `y` (rather than using it directly) eases the transition off the horizontal: for
+`y < 1` the precision drop-off is gentler than a plain-`y` model would give (small upward
+drags barely reduce sensitivity), while for `y > 1` it is steeper (`t` falls off faster the
+further up the drag goes).
+
+Substituting `Y = y³` reduces this to the same shape as the plain-`y` line equation, so the
+rest of the derivation goes through unchanged with `Y` in place of `y`.
 
 Rearranging:
 
 ```text
-ty = (2 - t)(x - t)
+tY = (2 - t)(x - t)
 ```
 
 Expanding:
 
 ```text
-ty = 2x - 2t - xt + t²
+tY = 2x - 2t - xt + t²
 ```
 
 Therefore:
 
 ```text
-t² - (x + y + 2)t + 2x = 0
+t² - (x + Y + 2)t + 2x = 0
+```
+
+i.e.
+
+```text
+t² - (x + y³ + 2)t + 2x = 0
 ```
 
 Applying the quadratic formula:
 
 ```text
-t = ((x + y + 2) ± sqrt((x + y + 2)² - 8x)) / 2
+t = ((x + y³ + 2) ± sqrt((x + y³ + 2)² - 8x)) / 2
 ```
 
 There are therefore two mathematical solutions.
@@ -205,9 +219,9 @@ There are therefore two mathematical solutions.
 The two roots represent two different mathematical branches.
 
 ```text
-t₋ = ((x + y + 2) - sqrt((x + y + 2)² - 8x)) / 2
+t₋ = ((x + y³ + 2) - sqrt((x + y³ + 2)² - 8x)) / 2
 
-t₊ = ((x + y + 2) + sqrt((x + y + 2)² - 8x)) / 2
+t₊ = ((x + y³ + 2) + sqrt((x + y³ + 2)² - 8x)) / 2
 ```
 
 For the intended upward-scrubbing behavior, use the smaller root:
@@ -309,8 +323,8 @@ The complete current mathematical behavior is:
 t(x, y) =
     x                                                if y <= 0
 
-    (x + y + 2
-       - sqrt((x + y + 2)² - 8x)) / 2               if y > 0
+    (x + y³ + 2
+       - sqrt((x + y³ + 2)² - 8x)) / 2               if y > 0
 ```
 
 Then restore the horizontal direction:
@@ -482,7 +496,7 @@ enum ScrubCalculator {
         vertical y: Double
     ) -> Double {
 
-        let b = x + y + 2
+        let b = x + y * y * y + 2
         let discriminant = b * b - 8 * x
 
         // Floating-point protection.
@@ -702,14 +716,15 @@ func testUpwardMovementReducesSensitivity() {
 
 ### Mathematical line tests
 
-The original diagram defines:
+The original diagram defines, for `Y = y³`:
 
 ```text
 t = 1/8
-y = 15x - 15/8
+Y = 15x - 15/8
 ```
 
-Pick several points on that line and verify that the calculator returns approximately `1/8`.
+Pick several points on that line, take `y = cbrt(Y)`, and verify that the calculator
+returns approximately `1/8`.
 
 Likewise test the lines for:
 

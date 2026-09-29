@@ -41,6 +41,12 @@ enum ScrubCalculator {
     /// The normalized solver, kept separate from coordinate normalization so the
     /// mathematical model is directly testable (`docs/SCRUB_DESIGN.md` "Mathematical Model").
     ///
+    /// The upward branch solves `y³ = ((2 - t) / t) * x - (2 - t)` for `t`, i.e. the same
+    /// quadratic as before but with `y` cubed. Cubing `y` eases the transition off the
+    /// horizontal: for `y < 1` the precision drop-off is gentler than the plain-`y` model
+    /// (small upward drags barely reduce sensitivity), while for `y > 1` it's steeper
+    /// (`t` falls off faster the further up the drag goes).
+    ///
     /// For `x > 2`, this has an intentional discontinuity: at `y == 0`, `t == x`, but as `y`
     /// grows past zero `t` drops toward `2`. That's the smaller root of the two the model's
     /// quadratic admits — the larger root would make upward dragging *increase* `t`, which is
@@ -48,7 +54,7 @@ enum ScrubCalculator {
     static func calculateNormalized(horizontal x: Double, vertical y: Double) -> Double {
         guard y > 0 else { return x }
 
-        let bCoefficient = x + y + 2
+        let bCoefficient = x + y * y * y + 2
         let discriminant = max(0, bCoefficient * bCoefficient - 8 * x)
         return max(0, (bCoefficient - discriminant.squareRoot()) / 2)
     }

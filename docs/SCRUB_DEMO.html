@@ -212,8 +212,8 @@
       if (magY <= 0) {
         t = magX; // Direct horizontal drag when y <= 0
       } else {
-        // Upward drag: quadratic formula for smaller root
-        const b = magX + magY + 2;
+        // Upward drag: quadratic formula for smaller root (y is cubed)
+        const b = magX + magY * magY * magY + 2;
         const discriminant = b * b - 8 * magX;
 
         if (discriminant >= 0) {
@@ -301,29 +301,37 @@
       ctx.arc(px, py, 6, 0, Math.PI * 2);
       ctx.fill();
 
-      // Draw Isoline passing through current t
+      // Draw Isocurve passing through current t
       if (calculatedT > 0 && calculatedT < 2) {
         ctx.strokeStyle = '#ff9500';
         ctx.lineWidth = 2;
         ctx.beginPath();
 
-        // Line equation: y = ((2 - t) / t) * x - (2 - t)
+        // Curve equation: y³ = ((2 - t) / t) * x - (2 - t), i.e. y = cbrt(slope * x + intercept)
         const slope = (2 - calculatedT) / calculatedT;
         const intercept = -(2 - calculatedT);
 
-        // Calculate endpoints on box boundary
-        const x1 = 0;
-        const y1 = intercept;
-        const x2 = 2;
-        const y2 = slope * 2 + intercept;
+        let started = false;
+        const steps = 100;
+        for (let i = 0; i <= steps; i++) {
+          const curveX = (i / steps) * 2;
+          const yCubed = slope * curveX + intercept;
+          if (yCubed <= 0) {
+            started = false;
+            continue;
+          }
+          const curveY = Math.cbrt(yCubed);
 
-        const p1x = (x1 / 2) * w;
-        const p1y = h - (y1 / 4) * h;
-        const p2x = (x2 / 2) * w;
-        const p2y = h - (y2 / 4) * h;
+          const px = (curveX / 2) * w;
+          const py = h - (curveY / 4) * h;
 
-        ctx.moveTo(p1x, p1y);
-        ctx.lineTo(p2x, p2y);
+          if (!started) {
+            ctx.moveTo(px, py);
+            started = true;
+          } else {
+            ctx.lineTo(px, py);
+          }
+        }
         ctx.stroke();
       }
     }
