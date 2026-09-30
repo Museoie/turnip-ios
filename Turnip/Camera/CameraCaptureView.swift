@@ -75,6 +75,9 @@ struct CameraCaptureView: View {
             }
             recordButton
         }
+        // The floating tab bar (`RootTabView`) now stays visible over this page too, so
+        // without this the record button and lens row would sit directly underneath it.
+        .padding(.bottom, FloatingTabBarMetrics.clearance)
     }
 
     private var recordButton: some View {
@@ -193,15 +196,26 @@ struct CameraCaptureView: View {
                 }
             }
         } label: {
-            Image(systemName: "gearshape.fill")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
-                .background(.black.opacity(0.4), in: Circle())
+            formatMenuGlyph
         }
         .opacity(viewModel.isRecording ? 0.4 : 1)
         .disabled(viewModel.isRecording)
         .accessibilityLabel("Resolution and frame rate")
+    }
+
+    /// Mirrors `ScrimIconButton`'s glyph exactly (real Liquid Glass on iOS 26, a dark
+    /// scrim pre-26) so the menu reads as the same control family as its neighbors.
+    @ViewBuilder
+    private var formatMenuGlyph: some View {
+        let image = Image(systemName: "gearshape.fill")
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.white)
+            .frame(width: 44, height: 44)
+        if #available(iOS 26.0, *) {
+            image.glassEffect(in: Circle())
+        } else {
+            image.background(.black.opacity(0.4), in: Circle())
+        }
     }
 
     // MARK: - Exposure

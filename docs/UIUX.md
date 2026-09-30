@@ -72,13 +72,16 @@ a finished recording needs to hand its asset into the same
 `select(_:)` a tapped gallery tile calls, then switch back to the gallery
 tab so the pick lands the way tapping a tile always has.
 
-The pill is a true overlay, not a safe-area inset — the gallery grid scrolls
-underneath it rather than stopping short, so it reads as floating over the
-tiles instead of a docked bar. It renders in Liquid Glass on iOS 26+
-(`.ultraThinMaterial` below that), and only while Home's own grid is the
-visible screen: it's hidden on the Camera page (which has its own cancel
-chevron back to Home) and hidden the moment Home pushes into
-Processing/ClipList/ClipEditor, reappearing once back at the grid.
+The pill is a true overlay, not a safe-area inset — the gallery grid (and
+Camera's record button/lens row) scroll or sit underneath it rather than
+stopping short, so it reads as floating over the content instead of a docked
+bar. It renders in Liquid Glass on iOS 26+ (`.ultraThinMaterial` below that),
+with a sliding selection pill behind whichever icon is active — visible on
+both pages, so the pill has something to slide between on a tap or a page
+swipe alike. Camera keeps its own cancel chevron too; the bar there is an
+additional way back, not a replacement. It's hidden only once Home pushes
+into Processing/ClipList/ClipEditor, each of which owns the full screen and
+its own back chevron, reappearing once back at the grid.
 
 ### 1. Home / Video Gallery
 

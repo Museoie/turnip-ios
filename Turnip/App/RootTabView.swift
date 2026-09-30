@@ -10,9 +10,10 @@ enum MainTab: Hashable {
     case home
 }
 
-/// The floating bar's approximate footprint, shared with `VideoGalleryView` so its grid
-/// can reserve scroll room to clear the bar — it overlays the grid rather than pushing it
-/// up, so without this the last row would be permanently stuck underneath it.
+/// The floating bar's approximate footprint, shared with `VideoGalleryView` (grid scroll
+/// room) and `CameraCaptureView` (record button/lens row spacing) so each can reserve
+/// clearance for the bar — it overlays their content rather than pushing it up, so without
+/// this their bottom-most controls would be permanently stuck underneath it.
 enum FloatingTabBarMetrics {
     static let clearance: CGFloat = 100
 }
@@ -51,16 +52,19 @@ struct RootTabView: View {
         .ignoresSafeArea()
         // An overlay, not a safe-area inset: the grid scrolls underneath it rather than
         // stopping short, so it reads as floating over the content instead of a docked
-        // bar. Home-only and root-only (`viewModel.path.isEmpty`) per docs/UIUX.md — the
-        // Camera page has its own cancel chevron back to Home, and a drilled-in clip
-        // screen has its own back chevron, so the bar would be redundant chrome there.
+        // bar. Visible on both pages (root-only, `viewModel.path.isEmpty`) so its
+        // selection marker actually has something to slide between — it's the reason a
+        // tab bar's marker animates in Slack/Instagram-style apps at all. Hidden only
+        // once Home drills into Processing/ClipList/ClipEditor, each of which has its own
+        // back chevron and needs the full screen; Camera keeps its own cancel chevron too,
+        // so the bar there is an additional way back, not a replacement.
         .overlay(alignment: .bottom) {
-            if selectedTab == .home && viewModel.path.isEmpty {
+            if viewModel.path.isEmpty {
                 FloatingTabBar(selectedTab: $selectedTab)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: selectedTab == .home && viewModel.path.isEmpty)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.path.isEmpty)
         // A distinct alert from Home's "Couldn't open video" — that one is about
         // resolving an existing library asset, not about this just-recorded file
         // failing to save. Sharing it would misname the failure to the user.
@@ -113,6 +117,11 @@ struct RootTabView: View {
 /// capsule rather than `TabView`'s own bar, which assumes more than two items.
 private struct FloatingTabBar: View {
     @Binding var selectedTab: MainTab
+    /// Ties the selection pill to whichever icon is currently selected: only one of the
+    /// two `tabButton`s ever draws it (see `indicator`), so a change in `selectedTab`
+    /// reads to SwiftUI as that same shape flying from its old spot to its new one
+    /// rather than one fading out while an unrelated one fades in.
+    @Namespace private var glassNamespace
 
     var body: some View {
         let buttons = HStack(spacing: 40) {
@@ -120,7 +129,11 @@ private struct FloatingTabBar: View {
             tabButton(.home, systemImage: "square.grid.2x2.fill", label: "Videos")
         }
         .padding(.horizontal, 28)
-        .padding(.vertical, 14)
+        .padding(.vertical, 8)
+        // Drives the indicator's slide for every path to a selection change alike — a
+        // tap (handled inline by the `Button`) and a swipe of the page `TabView` (which
+        // changes `selectedTab` from outside this view entirely).
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: selectedTab)
 
         // Real Liquid Glass where the OS supports it (iOS 26+); `.ultraThinMaterial`
         // otherwise, matching how the bar already looked pre-Liquid Glass.
@@ -131,7 +144,7 @@ private struct FloatingTabBar: View {
                 buttons.background(.ultraThinMaterial, in: Capsule())
             }
         }
-        .padding(.bottom, 12)
+        .padding(.bottom, 6)
     }
 
     private func tabButton(_ tab: MainTab, systemImage: String, label: String) -> some View {
@@ -143,9 +156,25 @@ private struct FloatingTabBar: View {
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.4))
                 .frame(width: 44, height: 44)
+                .background {
+                    if isSelected {
+                        indicator
+                    }
+                }
         }
         .accessibilityLabel(label)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityIdentifier("tab-\(label.lowercased())")
+    }
+
+    /// The selected tab's pill. A plain translucent fill, not a second `.glassEffect` —
+    /// stacking glass on glass artifacts, and the outer capsule is already real Liquid
+    /// Glass on iOS 26. `matchedGeometryEffect` is what makes it slide: SwiftUI treats
+    /// the copy that disappears from the old tab and the one that appears on the new tab
+    /// (same `id`, same `Namespace`) as one shape in flight rather than a cross-fade.
+    private var indicator: some View {
+        Circle()
+            .fill(.white.opacity(0.2))
+            .matchedGeometryEffect(id: "tab-indicator", in: glassNamespace)
     }
 }

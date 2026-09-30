@@ -31,22 +31,16 @@ struct ScreenshotHomeHarness: View {
     var body: some View {
         NavigationStack {
             // Same composition as `HomeView`'s denied branch: the wordmark header as content
-            // under Home's empty, transparent bar, with the same top-trailing overlay
-            // `HomeView.body` attaches at the root, outside the bar's hit-testing band. Wired
-            // to a real sheet present, not a no-op action, so a UI test can `.tap()` a button
-            // and assert the sheet actually opened — the behavior the button exists for, not
-            // just its presence in the hit-testing tree.
+            // under Home's empty, transparent bar, with `HomeNavigationBar` placing the same
+            // filter/settings controls `HomeView.body` gets. Wired to a real sheet present,
+            // not a no-op action, so a UI test can `.tap()` a button and assert the sheet
+            // actually opened — the behavior the button exists for, not just its presence in
+            // the hit-testing tree.
             VStack(spacing: 0) {
                 HomeHeader()
                 PhotosAccessDeniedView(restricted: false)
             }
-            .modifier(HomeNavigationBar())
-            .overlay(alignment: .topTrailing) {
-                HStack(spacing: 0) {
-                    GalleryFilterButton(viewModel: viewModel)
-                    HomeSettingsButton(action: { showSettings = true })
-                }
-            }
+            .modifier(HomeNavigationBar(viewModel: viewModel, showSettings: { showSettings = true }))
             .sheet(isPresented: $showSettings) { SettingsView(settings: Self.store) }
         }
     }
@@ -70,13 +64,7 @@ struct ScreenshotGalleryFilterHarness: View {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .modifier(HomeNavigationBar())
-            .overlay(alignment: .topTrailing) {
-                HStack(spacing: 0) {
-                    GalleryFilterButton(viewModel: viewModel)
-                    HomeSettingsButton(action: {})
-                }
-            }
+            .modifier(HomeNavigationBar(viewModel: viewModel, showSettings: {}))
         }
     }
 }

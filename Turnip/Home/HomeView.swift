@@ -21,22 +21,10 @@ struct HomeView: View {
             content
                 // The wordmark is scroll content (`HomeHeader`), not a bar title, so it
                 // scrolls away with the tiles (docs/UIUX.md). Root-only — pushed screens
-                // declare their own bars.
-                .modifier(HomeNavigationBar())
-                // Attached AFTER `HomeNavigationBar`, at the ROOT only — inside the
-                // `NavigationStack`'s root closure, so a pushed Processing/ClipList screen
-                // doesn't inherit it, and outside the band `HomeNavigationBar` reserves for
-                // its own (invisible-but-real) `UINavigationBar`: that system bar hit-tests
-                // its own frame ahead of SwiftUI content drawn under it, opaque to touches
-                // regardless of how transparent it looks — any control layered inside that
-                // band is unreachable no matter its own touch-target size. See
-                // `settingsButton` below.
-                .overlay(alignment: .topTrailing) {
-                    HStack(spacing: 0) {
-                        GalleryFilterButton(viewModel: viewModel)
-                        settingsButton
-                    }
-                }
+                // declare their own bars. `HomeNavigationBar` also places the filter and
+                // settings controls — see its doc comment for why that placement differs
+                // between iOS 26 and earlier.
+                .modifier(HomeNavigationBar(viewModel: viewModel, showSettings: { showSettings = true }))
                 .navigationDestination(for: SelectedVideo.self) { video in
                     // A video the camera already analyzed while recording it lands on the
                     // clip list directly. Otherwise the Processing screen shows the picked
@@ -135,10 +123,6 @@ struct HomeView: View {
         }
     }
 
-    private var settingsButton: some View {
-        HomeSettingsButton(action: { showSettings = true })
-    }
-
     private var errorPresented: Binding<Bool> {
         Binding(
             get: { viewModel.errorMessage != nil },
@@ -147,19 +131,16 @@ struct HomeView: View {
     }
 }
 
-/// The settings entry point's fixed corner overlay. Must stay attached to `HomeView`'s root
-/// content, outside the band `HomeNavigationBar` reserves for its own system
-/// `UINavigationBar` — that bar hit-tests its own frame ahead of SwiftUI content drawn under
-/// it, opaque to touches regardless of how transparent it looks
-/// (`.toolbarBackground(.hidden, ...)` hides its paint, not its hit area). A control layered
-/// inside that band is unreachable no matter its own touch-target size, accessibility
-/// identifier, or screenshot coverage — none of those exercise hit-testing against a real
-/// `UINavigationBar`; only a synthesized touch does (`TurnipUITests/ScreenshotTests.swift`'s
-/// `testHomeSettingsButtonOpensSettings`).
+/// The settings entry point's pre-iOS 26 fallback: `HomeNavigationBar` hides the real
+/// navigation bar outright on those OSes (no Liquid Glass to anchor a toolbar item to), so
+/// this instead floats as a manually-styled corner overlay. On iOS 26 the settings button is
+/// a real `ToolbarItem` in `HomeNavigationBar`'s toolbar instead — living inside the bar's own
+/// hit-testing hierarchy rather than layered over it, and picking up the system's native
+/// Liquid Glass bar-button styling for free.
 ///
 /// Extracted to its own type, not a private computed property, so the DEBUG screenshot
-/// harness composes the exact same view `HomeView` does instead of a hand-built duplicate
-/// that can drift from it.
+/// harness composes the exact same view `HomeNavigationBar` does instead of a hand-built
+/// duplicate that can drift from it.
 struct HomeSettingsButton: View {
     let action: () -> Void
 
@@ -170,20 +151,47 @@ struct HomeSettingsButton: View {
     }
 }
 
-/// The gallery filter entry point: All Items / Favorites / a specific album, sitting left of
-/// the settings gear in the same top-trailing overlay — see the corner-occupancy note on
-/// `HomeSettingsButton` above; this shares that same nav-bar-band constraint. Dimmed and
+/// The gallery filter entry point: All Items / Favorites / a specific album. Dimmed and
 /// disabled without library access, the same way `CameraCaptureView`'s `formatMenu` disables
 /// itself while recording — there is nothing for it to filter, and a Favorites tap that
 /// silently changes nothing would be worse than an unavailable control.
 ///
-/// Not `ScrimIconButton` directly: `Menu`'s `label` closure needs a bare glyph rather than a
-/// nested `Button`, the same reason `formatMenu` doesn't use it either — mirrors
-/// `ScrimIconButton`'s look so it still reads as the same control family.
+/// Placed by `HomeNavigationBar`, which picks the `Placement` for the OS: a real `ToolbarItem`
+/// on iOS 26 (in the bar's own hit-testing hierarchy, native Liquid Glass styling applied
+/// automatically) or a manually-styled corner overlay pre-26 (no system glass to anchor to,
+/// same reasoning as `HomeSettingsButton`). Not `ScrimIconButton` for the overlay glyph:
+/// `Menu`'s `label` closure needs a bare glyph rather than a nested `Button`, the same reason
+/// `formatMenu` doesn't use it either — mirrors `ScrimIconButton`'s look so it still reads as
+/// the same control family.
 struct GalleryFilterButton: View {
+    enum Placement {
+        case toolbar
+        case overlay
+    }
+
     @ObservedObject var viewModel: VideoLibraryViewModel
+    let placement: Placement
 
     var body: some View {
+        Group {
+            switch placement {
+            case .toolbar:
+                menu
+            case .overlay:
+                menu.padding()
+            }
+        }
+        .opacity(viewModel.authorization.canReadLibrary ? 1 : 0.4)
+        .disabled(!viewModel.authorization.canReadLibrary)
+        .accessibilityLabel("Filter")
+        // The filled-vs-outline glyph below is a purely visual signal; this carries the same
+        // state into the accessibility tree, the same convention TrimSliderView's handles use
+        // for a control whose state must never depend only on its shape.
+        .accessibilityValue(viewModel.filter.label)
+        .accessibilityIdentifier("gallery-filter-button")
+    }
+
+    private var menu: some View {
         Menu {
             filterRow(.all)
             filterRow(.favorites)
@@ -197,27 +205,32 @@ struct GalleryFilterButton: View {
                 }
             }
         } label: {
-            // .fill for an active (non-.all) filter -- the same outline/filled convention
-            // Photos' own filter control and SF Symbols' own "selected" pattern use -- so a
-            // filtered grid with real results (not just the zero-match empty state) still
-            // shows that a filter is on. Without this the glyph is byte-identical whether 20
-            // of 300 videos are showing or all of them are.
-            Image(systemName: viewModel.filter == .all
-                ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
-                .font(.body.weight(.semibold))
+            glyph
+        }
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        // .fill for an active (non-.all) filter -- the same outline/filled convention
+        // Photos' own filter control and SF Symbols' own "selected" pattern use -- so a
+        // filtered grid with real results (not just the zero-match empty state) still
+        // shows that a filter is on. Without this the glyph is byte-identical whether 20
+        // of 300 videos are showing or all of them are.
+        let image = Image(systemName: viewModel.filter == .all
+            ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+            .font(.body.weight(.semibold))
+        switch placement {
+        case .toolbar:
+            // No manual background: the system paints the native Liquid Glass bar-button
+            // circle behind a plain toolbar glyph, the same way `ClipEditorView`'s toolbar
+            // buttons stay unstyled and let the bar do it.
+            image
+        case .overlay:
+            image
                 .foregroundStyle(.white)
                 .frame(width: 44, height: 44)
                 .background(.black.opacity(0.4), in: Circle())
         }
-        .padding()
-        .opacity(viewModel.authorization.canReadLibrary ? 1 : 0.4)
-        .disabled(!viewModel.authorization.canReadLibrary)
-        .accessibilityLabel("Filter")
-        // The filled-vs-outline glyph above is a purely visual signal; this carries the same
-        // state into the accessibility tree, the same convention TrimSliderView's handles use
-        // for a control whose state must never depend only on its shape.
-        .accessibilityValue(viewModel.filter.label)
-        .accessibilityIdentifier("gallery-filter-button")
     }
 
     private func filterRow(_ filter: GalleryFilter) -> some View {
@@ -479,13 +492,22 @@ struct PhotosAccessDeniedView: View {
 /// and re-adds only the status bar's share as an inset. The wordmark header then sits
 /// directly under the status bar at rest — in the grid and in the non-scrolling states
 /// alike, so it doesn't jump when the grid replaces the loading state — and the glass
-/// fades in over the band only once tiles scroll under it. Pre-26 there is no glass to
-/// anchor, so the bar is hidden outright. Internal so the DEBUG screenshot harness and
-/// previews match.
+/// fades in over the band only once tiles scroll under it.
+///
+/// Also places the filter and settings controls, since where they can live depends on the
+/// same OS split as the glass itself: on iOS 26 they're real `ToolbarItem`s in this same bar
+/// — at the title's level at rest, riding the bar's own scroll-edge glass once scrolled, and
+/// reachable because they're part of the bar's hit-testing hierarchy rather than layered over
+/// it. Pre-26 the bar is hidden outright (no glass to anchor a toolbar item to), so they fall
+/// back to a manually-styled corner overlay instead. Internal so the DEBUG screenshot harness
+/// and previews match.
 struct HomeNavigationBar: ViewModifier {
     /// The inline bar's height on iOS 26 (measured: the top safe area with the bar minus
     /// the top safe area without it). There is no public constant for it.
     private static let barHeight: CGFloat = 54
+
+    @ObservedObject var viewModel: VideoLibraryViewModel
+    let showSettings: () -> Void
 
     /// Whether the scroll content has moved up past its rest position. With the header
     /// sitting inside the bar's band at rest, UIKit considers the content "under the
@@ -523,9 +545,26 @@ struct HomeNavigationBar: ViewModifier {
                             .opacity(0)
                             .accessibilityHidden(true)
                     }
+                    ToolbarItem(placement: .topBarLeading) {
+                        GalleryFilterButton(viewModel: viewModel, placement: .toolbar)
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: showSettings) {
+                            Image(systemName: "gearshape")
+                        }
+                        .accessibilityLabel("Settings")
+                        .accessibilityIdentifier("settings-button")
+                    }
                 }
         } else {
-            content.toolbar(.hidden, for: .navigationBar)
+            content
+                .toolbar(.hidden, for: .navigationBar)
+                .overlay(alignment: .topLeading) {
+                    GalleryFilterButton(viewModel: viewModel, placement: .overlay)
+                }
+                .overlay(alignment: .topTrailing) {
+                    HomeSettingsButton(action: showSettings)
+                }
         }
     }
 }
@@ -536,7 +575,9 @@ struct HomeNavigationBar: ViewModifier {
             HomeHeader()
             PhotosAccessDeniedView(restricted: false)
         }
-        .modifier(HomeNavigationBar())
+        .modifier(HomeNavigationBar(
+            viewModel: VideoLibraryViewModel(authorization: .denied(restricted: false)),
+            showSettings: {}))
     }
     .preferredColorScheme(.dark)
 }
@@ -547,7 +588,9 @@ struct HomeNavigationBar: ViewModifier {
             HomeHeader()
             PhotosAccessDeniedView(restricted: true)
         }
-        .modifier(HomeNavigationBar())
+        .modifier(HomeNavigationBar(
+            viewModel: VideoLibraryViewModel(authorization: .denied(restricted: true)),
+            showSettings: {}))
     }
     .preferredColorScheme(.dark)
 }
