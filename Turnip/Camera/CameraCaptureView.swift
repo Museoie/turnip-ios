@@ -61,7 +61,8 @@ struct CameraCaptureView: View {
     }
 
     private var cancelButton: some View {
-        ScrimIconButton(systemImage: "xmark", accessibilityLabel: "Cancel", action: onCancel)
+        ScrimIconButton(
+            systemImage: "xmark", accessibilityLabel: "Cancel", style: .scrim, action: onCancel)
             .padding()
     }
 
@@ -160,6 +161,7 @@ struct CameraCaptureView: View {
         ScrimIconButton(
             systemImage: showExposureSlider ? "sun.max.fill" : "sun.max",
             accessibilityLabel: "Exposure",
+            style: .scrim,
             action: { showExposureSlider.toggle() })
     }
 
@@ -167,6 +169,7 @@ struct CameraCaptureView: View {
         ScrimIconButton(
             systemImage: viewModel.isTorchOn ? "bolt.fill" : "bolt.slash.fill",
             accessibilityLabel: viewModel.isTorchOn ? "Turn off flash" : "Turn on flash",
+            style: .scrim,
             action: viewModel.toggleTorch)
     }
 
@@ -174,6 +177,7 @@ struct CameraCaptureView: View {
         ScrimIconButton(
             systemImage: "arrow.triangle.2.circlepath.camera",
             accessibilityLabel: "Switch camera",
+            style: .scrim,
             action: viewModel.switchCamera)
             .opacity(viewModel.isRecording ? 0.4 : 1)
             .disabled(viewModel.isRecording)
@@ -196,26 +200,15 @@ struct CameraCaptureView: View {
                 }
             }
         } label: {
-            formatMenuGlyph
+            Image(systemName: "gearshape.fill")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(.black.opacity(0.4), in: Circle())
         }
         .opacity(viewModel.isRecording ? 0.4 : 1)
         .disabled(viewModel.isRecording)
         .accessibilityLabel("Resolution and frame rate")
-    }
-
-    /// Mirrors `ScrimIconButton`'s glyph exactly (real Liquid Glass on iOS 26, a dark
-    /// scrim pre-26) so the menu reads as the same control family as its neighbors.
-    @ViewBuilder
-    private var formatMenuGlyph: some View {
-        let image = Image(systemName: "gearshape.fill")
-            .font(.body.weight(.semibold))
-            .foregroundStyle(.white)
-            .frame(width: 44, height: 44)
-        if #available(iOS 26.0, *) {
-            image.glassEffect(in: Circle())
-        } else {
-            image.background(.black.opacity(0.4), in: Circle())
-        }
     }
 
     // MARK: - Exposure
