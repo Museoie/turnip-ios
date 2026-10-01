@@ -103,6 +103,7 @@ struct HomeView: View {
             asset: asset,
             assetIdentifier: video.assetIdentifier,
             duration: video.duration,
+            showsNoTricksFound: clips.isEmpty,
             popToRoot: popToRoot
         )
     }

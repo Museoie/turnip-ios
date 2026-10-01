@@ -14,20 +14,21 @@ final class ProcessingViewModel: ObservableObject {
         case idle
         case processing(ProcessingProgress)
         case succeeded
-        case empty
         case failed(message: String)
     }
 
     @Published private(set) var state: State = .idle
     @Published private(set) var result: ProcessingResult?
-    /// Drives the navigation to the success destination once a run finds clips.
+    /// Drives the navigation to the success destination once a run finishes — including a
+    /// run that detected zero tricks: its empty `ProcessingResult` still navigates, and the
+    /// clip list itself puts up the "no tricks found" notice (`ClipListView`).
     @Published var isShowingClips = false
 
     var isRunning: Bool {
         switch state {
         case .idle, .processing:
             true
-        case .succeeded, .empty, .failed:
+        case .succeeded, .failed:
             false
         }
     }
@@ -87,7 +88,7 @@ final class ProcessingViewModel: ObservableObject {
         isShowingClips = false
     }
 
-    /// Restarts after a failure or an empty result.
+    /// Restarts after a failure.
     func retry(video: SelectedVideo) {
         guard !isRunning else { return }
         runTask?.cancel()
@@ -106,13 +107,9 @@ final class ProcessingViewModel: ObservableObject {
 
     private func finish(with result: ProcessingResult, from generation: Int) {
         guard generation == runGeneration else { return }
-        if result.clips.isEmpty {
-            state = .empty
-        } else {
-            self.result = result
-            state = .succeeded
-            isShowingClips = true
-        }
+        self.result = result
+        state = .succeeded
+        isShowingClips = true
     }
 
     private func fail(with message: String, from generation: Int) {

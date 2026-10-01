@@ -18,6 +18,10 @@ import UIKit
 /// original from Photos if its tile was trashed, and pops back to Home — there is no
 /// separate export/confirmation screen.
 ///
+/// An analysis that detected zero tricks still lands here — the original tile and the
+/// "+" tile, same as any other triage — rather than on a dead-end screen of its own;
+/// `showsNoTricksFound` then puts up a dismissible glass notice over the grid to say so.
+///
 /// The processing screen pushes this with the pipeline's output. The back chevron
 /// pops to Home rather than to the processing screen, Photos-app style — centered
 /// inline title on the same line as the chevron. This view deliberately declares no
@@ -25,6 +29,9 @@ import UIKit
 struct ClipListView: View {
     @StateObject private var viewModel: ClipListViewModel
     @State private var expandTarget: ExpandTarget?
+    /// Whether the "No tricks found" glass notice is up — seeded from `showsNoTricksFound`
+    /// at init, then owned here so a tap or the notice's own timeout can dismiss it.
+    @State private var isShowingNoTricksNotice: Bool
     let popToRoot: () -> Void
 
     init(
@@ -33,11 +40,13 @@ struct ClipListView: View {
         assetIdentifier: String,
         duration: TimeInterval,
         loader: ClipThumbnailLoader = ClipThumbnailLoader(),
+        showsNoTricksFound: Bool = false,
         popToRoot: @escaping () -> Void = {}
     ) {
         _viewModel = StateObject(wrappedValue: ClipListViewModel(
             items: items, asset: asset, assetIdentifier: assetIdentifier,
             duration: duration, loader: loader))
+        _isShowingNoTricksNotice = State(initialValue: showsNoTricksFound)
         self.popToRoot = popToRoot
     }
 
@@ -98,6 +107,13 @@ struct ClipListView: View {
         }
         .fullScreenCover(item: $expandTarget) { target in
             editor(for: target)
+        }
+        .overlay(alignment: .top) {
+            if isShowingNoTricksNotice {
+                GlassNoticeView(message: "No tricks found", isPresented: $isShowingNoTricksNotice)
+                    .padding(.top, 8)
+                    .accessibilityIdentifier("no-tricks-notice")
+            }
         }
     }
 
@@ -361,6 +377,19 @@ private struct ClipCardView: View {
             asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
             assetIdentifier: "preview",
             duration: 15
+        )
+    }
+    .preferredColorScheme(.dark)
+}
+
+#Preview("No tricks found") {
+    NavigationStack {
+        ClipListView(
+            items: [],
+            asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
+            assetIdentifier: "preview",
+            duration: 15,
+            showsNoTricksFound: true
         )
     }
     .preferredColorScheme(.dark)

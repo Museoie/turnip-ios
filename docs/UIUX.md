@@ -35,11 +35,9 @@ flowchart TD
     G -->|tap gallery icon / swipe left| A
     G -->|recording saved, analyzed live| C
     G -->|recording saved, live analysis incomplete| B
-    B -->|clips found| C[Clip List]
-    B -->|no tricks detected| E1[Empty state]
+    B -->|clips found, or none| C[Clip List]
     B -->|pipeline error| E2[Error state]
     B -->|cancel| A
-    E1 -->|back to Home| A
     E2 -->|retry / back to Home| A
     C -->|tap a derived clip's tile| D[Clip Detail / Editor]
     D -->|back, commits edits| C
@@ -199,11 +197,12 @@ default empty state, so it never reads as "your library is empty."
   "analyzing frame 400/1200" — overlays the bottom of the still-visible video,
   dimmed behind it. This is not instant for a multi-minute input video, so
   needs real progress feedback, not just a spinner.
-- Two exits besides success:
-  - **Empty state** — pipeline completes but finds zero trick windows (e.g.
-    user picked a video with no motion peaks). Message + back to Home.
-  - **Error state** — pipeline throws (unreadable video, pose model failure).
-    Message + retry, or back to Home.
+- On success the pipeline navigates to Clip List — even a run that finds zero trick
+  windows (e.g. the user picked a video with no motion peaks) still navigates there
+  rather than stopping on this screen; Clip List's own "No tricks found" notice (§3)
+  says so.
+- One exit besides success: the **Error state** — pipeline throws (unreadable video,
+  pose model failure). Message + retry, or back to Home.
 - A swipe here navigates the grid rather than reaching Camera: right browses
   to the previous video in Home's grid order, left to the next, replacing the
   screen in place (not stacking a new one, so the back chevron still returns
@@ -230,6 +229,10 @@ default empty state, so it never reads as "your library is empty."
   detected trick window, then a trailing "+" tile (grey square, centered plus
   sign) that appends a new full-frame clip at the start of the asset for the
   user to trim.
+- When an analysis detected zero tricks, this screen still shows — just the
+  original tile and the "+" tile — with a dismissible Liquid Glass notice
+  ("No tricks found") centered over the top of the grid, tap-to-dismiss or
+  auto-dismissing after 5 seconds, instead of a dead-end screen of its own.
 - Every tile autoplay-loops its window inline continuously (accessibility
   permitting), layered over its poster thumbnail so there's no blank flash
   while the loop starts — cropped and rotated to match the clip's manual

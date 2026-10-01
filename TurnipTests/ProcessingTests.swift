@@ -292,16 +292,17 @@ final class ProcessingViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isShowingClips)
     }
 
-    func testEmptyResultShowsTheEmptyState() async {
+    func testEmptyResultStillNavigatesToTheClips() async {
         let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .succeed(clips: [])))
 
         viewModel.start(video: Self.video)
         await Self.waitUntilNotRunning(viewModel)
 
-        guard case .empty = viewModel.state else {
-            return XCTFail("expected the empty state, got \(viewModel.state)")
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("expected the succeeded state, got \(viewModel.state)")
         }
-        XCTAssertFalse(viewModel.isShowingClips)
+        XCTAssertEqual(viewModel.result?.clips, [])
+        XCTAssertTrue(viewModel.isShowingClips)
     }
 
     func testSuccessfulRunNavigatesToTheClips() async {

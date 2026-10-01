@@ -2,10 +2,9 @@ import SwiftUI
 
 /// The app's one "nothing to show, here's why" layout — an icon, a title, a message,
 /// and optional actions below. Every empty/denied/error state in the app (Home's
-/// empty grid, Photos/Camera access denied, Processing's empty result and failure,
-/// the editor's load failure) is this same shape; before this existed they'd drifted
-/// into two different icon sizes and title styles across screens that otherwise
-/// agree.
+/// empty grid, Photos/Camera access denied, Processing's failure, the editor's load
+/// failure) is this same shape; before this existed they'd drifted into two different
+/// icon sizes and title styles across screens that otherwise agree.
 struct StatusStateView<Actions: View>: View {
     let systemImage: String
     let title: String

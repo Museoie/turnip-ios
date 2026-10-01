@@ -15,9 +15,11 @@ private enum DragAxis {
 /// (no native playback chrome — a thin scrub bar draws over the bottom) and a manual
 /// "Start analysis" button — black background, no title, Photos-app look. Once started
 /// it shows real per-frame progress ("Analyzing frame 400 of 1,200"), and on success
-/// navigates to `destination` with the detected clips. Empty
-/// and error states stay on this screen with a way back. Like the other pushed screens,
-/// it declares no `NavigationStack` of its own.
+/// navigates to `destination` with the detected clips — including a run that detected
+/// zero tricks, which still navigates there rather than stopping on this screen; the
+/// clip list itself puts up the "no tricks found" notice. Only the error state stays on
+/// this screen, with a way back. Like the other pushed screens, it declares no
+/// `NavigationStack` of its own.
 ///
 /// The success destination is injected rather than hardcoded to the clip list, so
 /// `Processing` never depends on `ClipList`'s view type (`ClipListView`): the screen
@@ -249,16 +251,12 @@ struct ProcessingView<Destination: View>: View {
         switch viewModel.state {
         case .idle, .processing:
             videoStage
-        case .empty:
+        case .failed(let message):
             // `StatusStateView` sizes to its own content otherwise, the same as every
             // other consumer of this view (`HomeView`'s empty grid and denied states apply
-            // the same frame externally). None of these three branches carry a
+            // the same frame externally). Neither of these two branches carries a
             // `.safeAreaInset` the way `videoStage` does, so extending each into the safe
             // area can't move what that inset is measured from.
-            emptyState
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea()
-        case .failed(let message):
             errorState(message: message)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
@@ -663,19 +661,6 @@ struct ProcessingView<Destination: View>: View {
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity)
         .background(Color.black.opacity(0.55))
-    }
-
-    private var emptyState: some View {
-        StatusStateView(
-            systemImage: "film",
-            title: "No tricks found",
-            message: "The whole video was analyzed but nothing moved like a trick. "
-                + "Try a clip with bigger, faster movement."
-        ) {
-            Button("Back to Home") { dismiss() }
-                .buttonStyle(.borderedProminent)
-                .padding(.top, 8)
-        }
     }
 
     private func errorState(message: String) -> some View {
