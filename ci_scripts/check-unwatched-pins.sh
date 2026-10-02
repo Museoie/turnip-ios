@@ -4,8 +4,9 @@ set -eu
 # Usage: ci_scripts/check-unwatched-pins.sh
 #
 # Reports whether the dependency pins that no package-manager updater covers —
-# XcodeGen in install-xcodegen.sh, SwiftLint in install-swiftlint.sh,
-# TensorFlowLiteSwift in Podfile.lock — are still the newest published release.
+# XcodeGen in install-xcodegen.sh, SwiftLint in install-swiftlint.sh, gitleaks
+# in install-gitleaks.sh, TensorFlowLiteSwift in Podfile.lock — are still the
+# newest published release.
 # Writes a markdown report to stdout.
 #
 # Exit codes: 0 every pin is current, 1 at least one pin has moved, 2 the check
@@ -34,7 +35,7 @@ pinned_swiftlint=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$repo_root/ci_scripts/ins
 # that pins a VERSION= without being added here would silently fall outside
 # that promise, so an unrecognized pinning script is a check failure rather
 # than a blind spot.
-known_install_scripts="install-xcodegen.sh install-swiftlint.sh"
+known_install_scripts="install-xcodegen.sh install-swiftlint.sh install-gitleaks.sh"
 for installer in "$repo_root"/ci_scripts/install-*.sh; do
   base=$(basename "$installer")
   case " $known_install_scripts " in
@@ -44,6 +45,10 @@ for installer in "$repo_root"/ci_scripts/install-*.sh; do
     fail "ci_scripts/$base pins a VERSION= but is not watched by this script"
   fi
 done
+
+pinned_gitleaks=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "$repo_root/ci_scripts/install-gitleaks.sh")
+[ -n "$pinned_gitleaks" ] ||
+  fail "no VERSION= assignment in ci_scripts/install-gitleaks.sh"
 
 pinned_tflite=$(sed -n 's/^  - TensorFlowLiteSwift (\([0-9][^)]*\)):.*/\1/p' "$repo_root/Podfile.lock" | head -1)
 [ -n "$pinned_tflite" ] ||
@@ -64,6 +69,16 @@ curl --fail --silent --show-error --location \
   fail "could not reach the SwiftLint releases API"
 latest_swiftlint=$(jq -r '.tag_name // ""' "$workdir/swiftlint.json")
 [ -n "$latest_swiftlint" ] || fail "the SwiftLint releases API returned no tag_name"
+
+curl --fail --silent --show-error --location \
+  -H 'Accept: application/vnd.github+json' \
+  -o "$workdir/gitleaks.json" \
+  https://api.github.com/repos/gitleaks/gitleaks/releases/latest ||
+  fail "could not reach the gitleaks releases API"
+# gitleaks tags its releases with a leading v; the installer pins the version
+# the asset filenames use, which does not carry one.
+latest_gitleaks=$(jq -r '.tag_name // "" | ltrimstr("v")' "$workdir/gitleaks.json")
+[ -n "$latest_gitleaks" ] || fail "the gitleaks releases API returned no tag_name"
 
 curl --fail --silent --show-error --location \
   -o "$workdir/tflite.json" \
@@ -97,12 +112,13 @@ report_pin() {
   fi
 }
 
-echo "XcodeGen and SwiftLint have no package manager and CocoaPods is not a"
-echo "Dependabot ecosystem, so these three pins are compared against the newest"
-echo "published release on a schedule instead of by an updater."
+echo "XcodeGen, SwiftLint and gitleaks have no package manager and CocoaPods is"
+echo "not a Dependabot ecosystem, so these four pins are compared against the"
+echo "newest published release on a schedule instead of by an updater."
 echo
 report_pin XcodeGen "$pinned_xcodegen" "$latest_xcodegen" ci_scripts/install-xcodegen.sh
 report_pin SwiftLint "$pinned_swiftlint" "$latest_swiftlint" ci_scripts/install-swiftlint.sh
+report_pin gitleaks "$pinned_gitleaks" "$latest_gitleaks" ci_scripts/install-gitleaks.sh
 report_pin TensorFlowLiteSwift "$pinned_tflite" "$latest_tflite" Podfile.lock
 echo
 echo "Bump steps for each are in the *Dependency updates* section of \`CONTRIBUTING.md\`."

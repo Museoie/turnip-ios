@@ -82,3 +82,21 @@ DerivedData/
 *.xcuserstate
 
 .DS_Store
+
+# Code-signing and API credential material
+#
+# None of these exist in a working tree yet — no build has been cut for
+# distribution. They arrive the first time one is, and `git add -A` does not
+# ask. Secret scanning reports a credential after it is public; these globs are
+# the half that keeps it out of the tree.
+*.p12
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+AuthKey_*.p8
+*.keychain
+*.keychain-db
+ExportOptions.plist
+.env
+.env.*

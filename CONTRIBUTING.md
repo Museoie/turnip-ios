@@ -97,13 +97,14 @@ Everything this project pins has a named updater, so no pin rots unnoticed:
 | `TensorFlowLiteSwift` | `Podfile.lock` | `dependency-check.yml` (weekly) |
 | XcodeGen and its archive checksum | `ci_scripts/install-xcodegen.sh` | `dependency-check.yml` (weekly) |
 | SwiftLint and its archive checksum | `ci_scripts/install-swiftlint.sh` | `dependency-check.yml` (weekly) |
+| gitleaks and its archive checksums | `ci_scripts/install-gitleaks.sh` | `dependency-check.yml` (weekly) |
 
 Dependabot has no CocoaPods ecosystem, and no notion of a shell script that
-downloads a release asset, so the last three are watched by
+downloads a release asset, so the last four are watched by
 [`.github/workflows/dependency-check.yml`](.github/workflows/dependency-check.yml)
-instead. It runs `ci_scripts/check-unwatched-pins.sh`, which compares the three pins
+instead. It runs `ci_scripts/check-unwatched-pins.sh`, which compares the four pins
 against the newest published release and opens a tracking issue when one has
-moved — refreshing that issue's body on later runs, and closing it once all three
+moved — refreshing that issue's body on later runs, and closing it once all four
 pins are current again. The same check runs locally:
 
 ```
@@ -142,6 +143,26 @@ shasum -a 256 /tmp/swiftlint.zip
 `swiftlint lint --strict` is a hard merge gate, so install the new version
 locally and confirm the repo still lints clean before pushing the bump.
 
+### Bumping gitleaks
+
+`VERSION` and both `SHA256_*` values in `ci_scripts/install-gitleaks.sh` are the
+only copies CI reads. gitleaks publishes one archive per platform, so each
+architecture has its own checksum and both belong to the same version:
+
+```
+for asset in darwin_arm64 darwin_x64; do
+  curl -fsSL -o "/tmp/gitleaks_$asset.tar.gz" \
+    "https://github.com/gitleaks/gitleaks/releases/download/v<version>/gitleaks_<version>_$asset.tar.gz"
+  shasum -a 256 "/tmp/gitleaks_$asset.tar.gz"
+done
+```
+
+A new version can recognise patterns the old one did not, so run
+`ci_scripts/scan-secrets.sh` over the working tree with the new binary before
+pushing the bump — a version that starts matching something already committed
+turns every open pull request red at once, and that is worth finding on the
+bump rather than on someone else's branch.
+
 ### Bumping TensorFlowLiteSwift
 
 The `Podfile` allows `~> 2.17.0`, so anything past 2.17.x needs that constraint
@@ -173,13 +194,16 @@ files are committed; they change together.
 
 The setting behind *CI must pass before merge* — a required `build-and-test`
 check on `main` — is repository configuration rather than a file, as is the
-private reporting route [`SECURITY.md`](SECURITY.md) offers alongside email.
-Neither shows up in a diff, so
+private reporting route [`SECURITY.md`](SECURITY.md) offers alongside email,
+and as are secret scanning and its push protection. None of them shows up in a
+diff, so
 [`ci_scripts/check-repo-settings.sh`](ci_scripts/check-repo-settings.sh)
-compares both against what these documents say — weekly from
+reports on all four — weekly from
 [`.github/workflows/repo-settings-check.yml`](.github/workflows/repo-settings-check.yml),
-which opens a tracking issue while one is missing and closes it once both are
-in place. The same check runs locally:
+which opens a tracking issue while one is missing and closes it once they are
+all in place. The scanning settings are readable only by a caller with admin
+access; run with any other token the check says so rather than guessing. The
+same check runs locally:
 
 ```
 ci_scripts/check-repo-settings.sh
@@ -297,3 +321,26 @@ exist for bug reports and feature requests.
 
 Do not open a public issue for security vulnerabilities. See
 [SECURITY.md](SECURITY.md) for the responsible disclosure process.
+
+### Credentials
+
+This repository is public, so a credential committed to it is compromised the
+moment it is pushed — rewriting the history afterwards does not un-publish it.
+Two things guard against that, and neither replaces reading your own diff:
+
+- `ci_scripts/scan-secrets.sh` runs in CI on every pull request over the
+  commits the branch adds, so a credential added and then deleted before review
+  is still caught. Run it locally the same way CI does:
+
+  ```
+  ci_scripts/install-gitleaks.sh "$HOME/.local"
+  PATH="$HOME/.local/bin:$PATH" ci_scripts/scan-secrets.sh origin/main
+  ```
+
+- `.gitignore` covers the code-signing and API credential material an iOS
+  project accumulates — `*.p12`, `*.mobileprovision`, `AuthKey_*.p8`,
+  `ExportOptions.plist`, `.env` and their siblings — so `git add -A` does not
+  stage one by accident.
+
+If a credential does reach a branch, treat it as leaked: rotate it first, and
+only then worry about the history.
