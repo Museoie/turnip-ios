@@ -19,7 +19,7 @@ struct VideoTileView: View {
     /// Reports this tile's own decoded thumbnail as it changes, so `HomeExpansionContainer`'s
     /// flying card can show the exact same image the tile is already displaying instead of
     /// requesting a second decode of its own. `nil` for callers that don't need it.
-    var onImageLoaded: ((UIImage?) -> Void)? = nil
+    var onImageLoaded: ((UIImage?) -> Void)?
 
     @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
