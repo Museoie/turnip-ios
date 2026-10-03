@@ -57,6 +57,34 @@ struct ProcessingView<Destination: View>: View {
     let browsingNeighbor: VideoLibraryViewModel.Resolution?
     /// Cancels a browse in progress. Nil (never shown) in previews and the screenshot harness.
     let cancelBrowsing: (() -> Void)?
+    /// Intercepts the back/cancel control's close instead of calling `dismiss()` directly, so
+    /// a presenter can animate its own reverse transition before the cover actually goes away.
+    /// `nil` (the default) falls back to `dismiss()`, unchanged for `ScreenshotHarness`/previews.
+    var onRequestClose: (() -> Void)?
+    /// Reports this screen's own vertical swipe-to-dismiss gesture to a presenter that wants to
+    /// drive a Photos-style reverse flight live, rather than this screen committing it
+    /// unilaterally — see `DismissGestureHooks`'s own doc comment.
+    var dismissGestureHooks: DismissGestureHooks?
+
+    /// Hands a presenter this screen's own vertical drag, live, instead of this screen deciding
+    /// commit/cancel itself: `HomeExpansionContainer` drives its flying card's geometry straight
+    /// off `onChanged`'s translation, the same way `ClipExpansionContainer`'s own dismiss drag
+    /// does, and owns the "almost any downward release commits" rule — this screen's own
+    /// `BrowseSwipe.commitDistance`/`flickDistance` threshold stays as the fallback for any
+    /// caller that doesn't supply hooks (`ScreenshotHarness`, previews).
+    struct DismissGestureHooks {
+        /// Called on every update while the vertical axis is locked in, with the drag's raw
+        /// `translation.height`.
+        let onChanged: (CGFloat) -> Void
+        /// Called once the drag ends on the vertical axis — the presenter owns the commit/
+        /// cancel decision and the close flight from here.
+        let onEnded: (_ translation: CGFloat, _ predictedTranslation: CGFloat) -> Void
+        /// Called when the system cancels the drag before `onEnded` can run (an incoming call,
+        /// Control Center) — the presenter's recovery signal, the same role
+        /// `ClipExpansionContainer`'s `didHandleDragEnd`/`onChange` pairing plays: without it, a
+        /// cancelled drag would leave the presenter's flight stuck mid-close forever.
+        let onCancelled: () -> Void
+    }
 
     @StateObject private var viewModel: ProcessingViewModel
     @State private var player: AVPlayer?
@@ -109,6 +137,15 @@ struct ProcessingView<Destination: View>: View {
     /// Whether `browsingOverlay` is up. Lags `browsingNeighbor` by `browsingOverlayDelay`, so a
     /// local video's near-instant resolve never flashes it over the page that just slid in.
     @State private var showsBrowsingProgress = false
+    /// True from the moment a vertical drag locks in until `dismissGestureHooks?.onEnded` (or
+    /// the cancellation path below) has handled it — not reset by `dragAxis`'s own `onEnded`
+    /// `defer`, which can already have cleared `dragAxis` to `nil` by the time the cancellation
+    /// check below runs.
+    @State private var isTrackingDismissDrag = false
+    /// Resets to `true` on every touch-down, `false` on every touch-up or cancellation —
+    /// `@GestureState` rather than a plain flag so a system-cancelled drag (an incoming call,
+    /// Control Center) still resets it even though `onEnded` never fires for one.
+    @GestureState private var isDragTouchActive = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.displayScale) private var displayScale
 
@@ -128,6 +165,8 @@ struct ProcessingView<Destination: View>: View {
         next: BrowseNeighbor? = nil,
         browsingNeighbor: VideoLibraryViewModel.Resolution? = nil,
         cancelBrowsing: (() -> Void)? = nil,
+        onRequestClose: (() -> Void)? = nil,
+        dismissGestureHooks: DismissGestureHooks? = nil,
         destination: @escaping (ProcessingResult, @escaping () -> Void) -> Destination
     ) {
         self.video = video
@@ -139,8 +178,18 @@ struct ProcessingView<Destination: View>: View {
         self.next = next
         self.browsingNeighbor = browsingNeighbor
         self.cancelBrowsing = cancelBrowsing
+        self.onRequestClose = onRequestClose
+        self.dismissGestureHooks = dismissGestureHooks
         self.destination = destination
         _viewModel = StateObject(wrappedValue: ProcessingViewModel(runner: runner))
+    }
+
+    private func close() {
+        if let onRequestClose {
+            onRequestClose()
+        } else {
+            dismiss()
+        }
     }
 
     var body: some View {
@@ -238,6 +287,15 @@ struct ProcessingView<Destination: View>: View {
             guard settled, committedDirection != nil else { return }
             springBack()
         }
+        .onChange(of: isDragTouchActive) { isActive in
+            // The system cancelled a vertical drag (incoming call, Control Center) before
+            // `onEnded` could run `dismissGestureHooks.onEnded` — without this, a presenter
+            // driving a live close flight off this screen's reports would stay stuck mid-close
+            // forever, the same failure mode `ClipExpansionContainer` hit before its own fix.
+            guard !isActive, isTrackingDismissDrag, let hooks = dismissGestureHooks else { return }
+            isTrackingDismissDrag = false
+            hooks.onCancelled()
+        }
         .onDisappear {
             viewModel.cancel()
         }
@@ -295,7 +353,7 @@ struct ProcessingView<Destination: View>: View {
         if isAnalyzing {
             viewModel.cancel()
         }
-        dismiss()
+        close()
     }
 
     /// The in-flight run's latest progress report, or `nil` outside `.processing` — the
@@ -375,13 +433,20 @@ struct ProcessingView<Destination: View>: View {
     /// changes direction partway through (right, then down) stays whichever it started as.
     private var videoSwipeGesture: some Gesture {
         DragGesture(minimumDistance: 20)
+            .updating($isDragTouchActive) { _, state, _ in state = true }
             .onChanged { value in
                 if isScrubbingVideo { dragWasScrub = true }
                 guard !dragWasScrub else { return }
                 if dragAxis == nil {
                     dragAxis = isDownwardTranslation(value.translation) ? .vertical : .horizontal
+                    if dragAxis == .vertical { isTrackingDismissDrag = true }
                 }
-                guard canBrowse, dragAxis == .horizontal else { return }
+                if dragAxis == .vertical {
+                    guard canBrowse, let hooks = dismissGestureHooks else { return }
+                    hooks.onChanged(value.translation.height)
+                    return
+                }
+                guard canBrowse else { return }
                 dragTranslation = BrowseSwipe.pageOffset(
                     translation: value.translation.width,
                     hasPrevious: previous != nil, hasNext: next != nil)
@@ -393,7 +458,12 @@ struct ProcessingView<Destination: View>: View {
                 }
                 guard !dragWasScrub else { return }
                 if dragAxis == .vertical {
+                    defer { isTrackingDismissDrag = false }
                     guard canBrowse else { return }
+                    if let hooks = dismissGestureHooks {
+                        hooks.onEnded(value.translation.height, value.predictedEndTranslation.height)
+                        return
+                    }
                     let translation = value.translation.height
                     let predicted = value.predictedEndTranslation.height
                     if translation >= BrowseSwipe.commitDistance || predicted >= BrowseSwipe.flickDistance {
@@ -575,6 +645,21 @@ struct ProcessingView<Destination: View>: View {
             } else {
                 ProgressView().tint(.white)
             }
+            if let displaySize {
+                // Reports the video's actual letterboxed rect (global space), not this
+                // stage's own full-screen bounds, so a Photos-style expansion transition
+                // flying in from Home can land its card exactly where the video's pixels
+                // really are instead of the surrounding black bars — the same reasoning
+                // `poseOverlay` below already uses this math for, just reported outward
+                // instead of drawn on top.
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: ProcessingVideoFramePreferenceKey.self,
+                        value: AVMakeRect(aspectRatio: displaySize, insideRect: proxy.frame(in: .global)))
+                }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+            }
             if isAnalyzing {
                 Color.black.opacity(0.45).ignoresSafeArea()
                 if let progress = currentProgress, let displaySize {
@@ -672,10 +757,23 @@ struct ProcessingView<Destination: View>: View {
             VStack(spacing: 12) {
                 Button("Retry") { viewModel.retry(video: video) }
                     .buttonStyle(.borderedProminent)
-                Button("Back to Home", role: .cancel) { dismiss() }
+                Button("Back to Home", role: .cancel) { close() }
             }
             .padding(.top, 8)
         }
+    }
+}
+
+/// `videoStage`'s own letterboxed video rect (global space) — see that property's inline
+/// comment for why it's reported rather than drawn. Reduces to the latest non-zero value
+/// (matching `ClipEditorPreviewFramePreferenceKey`'s own `reduce`): `displaySize` is nil for
+/// the first render or two while the asset's track info loads, during which this view simply
+/// isn't in the tree yet, so the default `.zero` should never overwrite a real measurement.
+struct ProcessingVideoFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
     }
 }
 

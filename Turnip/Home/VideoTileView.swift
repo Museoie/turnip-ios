@@ -16,6 +16,10 @@ struct VideoTileView: View {
     let revision: Int
     let isResolving: Bool
     let downloadProgress: Double?
+    /// Reports this tile's own decoded thumbnail as it changes, so `HomeExpansionContainer`'s
+    /// flying card can show the exact same image the tile is already displaying instead of
+    /// requesting a second decode of its own. `nil` for callers that don't need it.
+    var onImageLoaded: ((UIImage?) -> Void)? = nil
 
     @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
@@ -193,6 +197,7 @@ struct VideoTileView: View {
             if let result {
                 image = result
                 imageIsDegraded = isDegraded
+                onImageLoaded?(result)
             }
             if Self.deliveryLoadsRevision(hasResult: result != nil, isDegraded: isDegraded) {
                 loadedRevision = requestedRevision
@@ -215,6 +220,18 @@ struct VideoTileView: View {
         }
         requestID = nil
         requestToken += 1
+    }
+}
+
+/// Every visible tile's own on-screen frame (global space), keyed by `PHAsset.localIdentifier`
+/// — `HomeExpansionContainer` reads this live so a close lands on whichever tile is current,
+/// including after `ProcessingView`'s own swipe-to-browse moves to a neighbor. Merges on
+/// collision by taking the latest report: a tile's own `GeometryReader` re-reports on every
+/// layout pass, so the newest value is always the right one.
+struct VideoTileFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 

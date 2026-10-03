@@ -86,6 +86,15 @@ final class VideoLibraryViewModel: ObservableObject {
         }
     }
 
+    /// Whether Home is showing (or about to show) its expanded destination — `path` non-empty
+    /// once a video has resolved, `resolution` non-nil from the moment a tap/browse starts
+    /// resolving one. `RootTabView` reads this (not `path.isEmpty` alone) to gate the page
+    /// pager and floating tab bar: `HomeExpansionContainer`'s flight starts immediately on tap,
+    /// before `path` has anything in it, and the pager must already be locked out by then.
+    var isPresentingDestination: Bool {
+        !path.isEmpty || resolution != nil
+    }
+
     let thumbnails = ThumbnailLoader()
 
     private let library: PHPhotoLibrary

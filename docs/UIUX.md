@@ -1,12 +1,16 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
-*Rev 3 · 2026-09-23 · Draft for review.*
+*Rev 4 · 2026-10-02 · Documents the Photos-style tap-to-expand/collapse transition
+that replaced a plain push for Home → Processing and Clip List → Editor.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
-(pose detection → motion signal → peak detection → crop rect → export). This
-doc specifies the *screens* the v1 app needs to carry a user from "I have a
+(pose detection → motion signal → peak detection → crop rect → export), and to
+[`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md), which specifies *how*
+the tap-to-expand/collapse animation two of this doc's navigations use actually
+works — this doc only specifies *that* it happens. This doc specifies the
+*screens* the v1 app needs to carry a user from "I have a
 recording" to "clips are in my Photos library," and is scoped to v1
 (auto-clip + auto-crop, iOS-only, on-device). It does not cover v2 (community
 labeling, following/feed) — those get their own flow notes once the v1 screens
@@ -77,9 +81,11 @@ bar. It renders in Liquid Glass on iOS 26+ (`.ultraThinMaterial` below that),
 with a sliding selection pill behind whichever icon is active — visible on
 both pages, so the pill has something to slide between on a tap or a page
 swipe alike. Camera keeps its own cancel chevron too; the bar there is an
-additional way back, not a replacement. It's hidden only once Home pushes
-into Processing/ClipList/ClipEditor, each of which owns the full screen and
-its own back chevron, reappearing once back at the grid.
+additional way back, not a replacement. It's hidden only once Home opens
+Processing/ClipList/ClipEditor — a tap flies the tile into the full-screen
+destination rather than pushing it (see "Tapping a tile" below and
+[`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) — each of which owns
+the full screen and its own back chevron, reappearing once back at the grid.
 
 ### 1. Home / Video Gallery
 
@@ -100,7 +106,19 @@ because nothing else draws a real blur (a hidden bar or a `safeAreaBar`
 standing in for one gets no glass at all, and a non-text bar item only a dim
 gradient). The glass stays hidden until the content actually scrolls, since
 the header rests inside the bar's band — no custom landing state, no
-swipe-to-reveal. Tapping a tile goes straight to Processing for that video.
+swipe-to-reveal. Tapping a tile flies it open, Photos-style, into Processing
+for that video (straight to Clip List instead, for a camera take live
+inference already covered — §1b) — the tile grows smoothly to fill the
+screen rather than the screen pushing in from the side, landing on the
+tile's own thumbnail immediately rather than waiting on the tap's resolve
+(which can take a moment for an iCloud video) before showing any motion. The
+resolve's own progress, if it takes a moment, shows on that growing card
+instead of a separate loading screen. The reverse — the destination's own
+back control, or a swipe down outside its video surface — shrinks the same
+way back into the tile, landing on whichever tile is actually current if
+Processing's own swipe-to-browse-neighbors (§2) moved on from the one first
+tapped. See [`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md) for the
+mechanics.
 
 **Permission model** (shipped, in `Turnip/Home/`): because Home *is* the
 gallery, it enumerates video `PHAsset`s itself rather than delegating to an
@@ -191,7 +209,11 @@ default empty state, so it never reads as "your library is empty."
   full-width "Start analysis" button below it — black background, no title,
   no caption text, back chevron to Home. The user watches the autoplaying
   video, pausing/scrubbing it via the scrub bar if they want, and starts
-  analysis when ready.
+  analysis when ready. The back chevron, and a swipe down anywhere outside
+  the video surface itself (see the swipe bullet below), both shrink the
+  screen back into Home's tile rather than popping or dismissing outright —
+  [`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md) covers the mechanics
+  this screen's own swipe-to-dismiss gesture now drives.
 - Once started, the video stays on screen (paused) rather than being replaced
   by a separate page: a progress panel — spinner or determinate bar, plus
   "analyzing frame 400/1200" — overlays the bottom of the still-visible video,
@@ -216,11 +238,13 @@ default empty state, so it never reads as "your library is empty."
   drag starts makes no difference — the leading edge, the top band, the
   bottom strip, the chevron itself — with one carve-out: the scrub bar's own
   track (see its section below), which claims a horizontal drag for
-  scrubbing. Two things make that hold. This screen draws no navigation bar
-  and its own back chevron, because the stack's bar would sit over the page,
-  neither moving with it nor passing a drag to it, and the system back button
-  is what the edge-swipe-to-pop rides on. And the Camera/Home pager (§1) is
-  switched off while any screen is pushed over Home, because its swipe would
+  scrubbing. A down drag outside the video surface is the other carve-out —
+  it drives the expansion transition's own interactive dismiss (shrinking
+  live with the finger, landing back on Home's tile) rather than browsing.
+  This screen draws no navigation bar and its own back chevron, because the
+  stack's bar would sit over the page without moving with it or passing a
+  drag to it. And the Camera/Home pager (§1) is switched off while this
+  screen (or Clip List/Editor) is open over Home, because its swipe would
   otherwise take every horizontal drag before this screen saw it.
 
 ### 3. Clip List (triage)
@@ -248,10 +272,14 @@ default empty state, so it never reads as "your library is empty."
   the grid immediately, with no restore. Trashing the original tile is a
   reversible toggle — tap again to restore it — that marks the source video
   itself for deletion from Photos once Done runs.
-- Tapping a derived clip's tile opens the full Clip Detail / Editor (§4)
-  directly — the single entry point into "view large" and "edit," not a
-  separate pencil icon. The original tile isn't tappable — there's nothing
-  to edit on the source video.
+- Tapping a derived clip's tile flies it open, Photos-style, into the full
+  Clip Detail / Editor (§4) directly — the single entry point into "view
+  large" and "edit," not a separate pencil icon — the same tap-to-expand
+  transition Home uses to reach Processing
+  ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)), landing on the
+  tile's own cropped thumbnail immediately rather than the screen sliding in.
+  The original tile isn't tappable — there's nothing to edit on the source
+  video.
 - A "Done" action, always enabled: exports and saves every non-trashed
   derived clip to Photos, deletes the original video from Photos if its tile
   was trashed, and pops back to Home. A full-screen spinner covers the grid
@@ -289,9 +317,14 @@ default empty state, so it never reads as "your library is empty."
   - A Delete button at the top-right corner removes the clip from the list
     entirely — the same removal the list's own trash button already performs
     on a derived clip's tile (§3). Trashing stays a reversible toggle only
-    for the original tile.
-  - Back to Clip List commits the edits; no separate "save" step needed if
-    edits are held in view state until back-navigation.
+    for the original tile. Unlike the back chevron below, Delete fades the
+    screen out in place rather than flying back to a tile — the grid slot it
+    would land on no longer holds this clip.
+  - Back to Clip List commits the edits and shrinks the screen back into its
+    tile — the reverse of the tap that opened it, no separate "save" step
+    needed since edits are held in view state until back-navigation. A swipe
+    down outside the video surface does the same (the crop pinch/rotate/drag
+    gesture keeps sole ownership of the video itself).
 
 ## Out of scope for this doc
 

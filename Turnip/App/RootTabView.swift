@@ -40,7 +40,7 @@ struct RootTabView: View {
                 // inside Home (`viewModel.path` non-empty) owns its own horizontal
                 // gestures — Processing browses videos with one — and the pager's
                 // recognizer would otherwise take every one of them first.
-                .background(PageSwipeLock(swipeEnabled: viewModel.path.isEmpty))
+                .background(PageSwipeLock(swipeEnabled: !viewModel.isPresentingDestination))
                 .tag(MainTab.home)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
@@ -59,12 +59,12 @@ struct RootTabView: View {
         // back chevron and needs the full screen; Camera keeps its own cancel chevron too,
         // so the bar there is an additional way back, not a replacement.
         .overlay(alignment: .bottom) {
-            if viewModel.path.isEmpty {
+            if !viewModel.isPresentingDestination {
                 FloatingTabBar(selectedTab: $selectedTab)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: viewModel.path.isEmpty)
+        .animation(.easeInOut(duration: 0.2), value: viewModel.isPresentingDestination)
         // A distinct alert from Home's "Couldn't open video" — that one is about
         // resolving an existing library asset, not about this just-recorded file
         // failing to save. Sharing it would misname the failure to the user.

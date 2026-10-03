@@ -64,7 +64,20 @@ struct ClipListView: View {
                         item: item,
                         viewModel: viewModel,
                         isSuspended: expandTarget != nil,
-                        onOpen: item.isOriginal ? nil : { expandTarget = ExpandTarget(id: item.id) })
+                        isHidden: expandTarget?.id == item.id,
+                        onOpen: item.isOriginal ? nil : { frame, thumbnail in
+                            presentExpandTarget(ExpandTarget(
+                                id: item.id,
+                                sourceFrame: frame,
+                                thumbnail: thumbnail,
+                                // Snapshot now, rather than re-deriving from
+                                // `viewModel.binding(for:)` inside `editor(for:)`:
+                                // Delete removes the item from `viewModel.items`
+                                // synchronously, before the container's own close
+                                // animation finishes, and a binding lookup at that
+                                // point would come back nil.
+                                source: viewModel.editorSource(for: item)))
+                        })
                 }
                 AddClipTile { Task { await viewModel.addClip() } }
             }
@@ -135,21 +148,52 @@ struct ClipListView: View {
         )
     }
 
+    /// Sets `expandTarget`, suppressing the system's own slide-up transition for the cover's
+    /// appearance the same two-layer way `HomeView.presentSlot(_:)` does — see that method's
+    /// own doc comment for the full story. `Transaction.disablesAnimations` alone was believed
+    /// sufficient here (unlike Home's equivalent, which needed `UIView.setAnimationsEnabled`
+    /// too), a conclusion `docs/EXPANSION_TRANSITIONS.md` already flagged as never properly
+    /// isolated; a reported brief shrink-then-expand glitch right at tap time traces to
+    /// exactly this same residual `present(animated:)` gap, so both suppressions apply here now
+    /// too, with the same re-enable-on-the-next-run-loop-turn timing that was already proven
+    /// sufficient for the open side (only the *close* side needed a longer hold).
+    private func presentExpandTarget(_ target: ExpandTarget) {
+        UIView.setAnimationsEnabled(false)
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            expandTarget = target
+        }
+        DispatchQueue.main.async {
+            UIView.setAnimationsEnabled(true)
+        }
+    }
+
     /// The tile tap's destination: the full `ClipEditorView` (crop + trim) — tapping
     /// goes directly to the editor rather than through an intermediate full-screen
-    /// viewer, merging "view large" and "edit" into one entry point. The editor owns
-    /// its own back/Delete toolbar and closes itself via `@Environment(\.dismiss)`,
-    /// which resets `expandTarget` to `nil` — each tile's `isSuspended` flag (derived
-    /// from `expandTarget`) then lets its player resume.
-    @ViewBuilder
+    /// viewer, merging "view large" and "edit" into one entry point. `ClipExpansionContainer`
+    /// flies the tile's own frame open into it, Photos-style, and closes itself via
+    /// `@Environment(\.dismiss)` on its own reverse-flight schedule, which resets
+    /// `expandTarget` to `nil` — each tile's `isSuspended` flag (derived from
+    /// `expandTarget`) then lets its player resume.
     private func editor(for target: ExpandTarget) -> some View {
-        if let itemBinding = viewModel.binding(for: target.id) {
-            NavigationStack {
-                ClipEditorView(
-                    source: viewModel.editorSource(for: itemBinding.wrappedValue),
-                    onCommit: { result in viewModel.applyEditorResult(result, to: target.id) },
-                    onDelete: { viewModel.delete(target.id) }
-                )
+        let container = ClipExpansionContainer(
+            sourceFrame: target.sourceFrame,
+            thumbnail: target.thumbnail,
+            source: target.source,
+            onCommit: { result in viewModel.applyEditorResult(result, to: target.id) },
+            onDelete: { viewModel.delete(target.id) }
+        )
+        // Lets the grid show through the cover while the card/scrim animate —
+        // `ClipExpansionContainer` draws its own opaque scrim at `progress`, so
+        // without this the system's default opaque cover background would hide
+        // the grid the interactive dismiss is supposed to reveal. iOS 16.4+ only;
+        // earlier OSes keep the flight animation but lose the reveal-through-drag.
+        return Group {
+            if #available(iOS 16.4, *) {
+                container.presentationBackground(.clear)
+            } else {
+                container
             }
         }
     }
@@ -157,9 +201,17 @@ struct ClipListView: View {
 
 /// The tapped tile's presentation target: `UUID` alone isn't `Identifiable`, and
 /// `fullScreenCover(item:)` needs one to know which clip to open (and to dismiss when
-/// it goes back to `nil`).
+/// it goes back to `nil`). Carries the tile's own frame and poster thumbnail at tap
+/// time so `ClipExpansionContainer` can fly open from exactly there.
 private struct ExpandTarget: Identifiable {
     let id: UUID
+    let sourceFrame: CGRect
+    let thumbnail: CGImage?
+    /// Snapshotted at tap time rather than re-derived from `viewModel.binding(for:)`
+    /// later: Delete removes the item from `viewModel.items` synchronously, before
+    /// `ClipExpansionContainer`'s own close animation finishes, and a live lookup at
+    /// that point would already be nil.
+    let source: ClipEditorSource
 }
 
 /// The "+" tile: a grey square with a centered plus sign, appended after every clip
@@ -202,9 +254,15 @@ private struct ClipCardView: View {
     /// editor's `fullScreenCover` doesn't reliably fire `onDisappear` on the tiles
     /// behind it, so this is the signal that actually pauses them instead.
     let isSuspended: Bool
-    /// Opens the editor on this clip, or `nil` for the original item — its tile has
-    /// no tap action.
-    let onOpen: (() -> Void)?
+    /// True for exactly the tile whose clip is currently expanded — Photos empties
+    /// a tile's slot while its photo is one-up. `ClipExpansionContainer`'s own
+    /// flying card stands in at this tile's frame, so hiding it (rather than
+    /// removing it) avoids any layout reflow in the grid underneath.
+    let isHidden: Bool
+    /// Opens the editor on this clip, passing the tile's own on-screen frame (global
+    /// space) and its already-decoded poster thumbnail so the presenter can fly open
+    /// from exactly here — `nil` for the original item, whose tile has no tap action.
+    let onOpen: ((CGRect, CGImage?) -> Void)?
 
     @State private var thumbnail: CGImage?
     @State private var duration: TimeInterval?
@@ -214,11 +272,13 @@ private struct ClipCardView: View {
         item: ClipListItem,
         viewModel: ClipListViewModel,
         isSuspended: Bool,
-        onOpen: (() -> Void)?
+        isHidden: Bool,
+        onOpen: ((CGRect, CGImage?) -> Void)?
     ) {
         self.item = item
         _viewModel = ObservedObject(wrappedValue: viewModel)
         self.isSuspended = isSuspended
+        self.isHidden = isHidden
         self.onOpen = onOpen
         _playback = StateObject(
             wrappedValue: ClipCardPlayback(
@@ -237,6 +297,7 @@ private struct ClipCardView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        .opacity(isHidden ? 0 : 1)
         .task(id: item) {
             // Keyed by the item value, not just its id: `ForEach` keeps this card's own
             // identity stable across an editor commit, so an unkeyed `.task` would never
@@ -280,7 +341,7 @@ private struct ClipCardView: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .clipped()
                 .contentShape(Rectangle())
-                .onTapGesture { onOpen?() }
+                .onTapGesture { onOpen?(proxy.frame(in: .global), thumbnail) }
                 // The UI-test screenshot harness waits on this label to prove the
                 // thumbnail fallback actually engaged.
                 .accessibilityLabel(tileAccessibilityLabel)

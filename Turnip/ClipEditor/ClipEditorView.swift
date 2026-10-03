@@ -20,6 +20,23 @@ struct ClipEditorView: View {
     /// The Delete action: removes the clip from the list entirely, distinct from
     /// keep/discard (which the list's own toggle still owns).
     let onDelete: () -> Void
+    /// Intercepts the back button's close instead of calling `dismiss()` directly, so
+    /// a presenter can animate its own reverse transition before the cover actually
+    /// goes away. `nil` (the default) falls back to `dismiss()`, which keeps
+    /// `ScreenshotHarness` and this file's own `#Preview` working unchanged.
+    var onRequestClose: (() -> Void)?
+    /// Intercepts the Delete button's close the same way, but separately from
+    /// `onRequestClose`: a presenter that flies its reverse transition back to the
+    /// tile's on-screen frame (`ClipExpansionContainer`) can't reuse that same flight
+    /// for Delete, since deleting the item changes what's in that slot. Falls back to
+    /// `onRequestClose`, then `dismiss()`, so callers that don't need the distinction
+    /// don't have to supply both.
+    var onRequestDeleteClose: (() -> Void)?
+    /// A presenter's own swipe-to-dismiss gesture, planted behind this view's content
+    /// (see `ClipExpansionContainer`'s doc comment for why it has to live here rather
+    /// than behind this view in the presenter's own hierarchy) — `nil` for callers
+    /// that don't need it.
+    var dismissGesture: AnyGesture<DragGesture.Value>?
 
     @Environment(\.dismiss) private var dismiss
     @GestureState private var gestureScale: CGFloat = 1
@@ -29,11 +46,42 @@ struct ClipEditorView: View {
     init(
         source: ClipEditorSource,
         onCommit: @escaping (ClipEditorResult) -> Void,
-        onDelete: @escaping () -> Void
+        onDelete: @escaping () -> Void,
+        onRequestClose: (() -> Void)? = nil,
+        onRequestDeleteClose: (() -> Void)? = nil,
+        dismissGesture: AnyGesture<DragGesture.Value>? = nil
     ) {
         _viewModel = StateObject(wrappedValue: ClipEditorViewModel(source: source))
         self.onCommit = onCommit
         self.onDelete = onDelete
+        self.onRequestClose = onRequestClose
+        self.onRequestDeleteClose = onRequestDeleteClose
+        self.dismissGesture = dismissGesture
+    }
+
+    private func close() {
+        if let onRequestClose {
+            onRequestClose()
+        } else {
+            dismiss()
+        }
+    }
+
+    private func closeAfterDelete() {
+        if let onRequestDeleteClose {
+            onRequestDeleteClose()
+        } else {
+            close()
+        }
+    }
+
+    @ViewBuilder
+    private var dismissGestureLayer: some View {
+        if let dismissGesture {
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(dismissGesture)
+        }
     }
 
     var body: some View {
@@ -44,6 +92,12 @@ struct ClipEditorView: View {
             Spacer(minLength: 0)
         }
         .padding()
+        // Behind this view's own content rather than wrapping it, so the dismiss
+        // gesture only ever sees the margins/empty space this content doesn't already
+        // claim with its own gesture (the crop surface, the trim slider, the buttons)
+        // — see `ClipExpansionContainer`'s doc comment for why it has to be attached
+        // here rather than behind this whole view in a presenter's own hierarchy.
+        .background(dismissGestureLayer)
         .navigationTitle("Edit clip")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -65,14 +119,14 @@ struct ClipEditorView: View {
     private var backButton: some View {
         BackChevronButton(accessibilityLabel: "Back to clips") {
             onCommit(viewModel.result)
-            dismiss()
+            close()
         }
     }
 
     private var deleteButton: some View {
         Button(role: .destructive) {
             onDelete()
-            dismiss()
+            closeAfterDelete()
         } label: {
             Text("Delete")
         }
@@ -101,6 +155,17 @@ struct ClipEditorView: View {
                     .overlay { ProgressView() }
             }
         }
+        // Reports this surface's own on-screen frame (global space, the same space a
+        // presenter captures a grid tile's frame in) so a Photos-style expansion
+        // transition can land its flying card exactly here without duplicating this
+        // view's own aspect-ratio layout math.
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: ClipEditorPreviewFramePreferenceKey.self,
+                    value: proxy.frame(in: .global))
+            }
+        )
     }
 
     /// The full frame with the crop area's fixed marker drawn over it: the dimmed
@@ -210,6 +275,18 @@ struct ClipEditorView: View {
         }
         .buttonStyle(.bordered)
         .disabled(viewModel.cropAdjustment == .identity)
+    }
+}
+
+/// `previewSection`'s own on-screen frame, read by a Photos-style expansion
+/// transition presenting this view — see that modifier's call site above. Reduces to
+/// the latest non-zero report: during the frame this view first mounts, a stale zero
+/// default can still be in flight.
+struct ClipEditorPreviewFramePreferenceKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
     }
 }
 

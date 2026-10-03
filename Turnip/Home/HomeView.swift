@@ -15,9 +15,19 @@ struct HomeView: View {
     /// Settings sheet's album-name field, for a value this view never shows.
     private let settings = TurnipSettingsStore.shared
     @State private var showSettings = false
+    /// Stable for the life of one tap-to-close cycle — its own `id` never changes even though
+    /// the video showing inside it can (`VideoLibraryViewModel.browse()` replacing `path`'s top
+    /// element while this cover is up). `HomeExpansionContainer`'s doc comment on why a cover
+    /// bound directly to a changing video would re-slide on every browse.
+    @State private var presentationSlot: HomePresentationSlot?
+    /// Every visible tile's own frame, keyed by asset identifier — bubbled up from
+    /// `VideoGalleryView`'s tiles via `VideoTileFramePreferenceKey` rather than threaded down,
+    /// since a preference already climbs the view tree with no plumbing needed.
+    @State private var tileFrames: [String: CGRect] = [:]
+    @State private var tileThumbnails: [String: UIImage] = [:]
 
     var body: some View {
-        NavigationStack(path: $viewModel.path) {
+        NavigationStack {
             content
                 // The wordmark is scroll content (`HomeHeader`), not a bar title, so it
                 // scrolls away with the tiles (docs/UIUX.md). Root-only — pushed screens
@@ -25,45 +35,8 @@ struct HomeView: View {
                 // settings controls — see its doc comment for why that placement differs
                 // between iOS 26 and earlier.
                 .modifier(HomeNavigationBar(viewModel: viewModel, showSettings: { showSettings = true }))
-                .navigationDestination(for: SelectedVideo.self) { video in
-                    // A video the camera already analyzed while recording it lands on the
-                    // clip list directly. Otherwise the Processing screen shows the picked
-                    // video and runs the real detection pipeline on the user's tap, then
-                    // pushes the clip list on success — analysis never auto-starts
-                    // (docs/UIUX.md § "Processing"). `popToRoot` threads the flow's "back
-                    // to Home" action through the pushed screens so their back chevrons
-                    // return here instead of stepping back through the flow.
-                    if let clips = video.detectedClips {
-                        clipList(for: video, clips: clips, asset: video.asset, popToRoot: popToRoot)
-                    } else {
-                        ProcessingView(
-                            video: video,
-                            runner: ProcessingPipeline(sampleRate: settings.analysisGranularity),
-                            autostart: false,
-                            popToRoot: popToRoot,
-                            initialPoster: viewModel.thumbnails.cachedPoster(for: video.assetIdentifier),
-                            poster: viewModel.asset(withIdentifier: video.assetIdentifier).map(posterLoader),
-                            previous: browseNeighbor(of: video, offset: -1),
-                            next: browseNeighbor(of: video, offset: 1),
-                            // Renders this screen's browse-in-flight overlay from the same
-                            // `Resolution` state `ResolutionBanner` already shows on the grid.
-                            // Almost always the swipe this screen just triggered; showing it for
-                            // the rare unrelated case too (a camera recording resolving in the
-                            // background) is harmless — it just dims an already-paused video.
-                            browsingNeighbor: viewModel.resolution,
-                            cancelBrowsing: viewModel.cancelSelection,
-                            destination: { result, popToRoot in
-                                clipList(for: video, clips: result.clips, asset: result.asset, popToRoot: popToRoot)
-                            }
-                        )
-                        // Ties the screen's identity to the video it's showing: without this,
-                        // browsing to a neighbor replaces `path`'s top element but SwiftUI can
-                        // reuse the existing `ProcessingView`, leaving its `@StateObject` and
-                        // player pointed at the video that just left.
-                        .id(video.assetIdentifier)
-                    }
-                }
         }
+        .onPreferenceChange(VideoTileFramePreferenceKey.self) { tileFrames = $0 }
         .task { await viewModel.start() }
         .alert("Couldn't open video", isPresented: errorPresented) {
             Button("OK") {}
@@ -73,10 +46,53 @@ struct HomeView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView(settings: settings)
         }
+        .fullScreenCover(item: $presentationSlot) { slot in
+            expansion(for: slot)
+        }
+        // `select(_:)`/`browse(to:)` both land here, including the camera tab's own finished
+        // recordings — which never went through a tile tap here, so nothing has created a
+        // slot yet. Creates one lazily in that case, with no tile frame to fly from (the
+        // container's own fallback centers a small square instead).
+        .onChange(of: viewModel.path.isEmpty) { isEmpty in
+            if isEmpty {
+                presentationSlot = nil
+            } else if presentationSlot == nil, let identifier = viewModel.path.last?.assetIdentifier {
+                presentSlot(HomePresentationSlot(tappedAssetIdentifier: identifier))
+            }
+        }
+        // The cover's own `dismiss()` (its reverse flight's final step) only clears
+        // `presentationSlot`, the thing it's actually bound to — this is what cleans up the
+        // rest of the selection state behind it once that happens.
+        .onChange(of: presentationSlot?.id) { id in
+            guard id == nil else { return }
+            viewModel.path = []
+            viewModel.cancelSelection()
+        }
     }
 
-    private func popToRoot() {
-        viewModel.path = []
+    /// Sets `presentationSlot`, suppressing the system's own slide-up transition for the
+    /// cover's appearance: `HomeExpansionContainer` plays its own flight from `progress = 0`,
+    /// which renders identically to the tile still sitting there (now hidden, replaced by the
+    /// container's own card at the same frame) — any extra system animation on top shows as
+    /// the whole screen additionally sliding up from the bottom during the transition.
+    /// `Transaction.disablesAnimations` alone left a residual slide visible (confirmed by
+    /// frame-by-frame inspection of a screen recording — the cover's content only occupied the
+    /// bottom portion of the screen for the first couple of frames, growing to fill it, with no
+    /// trace of this container's own scrim over the gap at the top): that flag suppresses
+    /// SwiftUI's own animation system, but apparently not the UIKit `present(animated:)` call
+    /// that backs `fullScreenCover` underneath. `UIView.setAnimationsEnabled(false)` reaches
+    /// that layer directly; it's re-enabled on the next run loop turn, after the presentation
+    /// has already been issued.
+    private func presentSlot(_ slot: HomePresentationSlot) {
+        UIView.setAnimationsEnabled(false)
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            presentationSlot = slot
+        }
+        DispatchQueue.main.async {
+            UIView.setAnimationsEnabled(true)
+        }
     }
 
     /// The video Processing's swipe reaches at `offset` (`-1` previous, `+1` next) — nil when
@@ -108,6 +124,107 @@ struct HomeView: View {
         )
     }
 
+    /// The identifier the cover is currently showing: the resolved video once `path` has one,
+    /// else whichever tile the slot was opened for (or, for a camera-originated slot with no
+    /// tile tap behind it, nil — the container's fallback then stands in for both the source
+    /// frame and the thumbnail).
+    private func currentIdentifier(for slot: HomePresentationSlot) -> String? {
+        viewModel.path.last?.assetIdentifier ?? slot.tappedAssetIdentifier
+    }
+
+    /// The cover's whole content: `HomeExpansionContainer`'s flying card/scrim, wrapping
+    /// whichever of three states applies — still resolving, resolved onto Processing, or
+    /// resolved straight onto the clip list (a video the camera already analyzed). All three
+    /// read `viewModel` live, not a value captured at open time, so a browse mid-presentation
+    /// (changing `path`'s top) updates the content in place rather than needing a new slot.
+    private func expansion(for slot: HomePresentationSlot) -> some View {
+        let identifier = currentIdentifier(for: slot)
+        let container = HomeExpansionContainer(
+            sourceFrame: { identifier.flatMap { tileFrames[$0] } },
+            thumbnail: identifier.flatMap { tileThumbnails[$0] },
+            content: { handlers in destinationContent(identifier: identifier, handlers: handlers) }
+        )
+        // Lets the grid show through the cover while the card/scrim animate —
+        // `HomeExpansionContainer` draws its own opaque scrim at `progress`, so without
+        // this the system's default opaque cover background would hide the grid the whole
+        // flight is supposed to reveal. iOS 16.4+ only; earlier OSes keep the flight
+        // animation but lose the reveal-through-flight.
+        return Group {
+            if #available(iOS 16.4, *) {
+                container.presentationBackground(.clear)
+            } else {
+                container
+            }
+        }
+    }
+
+    /// One `NavigationStack` for the whole cover, mounted immediately when it appears rather
+    /// than created fresh partway through (inside the `if let video = viewModel.path.last`
+    /// branch) once the tapped video's async resolve lands. A `NavigationStack` is a real
+    /// `UINavigationController`; creating one *mid-presentation* gave it a first UIKit layout
+    /// pass (nav bar hidden, safe area settling) that animated into place instead of snapping —
+    /// read from the outside as the whole page sliding up from the bottom, on top of (and
+    /// independent from) this container's own card/scrim flight. Mounting it at `progress ≈ 0`
+    /// — while `content(closeHandlers)` is still near-invisible behind the card — makes that
+    /// first layout pass happen off-screen, and the resolve landing becomes an ordinary root-
+    /// content swap inside an already-settled controller instead of the controller's own birth.
+    @ViewBuilder
+    private func destinationContent(
+        identifier: String?, handlers: HomeExpansionCloseHandlers
+    ) -> some View {
+        NavigationStack {
+            if let video = viewModel.path.last {
+                if let clips = video.detectedClips {
+                    clipList(for: video, clips: clips, asset: video.asset, popToRoot: handlers.onRequestClose)
+                } else {
+                    ProcessingView(
+                        video: video,
+                        runner: ProcessingPipeline(sampleRate: settings.analysisGranularity),
+                        autostart: false,
+                        popToRoot: handlers.onRequestClose,
+                        initialPoster: viewModel.thumbnails.cachedPoster(for: video.assetIdentifier),
+                        poster: viewModel.asset(withIdentifier: video.assetIdentifier).map(posterLoader),
+                        previous: browseNeighbor(of: video, offset: -1),
+                        next: browseNeighbor(of: video, offset: 1),
+                        // Renders this screen's browse-in-flight overlay from the same
+                        // `Resolution` state `ResolutionBanner` already shows on the grid.
+                        // Almost always the swipe this screen just triggered; showing it
+                        // for the rare unrelated case too (a camera recording resolving in
+                        // the background) is harmless — it just dims an already-paused video.
+                        browsingNeighbor: viewModel.resolution,
+                        cancelBrowsing: viewModel.cancelSelection,
+                        onRequestClose: handlers.onRequestClose,
+                        dismissGestureHooks: .init(
+                            onChanged: handlers.dismissTranslationChanged,
+                            onEnded: handlers.dismissEnded,
+                            onCancelled: handlers.dismissCancelled),
+                        destination: { result, popToRoot in
+                            clipList(for: video, clips: result.clips, asset: result.asset, popToRoot: popToRoot)
+                        }
+                    )
+                    // Ties the screen's identity to the video it's showing: without this,
+                    // browsing to a neighbor replaces `path`'s top element but SwiftUI can
+                    // reuse the existing `ProcessingView`, leaving its `@StateObject` and
+                    // player pointed at the video that just left.
+                    .id(video.assetIdentifier)
+                }
+            } else {
+                ResolvingDestination(
+                    thumbnail: identifier.flatMap { tileThumbnails[$0] },
+                    resolution: viewModel.resolution,
+                    cancel: {
+                        viewModel.cancelSelection()
+                        handlers.onRequestClose()
+                    })
+                // Matches `ProcessingView`'s own bar state (`.toolbar(.hidden, for:
+                // .navigationBar)`), so the swap from this to it never flips the bar
+                // shown→hidden on top of the root-content swap.
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationBarBackButtonHidden(true)
+            }
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         switch viewModel.authorization {
@@ -120,7 +237,19 @@ struct HomeView: View {
                 PhotosAccessDeniedView(restricted: restricted)
             }
         case .authorized, .limited:
-            VideoGalleryView(viewModel: viewModel)
+            VideoGalleryView(
+                viewModel: viewModel,
+                hiddenAssetIdentifier: presentationSlot.flatMap(currentIdentifier),
+                onTileTapped: { asset, thumbnail in
+                    presentSlot(HomePresentationSlot(tappedAssetIdentifier: asset.localIdentifier))
+                    if let thumbnail {
+                        tileThumbnails[asset.localIdentifier] = thumbnail
+                    }
+                    viewModel.select(asset)
+                },
+                onThumbnailLoaded: { identifier, image in
+                    tileThumbnails[identifier] = image
+                })
         }
     }
 
@@ -129,6 +258,59 @@ struct HomeView: View {
             get: { viewModel.errorMessage != nil },
             set: { if !$0 { viewModel.errorMessage = nil } }
         )
+    }
+}
+
+/// `HomeView`'s stable fullScreenCover identity — see its own `presentationSlot` doc comment.
+private final class HomePresentationSlot: Identifiable {
+    let id = UUID()
+    let tappedAssetIdentifier: String
+    init(tappedAssetIdentifier: String) {
+        self.tappedAssetIdentifier = tappedAssetIdentifier
+    }
+}
+
+/// The destination while a tapped tile's video is still resolving (PhotoKit fetch, possibly an
+/// iCloud download) — Photos-faithful: the flight happens instantly on tap, onto this full-
+/// screen poster-plus-progress state, rather than waiting for the resolve to finish before
+/// showing any motion. Mirrors `ProcessingView.browsingOverlay`'s look, since this is the same
+/// situation (a swipe or tap landed on a video that needs a moment) for the first video instead
+/// of a neighbor.
+private struct ResolvingDestination: View {
+    let thumbnail: UIImage?
+    let resolution: VideoLibraryViewModel.Resolution?
+    let cancel: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if let thumbnail {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea()
+            }
+            VStack(spacing: 12) {
+                if let progress = resolution?.downloadProgress {
+                    Text("Downloading from iCloud…")
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                    ProgressView(value: progress)
+                        .tint(.white)
+                } else {
+                    Text("Preparing video…")
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                    ProgressView()
+                        .tint(.white)
+                }
+                Button("Cancel", role: .cancel, action: cancel)
+                    .tint(.white)
+            }
+            .padding(32)
+            .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16))
+        }
     }
 }
 
@@ -285,6 +467,24 @@ struct HomeHeader: View {
 /// scrollable grid, newest videos first — no landing/reveal state.
 struct VideoGalleryView: View {
     @ObservedObject var viewModel: VideoLibraryViewModel
+    /// The identifier of the video currently expanded (`HomeView.currentIdentifier(for:)`) —
+    /// that tile hides rather than un-rendering, the same reasoning as `ClipListView`'s own
+    /// `ClipCardView.isHidden`: `HomeExpansionContainer`'s flying card stands in at this tile's
+    /// exact frame, so hiding avoids any grid reflow underneath it.
+    let hiddenAssetIdentifier: String?
+    /// Opens the expansion on this asset, passing its already-decoded thumbnail (nil if the
+    /// tile hasn't finished its own first decode yet) so the presenter can fly open from
+    /// exactly here without a second image request.
+    let onTileTapped: (PHAsset, UIImage?) -> Void
+    let onThumbnailLoaded: (String, UIImage) -> Void
+    /// Mirrors what's been reported through `onThumbnailLoaded`, kept locally too so a tap can
+    /// read the tapped tile's own thumbnail synchronously rather than round-tripping through
+    /// `HomeView`'s copy.
+    @State private var thumbnailCache: [String: UIImage] = [:]
+    /// The identifier the grid last auto-scrolled to recenter, so the scroll-to-current-tile
+    /// effect below can tell a tap's own initial resolve (skip — the tile's already on screen)
+    /// from a real browse to a different one (recenter).
+    @State private var lastScrolledIdentifier: String?
 
     private static let spacing: CGFloat = 2
     private let columns = Array(repeating: GridItem(.flexible(), spacing: spacing), count: 3)
@@ -323,45 +523,80 @@ struct VideoGalleryView: View {
     }
 
     private var grid: some View {
-        ScrollView {
-            // The header is scroll content, not chrome: it leads the grid and leaves the
-            // screen with the first row.
-            HomeHeader()
-            LazyVGrid(columns: columns, spacing: Self.spacing) {
-                ForEach(
-                    Array(viewModel.videos.enumerated()), id: \.element.localIdentifier
-                ) { index, asset in
-                    tile(for: asset, index: index)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                // The header is scroll content, not chrome: it leads the grid and leaves the
+                // screen with the first row.
+                HomeHeader()
+                LazyVGrid(columns: columns, spacing: Self.spacing) {
+                    ForEach(
+                        Array(viewModel.videos.enumerated()), id: \.element.localIdentifier
+                    ) { index, asset in
+                        tile(for: asset, index: index)
+                    }
+                }
+                // The floating tab bar overlays this screen rather than reserving its own
+                // safe-area space, so without this the bottom row would end up permanently
+                // stuck underneath it.
+                .padding(.bottom, FloatingTabBarMetrics.clearance)
+            }
+            // The grid announces its count when VoiceOver enters it — a VoiceOver user
+            // otherwise has no sense of how many videos they're swiping through. The
+            // ScrollView must be declared an accessibility container: a label on a
+            // non-element container is never announced on entry.
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(gridAccessibilityLabel)
+            .accessibilityIdentifier("video-grid")
+            .onChange(of: viewModel.path.last?.assetIdentifier) { identifier in
+                guard let identifier else {
+                    lastScrolledIdentifier = nil
+                    return
+                }
+                defer { lastScrolledIdentifier = identifier }
+                // Skip the very first landing (a tap's own initial resolve): that tile is
+                // already on screen — it's why it was tappable — so recentering it here is
+                // both needless and visible, since it fires the instant resolution completes,
+                // which for a local video can be well before `HomeExpansionContainer`'s scrim
+                // has covered enough of the grid to hide a full-width re-center jump. Only an
+                // actual swipe-to-browse landing on a *different* tile (`lastScrolledIdentifier`
+                // already set, to the previous video) needs the grid recentered on it — Photos
+                // scrolls its grid the same way, behind the one-up, per the research this
+                // feature was built from.
+                guard lastScrolledIdentifier != nil else { return }
+                withTransaction(Transaction(animation: nil)) {
+                    scrollProxy.scrollTo(identifier, anchor: .center)
                 }
             }
-            // The floating tab bar overlays this screen rather than reserving its own
-            // safe-area space, so without this the bottom row would end up permanently
-            // stuck underneath it.
-            .padding(.bottom, FloatingTabBarMetrics.clearance)
         }
-        // The grid announces its count when VoiceOver enters it — a VoiceOver user
-        // otherwise has no sense of how many videos they're swiping through. The
-        // ScrollView must be declared an accessibility container: a label on a
-        // non-element container is never announced on entry.
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(gridAccessibilityLabel)
-        .accessibilityIdentifier("video-grid")
     }
 
     private func tile(for asset: PHAsset, index: Int) -> some View {
         Button {
-            viewModel.select(asset)
+            onTileTapped(asset, thumbnailCache[asset.localIdentifier])
         } label: {
             VideoTileView(
                 asset: asset,
                 thumbnails: viewModel.thumbnails,
                 revision: viewModel.thumbnails.revision(for: asset),
                 isResolving: viewModel.isResolving(asset),
-                downloadProgress: viewModel.downloadProgress(for: asset)
+                downloadProgress: viewModel.downloadProgress(for: asset),
+                onImageLoaded: { image in
+                    guard let image else { return }
+                    thumbnailCache[asset.localIdentifier] = image
+                    onThumbnailLoaded(asset.localIdentifier, image)
+                }
             )
         }
         .buttonStyle(.plain)
         .disabled(viewModel.resolution != nil)
+        .opacity(asset.localIdentifier == hiddenAssetIdentifier ? 0 : 1)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: VideoTileFramePreferenceKey.self,
+                    value: [asset.localIdentifier: proxy.frame(in: .global)])
+            }
+        )
         .onAppear { viewModel.tileAppeared(at: index) }
     }
 
