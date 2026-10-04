@@ -56,8 +56,15 @@ struct HomeView: View {
         .onChange(of: viewModel.path.isEmpty) { isEmpty in
             if isEmpty {
                 presentationSlot = nil
-            } else if presentationSlot == nil, let identifier = viewModel.path.last?.assetIdentifier {
-                presentSlot(HomePresentationSlot(tappedAssetIdentifier: identifier))
+            } else if presentationSlot == nil, let video = viewModel.path.last {
+                // `detectedClips` already non-nil here means this lands straight on
+                // `ClipListView` (the full-screen fallback is already correct for that), so no
+                // aspect-ratio guess — only a video headed for `ProcessingView` needs one.
+                let aspectRatio = video.detectedClips == nil
+                    ? viewModel.asset(withIdentifier: video.assetIdentifier).flatMap(Self.pixelAspectRatio)
+                    : nil
+                presentSlot(HomePresentationSlot(
+                    tappedAssetIdentifier: video.assetIdentifier, initialAspectRatio: aspectRatio))
             }
         }
         // The cover's own `dismiss()` (its reverse flight's final step) only clears
@@ -142,6 +149,7 @@ struct HomeView: View {
         let container = HomeExpansionContainer(
             sourceFrame: { identifier.flatMap { tileFrames[$0] } },
             thumbnail: identifier.flatMap { tileThumbnails[$0] },
+            initialAspectRatio: slot.initialAspectRatio,
             content: { handlers in destinationContent(identifier: identifier, handlers: handlers) }
         )
         // Lets the grid show through the cover while the card/scrim animate —
@@ -241,7 +249,14 @@ struct HomeView: View {
                 viewModel: viewModel,
                 hiddenAssetIdentifier: presentationSlot.flatMap(currentIdentifier),
                 onTileTapped: { asset, thumbnail in
-                    presentSlot(HomePresentationSlot(tappedAssetIdentifier: asset.localIdentifier))
+                    // A grid tap always calls `select(asset)` below with no `detectedClips`, so
+                    // this always lands on `ProcessingView` once resolved — always worth an
+                    // aspect-ratio guess, known synchronously from the tapped `PHAsset` itself
+                    // (see `HomeExpansionContainer.initialAspectRatio`'s own doc comment for why
+                    // this can't just wait for the real measurement instead).
+                    presentSlot(HomePresentationSlot(
+                        tappedAssetIdentifier: asset.localIdentifier,
+                        initialAspectRatio: Self.pixelAspectRatio(of: asset)))
                     if let thumbnail {
                         tileThumbnails[asset.localIdentifier] = thumbnail
                     }
@@ -259,14 +274,29 @@ struct HomeView: View {
             set: { if !$0 { viewModel.errorMessage = nil } }
         )
     }
+
+    /// `PHAsset.pixelWidth`/`pixelHeight` already reflect display orientation — the same thing
+    /// `ClipEditorViewModel.displayedSize` computes from a track's `naturalSize` +
+    /// `preferredTransform`, just available synchronously, with no asset resolve needed. `nil`
+    /// for the degenerate dimensions PhotoKit can report while an asset's metadata is still
+    /// settling.
+    private static func pixelAspectRatio(of asset: PHAsset) -> CGSize? {
+        guard asset.pixelWidth > 0, asset.pixelHeight > 0 else { return nil }
+        return CGSize(width: asset.pixelWidth, height: asset.pixelHeight)
+    }
 }
 
 /// `HomeView`'s stable fullScreenCover identity — see its own `presentationSlot` doc comment.
 private final class HomePresentationSlot: Identifiable {
     let id = UUID()
     let tappedAssetIdentifier: String
-    init(tappedAssetIdentifier: String) {
+    /// See `HomeExpansionContainer.initialAspectRatio`'s own doc comment — `nil` when this
+    /// slot's video is already known to land straight on `ClipListView`, which never
+    /// letterboxes.
+    let initialAspectRatio: CGSize?
+    init(tappedAssetIdentifier: String, initialAspectRatio: CGSize?) {
         self.tappedAssetIdentifier = tappedAssetIdentifier
+        self.initialAspectRatio = initialAspectRatio
     }
 }
 

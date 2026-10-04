@@ -5,10 +5,11 @@ import SwiftUI
 /// dimmed crop surround) rather than literally the same image Photos keeps on screen
 /// throughout. Two layers share one `progress` clock (`0` = exactly at the tile,
 /// `1` = fully open): a lightweight "card" (the tile's own cropped thumbnail) carries
-/// the geometry the whole way, while the real `ClipEditorView` only fades in over the
-/// last stretch of travel — late enough that its toolbar/trim-slider text never has
-/// to be legible mid-shrink, and early enough (`crossfadeThreshold`) that the swap
-/// reads as one continuous motion rather than two.
+/// the geometry the whole way, while the real `ClipEditorView` is hidden entirely
+/// until the last stretch of travel, then cut in instantly, with no cross-dissolve —
+/// late enough that its toolbar/trim-slider text never has to be legible mid-shrink
+/// (`crossfadeThreshold`), but an instant swap rather than a fade so neither layer is
+/// ever seen at partial opacity.
 ///
 /// `progress` is driven by a spring for the tap-to-open and back-button-close paths,
 /// and 1:1 by drag translation for the interactive swipe-to-dismiss — the same
@@ -34,18 +35,23 @@ struct ClipExpansionContainer: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var progress: CGFloat = 0
+    /// The editor's real, untransformed preview frame — recovered from
+    /// `ClipEditorPreviewFramePreferenceKey`'s report by dividing out this container's
+    /// own `.scaleEffect`/`.offset`, rather than used as reported. `previewSection`'s
+    /// `GeometryReader` sits *inside* that transform, so its raw `.global` frame is the
+    /// *transformed* position, not the editor's natural one — using it directly would
+    /// feed back on itself (the transform moves the measured frame, which moves
+    /// `destination`, which moves the transform...), which a previous version dodged by
+    /// only ever accepting a report once `progress` had already settled near 1 (where
+    /// the transform is ~identity). That meant the destination this container grew
+    /// *toward* stayed a placeholder guess for the entire opening flight, and a closing
+    /// flight's start point was only ever an approximation (whatever the transform's
+    /// small residual error happened to be at the moment it crossed the settle
+    /// threshold) rather than the editor's true frame. Dividing out the known transform
+    /// recovers the true frame from *any* report, so this can stay live the same way
+    /// `HomeExpansionContainer.measuredDestination` already does, with no locking and
+    /// no feedback loop.
     @State private var measuredDestination: CGRect?
-    /// Latches `measuredDestination` after its first trustworthy report, then ignores
-    /// every later one. `previewSection`'s own `GeometryReader` reports its frame in
-    /// `.global` space, which — since it sits *inside* the `.scaleEffect`/`.offset`
-    /// this container applies to the whole editor — reflects that transform too. Left
-    /// unlatched, a closing drag would feed back on itself: the transform moves the
-    /// measured frame, which moves `destination`, which moves the transform, forever,
-    /// so the view never settles (reproduced as a 60s+ hang with no "animations
-    /// complete" notification). Only near `progress == 1` is the transform the
-    /// identity, so only there is the report actually the view's true, untransformed
-    /// frame.
-    @State private var isDestinationLocked = false
     /// The live drag, via `@GestureState` rather than a plain `@State` flag: a system
     /// cancellation (an incoming call, Control Center, the home-indicator swipe-up
     /// zone this dismiss drag sits just above) resets `@GestureState` back to `nil`
@@ -103,9 +109,12 @@ struct ClipExpansionContainer: View {
                 .opacity(editorOpacity)
                 .allowsHitTesting(editorOpacity > 0.99)
                 .onPreferenceChange(ClipEditorPreviewFramePreferenceKey.self) { frame in
-                    guard !isDestinationLocked, frame != .zero, progress > 0.98 else { return }
-                    measuredDestination = frame
-                    isDestinationLocked = true
+                    guard frame != .zero, editorScale > 0 else { return }
+                    measuredDestination = CGRect(
+                        x: (frame.minX - editorOffsetX) / editorScale,
+                        y: (frame.minY - editorOffsetY) / editorScale,
+                        width: frame.width / editorScale,
+                        height: frame.height / editorScale)
                 }
 
                 cardLayer(rect: rect)
@@ -145,10 +154,18 @@ struct ClipExpansionContainer: View {
         .frame(width: rect.width, height: rect.height)
         .clipped()
         .position(x: rect.midX, y: rect.midY)
+        // Lets a UI test read this layer's live laid-out frame (accessibility reports
+        // geometry independent of its current opacity) to verify it tracks the real
+        // destination rather than a placeholder — see `docs/EXPANSION_TRANSITIONS.md`'s
+        // "Measuring the destination without a race or a feedback loop".
+        .accessibilityIdentifier("expansion-card")
     }
 
+    /// A hard cut, not a fade: below `crossfadeThreshold` the card is the only thing
+    /// visible, at/above it the real editor is — the two never co-fade at partial
+    /// opacity, so the swap reads as instant rather than a dissolve.
     private func editorOpacity(for progress: CGFloat) -> CGFloat {
-        max(0, min(1, (progress - crossfadeThreshold) / (1 - crossfadeThreshold)))
+        progress >= crossfadeThreshold ? 1 : 0
     }
 
     /// Linear interpolation between `sourceFrame` and `destination`, lerping the

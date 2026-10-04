@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 /// Home's Photos-style open/close flight: a tapped grid tile flies open into its full-screen
@@ -15,9 +16,14 @@ import SwiftUI
 /// — Home's destination can be a *letterboxed* video: `ProcessingView`'s player uses
 /// `.resizeAspect` gravity, so a video whose aspect ratio doesn't match the screen's only
 /// occupies a smaller centered rect within it. `measuredDestination` below corrects for that
-/// once `ProcessingView` reports its real on-screen video rect; `ClipListView` as a destination
-/// never reports one (it has no single video frame, just its own grid), so the full-screen
-/// default stands for that case. This container gains two more things `ClipExpansionContainer`
+/// once `ProcessingView` reports its real on-screen video rect; until then, `fallbackDestination`
+/// stands in with the same letterbox math run against `initialAspectRatio` (known synchronously,
+/// unlike the real measurement — see that property's own doc comment), rather than the full
+/// screen, so the open flight grows toward roughly the right rect from the first frame instead of
+/// only snapping to it once the real measurement eventually lands. `ClipListView` as a
+/// destination never reports a measurement (it has no single video frame, just its own grid), so
+/// the full-screen default stands unchanged for that case. This container gains two more things
+/// `ClipExpansionContainer`
 /// didn't need: a `sourceFrame` that's a live lookup rather than a one-shot capture (the close
 /// must land on whichever tile is current after a browse, not the one first tapped), and a
 /// dismiss gesture driven *into* it from the destination's own existing swipe
@@ -46,6 +52,21 @@ struct HomeExpansionContainer<Content: View>: View {
     /// instantly. Re-supplied (not locked to the first tap) when browsing to a neighbor whose
     /// thumbnail is already cached.
     let thumbnail: UIImage?
+    /// The video's pixel dimensions (`PHAsset.pixelWidth`/`pixelHeight`), known synchronously
+    /// from the tapped tile's own asset — used to letterbox the fallback destination (see
+    /// `body`'s `destination`) while `measuredDestination` is still nil, instead of guessing the
+    /// full screen. `nil` for a destination that never letterboxes (`ClipListView` directly, the
+    /// camera-originated case) so that destination's correct full-screen default isn't
+    /// second-guessed with an aspect ratio that doesn't apply to it. `ProcessingView`'s own
+    /// measurement needs the asset's *track* to have loaded, which can't even start until a
+    /// PhotoKit resolve that the Home doc comment notes "can be anywhere from instant to several
+    /// seconds" has already finished — long enough to lose the race against the ~0.3s open
+    /// spring every time, which is exactly what made the open flight grow toward the full screen
+    /// instead of the destination's real letterboxed rect. `PHAsset.pixelWidth`/`pixelHeight`
+    /// need no resolve at all (ordinary `PHAsset` metadata, already in hand from the grid), and
+    /// already reflect display orientation — the same thing `ClipEditorViewModel.displayedSize`
+    /// computes from `naturalSize` + `preferredTransform`, just without the async load.
+    let initialAspectRatio: CGSize?
     /// Builds the destination content, given the handlers it should wire into its own
     /// back-button/dismiss-gesture. `ProcessingView` (via its `onRequestClose`/
     /// `dismissGestureHooks`) or a plain `NavigationStack { ClipListView(...) }` (via
@@ -82,7 +103,7 @@ struct HomeExpansionContainer<Content: View>: View {
 
     var body: some View {
         GeometryReader { screen in
-            let destination = measuredDestination ?? CGRect(origin: .zero, size: screen.size)
+            let destination = measuredDestination ?? fallbackDestination(in: screen.size)
             let rect = currentRect(destination: destination)
             let contentOpacity = self.contentOpacity(for: progress)
             let cornerRadius = sourceCornerRadius * (1 - progress)
@@ -146,10 +167,18 @@ struct HomeExpansionContainer<Content: View>: View {
         .frame(width: rect.width, height: rect.height)
         .clipped()
         .position(x: rect.midX, y: rect.midY)
+        // Lets a UI test read this layer's live laid-out frame (accessibility reports
+        // geometry independent of its current opacity) to verify it tracks the real
+        // destination rather than a placeholder — see `docs/EXPANSION_TRANSITIONS.md`'s
+        // "Measuring the destination without a race or a feedback loop".
+        .accessibilityIdentifier("expansion-card")
     }
 
+    /// A hard cut, not a fade: below `crossfadeThreshold` the card is the only thing
+    /// visible, at/above it the real destination is — the two never co-fade at partial
+    /// opacity, so the swap reads as instant rather than a dissolve.
     private func contentOpacity(for progress: CGFloat) -> CGFloat {
-        max(0, min(1, (progress - crossfadeThreshold) / (1 - crossfadeThreshold)))
+        progress >= crossfadeThreshold ? 1 : 0
     }
 
     /// Linear interpolation between the source frame (falling back to a centered, slightly-inset
@@ -169,6 +198,16 @@ struct HomeExpansionContainer<Content: View>: View {
     private func fallbackSourceFrame(in size: CGSize) -> CGRect {
         let side = size.width * 0.3
         return CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
+    }
+
+    /// The destination before `measuredDestination` has a real report: the known aspect ratio's
+    /// letterboxed rect (matching what `ProcessingView` will eventually measure) when one's
+    /// available, else the full screen — correct as-is for a destination that never letterboxes
+    /// (`ClipListView` directly).
+    private func fallbackDestination(in size: CGSize) -> CGRect {
+        guard let initialAspectRatio, initialAspectRatio.width > 0, initialAspectRatio.height > 0
+        else { return CGRect(origin: .zero, size: size) }
+        return AVMakeRect(aspectRatio: initialAspectRatio, insideRect: CGRect(origin: .zero, size: size))
     }
 
     /// Reverse flight back to the tile, then — once it's visually landed — the actual dismiss.

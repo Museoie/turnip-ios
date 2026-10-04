@@ -446,6 +446,41 @@ struct ScreenshotProcessingBrowseHarness: View {
     }
 }
 
+// MARK: - Home expansion fallback destination
+
+/// `HomeExpansionContainer` in isolation (`-screenshotHomeExpansion`), verifying its
+/// fallback-destination math without needing a real `PHAsset` or a `ProcessingView`
+/// measurement to ever arrive — `content` here never reports
+/// `ProcessingVideoFramePreferenceKey`, so `measuredDestination` stays `nil` for the
+/// whole run and `fallbackDestination(in:)` is the only thing under test: given a
+/// deliberately wide `initialAspectRatio` (16:9 in a portrait window), the flying card
+/// should settle into a letterboxed band, never the full screen. A UI test reads the
+/// card's own laid-out frame (`"expansion-card"` — accessibility reports geometry
+/// regardless of the card's current opacity) once the open spring has settled.
+struct ScreenshotHomeExpansionHarness: View {
+    var body: some View {
+        HomeExpansionContainer(
+            sourceFrame: { CGRect(x: 20, y: 100, width: 100, height: 100) },
+            thumbnail: Self.solidImage(.systemRed),
+            initialAspectRatio: CGSize(width: 16, height: 9),
+            content: { _ in Color.clear }
+        )
+    }
+
+    /// 16:9, matching `initialAspectRatio` above — a mismatched thumbnail aspect ratio would
+    /// make `cardLayer`'s `.scaledToFill()` overflow its clipped box, which is a confound a UI
+    /// test reading this accessibility frame doesn't want: an `Image` leaf's accessibility frame
+    /// reflects its own post-fill, pre-clip render size, not the outer `.frame().clipped()` box,
+    /// so a mismatched source would make even a correct `fallbackDestination` look wrong here.
+    private static func solidImage(_ color: UIColor) -> UIImage {
+        let size = CGSize(width: 16, height: 9)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            color.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+        }
+    }
+}
+
 // MARK: - Settings
 
 /// Settings sheet (`-screenshotSettings`): the four preferences at their defaults, backed by

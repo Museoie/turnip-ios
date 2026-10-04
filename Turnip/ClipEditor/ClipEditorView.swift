@@ -138,7 +138,22 @@ struct ClipEditorView: View {
     private var previewSection: some View {
         Group {
             if let overlay = viewModel.previewOverlay, overlay.videoSize.width > 0 {
+                // Reports this surface's own on-screen frame (global space, the same space
+                // a presenter captures a grid tile's frame in) so a Photos-style expansion
+                // transition can land its flying card exactly here without duplicating this
+                // view's own aspect-ratio layout math. Only this branch reports: the
+                // loading/error placeholders below are an arbitrary 9:16 rect that doesn't
+                // match the clip's real aspect ratio, and reporting it would hand the
+                // expansion transition a destination to grow toward that's wrong for
+                // every clip that isn't actually 9:16.
                 fullFramePreview(overlay: overlay)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: ClipEditorPreviewFramePreferenceKey.self,
+                                value: proxy.frame(in: .global))
+                        }
+                    )
             } else if viewModel.failedToLoad {
                 StatusStateView(
                     systemImage: "exclamationmark.triangle",
@@ -155,17 +170,6 @@ struct ClipEditorView: View {
                     .overlay { ProgressView() }
             }
         }
-        // Reports this surface's own on-screen frame (global space, the same space a
-        // presenter captures a grid tile's frame in) so a Photos-style expansion
-        // transition can land its flying card exactly here without duplicating this
-        // view's own aspect-ratio layout math.
-        .background(
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: ClipEditorPreviewFramePreferenceKey.self,
-                    value: proxy.frame(in: .global))
-            }
-        )
     }
 
     /// The full frame with the crop area's fixed marker drawn over it: the dimmed

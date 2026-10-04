@@ -1,6 +1,19 @@
 # Photos-style expansion transitions
 
-*Rev 1 · 2026-10-02.*
+*Rev 2 · 2026-10-03.* Rev 1 described a cross-*fade* between the card and the
+real destination, and a destination measurement that — for
+`ClipExpansionContainer` — only ever locked in once `progress` had already
+settled. Both turned out to be bugs, not just simplifications: the fade was
+visibly a fade (never asked for), and the locking left the *open* flight
+targeting a placeholder square and the *close* flight starting from an
+approximation of the real frame rather than the frame itself, for every
+Clip List → Clip Editor transition. `HomeExpansionContainer`'s open side had
+a parallel bug — its own destination measurement can't even start loading
+until well after the open spring begins, so it reliably lost that race and
+grew toward the full screen instead of the real letterboxed video rect. See
+"Shared design: a two-layer hard cut over one `progress` clock" and
+"Measuring the destination without a race or a feedback loop" below for
+what changed.
 
 Companion to [`UIUX.md`](UIUX.md), which specifies *that* a tile tap opens its
 destination and a back action returns to the grid. This doc specifies *how*:
@@ -75,7 +88,7 @@ downward release commits" rule in each `dismissEnded`/`onEnded`, the spring
 response/damping pairs) are this research's measurements translated into
 SwiftUI's spring parameterization, not arbitrary tuning.
 
-## Shared design: a two-layer crossfade over one `progress` clock
+## Shared design: a two-layer hard cut over one `progress` clock
 
 Both containers share one structure, independently implemented:
 
@@ -89,16 +102,28 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
   and the destination frame, lerping center and size separately so it grows
   from its own middle rather than a corner (`currentRect(destination:)` in
   both files).
-- The **real destination content**, cross-faded in only over the last 15% of
-  `progress` (`crossfadeThreshold = 0.85`) — late enough that toolbar/control
-  text is never legible mid-shrink, early enough that the swap still reads as
-  one continuous motion. `ClipExpansionContainer` additionally scales/offsets
-  the real `ClipEditorView` to match the growing rect, since its destination
-  is the editor's own crop-hole preview, not the full screen.
-  `HomeExpansionContainer` never scales/offsets its content — only the
-  opacity crossfade — but its *destination rect* still isn't reliably the
-  full screen either: see "Matching the destination's real content rect, not
-  just its view bounds" below.
+- The **real destination content**, hidden entirely below the last 15% of
+  `progress` (`crossfadeThreshold = 0.85`) and shown entirely at/above it —
+  an instant cut, not a fade: `editorOpacity`/`contentOpacity` are a step
+  function, so the two layers are never both partially visible at once. Late
+  enough that toolbar/control text is never legible mid-shrink, early enough
+  that the swap still reads as one continuous motion with the geometry flight
+  around it. `ClipExpansionContainer` additionally scales/offsets the real
+  `ClipEditorView` to match the growing rect, since its destination is the
+  editor's own crop-hole preview, not the full screen. `HomeExpansionContainer`
+  never scales/offsets its content — only the hard-cut visibility swap — but
+  its *destination rect* still isn't reliably the full screen either: see
+  "Matching the destination's real content rect, not just its view bounds"
+  below.
+- Only the card layer, and the two destinations' own real content, are ever
+  faded/cut at all — the *source* tile sitting in the grid/list underneath is
+  hidden outright at the same instant (`VideoGalleryView`'s
+  `hiddenAssetIdentifier` / `ClipCardView.isHidden`, both wrapped in the same
+  `disablesAnimations`/`setAnimationsEnabled` transaction as the slot's own
+  state change — see "Suppressing the system's own presentation animation"
+  below), not faded — there's nothing animating that hide, so it was never the
+  source of a visible fade; the one that was visible was the crossfade this
+  rev replaced.
 - `progress` is driven by a critically-damped spring (`.spring(response:
   0.3, dampingFraction: 1)`) for tap-to-open, a slightly bouncier one
   (`response: 0.3, dampingFraction: 0.85`) for the reverse close flight, and
@@ -119,7 +144,7 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
 
 | | `ClipExpansionContainer` | `HomeExpansionContainer` |
 |---|---|---|
-| Destination frame | Measured via a `PreferenceKey` the editor's own preview surface reports (`ClipEditorPreviewFramePreferenceKey`) — the editor's *crop hole*, not the full screen, since the settled content is a different composition (full frame + dimmed surround) than the tile's cropped square. Locked after the first trustworthy report (`isDestinationLocked`), since this container scales/offsets the content and an unlocked measurement would feed back into its own transform | Defaults to the full screen (`ProcessingView`/`ClipListView` both already `ignoresSafeArea()`), but narrows to `ProcessingView`'s real, letterboxed video rect once it reports one via `ProcessingVideoFramePreferenceKey` — see "Matching the destination's real content rect" below. Never locked — stays live, the same `sourceFrame` is, so browsing to a neighbor with a different aspect ratio retargets it rather than flying toward the first video's letterbox rect |
+| Destination frame | Measured via a `PreferenceKey` the editor's own preview surface reports (`ClipEditorPreviewFramePreferenceKey`) — the editor's *crop hole*, not the full screen, since the settled content is a different composition (full frame + dimmed surround) than the tile's cropped square. Never locked: this container scales/offsets the content, so the raw report is read through that same transform, not the editor's true frame — rather than waiting for the transform to settle near identity (what a previous rev did), the current transform is divided back out of every report, recovering the true frame immediately and keeping it live, the same as `HomeExpansionContainer`'s own destination. A fallback square stands in only until the very first report arrives (see "Measuring the destination without a race or a feedback loop" below) | Defaults to a synchronous aspect-ratio estimate from the tapped `PHAsset`'s own pixel dimensions (full screen only when no estimate applies, e.g. a destination that goes straight to `ClipListView`), narrowing to `ProcessingView`'s real, letterboxed video rect once it reports one via `ProcessingVideoFramePreferenceKey` — see "Matching the destination's real content rect" and "Measuring the destination without a race or a feedback loop" below. Never locked — stays live, the same `sourceFrame` is, so browsing to a neighbor with a different aspect ratio retargets it rather than flying toward the first video's letterbox rect |
 | Source frame | Captured once, at tap time (`sourceFrame: CGRect`) | A **live closure** (`sourceFrame: () -> CGRect?`), re-read continuously — a close after `ProcessingView`'s own swipe-to-browse-neighbors must land on whichever tile is *now* current, not the one first tapped |
 | Dismiss gesture | Owns one itself, planted into `ClipEditorView`'s background (see "Gesture ownership" below) | Doesn't own one — the destination (`ProcessingView`) already has its own vertical swipe, reported *into* the container via `HomeExpansionCloseHandlers` |
 | Delete | Its own close path: fades out in place rather than flying, since the tile's grid slot holds different content (or nothing) by the time delete runs | N/A — Home has no per-tile delete |
@@ -161,6 +186,89 @@ narrower than tall) and recording the open/settle/close sequence at native
 frame rate: the settled video sits correctly letterboxed, and critically the
 *close* flight also now shrinks from that same narrower band — before the
 fix it would have shrunk from (and, on open, grown to) the full screen.
+
+## Measuring the destination without a race or a feedback loop
+
+Rev 1 shipped two different bugs that both showed up as the same symptom —
+the open flight's growth target (and, for Clip, the close flight's start
+point) not matching the destination's real on-screen size — for different
+reasons in each container.
+
+**`HomeExpansionContainer`: the measurement can't start until well after the
+open spring does.** `ProcessingVideoFramePreferenceKey` only reports once
+`ProcessingView`'s own `displaySize` has loaded from the asset's track info
+— and that load is inside a `.task` scoped to `ProcessingView` itself, which
+doesn't even mount until `viewModel.path.last` resolves to a video. Per
+`HomeView.presentSlot`'s own doc comment, that PhotoKit resolve "can be
+anywhere from instant to several seconds" — so the track load that feeds the
+real measurement routinely starts *after* the ~0.3s open spring has already
+finished. The destination fallback before Rev 2 was blind to this: a plain
+full screen. The open flight grew toward the full screen the entire time,
+only narrowing to the correct letterboxed rect once the real measurement
+eventually landed (if it landed before the crossfade cut, that was at least
+invisible; if not, the card itself was visibly the wrong size).
+
+The fix doesn't wait any longer for the real measurement — it replaces the
+*blind* full-screen guess with an *informed* one. `PHAsset.pixelWidth`/
+`pixelHeight` are ordinary asset metadata, already in hand from the grid
+tile that was tapped, needing no resolve or track load at all, and already
+reflect display orientation (the same thing `ClipEditorViewModel.displayedSize`
+computes from `naturalSize` + `preferredTransform`, just synchronously).
+`HomeExpansionContainer.initialAspectRatio` runs the same `AVMakeRect` math
+the real measurement does, against this synchronous estimate, so the open
+flight grows toward (almost always exactly) the right rect from the first
+frame — and still retargets live if the real measurement, once it lands,
+differs at all. This estimate is only correct for a destination that will
+letterbox, so `HomeView` only supplies one when the tapped video is actually
+headed for `ProcessingView` — for the camera-originated case that goes
+straight to `ClipListView` (never measured, correctly full screen), it's
+`nil`, and the full-screen default stands exactly as before.
+
+**`ClipExpansionContainer`: the destination measurement needed the
+transform it fed into to have already settled, which only happened near the
+very end of a flight — or never, during one.** `ClipEditorPreviewFramePreferenceKey`'s
+report is read *through* this container's own `.scaleEffect`/`.offset` on
+`ClipEditorView` (unlike Home, which applies no transform to its content),
+so the raw report isn't the editor's true, untransformed frame — it's that
+frame as distorted by whatever transform was currently in effect. Rev 1's
+fix for this was to simply wait: ignore every report until `progress > 0.98`
+and lock the first one that arrives after that, on the theory that the
+transform is close enough to identity by then for the distortion not to
+matter. In practice this meant the *open* flight's destination stayed the
+placeholder fallback square for the entire flight, every time — the lock
+can't fire until `progress` is already almost at `1`, i.e. after the growth
+is already visually done — so the open flight always grew toward the wrong
+target. The *close* flight's start point fared better (whatever got locked
+near the end of the preceding open was at least close to correct), but was
+only ever an approximation, not the real frame — the residual ~1-2% of
+transform distortion still in effect at `progress = 0.98` baked itself into
+the locked value permanently.
+
+The fix divides the known transform back out of *every* report, recovering
+the editor's true frame algebraically instead of waiting for the transform
+to become (approximately) the identity on its own:
+
+```swift
+measuredDestination = CGRect(
+    x: (frame.minX - editorOffsetX) / editorScale,
+    y: (frame.minY - editorOffsetY) / editorScale,
+    width: frame.width / editorScale,
+    height: frame.height / editorScale)
+```
+
+This is correct at *any* `progress`, including `0`, so there's no more
+waiting and no more locking — `measuredDestination` stays live the same way
+`HomeExpansionContainer`'s already does, converges to the same value however
+early or late the first report arrives, and keeps tracking a destination
+that could in principle still change (a crop re-render, say) for the rest of
+the editor's lifetime. The one thing this needed to actually land correctly:
+`ClipEditorView.previewSection` used to report its frame unconditionally,
+including from its *own* loading-placeholder branch (an arbitrary 9:16
+rect) — dividing out the transform recovers whatever frame was reported
+faithfully, placeholder included, so a placeholder report would have handed
+this container a confidently-wrong destination instead of an admittedly
+rough one. `previewSection` now only reports from the branch that renders
+the real, aspect-correct preview.
 
 ## Gesture ownership: why the dismiss drag can't live behind the content
 
