@@ -48,10 +48,46 @@ struct ClipExpansionContainer: View {
     /// flight's start point was only ever an approximation (whatever the transform's
     /// small residual error happened to be at the moment it crossed the settle
     /// threshold) rather than the editor's true frame. Dividing out the known transform
-    /// recovers the true frame from *any* report, so this can stay live the same way
-    /// `HomeExpansionContainer.measuredDestination` already does, with no locking and
-    /// no feedback loop.
+    /// recovers the true frame from *any* report, so it can stay live for the opening
+    /// flight — necessary there: the very first reports, taken before
+    /// `editorScale` has grown much past its starting value, are still visibly off (an
+    /// early-mount report doesn't yet reflect the real composited transform), and only
+    /// settle to the true frame after a few more arrive. `acceptsDestinationUpdates`
+    /// below stops accepting new reports once any close begins, though — see that
+    /// property's own doc comment for why staying live for the *whole* lifetime
+    /// (what this used to do) doesn't just risk working for longer than it needs to.
     @State private var measuredDestination: CGRect?
+    /// Gates `measuredDestination` updates: `true` through the opening flight (where
+    /// convergence from a placeholder-ish early report to the true frame is the actual
+    /// point of dividing out the transform live — see `measuredDestination`'s own doc
+    /// comment), `false` from the first touch-move of an interactive drag, or from the
+    /// moment `close()`/`closeForDelete()` runs, whichever comes first — i.e. for the rest
+    /// of this container's life, cancelled drag included, once the user could possibly be
+    /// leaving.
+    ///
+    /// Why: unlike `HomeExpansionContainer`, which applies no transform to its own
+    /// content, this container's `editorScale`/`editorOffsetX`/`editorOffsetY` (what
+    /// `measuredDestination` is divided out of) are themselves computed *from*
+    /// `measuredDestination` — self-referential. At a steady `progress` (fully open, fully
+    /// closed) that has one chance to converge and then goes quiet, since
+    /// `previewSection`'s on-screen frame stops moving and no more reports arrive. While
+    /// `progress` is animating or being dragged, though, it keeps moving for the whole
+    /// transition, through this exact same `onPreferenceChange` handler every intermediate
+    /// frame, so a self-referential loop there has far more chances to compound than it
+    /// does at a steady state.
+    ///
+    /// What's actually confirmed, from a user's real device, where the old always-live
+    /// version of this code froze on every close (never reproduced on the simulator): the
+    /// main thread livelocked and never recovered, and two debugger pauses taken a few
+    /// seconds apart each landed inside a `CATransaction` commit — one inside SwiftUI's own
+    /// graph update, the other 25 frames into a `CALayer` tree walk — with no app code in
+    /// either stack. That's real evidence of a genuine, unrecovering main-thread livelock
+    /// triggered by closing the editor; it is not a confirmation that *this specific
+    /// self-reference* is the mechanism (two samples can't show that, and the fix below is
+    /// inference from the code's structure, not from stepping through the actual loop). If
+    /// a user's device still freezes after this change, that inference was wrong and the
+    /// real cause is still out there.
+    @State private var acceptsDestinationUpdates = true
     /// The live drag, via `@GestureState` rather than a plain `@State` flag: a system
     /// cancellation (an incoming call, Control Center, the home-indicator swipe-up
     /// zone this dismiss drag sits just above) resets `@GestureState` back to `nil`
@@ -109,7 +145,9 @@ struct ClipExpansionContainer: View {
                 .opacity(editorOpacity)
                 .allowsHitTesting(editorOpacity > 0.99)
                 .onPreferenceChange(ClipEditorPreviewFramePreferenceKey.self) { frame in
-                    guard frame != .zero, editorScale > 0 else { return }
+                    // See `acceptsDestinationUpdates`'s own doc comment for why this stops
+                    // once a close begins instead of staying live for the whole lifetime.
+                    guard acceptsDestinationUpdates, frame != .zero, editorScale > 0 else { return }
                     measuredDestination = CGRect(
                         x: (frame.minX - editorOffsetX) / editorScale,
                         y: (frame.minY - editorOffsetY) / editorScale,
@@ -200,6 +238,12 @@ struct ClipExpansionContainer: View {
                     state = value.translation
                 }
                 .onChanged { value in
+                    // Stops `measuredDestination` updates for the rest of this container's
+                    // lifetime, cancel or commit: see `acceptsDestinationUpdates`'s own doc
+                    // comment for why a live interactive drag is unstable — the opening
+                    // flight converged long before dragging was possible, so there's no
+                    // destination left to lose by not remeasuring during or after one.
+                    acceptsDestinationUpdates = false
                     let travel = max(0, value.translation.height)
                     progress = 1 - min(travel / dismissTravel, 1)
                 }
@@ -228,6 +272,7 @@ struct ClipExpansionContainer: View {
     /// `dismiss(animated:)`'s transition later than `present(animated:)`'s, so re-enabling
     /// on just the next run loop turn still let the slide play out.
     private func close() {
+        acceptsDestinationUpdates = false
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { progress = 0 }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
             UIView.setAnimationsEnabled(false)
@@ -244,6 +289,7 @@ struct ClipExpansionContainer: View {
     /// — see `deleteFadeOpacity`'s own comment for why. Same `setAnimationsEnabled`
     /// guard as `close()`, for the same reason.
     private func closeForDelete() {
+        acceptsDestinationUpdates = false
         withAnimation(.easeOut(duration: 0.22)) { deleteFadeOpacity = 0 }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
             UIView.setAnimationsEnabled(false)

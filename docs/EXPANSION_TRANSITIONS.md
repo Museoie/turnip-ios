@@ -257,18 +257,80 @@ measuredDestination = CGRect(
 ```
 
 This is correct at *any* `progress`, including `0`, so there's no more
-waiting and no more locking — `measuredDestination` stays live the same way
-`HomeExpansionContainer`'s already does, converges to the same value however
-early or late the first report arrives, and keeps tracking a destination
-that could in principle still change (a crop re-render, say) for the rest of
-the editor's lifetime. The one thing this needed to actually land correctly:
-`ClipEditorView.previewSection` used to report its frame unconditionally,
-including from its *own* loading-placeholder branch (an arbitrary 9:16
-rect) — dividing out the transform recovers whatever frame was reported
-faithfully, placeholder included, so a placeholder report would have handed
-this container a confidently-wrong destination instead of an admittedly
-rough one. `previewSection` now only reports from the branch that renders
-the real, aspect-correct preview.
+waiting and no more locking during the opening flight — convergence starts
+from the first report instead of only becoming trustworthy once `progress`
+is already most of the way to `1`. The one thing this needed to actually
+land correctly: `ClipEditorView.previewSection` used to report its frame
+unconditionally, including from its *own* loading-placeholder branch (an
+arbitrary 9:16 rect) — dividing out the transform recovers whatever frame
+was reported faithfully, placeholder included, so a placeholder report
+would have handed this container a confidently-wrong destination instead
+of an admittedly rough one. `previewSection` now only reports from the
+branch that renders the real, aspect-correct preview.
+
+Rev 2 initially *also* kept `measuredDestination` live for the rest of the
+editor's lifetime, the same way `HomeExpansionContainer`'s already does —
+reasoning that since the divide-out is correct at any `progress`, there was
+no more reason to stop accepting reports than `HomeExpansionContainer` has.
+That part was wrong; see Rev 3 below.
+
+## Rev 3: the live version of the fix above livelocked real devices
+
+*2026-10-03, same day.* Unlike `HomeExpansionContainer`, which applies no
+transform to its own content, `ClipExpansionContainer`'s `editorScale`/
+`editorOffsetX`/`editorOffsetY` — the transform `measuredDestination` is
+divided out of — are themselves computed *from* `measuredDestination`. Kept
+live for the container's whole lifetime, this is self-referential: each
+report feeds a value back into the next render's transform, which the next
+report then gets divided back out of. At a steady `progress` (fully open,
+fully closed) the system has one chance to converge and then goes quiet —
+no further reports arrive once `previewSection`'s on-screen frame stops
+moving. During an *animated* close, `progress` instead keeps moving
+continuously for the whole transition, whether driven by the back button's
+spring or the interactive swipe's 1:1 drag — both go through the exact same
+`onPreferenceChange` handler every intermediate frame — so the
+self-referential system gets perturbed continuously rather than settling
+once — a plausible mechanism for a livelock, inferred from the code's own
+structure, not something stepped through live.
+
+What's actually confirmed, from a user's device where the always-live
+version above froze on *every* close (never reproduced on the simulator,
+across several attempts — see "Measuring the destination without a race or
+a feedback loop" above for this doc's own history of exactly that kind of
+false negative): the main thread livelocked and never recovered on its own,
+and two debugger pauses taken a few seconds apart each landed inside a
+`CATransaction` commit — one inside SwiftUI's own graph update, the other
+25 frames into a `CALayer` tree walk — with no app code in either stack.
+That's real evidence of a genuine, unrecovering main-thread livelock
+triggered by closing the editor. It is *not* confirmation that this
+specific self-reference is the mechanism — two pauses can't show the thread
+cycling, only that it was busy with expensive internal work at two
+different moments. The fix below is the best structural candidate found,
+shipped on that basis; if a user's device still freezes after it, this
+inference was wrong and the real cause is still out there.
+
+Taking only the first report and freezing for good (tried first) turned
+out to be too aggressive: the earliest reports, sampled before
+`editorScale` has grown much past its starting value, are themselves still
+visibly off — a newly-mounted view's first geometry report doesn't yet
+reflect the real composited transform — and need a few more live updates
+to actually converge, which `ExpansionTransitionVerificationTests`
+(`testClipExpansionOpenConvergesToTheEditorsRealPreviewFrame`) caught
+immediately: the card latched onto the wrong frame and never corrected.
+
+The fix instead draws the boundary at the thing that's actually unstable —
+not "has a report arrived yet" but "could the user possibly be leaving":
+`measuredDestination` stays exactly as live as it was for the opening
+flight (where that liveness is the real fix and the existing regression
+test already proves it converges), gated by a new
+`acceptsDestinationUpdates` flag that's set `false` on the first touch-move
+of an interactive drag, or when `close()`/`closeForDelete()` runs, whichever
+comes first — covering a committed swipe, a cancelled one, the back button,
+and Delete alike, for the rest of the container's lifetime. A cancelled
+drag's snap-back to `progress == 1` is *not* a special case left live: by
+the time any drag can start, the opening flight converged long ago, so
+there's nothing left to gain from remeasuring through the cancel-spring
+either.
 
 ## Gesture ownership: why the dismiss drag can't live behind the content
 
