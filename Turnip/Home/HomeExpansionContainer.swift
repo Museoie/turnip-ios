@@ -114,7 +114,8 @@ struct HomeExpansionContainer<Content: View>: View {
                     .ignoresSafeArea()
 
                 content(closeHandlers)
-                    .opacity(contentOpacity)
+                    .modifier(CrossfadeCut(
+                        progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: true))
                     .allowsHitTesting(contentOpacity > 0.99)
                     .onPreferenceChange(ProcessingVideoFramePreferenceKey.self) { frame in
                         guard frame != .zero else { return }
@@ -123,7 +124,8 @@ struct HomeExpansionContainer<Content: View>: View {
 
                 cardLayer(rect: rect)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-                    .opacity(1 - contentOpacity)
+                    .modifier(CrossfadeCut(
+                        progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: false))
                     .allowsHitTesting(contentOpacity < 0.99)
             }
         }
@@ -174,9 +176,12 @@ struct HomeExpansionContainer<Content: View>: View {
         .accessibilityIdentifier("expansion-card")
     }
 
-    /// A hard cut, not a fade: below `crossfadeThreshold` the card is the only thing
-    /// visible, at/above it the real destination is — the two never co-fade at partial
-    /// opacity, so the swap reads as instant rather than a dissolve.
+    /// Only feeds `allowsHitTesting` now — see `ClipExpansionContainer.CrossfadeCut`
+    /// for why this plain computed property can't drive the layers' actual visibility
+    /// (a `body` getter only runs once per `withAnimation`-driven `progress` change, at
+    /// the target value, so a threshold test here only ever sees `progress`'s two
+    /// endpoints). That's still enough for hit-testing, which only needs to be right
+    /// once the flight has committed to a direction, not frame-by-frame mid-flight.
     private func contentOpacity(for progress: CGFloat) -> CGFloat {
         progress >= crossfadeThreshold ? 1 : 0
     }
@@ -236,5 +241,49 @@ struct HomeExpansionContainer<Content: View>: View {
                 UIView.setAnimationsEnabled(true)
             }
         }
+    }
+}
+
+/// The actual hard cut `contentOpacity`/`cardLayer`'s own `1 - contentOpacity` tried and
+/// failed to produce: a plain `View.body` getter is only ever invoked once per
+/// `withAnimation`-driven `progress` change, at the *target* value — for the
+/// tap-to-open/back-close/cancel-spring paths that means a threshold test like
+/// `progress >= crossfadeThreshold` only ever sees `progress`'s two endpoints (0 and 1),
+/// never an intermediate value, so it always evaluates to the same two opacities (0 and
+/// 1) a plain `.opacity()` modifier was already going to receive — and since `.opacity`
+/// is itself animatable, SwiftUI's own animation system then smoothly interpolates
+/// between those two opacities across the *entire* spring, reproducing exactly the
+/// cross-dissolve this container exists to avoid. (The interactive drag path never
+/// showed this: it writes `progress` directly, outside `withAnimation`, which forces a
+/// genuine `body` re-evaluation — and an un-animated opacity jump — on every touch-move.)
+///
+/// Conforming to `Animatable` fixes this the same way a custom `GeometryEffect` would:
+/// `progress` becomes this modifier's own `animatableData`, so SwiftUI calls
+/// `body(content:)` once per rendered frame with the *live* interpolated value for the
+/// whole duration of the spring, not just at the start and end — the threshold test
+/// actually fires partway through the flight instead of only ever comparing the two
+/// endpoints. `.transaction { $0.animation = nil }` on the inner `.opacity()` stops that
+/// per-frame discrete jump from itself being treated as a new animatable change and
+/// smoothed over whatever's left of the enclosing spring.
+///
+/// Duplicated from `ClipExpansionContainer`'s identical type rather than shared: see
+/// this file's own doc comment for why the two containers are siblings, not a generic.
+private struct CrossfadeCut: Animatable, ViewModifier {
+    var progress: CGFloat
+    let threshold: CGFloat
+    /// `true` for the real destination content (visible at/above `threshold`), `false`
+    /// for the card (visible below it) — the two are never both `true` at once.
+    let visibleAboveThreshold: Bool
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let isVisible = visibleAboveThreshold ? progress >= threshold : progress < threshold
+        content
+            .opacity(isVisible ? 1 : 0)
+            .transaction { $0.animation = nil }
     }
 }

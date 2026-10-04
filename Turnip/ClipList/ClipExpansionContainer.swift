@@ -142,7 +142,8 @@ struct ClipExpansionContainer: View {
                 .frame(width: screen.size.width, height: screen.size.height)
                 .scaleEffect(editorScale, anchor: .topLeading)
                 .offset(x: editorOffsetX, y: editorOffsetY)
-                .opacity(editorOpacity)
+                .modifier(CrossfadeCut(
+                    progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: true))
                 .allowsHitTesting(editorOpacity > 0.99)
                 .onPreferenceChange(ClipEditorPreviewFramePreferenceKey.self) { frame in
                     // See `acceptsDestinationUpdates`'s own doc comment for why this stops
@@ -157,7 +158,8 @@ struct ClipExpansionContainer: View {
 
                 cardLayer(rect: rect)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-                    .opacity(1 - editorOpacity)
+                    .modifier(CrossfadeCut(
+                        progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: false))
                     .allowsHitTesting(editorOpacity < 0.99)
             }
             .opacity(deleteFadeOpacity)
@@ -199,9 +201,12 @@ struct ClipExpansionContainer: View {
         .accessibilityIdentifier("expansion-card")
     }
 
-    /// A hard cut, not a fade: below `crossfadeThreshold` the card is the only thing
-    /// visible, at/above it the real editor is — the two never co-fade at partial
-    /// opacity, so the swap reads as instant rather than a dissolve.
+    /// Only feeds `allowsHitTesting` now — see `CrossfadeCut` for why this plain
+    /// computed property can't drive the layers' actual visibility. Since `body` only
+    /// ever runs once per `withAnimation`-driven `progress` change (at the *target*
+    /// value), this returns the same two endpoints `CrossfadeCut` does, which is all
+    /// hit-testing needs: it only has to be right once the flight has fully committed
+    /// to a direction, not frame-by-frame mid-flight.
     private func editorOpacity(for progress: CGFloat) -> CGFloat {
         progress >= crossfadeThreshold ? 1 : 0
     }
@@ -300,5 +305,46 @@ struct ClipExpansionContainer: View {
                 UIView.setAnimationsEnabled(true)
             }
         }
+    }
+}
+
+/// The actual hard cut `editorOpacity`/`cardLayer`'s own `1 - editorOpacity` tried and
+/// failed to produce: a plain `View.body` getter is only ever invoked once per
+/// `withAnimation`-driven `progress` change, at the *target* value — for the
+/// tap-to-open/back-close/cancel-spring paths that means a threshold test like
+/// `progress >= crossfadeThreshold` only ever sees `progress`'s two endpoints (0 and 1),
+/// never an intermediate value, so it always evaluates to the same two opacities (0 and
+/// 1) a plain `.opacity()` modifier was already going to receive — and since `.opacity`
+/// is itself animatable, SwiftUI's own animation system then smoothly interpolates
+/// between those two opacities across the *entire* spring, reproducing exactly the
+/// cross-dissolve this container exists to avoid. (The interactive drag path never
+/// showed this: it writes `progress` directly, outside `withAnimation`, which forces a
+/// genuine `body` re-evaluation — and an un-animated opacity jump — on every touch-move.)
+///
+/// Conforming to `Animatable` fixes this the same way a custom `GeometryEffect` would:
+/// `progress` becomes this modifier's own `animatableData`, so SwiftUI calls
+/// `body(content:)` once per rendered frame with the *live* interpolated value for the
+/// whole duration of the spring, not just at the start and end — the threshold test
+/// actually fires partway through the flight instead of only ever comparing the two
+/// endpoints. `.transaction { $0.animation = nil }` on the inner `.opacity()` stops that
+/// per-frame discrete jump from itself being treated as a new animatable change and
+/// smoothed over whatever's left of the enclosing spring.
+private struct CrossfadeCut: Animatable, ViewModifier {
+    var progress: CGFloat
+    let threshold: CGFloat
+    /// `true` for the real editor content (visible at/above `threshold`), `false` for
+    /// the card (visible below it) — the two are never both `true` at once.
+    let visibleAboveThreshold: Bool
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let isVisible = visibleAboveThreshold ? progress >= threshold : progress < threshold
+        content
+            .opacity(isVisible ? 1 : 0)
+            .transaction { $0.animation = nil }
     }
 }

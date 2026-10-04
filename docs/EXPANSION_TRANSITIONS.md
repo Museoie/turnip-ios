@@ -1,5 +1,11 @@
 # Photos-style expansion transitions
 
+*Rev 4 · 2026-10-04.* Rev 2 (below) believed it had replaced the card/destination
+cross-fade with an instant cut. It hadn't, for every `withAnimation`-driven flight
+(tap-to-open, back-button-close, the cancel-spring) — see "Rev 4: the cut Rev 2
+thought it shipped was still a fade" near the end of this doc for the mechanism,
+how it was confirmed, and the actual fix.
+
 *Rev 2 · 2026-10-03.* Rev 1 described a cross-*fade* between the card and the
 real destination, and a destination measurement that — for
 `ClipExpansionContainer` — only ever locked in once `progress` had already
@@ -332,6 +338,86 @@ the time any drag can start, the opening flight converged long ago, so
 there's nothing left to gain from remeasuring through the cancel-spring
 either.
 
+## Rev 4: the cut Rev 2 thought it shipped was still a fade
+
+*2026-10-04.* Reported symptoms: the growing layer looked semi-transparent during
+the flight, and there was a subtle but persistent-feeling gap between where the
+expand/shrink motion topped out and the real destination's video frame
+(`ProcessingView` and `ClipEditorView` both). Both traced to the same cause, and
+Rev 2's "replace the cross-fade with an instant cut" fix (`editorOpacity`/
+`contentOpacity`'s `progress >= crossfadeThreshold ? 1 : 0`) never actually took
+effect for any `withAnimation`-driven flight — tap-to-open, back-button-close, the
+cancel-spring. Only the interactive drag (which writes `progress` directly,
+outside `withAnimation`) ever saw the step function behave like one.
+
+**Why.** A SwiftUI `View`'s `body` is a computed property, not a per-frame
+callback. `withAnimation(.spring…) { progress = 1 }` evaluates `body` *once*, at
+the new state's target value (`progress == 1`) — not at any of the values the
+spring will actually pass through on the way there. `editorOpacity(for:)` is a
+plain function of that single `progress` value, so for the whole 0.3s flight it
+only ever gets asked about the two endpoints (`0` and `1`), never anything
+in between — exactly the two inputs a plain `.opacity()` modifier was already
+going to receive. But `.opacity()` is itself `Animatable`: SwiftUI's own render
+loop takes those two endpoint values and interpolates between them using the
+*same* spring, smoothly, across the entire flight — reproducing, frame for
+frame, the cross-dissolve this feature exists to not have. The geometry
+(`.frame`/`.position`/`.scaleEffect`/`.offset`) was never broken this way —
+`currentRect` is linear in `progress`, so interpolating its two endpoint values
+gives the same answer as evaluating it continuously would — only the *step
+function* lost information by being evaluated solely at the endpoints.
+
+This also explains the "gap": since opacity and geometry were being interpolated
+by the identical spring curve, the moment either layer crossed into
+human-visibility (some non-trivial opacity) corresponded to the *same* fraction
+of the geometry's growth — on open, the card was still fading in size when it
+first became legible, so it visually seemed to stop short of the real frame; on
+close, the reverse. The settled, static endpoint was always pixel-correct (the
+existing `ExpansionTransitionVerificationTests` frame comparisons were measuring
+exactly that, long after the animation had finished, which is why they kept
+passing throughout) — the gap was only ever visible mid-flight.
+
+**Confirmed, not assumed** — this doc has enough history of fixes that looked
+right on paper and weren't (see "A verification note" below) to not repeat that
+here. A `print()` inside `contentOpacity(for:)`, read via `xcrun simctl launch
+--console-pty` (the one mechanism in this codebase's own notes that reliably
+captures `print()`, not `log stream`), showed exactly two calls for the entire
+open flight:
+```
+SCRATCH_OLD_OPACITY progress=0.0 result=0.0
+SCRATCH_OLD_OPACITY progress=1.0 result=1.0
+```
+— proving the step function never ran against an intermediate value, for a real
+on-device flight, not a theoretical one.
+
+**The fix** can't live in a computed property no matter how it's written — it
+needs `body` itself (or an equivalent) to be re-invoked at intermediate
+`progress` values. `CrossfadeCut`, a `ViewModifier` conforming to `Animatable`
+with `progress` as its own `animatableData`, does exactly that: SwiftUI drives a
+custom `Animatable` type's `animatableData` through the spring itself, calling
+`body(content:)` once per rendered frame with the *live* interpolated value —
+the same mechanism a custom `GeometryEffect` uses for frame-accurate shape
+animation, applied here to a visibility cut instead. `.transaction { $0.animation
+= nil }` on the inner `.opacity()` stops that per-frame discrete jump from being
+treated as yet another animatable change and smoothed over whatever's left of
+the spring. Re-verified the same way, post-fix:
+```
+SCRATCH_CROSSFADE above=false progress=0.8334805370860541 visible=true
+SCRATCH_CROSSFADE above=true  progress=0.8334805370860541 visible=false
+SCRATCH_CROSSFADE above=false progress=0.8713415891185463 visible=false
+SCRATCH_CROSSFADE above=true  progress=0.8713415891185463 visible=true
+```
+36 calls across the one flight, converging smoothly from `progress ≈ 0` through
+every intermediate value to `1.0`, with the visibility swap landing tight against
+`crossfadeThreshold` (between `0.8335` and `0.8713`) instead of at one of the two
+endpoints.
+
+Duplicated as `CrossfadeCut` in both `ClipExpansionContainer.swift` and
+`HomeExpansionContainer.swift` rather than shared, consistent with how the rest
+of each container's logic is independently implemented (see this doc's own
+intro). `editorOpacity`/`contentOpacity` stay, unchanged, as the (correct, since
+hit-testing only needs the two endpoints) gate for `allowsHitTesting` — they just
+no longer drive the layers' actual visibility.
+
 ## Gesture ownership: why the dismiss drag can't live behind the content
 
 A `NavigationStack` is backed by a real `UIViewController`. A SwiftUI
@@ -620,6 +706,21 @@ app`-style memory note captures the reusable parts of the recipe (recording
    destination correctness has to be inferred from the open direction's
    (same `measuredDestination`, same `currentRect`, no separate computation
    close performs) rather than independently screenshotted.
+7. **A frame-accessible geometry regression test cannot catch a pure-opacity
+   bug.** `ExpansionTransitionVerificationTests` samples the card's *settled*
+   frame, well after any animation finished, so it kept passing throughout Rev
+   2's own fade-that-wasn't-removed (Rev 4 above) — the geometry it checks was
+   never wrong, only the opacity *during* the flight was. When the suspect
+   behavior is "something is animating that shouldn't be" rather than "the
+   wrong value was computed," the decisive check is counting how many times a
+   value-producing function actually gets called, not reading its settled
+   output: a `print()` inside the suspect computed property, captured live via
+   `xcrun simctl launch --console-pty` (lesson 4's own technique — plain
+   `print()`, not `log stream`), showed the pre-Rev-4 opacity function was
+   called exactly twice for an entire spring-driven flight (`progress=0.0`,
+   then `progress=1.0`) — conclusive proof `body` only ever saw the two
+   endpoints, in a way no amount of re-reading the `progress >=
+   crossfadeThreshold` line would have surfaced.
 
 `TurnipUITests/ExpansionTransitionVerificationTests.swift` is where Rev 2's
 own fix was actually verified against the running app rather than just
