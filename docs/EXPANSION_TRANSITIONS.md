@@ -517,3 +517,60 @@ app`-style memory note captures the reusable parts of the recipe (recording
      *own* sampling interval is shorter than the suspected glitch duration.
      If it isn't, a clean result only means the method didn't happen to
      catch it this time — not that the bug is gone.
+
+4. **Plain `print()` never reaches `simctl ... log stream`, at any
+   predicate.** Unlike `NSLog`/`os_log` (lesson 3's own caveat about
+   throttling still applies to those), a bare Swift `print()` writes
+   straight to the process's stdout file descriptor and never enters the
+   unified logging subsystem `log stream` taps — a `print()` added to debug
+   Rev 2's destination math produced zero matches against every predicate
+   tried, including one scoped to the exact process name, with the log
+   otherwise visibly flowing. What worked: `xcrun simctl launch
+   --console-pty <device> <bundle-id> <launch-args>`, which attaches to the
+   app's real stdout/stderr and streams `print()` output directly — the
+   same mechanism this doc's own `ScreenshotTests.addScreenshot(named:)`
+   relies on when it prints a result for `xcodebuild test`'s own log to
+   capture, except that capture path is the *test runner* process's stdout,
+   not the *app-under-test* process's, and the two aren't interchangeable.
+5. **An `Image().resizable().scaledToFill().clipped()`'s accessibility
+   frame is its pre-clip, filled size — not the outer `.frame().clipped()`
+   box.** Giving `cardLayer`'s `Image` an `accessibilityIdentifier` to let a
+   UI test read its laid-out rect (see below) is the right idea, but if the
+   source image's aspect ratio doesn't match the box it's being fit into,
+   XCUITest reports the *overflowed* rendered size the image would have
+   before clipping, not the visible clipped rect — a test built around a
+   deliberately square synthetic thumbnail against a deliberately
+   non-square destination read back a confidently wrong frame for exactly
+   this reason, with no error, before the mismatch was traced to the
+   thumbnail's own aspect ratio rather than to the geometry under test.
+   Giving the synthetic thumbnail the same aspect ratio as the destination
+   it's meant to land in sidesteps this; it isn't a bug in `cardLayer`, just
+   a property of how `Image` accessibility nodes report their frame.
+6. **`UIView.setAnimationsEnabled(false)` — the same call `close()` uses
+   deliberately, see "Suppressing the system's own dismissal animation" —
+   also blocks XCUITest's own accessibility snapshot for as long as it's in
+   effect.** A UI test that samples the flying card's frame partway through
+   a close, to verify it lands on the right `sourceFrame`, reliably timed
+   out or hung for ~30s trying to take a snapshot during exactly the
+   ~0.42s–0.92s window `close()` holds animations disabled — reproduced
+   across a simulator reboot, so not host flakiness. There's no known
+   workaround short of not sampling in that window; the close direction's
+   destination correctness has to be inferred from the open direction's
+   (same `measuredDestination`, same `currentRect`, no separate computation
+   close performs) rather than independently screenshotted.
+
+`TurnipUITests/ExpansionTransitionVerificationTests.swift` is where Rev 2's
+own fix was actually verified against the running app rather than just
+re-read as a diff, and it stays in the tree as a regression test against
+these two specific bugs recurring — run it directly
+(`-only-testing:TurnipUITests/ExpansionTransitionVerificationTests`) the
+next time either container's destination math changes. It leans on the
+same accessibility-frame-reads-geometry-regardless-of-opacity property the
+`"expansion-card"` identifier on each container's card layer exists for,
+and, for `HomeExpansionContainer` specifically — which needs a real
+`PHAsset` to reach through the app's own UI, the thing `ScreenshotHomeHarness`'s
+own doc comment already flags as unscriptable — drives the container
+directly via `ScreenshotHomeExpansionHarness` (`-screenshotHomeExpansion`)
+with a synthetic non-square `initialAspectRatio` and a `content` that never
+reports a measurement, isolating `fallbackDestination` from everything else
+the container does.
