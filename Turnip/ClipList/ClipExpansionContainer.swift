@@ -329,11 +329,11 @@ struct ClipExpansionContainer: View {
         guard !hasStartedOpenFlight, force || (isSeekedToSource && isSurfaceReady) else { return }
         hasStartedOpenFlight = true
         onFlightStarted()
-        ExpansionFlightGeometry.animateFlight({ progress = 1 }) {
+        ExpansionFlightGeometry.animateFlight({ progress = 1 }, completion: {
             guard !isClosing else { return }
             setLanded(true)
             viewModel.releasePlayback()
-        }
+        })
         scrubber.animate(from: sourceTime, to: viewModel.window.startTime, duration: flightDuration)
     }
 
@@ -376,11 +376,11 @@ struct ClipExpansionContainer: View {
     /// started on, then resumes playback if the user hadn't paused it.
     private func cancelDrag() {
         if progress < 1 {
-            ExpansionFlightGeometry.animateFlight({ progress = 1 }) {
+            ExpansionFlightGeometry.animateFlight({ progress = 1 }, completion: {
                 // Not if another drag has started, or a close, while this snap-back ran.
                 guard dragTranslation == nil, !isClosing else { return }
                 setLanded(true)
-            }
+            })
         } else {
             // The drag never moved the card (it only ever went up), so there is nothing to
             // animate and no completion to wait for.

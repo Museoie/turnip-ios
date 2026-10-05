@@ -649,7 +649,9 @@ struct ProcessingView<Destination: View>: View {
                         .ignoresSafeArea()
                         // Hands the player itself outward too, so the expansion transition's
                         // card can draw the same frames this stage draws and scrub them on close.
-                        .preference(key: ProcessingPlayerPreferenceKey.self, value: ProcessingPlayerHandle(player: player))
+                        .preference(
+                            key: ProcessingPlayerPreferenceKey.self,
+                            value: ProcessingPlayerHandle(player: player))
                 }
             }
             // The backdrop and the picture: an expansion flight's card draws both until it

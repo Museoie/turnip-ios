@@ -192,10 +192,10 @@ struct HomeExpansionContainer<Content: View>: View {
         .ignoresSafeArea()
         .onAppear {
             onFlightStarted()
-            ExpansionFlightGeometry.animateFlight({ progress = 1 }) {
+            ExpansionFlightGeometry.animateFlight({ progress = 1 }, completion: {
                 guard !isClosing, dragScrubOrigin == nil else { return }
                 setLanded(true)
-            }
+            })
         }
     }
 
@@ -332,11 +332,11 @@ struct HomeExpansionContainer<Content: View>: View {
         let origin = dragScrubOrigin
         dragScrubOrigin = nil
         if progress < 1 {
-            ExpansionFlightGeometry.animateFlight({ progress = 1 }) {
+            ExpansionFlightGeometry.animateFlight({ progress = 1 }, completion: {
                 // Not if another drag has started, or a close, while this snap-back ran.
                 guard dragScrubOrigin == nil, !isClosing else { return }
                 setLanded(true)
-            }
+            })
         } else {
             // The drag never moved the card (it only ever went up), so there is nothing to
             // animate and no completion to wait for.
