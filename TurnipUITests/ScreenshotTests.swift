@@ -197,7 +197,22 @@ final class ScreenshotTests: XCTestCase {
         let trimRange = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label == 'Trim range 2.0s to 5.0s'"))
             .firstMatch
-        XCTAssertTrue(trimRange.waitForExistence(timeout: 45))
+        // Fail fast, and with a reason, if the harness degraded to its load-failure
+        // fallback: without this, a sample-movie encode that failed on a loaded CI
+        // runner (see `ScreenshotHarness.appendSolidFrame`) showed up only as this
+        // wait silently running out its full 45s — indistinguishable from "slow".
+        let loadFailure = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Couldn't load this clip"))
+            .firstMatch
+        let deadline = Date().addingTimeInterval(45)
+        while Date() < deadline, !trimRange.exists {
+            XCTAssertFalse(
+                loadFailure.exists,
+                "editor reached its load-failure state: the harness's sample movie failed to encode")
+            if loadFailure.exists { return }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        XCTAssertTrue(trimRange.exists, "trim range never loaded within 45s")
         addScreenshot(named: "clip-editor")
     }
 

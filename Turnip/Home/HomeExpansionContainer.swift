@@ -97,7 +97,10 @@ struct HomeExpansionContainer<Content: View>: View {
     /// Below this, the real destination is invisible and the card alone carries the geometry;
     /// above it, the two crossfade. See `ClipExpansionContainer`'s own constant for why: late
     /// enough that chrome/controls never have to be legible mid-shrink.
-    private let crossfadeThreshold: CGFloat = 0.85
+    private let crossfadeThreshold: CGFloat = 0.999
+    /// See `ClipExpansionContainer.flightDuration` for why this is a timing curve's
+    /// explicit duration and not a spring `response`.
+    private let flightDuration: TimeInterval = 1
     private let dismissTravel: CGFloat = 420
     private let sourceCornerRadius: CGFloat = 8
 
@@ -111,7 +114,6 @@ struct HomeExpansionContainer<Content: View>: View {
             // plain values, not something it re-evaluates itself.
             let source = lockedSourceFrame ?? sourceFrame() ?? fallbackSourceFrame(in: destination.size)
             let contentOpacity = self.contentOpacity(for: progress)
-            let cornerRadius = sourceCornerRadius * (1 - progress)
 
             ZStack {
                 Color.black
@@ -128,16 +130,17 @@ struct HomeExpansionContainer<Content: View>: View {
                     }
 
                 cardLayer(destination: destination)
-                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
                     .modifier(CrossfadeCut(
                         progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: false))
+                    // Outside `CrossfadeCut`, deliberately — see the identical call site in
+                    // `ClipExpansionContainer` for why the order is load-bearing.
                     .modifier(CardFlightEffect(progress: progress, sourceFrame: source, destination: destination))
                     .allowsHitTesting(contentOpacity < 0.99)
             }
         }
         .ignoresSafeArea()
         .onAppear {
-            withAnimation(.spring(response: 1, dampingFraction: 1)) { progress = 1 }
+            withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
         }
     }
 
@@ -153,11 +156,11 @@ struct HomeExpansionContainer<Content: View>: View {
                 if committing {
                     close()
                 } else {
-                    withAnimation(.spring(response: 1, dampingFraction: 0.9)) { progress = 1 }
+                    withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
                 }
             },
             dismissCancelled: {
-                withAnimation(.spring(response: 1, dampingFraction: 0.9)) { progress = 1 }
+                withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
             })
     }
 
@@ -178,11 +181,13 @@ struct HomeExpansionContainer<Content: View>: View {
         }
         .frame(width: destination.width, height: destination.height)
         .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: sourceCornerRadius * (1 - progress)))
         .position(x: destination.midX, y: destination.midY)
-        // Lets a UI test read this layer's live laid-out frame (accessibility reports
-        // geometry independent of its current opacity) to verify it tracks the real
-        // destination rather than a placeholder — see `docs/EXPANSION_TRANSITIONS.md`'s
-        // "Measuring the destination without a race or a feedback loop".
+        // Lets a UI test read this layer's laid-out (pre-transform, i.e. settled)
+        // frame — accessibility reports geometry independent of opacity — to verify it
+        // tracks the real destination rather than a placeholder; see
+        // `docs/EXPANSION_TRANSITIONS.md`'s "Measuring the destination without a race
+        // or a feedback loop". It cannot see the live transform (Rev 7).
         .accessibilityIdentifier("expansion-card")
     }
 
@@ -227,8 +232,8 @@ struct HomeExpansionContainer<Content: View>: View {
     /// did not.
     private func close() {
         lockedSourceFrame = sourceFrame()
-        withAnimation(.spring(response: 1, dampingFraction: 0.85)) { progress = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+        withAnimation(.easeInOut(duration: flightDuration)) { progress = 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + flightDuration + 0.05) {
             UIView.setAnimationsEnabled(false)
             var transaction = Transaction()
             transaction.disablesAnimations = true
@@ -319,6 +324,8 @@ private struct CardFlightEffect: GeometryEffect {
 
     func effectValue(size: CGSize) -> ProjectionTransform {
         let rect = liveRect(progress: progress, sourceFrame: sourceFrame, destination: destination)
+        // Applied to the post-`.position` layer, whose local origin is the screen's —
+        // see `ClipExpansionContainer.CardFlightEffect` for the derivation.
         let scaleX = rect.width / max(destination.width, 1)
         let scaleY = rect.height / max(destination.height, 1)
         let offsetX = rect.minX - destination.minX * scaleX

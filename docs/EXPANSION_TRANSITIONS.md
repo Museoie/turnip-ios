@@ -1,5 +1,16 @@
 # Photos-style expansion transitions
 
+*Rev 7 · 2026-10-05.* Rev 6 below was reported, correctly, as having fixed
+neither the duration nor the gap. Two root causes, both in plain sight and both
+missed by every earlier verification: the card/content cut fired at `progress =
+0.85`, i.e. with the card still 15% short of the destination — a hard size pop
+at the end of every open, which *was* the "gap" — and a critically-damped
+spring does most of its travel in the first ~0.65s, so the growth never read
+as a second long. The flight is now an explicit 1s timing curve and the cut
+happens at `progress ≈ 1`. See "Rev 7" near the end for the mechanism and,
+more importantly, for the redesigned verification that measures what a user
+sees instead of what the code computes.
+
 *Rev 6 · 2026-10-04.* The open/close spring's `response` moved from `0.3`/`0.29`
 to `1` (a ~1s flight, measured — not assumed — to actually be what that value
 produces), and the card's geometry (`rect`, driving its `.frame`/`.position`)
@@ -117,13 +128,15 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
   and the destination frame, lerping center and size separately so it grows
   from its own middle rather than a corner (`currentRect(destination:)` in
   both files).
-- The **real destination content**, hidden entirely below the last 15% of
-  `progress` (`crossfadeThreshold = 0.85`) and shown entirely at/above it —
-  an instant cut, not a fade: `editorOpacity`/`contentOpacity` are a step
-  function, so the two layers are never both partially visible at once. Late
-  enough that toolbar/control text is never legible mid-shrink, early enough
-  that the swap still reads as one continuous motion with the geometry flight
-  around it. `ClipExpansionContainer` additionally scales/offsets the real
+- The **real destination content**, hidden for the entire flight and cut in
+  only once the card has actually arrived (`crossfadeThreshold = 0.999`, i.e.
+  `progress ≈ 1`) — an instant cut, not a fade, and at the one point where the
+  card's rect equals the content's settled frame, so nothing pops. (Through
+  Rev 6 this was `0.85`: the card was swapped out while still 15% of the
+  distance short, which was the "sizing gap" bug — see Rev 7.) On close, the
+  same threshold hands back to the card on the first frame of travel, so
+  toolbar/control text is never seen mid-shrink. `ClipExpansionContainer`
+  additionally scales/offsets the real
   `ClipEditorView` to match the growing rect, since its destination is the
   editor's own crop-hole preview, not the full screen. `HomeExpansionContainer`
   never scales/offsets its content — only the hard-cut visibility swap — but
@@ -139,20 +152,21 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
   below), not faded — there's nothing animating that hide, so it was never the
   source of a visible fade; the one that was visible was the crossfade this
   rev replaced.
-- `progress` is driven by a critically-damped spring (`.spring(response:
-  1, dampingFraction: 1)`) for tap-to-open, a slightly bouncier one
-  (`response: 1, dampingFraction: 0.85`) for the reverse close flight, and
-  1:1 by live drag translation for an interactive dismiss — the same
-  geometry/opacity math serves all three, so there's no separate
-  "interactive" rendering branch, only a different thing writing to
-  `progress`. `response` isn't literally the flight's duration — for
-  `dampingFraction: 1` it settles (per a `print()`-instrumented on-device
-  measurement, not the naive assumption that `response` ≈ duration) to 99%
-  in ~1.1s and fully by ~1.4s for `response: 1`, which is what "about a
-  one-second flight" actually maps to.
+- `progress` is driven by `.easeInOut(duration: flightDuration)` with
+  `flightDuration = 1` for tap-to-open, the reverse close flight, and the
+  cancel-snap-back, and 1:1 by live drag translation for an interactive
+  dismiss — the same geometry/opacity math serves all of them, so there's no
+  separate "interactive" rendering branch, only a different thing writing to
+  `progress`. An explicit-duration curve rather than a spring: the
+  `.spring(response: 1, …)` Revs 5–6 used does ~85% of its travel in the first
+  ~0.65s and then crawls, so the *visible* growth never read as a second even
+  though `progress` technically took ~1.5s to settle — see Rev 7. (The
+  Photos-measured spring constants in "Research" above still describe the
+  *interactive* feel; the open/close duration is now a product decision, not
+  a spring parameter.)
 - **Close** always runs the same two steps: animate `progress` back to 0,
-  then — once that's visually landed (a fixed delay matching the spring's
-  settle time, not a completion callback) — call the real `dismiss()`,
+  then — once that's visually landed (`flightDuration + 0.05`, not a
+  completion callback) — call the real `dismiss()`,
   suppressing the system's own cover-dismissal transition the same two-layer
   way the open side suppresses its presentation animation (see "Suppressing
   the system's own dismissal animation" below) so it doesn't layer a second
@@ -782,6 +796,97 @@ there, since Home's `content` never has a transform applied to it at all
 (only the opacity cut), so there was never an editor-side self-reference
 risk to avoid in the first place.
 
+## Rev 7: the cut was in the wrong place, and the verification measured the wrong thing
+
+*2026-10-05.* Rev 6 shipped with a log showing `progress` following a ~1s
+curve and `rect` continuous through the destination retarget, and was reported
+back as fixing neither request. Both reports were correct. The two causes:
+
+**The cut at `crossfadeThreshold = 0.85` was itself the gap.** `currentRect`
+only reaches `destination` at `progress == 1`. Swapping to the real content at
+`0.85` swapped a card that was still 15% of the tile-to-destination distance
+short for content already sitting at 100% — a hard pop at the end of every
+open. For `HomeExpansionContainer`, whose content has no transform at all, that
+is the full 15% (a ~190pt tile growing to 393pt pops ~30pt). For
+`ClipExpansionContainer` the editor's own uniform scale/offset started from a
+value computed against the *fallback* square, so it never quite coincided
+with the card either. This was the user's "gap between the maximum size of the
+expansion and the video frame" from the very first report — Rev 2's fade had
+smeared it, Rev 4's hard cut made it crisp, and Revs 5–6 chased the
+destination retarget instead, which was a real but *separate* defect. The
+threshold is now `0.999`: fractionally under `1` only so an interactive
+drag's first touch-move already hands back to the card.
+
+**`.spring(response: 1, dampingFraction: 1)` is not a one-second expansion.**
+It reaches 85% of its travel at ~0.65s and 95% at ~0.8s, then crawls toward
+1.0 until ~1.5s. The card's visible growth therefore read as well under a
+second, ended with the pop above, and the only thing that visibly lasted a
+second was the scrim fading in — exactly the "you lengthened a cross fade, not
+the expansion" report. Rev 6's own calibration note ("settles to 99% in ~1.1s")
+was true and beside the point. The flight is now `.easeInOut(duration:
+flightDuration)` with `flightDuration = 1`: it ends at exactly `1.0` at
+exactly one second, and the dismiss delay is `flightDuration + 0.05` instead
+of a spring-settle guess.
+
+**Why five revisions of verification missed both.** Every check measured
+something the code *computes* — `progress`'s curve, `rect`'s continuity, the
+card's *settled* accessibility frame — and none measured what the user
+*sees*: how long the card is visibly growing, and whether the card's frame at
+the instant it disappears equals the frame of what replaces it. The settled
+frame is correct in every revision; the problem was never at settle. A log
+that `progress` reaches `0.99` at 1.1s says nothing about when the growth
+stopped being perceptible.
+
+**The redesigned verification**, run against the real `ClipListView` tap flow
+(not the direct-mount harness — Rev 6 already recorded why that hides timing):
+
+1. *Duration, as the user sees it:* a timestamped `NSLog("T0")` in `onAppear`
+   and one in `CrossfadeCut` on every frame, via `simctl spawn … log stream`.
+   The number that matters is the wall-clock delta from `T0` to the first
+   frame the editor instance reports `visible`, because that is when the
+   card's growth is replaced by the content. Result: **+1.038s** (and
+   `+1.052s` on a second run).
+2. *Gap, at the only instant it can exist:* `CardFlightEffect.effectValue`
+   logs `rect` and `destination` every frame; the last `rect` logged before
+   the cut is compared against `destination`. Result:
+   `rect=(51.6, 129.0, 290.3×514.9)` vs `dest=(51.2, 129.0, 290.5×515.7)` —
+   under 1pt on every edge. Under Rev 6's `0.85` cut the same measurement
+   would have shown `rect` ≈ 15% of the distance short, which is how this
+   check would have caught the original bug.
+3. *Liveness guard:* the number of `effectValue` calls between `T0` and the
+   cut — **121** on a ~1s flight, i.e. per-frame. A handful means the effect
+   isn't animating; thousands means a feedback loop (Rev 6).
+4. *Eyes:* `XCUIScreen.main.screenshot()` at ~180ms intervals after the tap,
+   exported from the `.xcresult` and actually looked at. At 0.70s the card
+   is roughly a third of the way; at 0.88s about two-thirds; at 1.06s
+   essentially there. Growth is visibly still happening past 0.9s, which
+   no earlier revision could have claimed.
+
+Two things that pass of checks 1–3 and the screenshots caught, recorded
+because they're the kind of mistake that will recur:
+
+- The log said the card's `rect` was correct while a screenshot showed the
+  card ~150pt to the right of where it "should" be. The log was right: the
+  tapped tile (`label == 'Open clip'`) is the **top-right** tile in
+  `-screenshotClipListMedia`, with `sourceFrame.minX = 200.5`, not the
+  top-left one. Reading `sourceFrame` out of the first `effectValue` log line
+  before interpreting a screenshot would have avoided a wrong "fix" (moving
+  `CardFlightEffect` before `.position`) that then broke the live calls.
+- That wrong fix produced its own clean signal: 6 `effectValue` calls instead
+  of 121. Applying the effect inside `.position` puts it *under*
+  `CrossfadeCut`, whose `.transaction { $0.animation = nil }` applies to its
+  whole subtree, so the nested `Animatable` never interpolates and the card
+  snaps to its final size. Third independent observation of the same rule
+  (Rev 6 saw it twice and misattributed it): **any `Animatable` whose
+  interpolation matters must be applied *outside* `CrossfadeCut`.** Check 3
+  is what makes this visible immediately.
+
+`CardFlightEffect` is therefore applied after `.position`, outermost, with
+its transform expressed in the post-`.position` layer's space (origin at the
+screen's, since the enclosing `GeometryReader` is edge to edge):
+`scale = rect.size / destination.size`, `offset = rect.min - destination.min *
+scale`. Both containers.
+
 ## Gesture ownership: why the dismiss drag can't live behind the content
 
 A `NavigationStack` is backed by a real `UIViewController`. A SwiftUI
@@ -1137,11 +1242,49 @@ app`-style memory note captures the reusable parts of the recipe (recording
     trigger a parent layout pass that re-invokes the modifier, which
     requests another new layout — confirmed as tens of thousands of calls
     in under a minute for what should be a ~60–120 Hz, ~1.5s flight. The
-    fix isn't about nesting order relative to other `Animatable` modifiers
-    (plausible-looking red herring, explored at length — see Rev 6 above);
-    it's using `GeometryEffect`, whose `effectValue(size:)` runs at render
-    time against an *already-settled* layout size and returns a transform,
-    with structurally no path back into another layout pass.
+    fix for the *loop* is using `GeometryEffect`, whose `effectValue(size:)`
+    runs at render time against an *already-settled* layout size and returns
+    a transform, with structurally no path back into another layout pass.
+    (Rev 6 also called nesting order "a red herring". Rev 7 corrected that:
+    order does matter, for a different reason — see lesson 14.)
+12. **Verify the thing the user described, not the thing the code computes.**
+    Revs 2–6 each shipped with a passing check, and every check was of an
+    internal value: `progress`'s curve, `rect`'s continuity, the card's
+    *settled* accessibility frame. The two reported symptoms — "the expansion
+    doesn't take a second" and "there's a gap between the expansion's final
+    size and the video frame" — translate to two measurable quantities that no
+    revision had measured: wall-clock from flight start to the frame the
+    content replaces the card, and the card's rect on its last visible frame
+    vs. the content's frame. Rev 7's checks 1–2 are exactly those; both would
+    have failed on every earlier revision. Before declaring an animation bug
+    fixed, write down the user's sentence and the one number that would make
+    it false, then measure that number.
+13. **Read the inputs out of the log before interpreting a screenshot.** A
+    screenshot showed the card ~150pt right of where it "should" be while the
+    log said `rect` was correct. The log was right: the tapped tile in
+    `-screenshotClipListMedia` is the top-right one (`sourceFrame.minX =
+    200.5`). Acting on the screenshot alone produced a wrong "fix" that
+    broke the animation (lesson 14). The first log line of a flight carries
+    `sourceFrame` and `destination`; check them first.
+14. **Any `Animatable` whose interpolation matters goes *outside*
+    `CrossfadeCut`, never inside.** `CrossfadeCut` ends in `.transaction {
+    $0.animation = nil }`, which applies to its whole subtree, so a nested
+    `Animatable` never receives per-frame values and snaps to its target.
+    Observed three times (Rev 6 twice, Rev 7 once) with the same signature:
+    a single-digit call count from the inner effect against ~120 from
+    `CrossfadeCut` over the same flight. That call-count ratio is the fast
+    check — see Rev 7's check 3.
+15. **A bounded spin that silently degrades to a fallback turns a slow CI
+    runner into an unexplained timeout.** `ScreenshotHarness.appendSolidFrame`
+    waited at most 500 × 2ms for the encoder, then appended anyway; on a
+    loaded shared runner `append` failed, the harness fell back to
+    `/dev/null`, the editor showed its load-failure state, and
+    `ScreenshotTests.testClipEditor` ran out its full 45s with no diagnostic
+    (CI run 37261809377, the first after Rev 6 — 6–14s on every earlier
+    green run, 73s then). Two fixes, both needed: bound such waits by wall
+    clock with a generous budget, and make the test assert the failure state
+    is *absent* while it waits, so a degraded harness fails in seconds with a
+    reason instead of in a minute with none.
 
 `TurnipUITests/ExpansionTransitionVerificationTests.swift` is where Rev 2's
 own fix was actually verified against the running app rather than just

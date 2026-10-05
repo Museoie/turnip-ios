@@ -252,13 +252,20 @@ private func appendSolidFrame(
 ) throws {
     // Bounded on writer status: if the writer fails mid-write,
     // `isReadyForMoreMediaData` never becomes true, and without the status
-    // check the loop would spin with no cause. Finishes in well under a second
-    // for the few hundred local frames.
-    var spins = 0
-    while !input.isReadyForMoreMediaData, writer.status == .writing, spins < 500 {
+    // check the loop would spin with no cause. Bounded by wall clock, not a
+    // spin count: an earlier `spins < 500` × 2ms cap (one second) was enough on
+    // a developer machine but not on a loaded shared CI runner, where the
+    // encoder can stay busy longer — the loop then fell through to `append`,
+    // which returned `false`, and the whole harness silently degraded to the
+    // `/dev/null` load-failure fallback. `ScreenshotTests.testClipEditor` then
+    // waited its full 45s for a trim label that could never appear, with no
+    // diagnostic. The budget is per frame and deliberately generous; a healthy
+    // encoder is ready in single-digit milliseconds.
+    let deadline = Date().addingTimeInterval(15)
+    while !input.isReadyForMoreMediaData, writer.status == .writing, Date() < deadline {
         Thread.sleep(forTimeInterval: 0.002)
-        spins += 1
     }
+    guard input.isReadyForMoreMediaData else { throw ScreenshotMovieError.appendFailed }
     guard let pool = adaptor.pixelBufferPool else {
         throw ScreenshotMovieError.setupFailed
     }

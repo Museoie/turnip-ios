@@ -105,9 +105,22 @@ struct ClipExpansionContainer: View {
     /// nothing), so flying there would land in the wrong spot.
     @State private var deleteFadeOpacity: CGFloat = 1
 
+    /// How long the open and close flights take, wall-clock. A timing curve with an
+    /// explicit duration rather than a spring: a critically-damped `.spring(response:
+    /// 1, …)` does ~85% of its travel in the first ~0.65s and then crawls for most of
+    /// another second, so the *visible* growth read as well under a second while only
+    /// the scrim fade looked lengthened — see `docs/EXPANSION_TRANSITIONS.md`'s Rev 7.
+    private let flightDuration: TimeInterval = 1
     /// Below this, the real editor is invisible and the card alone carries the
-    /// geometry; above it, the two crossfade.
-    private let crossfadeThreshold: CGFloat = 0.85
+    /// geometry; at/above it, the editor is. Effectively `1`: the swap has to happen
+    /// where the card's rect *equals* the editor's settled frame, and `currentRect`
+    /// only reaches `destination` at `progress == 1`. The previous `0.85` cut swapped a
+    /// card that was still 15% of the way short of its destination for content that
+    /// was already there — a hard, visible size pop at the end of every open, which was
+    /// the reported "gap between the expansion's maximum size and the video frame".
+    /// Fractionally under `1` only so an interactive drag's very first touch-move
+    /// (`progress = 1 - travel / dismissTravel`) already hands back to the card.
+    private let crossfadeThreshold: CGFloat = 0.999
     /// Downward drag distance, in points, that fully closes the view.
     private let dismissTravel: CGFloat = 420
     /// The tile's own corner radius (`ClipCardView.tile`'s `clipShape`) — the flying
@@ -181,13 +194,16 @@ struct ClipExpansionContainer: View {
                 }
 
                 cardLayer(destination: destination)
-                    // Linear in `progress`, same reasoning as the scrim's `.opacity(progress)`
-                    // above: interpolating this modifier's two endpoint outputs equals
-                    // evaluating it continuously would have, so it doesn't need to ride the
-                    // live path the way `CardFlightEffect`'s own transform does.
-                    .clipShape(RoundedRectangle(cornerRadius: sourceCornerRadius * (1 - progress)))
                     .modifier(CrossfadeCut(
                         progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: false))
+                    // Outside `CrossfadeCut`, not inside it — order matters here, and
+                    // only here: `CrossfadeCut` ends in `.transaction { $0.animation =
+                    // nil }`, which applies to its whole subtree, so an `Animatable`
+                    // nested *under* it never gets per-frame values and snaps straight
+                    // to its target (confirmed three separate times — see Rev 7 in
+                    // `docs/EXPANSION_TRANSITIONS.md`). The scrim-sized layer this
+                    // wraps (post-`.position`) has its origin at the screen's, which
+                    // `CardFlightEffect`'s transform relies on.
                     .modifier(CardFlightEffect(
                         progress: progress, sourceFrame: sourceFrame, destination: destination))
                     .allowsHitTesting(editorOpacity < 0.99)
@@ -196,7 +212,7 @@ struct ClipExpansionContainer: View {
         }
         .ignoresSafeArea()
         .onAppear {
-            withAnimation(.spring(response: 1, dampingFraction: 1)) { progress = 1 }
+            withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
         }
         .onChange(of: dragTranslation != nil) { isDraggingNow in
             guard !isDraggingNow else { return }
@@ -206,7 +222,7 @@ struct ClipExpansionContainer: View {
             }
             // `onEnded` never ran (system-cancelled) — fall back to the same
             // cancel-spring a normal non-committing release would use.
-            withAnimation(.spring(response: 1, dampingFraction: 0.9)) { progress = 1 }
+            withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
         }
     }
 
@@ -227,11 +243,16 @@ struct ClipExpansionContainer: View {
         }
         .frame(width: destination.width, height: destination.height)
         .clipped()
+        // Linear in `progress`, same reasoning as the scrim's `.opacity(progress)`:
+        // interpolating this modifier's two endpoint outputs equals evaluating it
+        // continuously would have, so it doesn't need to ride the live path.
+        .clipShape(RoundedRectangle(cornerRadius: sourceCornerRadius * (1 - progress)))
         .position(x: destination.midX, y: destination.midY)
-        // Lets a UI test read this layer's live laid-out frame (accessibility reports
-        // geometry independent of its current opacity) to verify it tracks the real
-        // destination rather than a placeholder — see `docs/EXPANSION_TRANSITIONS.md`'s
-        // "Measuring the destination without a race or a feedback loop".
+        // Lets a UI test read this layer's laid-out (pre-transform, i.e. settled)
+        // frame — accessibility reports geometry independent of opacity — to verify it
+        // tracks the real destination rather than a placeholder; see
+        // `docs/EXPANSION_TRANSITIONS.md`'s "Measuring the destination without a race
+        // or a feedback loop". It cannot see the live transform (Rev 7).
         .accessibilityIdentifier("expansion-card")
     }
 
@@ -293,7 +314,7 @@ struct ClipExpansionContainer: View {
                     if committing {
                         close()
                     } else {
-                        withAnimation(.spring(response: 1, dampingFraction: 0.9)) { progress = 1 }
+                        withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
                     }
                 }
         )
@@ -312,8 +333,8 @@ struct ClipExpansionContainer: View {
     /// on just the next run loop turn still let the slide play out.
     private func close() {
         acceptsDestinationUpdates = false
-        withAnimation(.spring(response: 1, dampingFraction: 0.85)) { progress = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+        withAnimation(.easeInOut(duration: flightDuration)) { progress = 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + flightDuration + 0.05) {
             UIView.setAnimationsEnabled(false)
             var transaction = Transaction()
             transaction.disablesAnimations = true
@@ -460,6 +481,11 @@ private struct CardFlightEffect: GeometryEffect {
 
     func effectValue(size: CGSize) -> ProjectionTransform {
         let rect = liveRect(progress: progress, sourceFrame: sourceFrame, destination: destination)
+        // Applied to the post-`.position` layer, whose local origin is the screen's
+        // (the enclosing `GeometryReader` ignores the safe area edge to edge), so this
+        // maps `destination` — where the card is laid out — onto `rect` in global space:
+        // scale about the screen origin, then translate so `destination.minX * scaleX`
+        // lands on `rect.minX`.
         let scaleX = rect.width / max(destination.width, 1)
         let scaleY = rect.height / max(destination.height, 1)
         let offsetX = rect.minX - destination.minX * scaleX
