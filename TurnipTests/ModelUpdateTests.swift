@@ -14,6 +14,16 @@ actor MockModelUpdateClient: ModelUpdateClient {
     private(set) var fetchedEndpoints: [URL] = []
     private(set) var downloadRequests: [URL] = []
 
+    /// One-shot gate for `downloadModel`: when armed via
+    /// `armDownloadSuspension()`, the next download call records its request
+    /// and then parks on a continuation instead of completing, until the test
+    /// calls `releaseDownloadSuspension()`. This holds the service's
+    /// in-flight window open so a test can make a second check provably
+    /// overlap the first — structural overlap, not scheduling luck. See
+    /// `testOverlappingChecksAreSuppressed`.
+    var suspendNextDownload = false
+    private var suspendedDownload: CheckedContinuation<Void, Never>?
+
     func fetchManifest(from endpoint: URL) async throws -> ModelUpdateManifest {
         fetchedEndpoints.append(endpoint)
         if let manifestError = manifestError {
@@ -24,6 +34,12 @@ actor MockModelUpdateClient: ModelUpdateClient {
 
     func downloadModel(from url: URL) async throws -> URL {
         downloadRequests.append(url)
+        if suspendNextDownload {
+            suspendNextDownload = false
+            await withCheckedContinuation { continuation in
+                suspendedDownload = continuation
+            }
+        }
         if let downloadError = downloadError {
             throw downloadError
         }
@@ -279,21 +295,28 @@ final class ModelUpdateTests: XCTestCase {
         let bytes = Data("fake-model-bytes".utf8)
         await client.setManifest(makeManifest(version: "2026.09.10-1", bytes: bytes))
         await client.setDownloadBytes(bytes)
+        // Park the first check inside its download instead of racing it: the
+        // gate holds the check — and the service's in-flight flag — open
+        // until the test resumes it, so the second check below provably
+        // overlaps the first. Structural overlap, not scheduling luck.
+        await client.armDownloadSuspension()
         let service = makeService(client: client, store: store)
 
         let first = Task.detached { await service.checkForUpdates() }
-        // Spin until the first check has entered its manifest fetch: the
-        // in-flight flag is set before the first await, so from here on the
-        // second check is guaranteed to overlap it.
+        // Wait for the first check to reach the gate: the request is recorded
+        // immediately before the park point, so from here on the check cannot
+        // finish before the test resumes it. (The spin is a one-way latch,
+        // not a race — reaching the gate means parked.)
         var spins = 0
-        while await client.fetchedEndpoints.isEmpty, spins < 100_000 {
+        while await client.downloadRequests.isEmpty, spins < 100_000 {
             spins += 1
             await Task.yield()
         }
-        let fetchedEndpoints = await client.fetchedEndpoints
-        XCTAssertFalse(fetchedEndpoints.isEmpty)
+        let downloadRequests = await client.downloadRequests
+        XCTAssertFalse(downloadRequests.isEmpty)
 
         await service.checkForUpdates() // must be suppressed, not queued
+        await client.releaseDownloadSuspension()
         await first.value
 
         let fetched = await client.fetchedEndpoints
@@ -552,5 +575,18 @@ private extension MockModelUpdateClient {
     func setDownloadBytes(_ bytes: Data) {
         self.downloadBytes = bytes
         self.downloadError = nil
+    }
+
+    /// Arms the one-shot download gate: the next `downloadModel` call parks
+    /// instead of completing. Call before starting the first check.
+    func armDownloadSuspension() {
+        suspendNextDownload = true
+    }
+
+    /// Resumes the parked `downloadModel` call, if any, letting the first
+    /// check finish. Call after the overlapping work has been issued.
+    func releaseDownloadSuspension() {
+        suspendedDownload?.resume()
+        suspendedDownload = nil
     }
 }
