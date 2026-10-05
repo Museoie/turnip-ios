@@ -535,6 +535,44 @@ from. If a real device still shows jitter or a lingering mismatch during the
 open flight after this fix, that's the next place to look — `verified, not
 assumed` applies especially there.
 
+**Postscript, same day: the fix above was itself wrong.** Reported back after
+shipping — neither the duration change nor the gap fix seemed to have taken
+effect. They hadn't, for a reason that follows directly from the SwiftUI
+semantics explained above but wasn't thought through at the time: the
+`withAnimation(.spring(response: 0.25, …))` wrapped around
+`measuredDestination`'s assignment doesn't just smooth *that* value — it
+retargets the exact same `.frame`/`.position` the *main* open spring
+(`response: 1`) is still actively animating. SwiftUI's implicit-animation
+retargeting takes the newest animation's curve for whatever it touches, not a
+blend of the two, so once the short correction fires, the long spring's
+remaining influence over the geometry is simply gone. Confirmed with a
+timestamped `print()` through the real `ClipListView` tap flow (not the
+isolated harness, which has different, shorter, asset-load timing): the real
+measurement arrived at `t≈0.13s`, the 0.25s correction then ran the geometry
+to its final size by `t≈0.4s` — while `CrossfadeCut`'s own `progress`
+logging, untouched by any of this, showed the *correct* curve the whole time
+(crossing `0.85` at `t≈0.67s`, settling at `t≈1.5s`). The card finished
+growing and then sat static for another half-second-plus before the crossfade
+cut, which is a *third*, different-looking defect from either original
+report — and reads, from the outside, exactly like "nothing changed," since
+the dominant visual cue (the card's own growth) really was back to taking a
+fraction of a second.
+
+The `withAnimation` wrap was reverted (back to the plain assignment this
+section originally replaced) to restore the open spring's correct pacing
+immediately — this reintroduces the original unanimated-jump bug, now
+confirmed to be smaller/less visually prominent at `response: 1` than it was
+at the original `response: 0.3`, since the real measurement lands at a much
+earlier *fraction* of a now-longer flight, but it is still a bug. The
+architecturally correct fix — computing `rect` (and, for
+`ClipExpansionContainer`, `editorScale`/`editorOffsetX`/`editorOffsetY`) from
+*live* `progress` via an `Animatable` modifier, `CrossfadeCut`'s own
+technique applied to geometry instead of opacity — removes the need for any
+second animation at all: a `destination` change just becomes a new per-frame
+lerp target, nothing to retarget or fight. See "Rev 6" below for that fix,
+once it lands; until then, the known-smaller jump from the plain assignment
+is the shipped state.
+
 ## Gesture ownership: why the dismiss drag can't live behind the content
 
 A `NavigationStack` is backed by a real `UIViewController`. A SwiftUI

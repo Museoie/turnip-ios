@@ -149,28 +149,25 @@ struct ClipExpansionContainer: View {
                     // See `acceptsDestinationUpdates`'s own doc comment for why this stops
                     // once a close begins instead of staying live for the whole lifetime.
                     guard acceptsDestinationUpdates, frame != .zero, editorScale > 0 else { return }
-                    let next = CGRect(
+                    // See `docs/EXPANSION_TRANSITIONS.md`'s Rev 5/Rev 6 for why this is a
+                    // plain assignment and not `withAnimation` around it: wrapping it in a
+                    // short corrective spring fixes the unanimated jump this value's own
+                    // late arrival causes, but that short spring *retargets* the same
+                    // `.frame`/`.position` the main open/close spring is still animating —
+                    // SwiftUI's retargeting takes the newest animation's curve, so the
+                    // short correction wins and the geometry finishes in ~0.25s instead of
+                    // riding out the full flight, independent of `response` on the main
+                    // spring. Confirmed on-device: the card was fully settled by ~0.4s while
+                    // the crossfade cut (driven by the untouched, correctly-paced `progress`
+                    // spring) didn't land until ~1s — the two visibly decoupled. The real fix
+                    // needs `rect` computed from *live* progress via an `Animatable` modifier
+                    // (`CrossfadeCut`'s own technique, applied to geometry) so a destination
+                    // change is just a new per-frame lerp target, not a second animation.
+                    measuredDestination = CGRect(
                         x: (frame.minX - editorOffsetX) / editorScale,
                         y: (frame.minY - editorOffsetY) / editorScale,
                         width: frame.width / editorScale,
                         height: frame.height / editorScale)
-                    // A plain assignment here is an un-animated jump: `rect`'s `.frame`/
-                    // `.position` are plain (non-Animatable-modifier) values recomputed once
-                    // per state change, same as any other `@State` mutation — the one thing
-                    // that keeps them looking continuous across the open/close springs is
-                    // that `currentRect` is linear in `progress`, so interpolating its two
-                    // endpoint outputs equals evaluating it continuously would have. Changing
-                    // `destination` itself isn't covered by that: at whatever `progress` is
-                    // already committed to (1, mid-open-spring, almost immediately), this
-                    // retargets `rect` straight to the new `destination`, with nothing to
-                    // interpolate from unless this specific change is itself inside a
-                    // `withAnimation` block. Confirmed via a bordered screen recording: the
-                    // card visibly snapped from `fallbackDestination`'s square to the real
-                    // letterboxed rect in a single frame the instant this report first
-                    // arrived, rather than growing toward it like the rest of the flight.
-                    withAnimation(.spring(response: 0.25, dampingFraction: 1)) {
-                        measuredDestination = next
-                    }
                 }
 
                 cardLayer(rect: rect)

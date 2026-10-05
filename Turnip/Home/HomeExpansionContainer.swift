@@ -119,13 +119,15 @@ struct HomeExpansionContainer<Content: View>: View {
                     .allowsHitTesting(contentOpacity > 0.99)
                     .onPreferenceChange(ProcessingVideoFramePreferenceKey.self) { frame in
                         guard frame != .zero else { return }
-                        // See `ClipExpansionContainer`'s identical fix for why a plain
-                        // assignment here snaps `rect`'s `.frame`/`.position` straight to the
-                        // new `destination` instead of growing into it — confirmed the same
-                        // way, via a bordered recording of the open flight.
-                        withAnimation(.spring(response: 0.25, dampingFraction: 1)) {
-                            measuredDestination = frame
-                        }
+                        // See `ClipExpansionContainer`'s identical comment, and
+                        // `docs/EXPANSION_TRANSITIONS.md`'s Rev 5/Rev 6: this was briefly
+                        // wrapped in `withAnimation`, which fixed the unanimated jump but
+                        // broke the open spring's own pacing — a short corrective spring
+                        // retargeting the same `.frame`/`.position` the main spring is still
+                        // animating wins, so geometry finished in ~0.25s regardless of the
+                        // main spring's `response`. Reverted pending the live-progress
+                        // `Animatable` fix.
+                        measuredDestination = frame
                     }
 
                 cardLayer(rect: rect)
