@@ -62,7 +62,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
-        XCTAssertTrue(app.navigationBars["Edit clip"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
 
         let preview = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label == 'Clip preview with crop area'"))

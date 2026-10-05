@@ -1,5 +1,24 @@
 # Photos-style expansion transitions
 
+*Rev 9 · 2026-10-05.* The flight is 250ms. The destination's chrome now
+cross-fades in *over* the flying card for the whole flight instead of appearing
+whole at the end: the destination sits above the card at `.opacity(progress)`,
+its navigation container made see-through (`containerBackground(.clear)`, iOS
+18), and only its backdrop and video surface stay hidden — behind
+`expansionVideoSurface()`, keyed on a plain `expansionHasLanded` flag the
+container flips with animations disabled, which also flips the card off in the
+same update. (Home's open used to flicker: the tapped tile's slot went empty
+for the few frames the cover took to present, and the tap's own PhotoKit
+resolve disabled — and so dimmed — every grid tile and raised the "Preparing
+video…" banner, both of which snapped back when the resolve landed mid-flight.
+All three are gone.) The clip list's back action now slides the page off
+sideways (`slideClose()`) rather than shrinking into the video's tile, and the
+editor draws its own top row instead of a navigation bar so a downward drag
+anywhere above the video dismisses. See "Rev 9" near the end for the
+mechanisms, the one approach that was tried and reverted (an animated
+`expansionProgress` environment value — it never interpolates for a destination
+that mounts mid-flight), and the verification.
+
 *Rev 8 · 2026-10-05.* The flight is now 350ms. The card no longer stretches: it
 is laid out at the destination and shown through a window that uncrops from what
 the tile showed to the whole frame, scaled uniformly (`ExpansionFlightGeometry`,
@@ -1047,6 +1066,152 @@ swipe-dismiss run, so the recording alone can't show the dismiss; an
 end-of-test `XCUIScreen.main.screenshot()` saved to `/tmp` does, and it showed
 the grid with the tile's trash button back every time.
 
+## Rev 9: chrome fades in over the card, Home stops flickering, the list pops sideways
+
+*2026-10-05.* Six requests: no flicker of Home at the start of the open; the
+destination's controls to cross-fade *during* the flight instead of appearing
+at its end; a faster flight; the editor's whole area above the video to accept
+the dismiss drag; and the clip list's back button to pop sideways rather than
+shrink.
+
+**The Home flicker, reproduced before anything changed** (a `-vsync 0` dump of
+a tile tap, plus timestamped `NSLog`s at the tap, the cover's first body, its
+`onAppear` and the resolve landing): three separate things happened in the
+~100ms between the tap and the card's first frame, and un-happened ~80ms into
+the flight.
+
+1. `presentSlot` hid the tapped tile on the same render it set the slot, but
+   UIKit took ~70–100ms to actually present the cover — an empty black slot in
+   the grid for those frames, with no card yet to stand in. Fixed the way
+   `ClipListView` already did it: the container's `onFlightStarted` (called from
+   its `onAppear`) is what sets `HomeView.hidesSourceTile`, not the slot.
+2. `viewModel.select` set `resolution`, which `.disabled`-ed every grid tile —
+   and a disabled `.plain` button dims its label, so the whole grid went to
+   ~53% brightness — and raised `ResolutionBanner` at the bottom. A local video
+   resolved ~170ms later, mid-flight, snapping both back while the scrim was
+   still thin. `VideoGalleryView.isCovered` now skips both while a slot is
+   presented (the cover blocks input anyway, and its own resolving state shows
+   the same progress); the double-tap guard the disabling provided moved to
+   `onTileTapped` (`guard presentationSlot == nil`).
+3. `ResolvingDestination`'s progress box, once chrome became visible mid-flight
+   (below), would have faded in and then been replaced by `ProcessingView`'s
+   controls a few frames later. It now lags its appearance by 0.4s, the way
+   `ProcessingView.browsingOverlayDelay` does.
+
+**Chrome cross-fades: the destination moves above the card.** Through Rev 8 the
+destination sat *under* the card, hidden by a hard cut until `progress ≈ 1`, so
+everything it drew — including chrome that overlaps the video (the editor's
+crop surround, marker rectangle and playback pill; Processing's chevron and
+bottom controls over a portrait video's letterbox rect) — appeared whole on the
+cut frame. Fading the destination in under the card would have left exactly
+that overlapping chrome popping. So the destination is now the *top* layer, at
+a plain `.opacity(progress)` (which `.opacity` interpolates on its own across
+the flight, no `Animatable` needed), with two things excepted:
+
+- Its own backdrop and video surface, which the card is already drawing in
+  their place, stay hidden behind `expansionVideoSurface()` until the card has
+  landed: `ProcessingView`'s `swipeBackdrop` and `videoStage`'s black-plus-
+  poster-plus-player stack, `ResolvingDestination`'s black-plus-thumbnail,
+  `ClipEditorView`'s `ClipEditorVideoSurface`, and — the one destination with
+  no backdrop of its own — a `systemBackground` fill behind the camera-case
+  `ClipListView`.
+- The navigation container itself. A `NavigationStack` is opaque (confirmed in
+  a throwaway host app: a red fill behind one is invisible), so at
+  `.opacity(progress)` its system background would have dimmed the card for the
+  whole flight. `expansionTransparentNavigationContainer()` applies
+  `containerBackground(.clear, for: .navigation)` (iOS 18 — confirmed in the
+  same probe to make the stack see-through); the container's scrim is the
+  backdrop instead. Pre-18, `destinationChromeCrossfades` is `false` and both
+  containers keep the destination *under* the card behind the same landed flag,
+  i.e. Rev 8's hard cut without the fade.
+
+Because the content's cut now lives inside the destination, its
+`.transaction { $0.animation = nil }` is gone from above the destination —
+which had been suppressing every animation inside `ProcessingView` (the browse
+slide and spring-back) and `ClipEditorView` since Rev 4.
+
+**Why the cut is a flag, not the live `progress`.** The first version handed
+the destination an `expansionProgress` environment value and cut its video
+surface with `ExpansionCrossfadeCut` keyed on it — the same `Animatable`
+mechanism as the card's own cut. A per-frame `NSLog` inside the cut (the
+lesson-14 check) showed it interpolating perfectly on the *close* (the inner
+cuts crossed the threshold on the same frame as the card's) and not at all on
+the *open*: the first value the destination's cut ever saw was `1.0`. An
+`Animatable` only interpolates for a view that existed when the animation
+started; `ResolvingDestination` first renders a frame after `onAppear`'s
+`withAnimation`, and `ProcessingView` replaces it mid-flight when the resolve
+lands — both read the *target* and showed their backdrop at `.opacity(progress)`
+over the card. So the containers keep a `hasLanded: Bool` instead, written only
+through `setLanded(_:)` under `Transaction.disablesAnimations`: `true` from the
+open flight's completion (`ExpansionFlightGeometry.animateFlight`, which uses
+`withAnimation(_:completionCriteria:_:completion:)` with `.logicallyComplete`
+on iOS 17+, and waits `flightDuration + 0.05` before that — late is invisible,
+the card rests on the destination showing the same player; early would be a
+size pop), `false` on `close()`'s first frame and on every interactive
+touch-move, `true` again when a cancelled drag's snap-back completes (unless a
+new drag or a close began meanwhile). The card's `.opacity(hasLanded ? 0 : 1)`
+and the destination's `expansionHasLanded` read the same flag in the same
+update, so the swap is one atomic frame; a view mounting mid-flight reads
+`false` and simply stays hidden. `ExpansionCrossfadeCut` and the
+`crossfadeThreshold` are gone with it, and hit-testing (`allowsHitTesting`) is
+keyed on the flag too.
+
+**250ms.** One constant, `ExpansionFlightGeometry.flightDuration`, shared by
+both containers; the dismiss delay still derives from it.
+
+**The editor's dismiss band.** The area above the video that ignored the drag
+was the navigation bar: the bar is the stack's own view laid over the screen,
+so a drag starting in its band never reached the gesture planted behind the
+editor's content — the same reason `ProcessingView` has no bar. `ClipEditorView`
+now hides its bar and draws `topRow` as content (a `ScrimIconButton` chevron,
+the title, a glass/bordered Delete), and its gesture layer `ignoresSafeArea()`
+so the status-bar band counts too. A visible change the request implied rather
+than asked for. The UI tests that waited on `navigationBars["Edit clip"]` wait
+on `staticTexts["clip-editor-title"]` instead.
+
+**The list pops sideways.** `HomeExpansionCloseHandlers.onRequestSlideClose`
+→ `HomeExpansionContainer.slideClose()`: `progress` stays at `1`, a separate
+`slideProgress` carries the whole `ZStack` (scrim, card, destination) a screen
+width to the trailing edge over 0.3s, `onSlideOutStarted` reveals the hidden
+tile as the grid comes back into view, then the same two-layer-suppressed
+`dismiss()`. Wired as `ProcessingView`'s `popToRoot` (which only its pushed
+clip list receives) and as the camera-case `ClipListView`'s; Processing's own
+chevron and `ResolvingDestination`'s cancel still fly back into the tile.
+
+**Verification**, all against the real tap flows through the scratch driver,
+`-vsync 0` dumps, and the landed-flag/lifecycle `NSLog`s (removed):
+
+- *Flicker:* every frame from the last pre-tap one to the first flight frame
+  has the grid at full brightness, no banner, and the tapped tile in place
+  (`tile0 (247,174,0)` throughout; the slot is never black before the card).
+  The flag log shows `false` for both the placeholder's and Processing's
+  mid-flight mount, `true` ~270ms after `onAppear`, `false` on close.
+- *Cross-fade:* Home open — `Start analysis` region rises `16 → 59 → 103 →
+  133 → 139` (blue channel) over consecutive frames while the scrim goes
+  `247 → 165 → 81 → 19 → 8` on an uncovered tile; Home close — the chevron,
+  scrub bar and button fade out over 354–356 while the card shrinks. Editor
+  open — the top row, crop marker, pill and trim slider fade in over 331–335
+  as the card grows; the last open frame's preview reads grey `13` = the
+  clip's first frame, so the scrub still lands where Rev 8 left it.
+- *Band drag:* a 25%-screen downward drag starting on the video leaves the
+  editor up (the crop drag takes it); one starting at normalized `y = 0.10`
+  (the title row) dismisses to the clip list. Both asserted by the driver.
+- *Slide:* 425–431 show the Clips page moving right with the grid uncovered
+  from the left, no shrink; the end-of-test screenshot is the grid with the
+  tile back.
+- *Cancelled drag that never moved:* an upward-only drag on the editor's
+  empty area, then the back button — the clip list returns (the synchronous
+  `setLanded(true)` branch in `cancelDrag`; no animation runs, so no completion
+  would have).
+- *A recorder artifact, not a bug:* two of seven recordings showed frames
+  alternating, strictly every other frame and pixel-identical, between the
+  settled cover and the Home grid *with the tapped tile visible* — once for
+  ~1s after a close had landed, once while Processing sat idle. The grid with
+  that tile visible can't be the app's state under a presented cover, and 60
+  consecutive `XCUIScreen.main.screenshot()` samples of the settled
+  Processing view (two runs) all read the video's pixels at center, never the
+  grid's. `simctl io recordVideo` interleaving two sources; lesson 19.
+
 ## Gesture ownership: why the dismiss drag can't live behind the content
 
 A `NavigationStack` is backed by a real `UIViewController`. A SwiftUI
@@ -1066,7 +1231,9 @@ destination's own root view —
 - `ClipEditorView` takes a `dismissGesture: AnyGesture<DragGesture.Value>?`
   and attaches it behind its own `VStack`, so it only fires where the
   editor's own crop-drag/trim-slider/button gestures don't claim the touch
-  first.
+  first. Since Rev 9 the editor has no navigation bar — the bar would sit over
+  that layer and swallow a drag starting in its band — and draws its own top
+  row as content instead, with the gesture layer extended into the safe area.
 - `ProcessingView` already *had* its own vertical swipe-to-dismiss (it just
   used to commit unilaterally on release and call `dismiss()` directly). It
   now reports that gesture's live state to the presenter instead of deciding
@@ -1465,6 +1632,12 @@ app`-style memory note captures the reusable parts of the recipe (recording
     card still at the tile, while an end-of-test screenshot showed the grid
     fully restored. Don't read "the last recorded frame" as "the end state";
     capture the end state separately.
+19. **The recorder can interleave frames from two sources.** Strictly
+    alternating, pixel-identical frames of two settled states — one of which
+    the app cannot be in (Rev 9: the grid with the expanded tile *visible*
+    under a presented cover) — are the signature. Confirm against the real
+    compositor with a burst of `XCUIScreen.main.screenshot()` samples before
+    chasing it in the app; a sub-second glitch that's real shows up there too.
 
 `TurnipUITests/ExpansionTransitionVerificationTests.swift` is where Rev 2's
 own fix was actually verified against the running app rather than just

@@ -529,6 +529,10 @@ struct ProcessingView<Destination: View>: View {
     private var swipeBackdrop: some View {
         GeometryReader { proxy in
             Color.black
+                // Hidden while an expansion flight is in progress, like `videoStage`'s own
+                // backdrop: the presenting container's scrim stands in, and a black fill
+                // fading in here would dim the flying card underneath.
+                .expansionVideoSurface()
                 .onAppear { pageSize = proxy.size }
                 .onChange(of: proxy.size) { pageSize = $0 }
         }
@@ -629,23 +633,29 @@ struct ProcessingView<Destination: View>: View {
     /// replacing it with a separate page.
     private var videoStage: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-            // Under the player, which is transparent until it has decoded a frame: the same
-            // letterbox fit, so the first decoded frame lands exactly over it.
-            if let posterImage {
-                Image(uiImage: posterImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .ignoresSafeArea()
+            ZStack {
+                Color.black.ignoresSafeArea()
+                // Under the player, which is transparent until it has decoded a frame: the same
+                // letterbox fit, so the first decoded frame lands exactly over it.
+                if let posterImage {
+                    Image(uiImage: posterImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .ignoresSafeArea()
+                }
+                if let player {
+                    BareVideoPlayerView(player: player)
+                        .ignoresSafeArea()
+                        // Hands the player itself outward too, so the expansion transition's
+                        // card can draw the same frames this stage draws and scrub them on close.
+                        .preference(key: ProcessingPlayerPreferenceKey.self, value: ProcessingPlayerHandle(player: player))
+                }
             }
-            if let player {
-                BareVideoPlayerView(player: player)
-                    .ignoresSafeArea()
-                    // Hands the player itself outward too, so the expansion transition's
-                    // card can draw the same frames this stage draws and scrub them on close.
-                    .preference(key: ProcessingPlayerPreferenceKey.self, value: ProcessingPlayerHandle(player: player))
-            } else {
+            // The backdrop and the picture: an expansion flight's card draws both until it
+            // lands, so they stay hidden until then while the controls above fade in over it.
+            .expansionVideoSurface()
+            if player == nil {
                 ProgressView().tint(.white)
             }
             if let displaySize {

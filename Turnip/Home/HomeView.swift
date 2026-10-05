@@ -20,6 +20,12 @@ struct HomeView: View {
     /// element while this cover is up). `HomeExpansionContainer`'s doc comment on why a cover
     /// bound directly to a changing video would re-slide on every browse.
     @State private var presentationSlot: HomePresentationSlot?
+    /// Whether the expanded video's tile is hidden under the cover's flying card. Not simply
+    /// "is a slot presented": the cover takes a few frames to actually appear after
+    /// `presentSlot`, and a tile hidden before its stand-in exists leaves an empty slot in the
+    /// grid meanwhile. Set by the container the instant its flight starts, cleared when it
+    /// slides off sideways (the grid shows through as it goes) and on every new presentation.
+    @State private var hidesSourceTile = false
     /// Every visible tile's own frame, keyed by asset identifier — bubbled up from
     /// `VideoGalleryView`'s tiles via `VideoTileFramePreferenceKey` rather than threaded down,
     /// since a preference already climbs the view tree with no plumbing needed.
@@ -91,6 +97,7 @@ struct HomeView: View {
     /// that layer directly; it's re-enabled on the next run loop turn, after the presentation
     /// has already been issued.
     private func presentSlot(_ slot: HomePresentationSlot) {
+        hidesSourceTile = false
         UIView.setAnimationsEnabled(false)
         var transaction = Transaction()
         transaction.disablesAnimations = true
@@ -151,7 +158,9 @@ struct HomeView: View {
             thumbnail: identifier.flatMap { tileThumbnails[$0] },
             poster: identifier.flatMap { viewModel.thumbnails.cachedPoster(for: $0) },
             initialAspectRatio: slot.initialAspectRatio,
-            content: { handlers in destinationContent(identifier: identifier, handlers: handlers) }
+            content: { handlers in destinationContent(identifier: identifier, handlers: handlers) },
+            onFlightStarted: { hidesSourceTile = true },
+            onSlideOutStarted: { hidesSourceTile = false }
         )
         // Lets the grid show through the cover while the card/scrim animate —
         // `HomeExpansionContainer` draws its own opaque scrim at `progress`, so without
@@ -182,15 +191,22 @@ struct HomeView: View {
         identifier: String?, handlers: HomeExpansionCloseHandlers
     ) -> some View {
         NavigationStack {
-            if let video = viewModel.path.last {
-                if let clips = video.detectedClips {
-                    clipList(for: video, clips: clips, asset: video.asset, popToRoot: handlers.onRequestClose)
-                } else {
-                    ProcessingView(
-                        video: video,
-                        runner: ProcessingPipeline(sampleRate: settings.analysisGranularity),
-                        autostart: false,
-                        popToRoot: handlers.onRequestClose,
+            Group {
+                if let video = viewModel.path.last {
+                    if let clips = video.detectedClips {
+                        clipList(for: video, clips: clips, asset: video.asset, popToRoot: handlers.onRequestSlideClose)
+                            // The list has no backdrop of its own and the stack's is made
+                            // see-through below, so it gets one here — hidden, like a video
+                            // surface, until the flying card has landed.
+                            .background(Color(.systemBackground).ignoresSafeArea().expansionVideoSurface())
+                    } else {
+                        ProcessingView(
+                            video: video,
+                            runner: ProcessingPipeline(sampleRate: settings.analysisGranularity),
+                            autostart: false,
+                            // The clip list it pushes pops sideways back to Home; this
+                            // screen's own chevron still flies back into the tile.
+                            popToRoot: handlers.onRequestSlideClose,
                         initialPoster: viewModel.thumbnails.cachedPoster(for: video.assetIdentifier),
                         poster: viewModel.asset(withIdentifier: video.assetIdentifier).map(posterLoader),
                         previous: browseNeighbor(of: video, offset: -1),
@@ -207,30 +223,35 @@ struct HomeView: View {
                             onChanged: handlers.dismissTranslationChanged,
                             onEnded: handlers.dismissEnded,
                             onCancelled: handlers.dismissCancelled),
-                        destination: { result, popToRoot in
-                            clipList(for: video, clips: result.clips, asset: result.asset, popToRoot: popToRoot)
-                        }
-                    )
-                    // Ties the screen's identity to the video it's showing: without this,
-                    // browsing to a neighbor replaces `path`'s top element but SwiftUI can
-                    // reuse the existing `ProcessingView`, leaving its `@StateObject` and
-                    // player pointed at the video that just left.
-                    .id(video.assetIdentifier)
+                            destination: { result, popToRoot in
+                                clipList(for: video, clips: result.clips, asset: result.asset, popToRoot: popToRoot)
+                            }
+                        )
+                        // Ties the screen's identity to the video it's showing: without this,
+                        // browsing to a neighbor replaces `path`'s top element but SwiftUI can
+                        // reuse the existing `ProcessingView`, leaving its `@StateObject` and
+                        // player pointed at the video that just left.
+                        .id(video.assetIdentifier)
+                    }
+                } else {
+                    ResolvingDestination(
+                        thumbnail: identifier.flatMap { tileThumbnails[$0] },
+                        resolution: viewModel.resolution,
+                        cancel: {
+                            viewModel.cancelSelection()
+                            handlers.onRequestClose()
+                        })
+                    // Matches `ProcessingView`'s own bar state (`.toolbar(.hidden, for:
+                    // .navigationBar)`), so the swap from this to it never flips the bar
+                    // shown→hidden on top of the root-content swap.
+                    .toolbar(.hidden, for: .navigationBar)
+                    .navigationBarBackButtonHidden(true)
                 }
-            } else {
-                ResolvingDestination(
-                    thumbnail: identifier.flatMap { tileThumbnails[$0] },
-                    resolution: viewModel.resolution,
-                    cancel: {
-                        viewModel.cancelSelection()
-                        handlers.onRequestClose()
-                    })
-                // Matches `ProcessingView`'s own bar state (`.toolbar(.hidden, for:
-                // .navigationBar)`), so the swap from this to it never flips the bar
-                // shown→hidden on top of the root-content swap.
-                .toolbar(.hidden, for: .navigationBar)
-                .navigationBarBackButtonHidden(true)
             }
+            // See-through, so `HomeExpansionContainer` can fade this content in over its
+            // flying card; the container's scrim is the backdrop until each destination's
+            // own (cut in with its video surface) takes over.
+            .expansionTransparentNavigationContainer()
         }
     }
 
@@ -248,8 +269,12 @@ struct HomeView: View {
         case .authorized, .limited:
             VideoGalleryView(
                 viewModel: viewModel,
-                hiddenAssetIdentifier: presentationSlot.flatMap(currentIdentifier),
+                hiddenAssetIdentifier: hidesSourceTile ? presentationSlot.flatMap(currentIdentifier) : nil,
+                isCovered: presentationSlot != nil,
                 onTileTapped: { asset, thumbnail in
+                    // A second tap before the cover is up (it takes a few frames to appear)
+                    // must not replace the slot that's already presenting.
+                    guard presentationSlot == nil else { return }
                     // A grid tap always calls `select(asset)` below with no `detectedClips`, so
                     // this always lands on `ProcessingView` once resolved — always worth an
                     // aspect-ratio guess, known synchronously from the tapped `PHAsset` itself
@@ -312,36 +337,60 @@ private struct ResolvingDestination: View {
     let resolution: VideoLibraryViewModel.Resolution?
     let cancel: () -> Void
 
+    /// Whether the progress box is up. Lags this view's appearance by `progressDelay`, the
+    /// way `ProcessingView.browsingOverlayDelay` lags a browse: a local video resolves during
+    /// the opening flight, and a box that fades in with the flight's chrome only to be
+    /// replaced by `ProcessingView`'s controls a few frames later would read as a flicker.
+    @State private var showsProgress = false
+
+    private static let progressDelay: TimeInterval = 0.4
+
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-            if let thumbnail {
-                Image(uiImage: thumbnail)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .ignoresSafeArea()
-            }
-            VStack(spacing: 12) {
-                if let progress = resolution?.downloadProgress {
-                    Text("Downloading from iCloud…")
-                        .font(.subheadline)
-                        .foregroundStyle(.white)
-                    ProgressView(value: progress)
-                        .tint(.white)
-                } else {
-                    Text("Preparing video…")
-                        .font(.subheadline)
-                        .foregroundStyle(.white)
-                    ProgressView()
-                        .tint(.white)
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let thumbnail {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .ignoresSafeArea()
                 }
-                Button("Cancel", role: .cancel, action: cancel)
+            }
+            // The flying card draws the same poster until it lands.
+            .expansionVideoSurface()
+            if showsProgress {
+                progressBox
+                    .transition(.opacity)
+            }
+        }
+        .task {
+            try? await Task.sleep(for: .seconds(Self.progressDelay))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.15)) { showsProgress = true }
+        }
+    }
+
+    private var progressBox: some View {
+        VStack(spacing: 12) {
+            if let progress = resolution?.downloadProgress {
+                Text("Downloading from iCloud…")
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+                ProgressView(value: progress)
+                    .tint(.white)
+            } else {
+                Text("Preparing video…")
+                    .font(.subheadline)
+                    .foregroundStyle(.white)
+                ProgressView()
                     .tint(.white)
             }
-            .padding(32)
-            .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16))
+            Button("Cancel", role: .cancel, action: cancel)
+                .tint(.white)
         }
+        .padding(32)
+        .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -503,6 +552,14 @@ struct VideoGalleryView: View {
     /// `ClipCardView.isHidden`: `HomeExpansionContainer`'s flying card stands in at this tile's
     /// exact frame, so hiding avoids any grid reflow underneath it.
     let hiddenAssetIdentifier: String?
+    /// Whether the expansion cover is presented over this grid. The grid shows through the
+    /// cover while its card flies, so nothing here may change in response to the tap's own
+    /// resolution meanwhile: the tiles aren't disabled (a disabled plain button dims its
+    /// label, and a grid that dims under the flight and un-dims when the resolve lands reads
+    /// as a flicker) and the resolution banner stays down (the cover's own resolving state
+    /// shows the same progress). The
+    /// cover already blocks input, so neither guard is needed while it's up.
+    var isCovered = false
     /// Opens the expansion on this asset, passing its already-decoded thumbnail (nil if the
     /// tile hasn't finished its own first decode yet) so the presenter can fly open from
     /// exactly here without a second image request.
@@ -528,7 +585,7 @@ struct VideoGalleryView: View {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if let resolution = viewModel.resolution {
+                if !isCovered, let resolution = viewModel.resolution {
                     ResolutionBanner(resolution: resolution, cancel: viewModel.cancelSelection)
                 }
             }
@@ -619,7 +676,7 @@ struct VideoGalleryView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(viewModel.resolution != nil)
+        .disabled(viewModel.resolution != nil && !isCovered)
         .opacity(asset.localIdentifier == hiddenAssetIdentifier ? 0 : 1)
         .background(
             GeometryReader { proxy in

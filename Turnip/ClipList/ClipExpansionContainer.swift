@@ -95,20 +95,18 @@ struct ClipExpansionContainer: View {
     /// after the user has already started leaving does nothing instead of restarting the
     /// loop under the closing scrub.
     @State private var isClosing = false
+    /// Whether the card has landed on the editor's preview: `true` from the opening
+    /// flight's completion until the first frame of any close. Drives the hard cut
+    /// between the card and the editor's video surface — both read it, and it's written
+    /// with animations disabled (`setLanded`), so the swap is one atomic, unanimated
+    /// frame. Also handed to the editor as `expansionHasLanded`; see that environment
+    /// value for why it's a flag rather than the live `progress`.
+    @State private var hasLanded = false
 
-    /// How long the open and close flights take, wall-clock. A timing curve with an
-    /// explicit duration rather than a spring, so the visible growth lasts exactly this
-    /// long instead of a spring's long tail.
-    private let flightDuration: TimeInterval = 0.35
+    private let flightDuration = ExpansionFlightGeometry.flightDuration
     /// How long the opening flight waits for the card's video surface before starting
     /// anyway, with the poster thumbnail standing in for a frame that never came.
     private let surfaceReadinessTimeout: TimeInterval = 0.3
-    /// Below this, the real editor is invisible and the card alone carries the
-    /// geometry; at/above it, the editor is. Effectively `1`: the swap has to happen
-    /// where the card's window equals the editor's settled frame, which is only at
-    /// `progress == 1`. Fractionally under `1` only so an interactive drag's very first
-    /// touch-move (`progress = 1 - travel / dismissTravel`) already hands back to the card.
-    private let crossfadeThreshold: CGFloat = 0.999
     /// Downward drag distance, in points, that fully closes the view.
     private let dismissTravel: CGFloat = 420
     /// The tile's own corner radius (`ClipCardView.tile`'s `clipShape`) — the flying
@@ -143,45 +141,44 @@ struct ClipExpansionContainer: View {
             // The crop rect in the card's own coordinates: what the tile shows, and so the
             // part of the frame the card's window starts on.
             let focus = viewModel.cropRect.denormalized(in: destination.size)
-            let editorOpacity = editorOpacity(for: progress)
+            let chromeCrossfades = ExpansionFlightGeometry.destinationChromeCrossfades
 
             ZStack {
                 Color(.systemBackground)
                     .opacity(progress)
                     .ignoresSafeArea()
 
-                NavigationStack {
-                    ClipEditorView(
-                        viewModel: viewModel,
-                        onCommit: onCommit,
-                        onDelete: onDelete,
-                        onRequestClose: close,
-                        onRequestDeleteClose: closeForDelete,
-                        dismissGesture: dismissDragGesture)
-                }
-                .frame(width: screen.size.width, height: screen.size.height)
-                .modifier(ExpansionCrossfadeCut(
-                    progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: true))
-                .allowsHitTesting(editorOpacity > 0.99)
-                .onPreferenceChange(ClipEditorPreviewFramePreferenceKey.self) { frame in
-                    guard acceptsDestinationUpdates, frame != .zero else { return }
-                    measuredDestination = frame
+                if !chromeCrossfades {
+                    // Under the card, hidden for the whole flight and cut in once the card
+                    // has landed: the pre-iOS 18 fallback, where the editor's navigation
+                    // container can't be made see-through (see `destinationChromeCrossfades`).
+                    editor(size: screen.size)
+                        .opacity(hasLanded ? 1 : 0)
                 }
 
                 cardLayer(destination: destination, focus: focus)
-                    .modifier(ExpansionCrossfadeCut(
-                        progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: false))
-                    // Both outside `ExpansionCrossfadeCut`, not inside it: its
-                    // animation-suppressing transaction applies to its whole subtree, so an
-                    // `Animatable` nested under it never gets per-frame values and snaps
-                    // straight to its target. The layer these wrap (post-`.position`) has
-                    // its origin at the screen's, which both rely on.
+                    // The hard cut to the editor's video surface — unanimated, since
+                    // `hasLanded` is only ever written with animations disabled.
+                    .opacity(hasLanded ? 0 : 1)
+                    // The layer these wrap (post-`.position`) has its origin at the
+                    // screen's, which both rely on.
                     .clipShape(ExpansionFlightClip(
                         progress: progress, sourceFrame: sourceFrame, destination: destination,
                         focus: focus, sourceCornerRadius: sourceCornerRadius))
                     .modifier(ExpansionFlightEffect(
                         progress: progress, sourceFrame: sourceFrame, destination: destination, focus: focus))
-                    .allowsHitTesting(editorOpacity < 0.99)
+                    .allowsHitTesting(!hasLanded)
+
+                if chromeCrossfades {
+                    // Over the card, fading in with the flight: the editor's chrome (its
+                    // top row, the crop marker and dimmed surround, the playback pill, the
+                    // trim slider) cross-fades in place over the growing picture, while its
+                    // own video surface stays hidden under `expansionVideoSurface()` until
+                    // the card has landed. A plain `.opacity`, not a cut: it's meant to
+                    // interpolate across the whole flight, which `.opacity` does on its own.
+                    editor(size: screen.size)
+                        .opacity(progress)
+                }
             }
             .opacity(deleteFadeOpacity)
         }
@@ -196,6 +193,30 @@ struct ClipExpansionContainer: View {
             // `onEnded` never ran (system-cancelled) — fall back to the same
             // cancel-flight a normal non-committing release would use.
             cancelDrag()
+        }
+    }
+
+    /// The real editor in its own navigation stack, with `hasLanded` handed down for its
+    /// video-surface cut and its preview frame handed back up. Built by one of the two
+    /// branches in `body`. The stack's own background is made see-through so the editor can
+    /// fade in over the card; this container's scrim is its backdrop instead.
+    private func editor(size: CGSize) -> some View {
+        NavigationStack {
+            ClipEditorView(
+                viewModel: viewModel,
+                onCommit: onCommit,
+                onDelete: onDelete,
+                onRequestClose: close,
+                onRequestDeleteClose: closeForDelete,
+                dismissGesture: dismissDragGesture)
+            .expansionTransparentNavigationContainer()
+        }
+        .frame(width: size.width, height: size.height)
+        .environment(\.expansionHasLanded, hasLanded)
+        .allowsHitTesting(hasLanded)
+        .onPreferenceChange(ClipEditorPreviewFramePreferenceKey.self) { frame in
+            guard acceptsDestinationUpdates, frame != .zero else { return }
+            measuredDestination = frame
         }
     }
 
@@ -250,12 +271,14 @@ struct ClipExpansionContainer: View {
         }
     }
 
-    /// Only feeds `allowsHitTesting` — see `ExpansionCrossfadeCut` for why a plain
-    /// computed property can't drive the layers' actual visibility. Hit-testing only
-    /// has to be right once the flight has fully committed to a direction, which the
-    /// two endpoints `body` sees are enough for.
-    private func editorOpacity(for progress: CGFloat) -> CGFloat {
-        progress >= crossfadeThreshold ? 1 : 0
+    /// Writes `hasLanded` with animations disabled, so the card/editor swap it drives is
+    /// an instant cut even when it lands in the same update as an animated `progress`
+    /// change (a close's first frame).
+    private func setLanded(_ landed: Bool) {
+        guard hasLanded != landed else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { hasLanded = landed }
     }
 
     /// A placeholder destination for the brief window before `ClipEditorView`'s own
@@ -306,13 +329,12 @@ struct ClipExpansionContainer: View {
         guard !hasStartedOpenFlight, force || (isSeekedToSource && isSurfaceReady) else { return }
         hasStartedOpenFlight = true
         onFlightStarted()
-        withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
-        scrubber.animate(from: sourceTime, to: viewModel.window.startTime, duration: flightDuration)
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: UInt64(flightDuration * 1_000_000_000))
+        ExpansionFlightGeometry.animateFlight({ progress = 1 }) {
             guard !isClosing else { return }
+            setLanded(true)
             viewModel.releasePlayback()
         }
+        scrubber.animate(from: sourceTime, to: viewModel.window.startTime, duration: flightDuration)
     }
 
     // MARK: - Closing
@@ -330,6 +352,7 @@ struct ClipExpansionContainer: View {
                 }
                 .onChanged { value in
                     acceptsDestinationUpdates = false
+                    setLanded(false)
                     let origin = dragScrubOrigin ?? viewModel.beginPresenterScrub()
                     dragScrubOrigin = origin
                     let travel = max(0, value.translation.height)
@@ -352,7 +375,17 @@ struct ClipExpansionContainer: View {
     /// Flies back to fully open and scrubs the player back to the frame the drag
     /// started on, then resumes playback if the user hadn't paused it.
     private func cancelDrag() {
-        withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
+        if progress < 1 {
+            ExpansionFlightGeometry.animateFlight({ progress = 1 }) {
+                // Not if another drag has started, or a close, while this snap-back ran.
+                guard dragTranslation == nil, !isClosing else { return }
+                setLanded(true)
+            }
+        } else {
+            // The drag never moved the card (it only ever went up), so there is nothing to
+            // animate and no completion to wait for.
+            setLanded(true)
+        }
         guard let origin = dragScrubOrigin else { return }
         dragScrubOrigin = nil
         scrubber.animate(from: viewModel.currentTime, to: origin, duration: flightDuration)
@@ -378,6 +411,7 @@ struct ClipExpansionContainer: View {
     private func close() {
         acceptsDestinationUpdates = false
         isClosing = true
+        setLanded(false)
         let from = viewModel.beginPresenterScrub()
         dragScrubOrigin = nil
         withAnimation(.easeInOut(duration: flightDuration)) { progress = 0 }

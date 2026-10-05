@@ -176,7 +176,7 @@ final class ScreenshotTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
-        XCTAssertTrue(app.navigationBars["Edit clip"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
         addScreenshot(named: "clip-list-expand-to-editor")
     }
 

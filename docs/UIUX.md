@@ -288,7 +288,10 @@ default empty state, so it never reads as "your library is empty."
   an alert naming the failure, so Done can be retried without risking the
   user's only copy of a trick that never actually saved.
 - The back chevron pops to Home, not to Processing; the title sits centered
-  inline on the same line as the chevron, Photos-app style.
+  inline on the same line as the chevron, Photos-app style. The pop is a
+  sideways slide, like any navigation pop — not a shrink back into the
+  video's tile, since this screen's tiles are the clips cut from the video,
+  not the video itself (`EXPANSION_TRANSITIONS.md`, Rev 9).
 
 ### 4. Clip Detail / Editor
 
@@ -323,8 +326,11 @@ default empty state, so it never reads as "your library is empty."
   - Back to Clip List commits the edits and shrinks the screen back into its
     tile — the reverse of the tap that opened it, no separate "save" step
     needed since edits are held in view state until back-navigation. A swipe
-    down outside the video surface does the same (the crop pinch/rotate/drag
-    gesture keeps sole ownership of the video itself).
+    down anywhere outside the video surface does the same — including the top
+    row and the band above it (the crop pinch/rotate/drag gesture keeps sole
+    ownership of the video itself). The screen draws that top row (back
+    chevron, title, Delete) as its own content rather than a navigation bar,
+    the same way Processing does, so no bar sits over the swipe band.
 
 ## Out of scope for this doc
 

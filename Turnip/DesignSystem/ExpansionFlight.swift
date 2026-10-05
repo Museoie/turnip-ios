@@ -16,6 +16,42 @@ import SwiftUI
 /// `ExpansionFlightClip` (the window) and `ExpansionFlightEffect` (the scale and
 /// placement), both render-time primitives driven by the same live `progress`.
 struct ExpansionFlightGeometry: Equatable {
+    /// How long an animated open or close flight takes, wall-clock, in both containers. A
+    /// timing curve with an explicit duration rather than a spring, so the visible growth
+    /// lasts exactly this long instead of a spring's long tail.
+    static let flightDuration: TimeInterval = 0.25
+    /// Runs `changes` as a flight — `progress` to `0` or `1` on the flight's own curve — and
+    /// calls `completion` once that animation has actually reached its end value, which is
+    /// the one moment the card's window equals the settled destination and the two can be
+    /// swapped without a pop. Before iOS 17 there's no completion to hook, so this waits the
+    /// flight's duration plus a little: late is invisible (the card rests on the destination
+    /// showing the same picture), early would be a size pop.
+    @MainActor
+    static func animateFlight(_ changes: () -> Void, completion: @escaping () -> Void) {
+        if #available(iOS 17.0, *) {
+            withAnimation(.easeInOut(duration: flightDuration), completionCriteria: .logicallyComplete) {
+                changes()
+            } completion: {
+                completion()
+            }
+        } else {
+            withAnimation(.easeInOut(duration: flightDuration)) { changes() }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64((flightDuration + 0.05) * 1_000_000_000))
+                completion()
+            }
+        }
+    }
+
+    /// Whether a destination's chrome cross-fades in over the flying card. Needs the
+    /// destination's navigation container to be see-through (`containerBackground`, iOS 18),
+    /// or its opaque system background would dim the card underneath for the whole flight.
+    /// Where it isn't, the containers keep the destination hidden under a hard cut instead.
+    static var destinationChromeCrossfades: Bool {
+        if #available(iOS 18.0, *) { return true }
+        return false
+    }
+
     /// Where the card is on screen, in the same space `sourceFrame`/`destination` use.
     let rect: CGRect
     /// The visible window onto the card's content, in the card's own coordinates
@@ -121,35 +157,63 @@ struct ExpansionFlightEffect: GeometryEffect {
     }
 }
 
-/// An instant visibility cut at `threshold`, evaluated against the *live* animated
-/// `progress` rather than its target value.
+/// Whether the presenting container's flying card has landed on the destination — `true`
+/// from the moment the opening flight's animation completes until the first frame of any
+/// close (the back button's flight, or an interactive drag's first touch-move). A
+/// destination reads it to hide its own backdrop and video surface while `false`: the card
+/// draws those in their place until it lands, and the rest of the destination's chrome fades
+/// in over the card meanwhile. `true` by default: a destination shown without an expansion
+/// is simply itself.
 ///
-/// A plain `View.body` getter runs once per `withAnimation`-driven `progress` change, at
-/// the target value, so a threshold test there only ever sees the two endpoints — and
-/// since `.opacity` is itself animatable, SwiftUI then interpolates between those two
-/// opacities across the whole flight, producing a cross-dissolve. Conforming to
-/// `Animatable` makes SwiftUI call `body(content:)` once per rendered frame with the
-/// interpolated `progress`, so the cut fires partway through the flight. The
-/// `.transaction { $0.animation = nil }` keeps that per-frame jump from being smoothed
-/// again — and also suppresses every animation in the modified subtree, which is why
-/// anything that must animate goes outside this modifier, never inside it.
-struct ExpansionCrossfadeCut: Animatable, ViewModifier {
-    var progress: CGFloat
-    let threshold: CGFloat
-    /// `true` for the real destination content (visible at/above `threshold`), `false`
-    /// for the card (visible below it) — the two are never both `true` at once.
-    let visibleAboveThreshold: Bool
+/// A plain flag the container writes with animations disabled, not the live flight
+/// `progress`: a cut keyed on an animated value only interpolates for views that already
+/// existed when the animation started, and a destination that mounts *mid-flight* (Home's
+/// `ProcessingView` replacing its resolving placeholder when the video resolves, typically
+/// well inside the 250ms) would read the target value and show its backdrop over the card.
+/// The container flips the card's own visibility off the same flag in the same update, so
+/// the two never show together and never both hide.
+private struct ExpansionHasLandedKey: EnvironmentKey {
+    static let defaultValue = true
+}
 
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
+extension EnvironmentValues {
+    var expansionHasLanded: Bool {
+        get { self[ExpansionHasLandedKey.self] }
+        set { self[ExpansionHasLandedKey.self] = newValue }
     }
+}
+
+/// Hides a destination's backdrop or video surface until the expansion flight has landed
+/// (`expansionHasLanded`). The flying card shows this content's picture until then, so the
+/// cut is invisible; everything a destination draws *without* this modifier fades in over
+/// the card instead. The flag is written with animations disabled, so this is an instant
+/// cut without needing to suppress animations in the modified subtree.
+struct ExpansionVideoSurfaceCut: ViewModifier {
+    @Environment(\.expansionHasLanded) private var hasLanded
 
     func body(content: Content) -> some View {
-        let isVisible = visibleAboveThreshold ? progress >= threshold : progress < threshold
-        content
-            .opacity(isVisible ? 1 : 0)
-            .transaction { $0.animation = nil }
+        content.opacity(hasLanded ? 1 : 0)
+    }
+}
+
+extension View {
+    /// See `ExpansionVideoSurfaceCut`.
+    func expansionVideoSurface() -> some View {
+        modifier(ExpansionVideoSurfaceCut())
+    }
+
+    /// Makes the enclosing `NavigationStack`'s own background see-through, so an expansion
+    /// container can fade this content in *over* its flying card without the stack's opaque
+    /// system background dimming the card. The container's scrim is the backdrop instead.
+    /// A no-op before iOS 18, where the containers fall back to a hard cut — see
+    /// `ExpansionFlightGeometry.destinationChromeCrossfades`.
+    @ViewBuilder
+    func expansionTransparentNavigationContainer() -> some View {
+        if #available(iOS 18.0, *) {
+            containerBackground(.clear, for: .navigation)
+        } else {
+            self
+        }
     }
 }
 

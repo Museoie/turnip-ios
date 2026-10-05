@@ -101,11 +101,15 @@ struct ClipEditorView: View {
             Color.clear
                 .contentShape(Rectangle())
                 .gesture(dismissGesture)
+                // Edge to edge, so the status-bar band above the top row counts too: only the
+                // video surface is meant to keep a downward drag for itself.
+                .ignoresSafeArea()
         }
     }
 
     var body: some View {
         VStack(spacing: 16) {
+            topRow
             previewSection
             resetCropButton
             TrimSliderView(viewModel: viewModel)
@@ -118,12 +122,13 @@ struct ClipEditorView: View {
         // — see `ClipExpansionContainer`'s doc comment for why it has to be attached
         // here rather than behind this whole view in a presenter's own hierarchy.
         .background(dismissGestureLayer)
-        .navigationTitle("Edit clip")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) { backButton }
-            ToolbarItem(placement: .navigationBarTrailing) { deleteButton }
-        }
+        // No navigation bar: the bar is the stack's own view laid over this screen, so a
+        // drag that starts in its band never reaches the dismiss gesture behind this
+        // content. `topRow` draws the same controls as content instead, which leaves the
+        // whole area above the video to that gesture — `ProcessingView` hides its bar for
+        // the same reason.
+        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarBackButtonHidden(true)
         .task {
             await viewModel.prepare()
         }
@@ -132,25 +137,48 @@ struct ClipEditorView: View {
         }
     }
 
+    /// The screen's own top row in place of a navigation bar (see `body`): the back chevron
+    /// leading, the title centered, Delete trailing.
+    private var topRow: some View {
+        ZStack {
+            Text("Edit clip")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("clip-editor-title")
+            HStack {
+                backButton
+                Spacer()
+                deleteButton
+            }
+        }
+    }
+
     /// Commits the current edits and closes — the back chevron's action. Runs
     /// synchronously with the tap, before `dismiss()` starts the cover's transition, so
     /// the presenting screen's state settles before the animation begins instead of
-    /// racing it.
+    /// racing it. The same floating glass chevron `ProcessingView` draws over its video.
     private var backButton: some View {
-        BackChevronButton(accessibilityLabel: "Back to clips") {
+        ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to clips") {
             onCommit(viewModel.result)
             close()
         }
     }
 
     private var deleteButton: some View {
-        Button(role: .destructive) {
+        let button = Button(role: .destructive) {
             onDelete()
             closeAfterDelete()
         } label: {
             Text("Delete")
         }
         .accessibilityLabel("Delete clip")
+        return Group {
+            if #available(iOS 26.0, *) {
+                button.buttonStyle(.glass)
+            } else {
+                button.buttonStyle(.bordered)
+            }
+        }
     }
 
     /// The trimmed clip, looping, full frame with the crop area's fixed marker drawn
@@ -216,6 +244,9 @@ struct ClipEditorView: View {
                     gestureScale: gestureScale,
                     gestureRotation: gestureRotation,
                     gestureOffset: gestureOffset)
+                // Hidden until an expansion flight's card — the same player, same
+                // transform — has landed here; the marker and controls above fade in over it.
+                .expansionVideoSurface()
                 CropOverlayShape(hole: hole)
                     .fill(.black.opacity(0.55), style: FillStyle(eoFill: true))
                     .allowsHitTesting(false)

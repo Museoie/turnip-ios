@@ -35,8 +35,11 @@ import SwiftUI
 /// `onRequestClose` covers a plain back button; `dismissTranslationChanged`/`dismissEnded`/
 /// `dismissCancelled` cover a destination with its own live vertical-drag gesture
 /// (`ProcessingView`) — a destination without one (`ClipListView`) simply never calls them.
+/// `onRequestSlideClose` is the clip list's back action: a sideways pop rather than a flight
+/// back into the tile, see `HomeExpansionContainer.slideClose()`.
 struct HomeExpansionCloseHandlers {
     let onRequestClose: () -> Void
+    let onRequestSlideClose: () -> Void
     let dismissTranslationChanged: (CGFloat) -> Void
     let dismissEnded: (_ translation: CGFloat, _ predictedTranslation: CGFloat) -> Void
     let dismissCancelled: () -> Void
@@ -80,9 +83,28 @@ struct HomeExpansionContainer<Content: View>: View {
     /// `onRequestClose` alone — it has no built-in swipe-to-dismiss of its own) both fit this
     /// shape.
     @ViewBuilder let content: (HomeExpansionCloseHandlers) -> Content
+    /// Called the instant the opening flight starts moving — which is when the presenter
+    /// should hide the tile underneath. Not when the cover is requested: UIKit takes a few
+    /// frames to present it, and a tile hidden before the card exists leaves its slot empty
+    /// in the grid for those frames.
+    var onFlightStarted: () -> Void = {}
+    /// Called as `slideClose()` starts moving the page sideways, so the presenter can show
+    /// the hidden tile again: the grid is uncovered as the page slides off it.
+    var onSlideOutStarted: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
     @State private var progress: CGFloat = 0
+    /// `slideClose()`'s own clock, separate from `progress` (which stays at `1` — the
+    /// destination is fully open while it leaves): `0` in place, `1` a full screen width
+    /// off to the trailing edge.
+    @State private var slideProgress: CGFloat = 0
+    /// Whether the card has landed on the destination: `true` from the opening flight's
+    /// completion until the first frame of any close. Drives the hard cut between the card
+    /// and the destination's video surface — both read it, and it's written with animations
+    /// disabled (`setLanded`), so the swap is one atomic, unanimated frame. Also handed to the
+    /// destination as `expansionHasLanded`; see that environment value for why it's a flag
+    /// rather than the live `progress`.
+    @State private var hasLanded = false
     /// Latches `sourceFrame()`'s value the instant a non-interactive close (back button, or a
     /// committed swipe-to-dismiss) begins, then `body`'s own `source` resolution prefers this
     /// over the live lookup for the rest of that flight: once the flight is no longer driven by
@@ -113,12 +135,10 @@ struct HomeExpansionContainer<Content: View>: View {
     /// Set by `close()`, so a cancelled drag's deferred resume that lands after the user
     /// has already started leaving doesn't restart the player under the closing scrub.
     @State private var isClosing = false
-    /// Below this, the real destination is invisible and the card alone carries the geometry;
-    /// at/above it, the destination is. See `ClipExpansionContainer`'s own constant for why
-    /// this is effectively `1`.
-    private let crossfadeThreshold: CGFloat = 0.999
-    /// See `ClipExpansionContainer.flightDuration`.
-    private let flightDuration: TimeInterval = 0.35
+    private let flightDuration = ExpansionFlightGeometry.flightDuration
+    /// How long `slideClose()` takes to carry the page off screen — a navigation pop's pace,
+    /// not the flight's.
+    private let slideDuration: TimeInterval = 0.3
     private let dismissTravel: CGFloat = 420
     private let sourceCornerRadius: CGFloat = 8
 
@@ -130,49 +150,77 @@ struct HomeExpansionContainer<Content: View>: View {
             // parameters have to be plain values, not something it re-evaluates itself.
             let source = lockedSourceFrame ?? sourceFrame() ?? fallbackSourceFrame(in: destination.size)
             let focus = Self.centerSquare(of: destination.size)
-            let contentOpacity = self.contentOpacity(for: progress)
+            let chromeCrossfades = ExpansionFlightGeometry.destinationChromeCrossfades
 
             ZStack {
                 Color.black
                     .opacity(progress)
                     .ignoresSafeArea()
 
-                content(closeHandlers)
-                    .modifier(ExpansionCrossfadeCut(
-                        progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: true))
-                    .allowsHitTesting(contentOpacity > 0.99)
-                    .onPreferenceChange(ProcessingVideoFramePreferenceKey.self) { frame in
-                        guard frame != .zero else { return }
-                        measuredDestination = frame
-                    }
-                    .onPreferenceChange(ProcessingPlayerPreferenceKey.self) { handle in
-                        destinationPlayer = handle.player
-                        scrubber.seek = handle.player.map(FlightScrubber.exactSeek) ?? { _ in }
-                    }
+                if !chromeCrossfades {
+                    // Under the card, hidden for the whole flight and cut in once the card
+                    // has landed: the pre-iOS 18 fallback, where the destination's navigation
+                    // container can't be made see-through (see `destinationChromeCrossfades`).
+                    destinationContent()
+                        .opacity(hasLanded ? 1 : 0)
+                }
 
                 cardLayer(destination: destination, focus: focus)
-                    .modifier(ExpansionCrossfadeCut(
-                        progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: false))
-                    // Both outside `ExpansionCrossfadeCut`, deliberately — see the identical
-                    // call site in `ClipExpansionContainer` for why the order is load-bearing.
+                    // The hard cut to the destination's video surface — unanimated, since
+                    // `hasLanded` is only ever written with animations disabled.
+                    .opacity(hasLanded ? 0 : 1)
                     .clipShape(ExpansionFlightClip(
                         progress: progress, sourceFrame: source, destination: destination,
                         focus: focus, sourceCornerRadius: sourceCornerRadius))
                     .modifier(ExpansionFlightEffect(
                         progress: progress, sourceFrame: source, destination: destination, focus: focus))
-                    .allowsHitTesting(contentOpacity < 0.99)
+                    .allowsHitTesting(!hasLanded)
+
+                if chromeCrossfades {
+                    // Over the card, fading in with the flight: its chrome (controls, the
+                    // scrub bar, its own chevron) cross-fades in place over the growing
+                    // picture, while its backdrop and video surface stay hidden under
+                    // `expansionVideoSurface()` until the card has landed — the card draws
+                    // those in their place. A plain `.opacity`, not a cut: it's meant to
+                    // interpolate across the whole flight, which `.opacity` does on its own.
+                    destinationContent()
+                        .opacity(progress)
+                }
             }
+            .offset(x: slideProgress * screen.size.width)
         }
         .ignoresSafeArea()
         .onAppear {
-            withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
+            onFlightStarted()
+            ExpansionFlightGeometry.animateFlight({ progress = 1 }) {
+                guard !isClosing, dragScrubOrigin == nil else { return }
+                setLanded(true)
+            }
         }
+    }
+
+    /// The destination, with `hasLanded` handed down for its video-surface cut and its
+    /// measurements handed back up. Built by one of the two branches in `body`.
+    private func destinationContent() -> some View {
+        content(closeHandlers)
+            .environment(\.expansionHasLanded, hasLanded)
+            .allowsHitTesting(hasLanded)
+            .onPreferenceChange(ProcessingVideoFramePreferenceKey.self) { frame in
+                guard frame != .zero else { return }
+                measuredDestination = frame
+            }
+            .onPreferenceChange(ProcessingPlayerPreferenceKey.self) { handle in
+                destinationPlayer = handle.player
+                scrubber.seek = handle.player.map(FlightScrubber.exactSeek) ?? { _ in }
+            }
     }
 
     private var closeHandlers: HomeExpansionCloseHandlers {
         HomeExpansionCloseHandlers(
             onRequestClose: close,
+            onRequestSlideClose: slideClose,
             dismissTranslationChanged: { translation in
+                setLanded(false)
                 let travel = max(0, translation)
                 progress = 1 - min(travel / dismissTravel, 1)
                 let origin = dragScrubOrigin ?? beginPresenterScrub()
@@ -232,12 +280,14 @@ struct HomeExpansionContainer<Content: View>: View {
         .position(x: destination.midX, y: destination.midY)
     }
 
-    /// Only feeds `allowsHitTesting` — see `ExpansionCrossfadeCut` for why a plain computed
-    /// property can't drive the layers' actual visibility. Hit-testing only has to be right
-    /// once the flight has committed to a direction, which the two endpoints `body` sees are
-    /// enough for.
-    private func contentOpacity(for progress: CGFloat) -> CGFloat {
-        progress >= crossfadeThreshold ? 1 : 0
+    /// Writes `hasLanded` with animations disabled, so the card/destination swap it drives
+    /// is an instant cut even when it lands in the same update as an animated `progress`
+    /// change (a close's first frame).
+    private func setLanded(_ landed: Bool) {
+        guard hasLanded != landed else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { hasLanded = landed }
     }
 
     /// The part of the video's frame a square grid tile shows: `ThumbnailLoader` requests
@@ -276,9 +326,23 @@ struct HomeExpansionContainer<Content: View>: View {
     /// Flies back to fully open and scrubs the player back to the frame the drag started on,
     /// then resumes playback if it was playing.
     private func cancelDrag() {
-        withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
-        guard let origin = dragScrubOrigin, let destinationPlayer else { return }
+        // Cleared before anything can return early below (a destination without a player
+        // has an origin but nothing to scrub), since the completion reads it to tell this
+        // drag's snap-back from a newer drag's.
+        let origin = dragScrubOrigin
         dragScrubOrigin = nil
+        if progress < 1 {
+            ExpansionFlightGeometry.animateFlight({ progress = 1 }) {
+                // Not if another drag has started, or a close, while this snap-back ran.
+                guard dragScrubOrigin == nil, !isClosing else { return }
+                setLanded(true)
+            }
+        } else {
+            // The drag never moved the card (it only ever went up), so there is nothing to
+            // animate and no completion to wait for.
+            setLanded(true)
+        }
+        guard let origin, let destinationPlayer else { return }
         scrubber.animate(from: currentTime(of: destinationPlayer), to: origin.time, duration: flightDuration)
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(flightDuration * 1_000_000_000))
@@ -311,6 +375,7 @@ struct HomeExpansionContainer<Content: View>: View {
     private func close() {
         lockedSourceFrame = sourceFrame()
         isClosing = true
+        setLanded(false)
         let origin = beginPresenterScrub()
         dragScrubOrigin = nil
         withAnimation(.easeInOut(duration: flightDuration)) { progress = 0 }
@@ -321,13 +386,37 @@ struct HomeExpansionContainer<Content: View>: View {
             try? await Task.sleep(nanoseconds: UInt64((flightDuration + 0.05) * 1_000_000_000))
             // Never before the scrub's final seek has put the landing frame on screen.
             await scrubber.waitUntilDone()
-            UIView.setAnimationsEnabled(false)
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { dismiss() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                UIView.setAnimationsEnabled(true)
-            }
+            dismissSuppressingSystemTransition()
+        }
+    }
+
+    /// The clip list's way out: the page slides off to the trailing edge like a navigation
+    /// pop, uncovering Home, instead of flying back into the tile. The list's tiles are the
+    /// clips cut out of the video, not the video itself, so a shrink back into the video's
+    /// tile reads as the wrong thing returning. `progress` stays at `1` throughout — the
+    /// destination is fully open while it leaves — and `onSlideOutStarted` reveals the tile
+    /// underneath as the grid comes back into view.
+    private func slideClose() {
+        guard !isClosing else { return }
+        isClosing = true
+        scrubber.cancel()
+        onSlideOutStarted()
+        withAnimation(.easeInOut(duration: slideDuration)) { slideProgress = 1 }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64((slideDuration + 0.05) * 1_000_000_000))
+            dismissSuppressingSystemTransition()
+        }
+    }
+
+    /// The actual dismiss, once a close has visually landed — see `close()`'s doc comment for
+    /// why both suppressions, and the 0.5s hold, are needed.
+    private func dismissSuppressingSystemTransition() {
+        UIView.setAnimationsEnabled(false)
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { dismiss() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            UIView.setAnimationsEnabled(true)
         }
     }
 }
