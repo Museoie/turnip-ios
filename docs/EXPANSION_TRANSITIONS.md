@@ -1,5 +1,14 @@
 # Photos-style expansion transitions
 
+*Rev 6 · 2026-10-04.* The open/close spring's `response` moved from `0.3`/`0.29`
+to `1` (a ~1s flight, measured — not assumed — to actually be what that value
+produces), and the card's geometry (`rect`, driving its `.frame`/`.position`)
+now comes from *live* `progress` via a `GeometryEffect`, so a destination
+retarget mid-flight (the real measurement replacing the fallback guess) is
+absorbed as a continuous lerp instead of causing a visible jump. Getting there
+took three attempts, two of which hung — see "Rev 6: the live-geometry fix,
+three attempts in" near the end of this doc.
+
 *Rev 4 · 2026-10-04.* Rev 2 (below) believed it had replaced the card/destination
 cross-fade with an instant cut. It hadn't, for every `withAnimation`-driven flight
 (tap-to-open, back-button-close, the cancel-spring) — see "Rev 4: the cut Rev 2
@@ -573,6 +582,206 @@ lerp target, nothing to retarget or fight. See "Rev 6" below for that fix,
 once it lands; until then, the known-smaller jump from the plain assignment
 is the shipped state.
 
+## Rev 6: the live-geometry fix, three attempts in
+
+*2026-10-04, same day.* Three shapes of "compute `rect` from live `progress`"
+were tried before one actually worked. The first two each caused a
+confirmed hang — not a vague slowdown, a sustained near-100% CPU spin that
+needed the process killed. Both are worth recording in full, because both
+*looked* like the obviously-correct application of the exact technique
+`CrossfadeCut` had already proven safe for opacity.
+
+**Attempt 1: a `View` with a `@ViewBuilder content` closure.** The natural
+reading of "compute geometry live and hand it to both layers" is a wrapper
+view, `Animatable`, whose `body` calls a content closure with the live
+`rect`/`editorScale`/`editorOffsetX`/`editorOffsetY`/`cornerRadius`:
+
+```swift
+LiveFlightGeometry(progress: progress, sourceFrame: sourceFrame, destination: destination) {
+    rect, editorScale, editorOffsetX, editorOffsetY, cornerRadius in
+    ZStack {
+        NavigationStack { ClipEditorView(...) } /* ... */
+        cardLayer(rect: rect) /* ... */
+    }
+}
+```
+
+This compiles, looks reasonable, and is wrong in a way that only shows up at
+runtime: `Animatable`'s `body` is called once per rendered frame for the
+whole duration of the spring (confirmed for `CrossfadeCut` already, same
+mechanism) — and here, `body` calling the `content` closure means the
+closure's entire literal contents, including `NavigationStack { ClipEditorView
+(...) }`, get *rebuilt* every one of those frames. `NavigationStack` is
+backed by a real `UIViewController` (this doc's own "Gesture ownership"
+section, below, already established that). Reconstructing that
+`UIViewController`-backed subtree ~60–120 times a second for the ~1s open
+spring is not a cost SwiftUI's diffing can hide. Confirmed via `ps`: the
+simulator's `Turnip` process pinned at 98.5% CPU, state `R` (running, not
+blocked), for the full 175s an `XCTest` accessibility query then timed out
+waiting on. Indistinguishable from Rev 3's real-device livelock by symptom
+alone — it took checking actual CPU state to tell "working through a huge
+backlog" from "stuck."
+
+**Attempt 2: a plain `ViewModifier` applying layout modifiers.** The fix for
+attempt 1 seemed obvious: `ViewModifier.body(content:)` receives `content`
+the *enclosing* body already built once — `CrossfadeCut` proves this doesn't
+rebuild anything expensive, since it only ever receives an already-built
+`NavigationStack` and adds `.opacity()`/`.transaction()` to it. So, two
+`Animatable` `ViewModifier`s — `LiveCardGeometry` applying `.frame`/
+`.clipped`/`.position`/`.clipShape`, `LiveEditorGeometry` applying
+`.scaleEffect`/`.offset` — each called via `.modifier(...)` on content built
+once by the enclosing `body`.
+
+This one is more insidious: it doesn't hang immediately, and the failure
+mode changes depending on `.modifier()` ordering relative to `CrossfadeCut`
+(explored at length before the real cause was found — nesting order turned
+out to be a red herring both times). With `LiveCardGeometry` nested inside
+`CrossfadeCut`, a timestamped-`NSLog` check showed it was called only
+*three* times total for the whole flight — not live at all, just the
+ordinary handful of `body`-level re-renders a plain `@State` change would
+have produced anyway. Swapping the order (geometry modifier outermost) did
+make it live — 79 calls, matching `CrossfadeCut`'s own count — but applying
+the *same* swapped order to the editor's `.scaleEffect`/`.offset` produced a
+second, different hang: 22,295 calls to `effectValue`-equivalent code in
+under 40 seconds, for what should be a ~1.5s flight.
+
+The actual mechanism, once traced: `.frame`/`.position`/`.clipShape` are
+*layout* modifiers, not render-time ones. A `ViewModifier`'s `body(content:)`
+being called with a *new* size/position every frame means the surrounding
+layout system has to re-run layout to accommodate the new intrinsic size the
+modifier is now requesting — which can itself trigger another pass through
+the modifier (its inputs, read from the enclosing `body`'s `@State`-derived
+values, haven't *logically* changed, but the layout engine doesn't know
+that) — a layout feedback loop, not an animation one. On the editor side
+specifically, there's a second compounding mechanism: `ClipEditorView`'s own
+`previewSection` reports its on-screen frame via a `GeometryReader`
+`.background`, in `.global` coordinate space — which, once the editor's own
+`.scaleEffect`/`.offset` are *live*, genuinely changes on every rendered
+frame (the editor's actual on-screen position is changing, correctly). That
+feeds `onPreferenceChange(ClipEditorPreviewFramePreferenceKey.self)`, which
+fired on *every* such change instead of a bounded handful of times, writing
+`measuredDestination` every frame — Rev 3's self-referential livelock,
+reintroduced through a different door than the one Rev 3 closed.
+`CrossfadeCut` never hit either problem because `.opacity()`/`.transaction()`
+are render-time, not layout, modifiers — the same distinction `GeometryEffect`
+below is built around.
+
+**Attempt 3: `GeometryEffect` — the fix.** This is the primitive SwiftUI
+actually provides for "per-frame animatable transform, computed after layout,
+with no way to feed back into layout": `effectValue(size:) -> ProjectionTransform`
+runs at render time against an already-settled layout size, and returns a
+transform applied to the rendered output, not a new layout request.
+`.scaleEffect`/`.offset` — what this container already used for the editor
+— are themselves built on `GeometryEffect`; `CardFlightEffect` and (the
+editor-side version, tried and itself reverted — see below) `EditorFlightEffect`
+just compute their transform from `liveRect(progress:sourceFrame:destination:)`
+instead of a fixed value:
+
+```swift
+private struct CardFlightEffect: GeometryEffect {
+    var progress: CGFloat   // animatableData
+    let sourceFrame: CGRect
+    let destination: CGRect
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        let rect = liveRect(progress: progress, sourceFrame: sourceFrame, destination: destination)
+        let scaleX = rect.width / max(destination.width, 1)
+        let scaleY = rect.height / max(destination.height, 1)
+        let offsetX = rect.minX - destination.minX * scaleX
+        let offsetY = rect.minY - destination.minY * scaleY
+        return ProjectionTransform(CGAffineTransform(a: scaleX, b: 0, c: 0, d: scaleY, tx: offsetX, ty: offsetY))
+    }
+}
+```
+
+`cardLayer` is laid out at `destination`'s size/position — fixed, the same
+way the editor was already laid out at the full screen size — with
+`CardFlightEffect` flying it to wherever `liveRect` says it should visually
+be, every frame, without ever asking layout for a different size. Nothing
+for a layout pass to feed back into; nothing for `onPreferenceChange` to
+fire more than the same bounded handful of times it already did.
+
+**Applied only to the card, not the editor.** `EditorFlightEffect`
+(mechanically identical to `CardFlightEffect`, minus the independent
+width/height scaling — the editor's own content has `destination`'s fixed
+aspect ratio throughout, so it's a uniform scale, matching the pre-live
+`editorScale`'s original formula) was written, and did reproduce attempt 2's
+second hang — confirming the `previewSection`/`onPreferenceChange` feedback
+mechanism above has nothing to do with *which* geometry primitive drives the
+transform; it's specifically about the editor's transform being live at all.
+But the editor doesn't need to be live: it's invisible (`CrossfadeCut`) for
+the entire flight until `progress` nears the crossfade threshold, by which
+point `destination` has long since stabilized — the real measurement
+consistently arrives within the first ~15% of the flight (confirmed on
+real-device-equivalent timing below), nowhere near 0.85. The body-level,
+static `targetEditorScale`/`targetEditorOffsetX`/`targetEditorOffsetY` this
+container already computes for the preference-divide-out math (see
+`measuredDestination`'s own doc comment, and the comment at the editor's
+`.scaleEffect`/`.offset` call site) are *also* exactly correct for driving
+the editor's actual transform — there was never a second bug to fix on the
+editor's side, only the appearance of needing the same medicine the card
+needed. `EditorFlightEffect` was deleted once this was confirmed, not kept
+unused.
+
+**Confirmed, not assumed**, same discipline as every other revision in this
+doc. A `print()`/`NSLog()` from inside `CrossfadeCut.body(content:)` and
+`CardFlightEffect.effectValue(size:)`, captured via `xcrun simctl spawn
+<device> log stream --predicate 'process == "Turnip"'` while an `XCTest`
+drove the real `ClipListView` tap (not the isolated harness — see the next
+paragraph for why that distinction mattered), showed:
+
+```
+SCRATCH_PROGRESS progress=0.000000
+SCRATCH_RECT progress=0.000000 width=176.500000 destWidth=361.000000   ← fallback square
+SCRATCH_RECT progress=0.000000 width=176.500000 destWidth=290.522621   ← real measurement lands
+SCRATCH_PROGRESS progress=0.001297
+SCRATCH_RECT progress=0.001297 width=176.647931 destWidth=290.522621
+SCRATCH_PROGRESS progress=0.014304
+SCRATCH_RECT progress=0.014304 width=178.131031 destWidth=290.522621
+… (continuous, 34 samples total, width tracking progress smoothly toward 290.52) …
+SCRATCH_RECT progress=0.843322 width=272.657762 destWidth=290.522621   ← card about to cut out
+SCRATCH_PROGRESS … continues to progress=1.000000 at ~1.5s
+```
+
+The destination switches from the `361`pt fallback square to the real
+`290.52`pt measurement while `progress` is still `0.000000` on both sides —
+`rect.width` doesn't move at all across that switch, because at `progress =
+0` the lerp always equals `sourceFrame` regardless of `destination`. Growth
+from there is smooth and continuous straight through to where the card cuts
+out (`progress ≈ 0.85`), with no discontinuity anywhere. `CardFlightEffect`
+isn't called every single rendered frame the way `CrossfadeCut` is (34
+calls vs. 79 over the same flight — SwiftUI apparently doesn't always
+re-invoke a `GeometryEffect` on frames where nothing about its *rendered*
+output would meaningfully change) but every call it does receive is
+continuous with its neighbors, which is the property that actually matters.
+
+**Why the isolated harness gave a different, less useful answer.**
+Diagnosing this against `ScreenshotClipExpansionHarness`-style direct mounts
+(no `ClipListView`, no tap, no `XCUITest`) is what made attempt 2's "only 3
+calls" result look like a nesting-order problem in the first place — the
+harness's locally-generated sample movie loads fast enough that the
+real-measurement retarget was already long done by the time any diagnostic
+frame got sampled, hiding the actual timing relationship between the retarget
+and the live interpolation. The real `ClipListView` → `ClipEditorView` path,
+with real (if still fast — a 6-second generated sample movie, not a user's
+actual Photos-library asset) `AVAsset` loading, was the only context where
+this was visible. Lesson, adjacent to this doc's existing ones about
+`recordVideo` dropping frames under load: an isolated harness built to
+remove confounding variables can *also* remove the variable you're trying to
+measure. When timing relative to an async load is the thing under test, the
+real call path has to be in the loop somewhere.
+
+**Verification in the end:** `ExpansionTransitionVerificationTests` (both
+cases, pixel-exact against the previously-passing values), a scratch
+hang-check test (tap-and-wait with a 45s kill-guard, both for open and for
+back-button close — passed in ~7–11s each, consistent with a flight that
+isn't stuck), and the `NSLog` continuity check above. `HomeExpansionContainer`
+got the identical `CardFlightEffect` treatment (its own `liveRect`/
+`CardFlightEffect`, duplicated per this file's own convention) — simpler
+there, since Home's `content` never has a transform applied to it at all
+(only the opacity cut), so there was never an editor-side self-reference
+risk to avoid in the first place.
+
 ## Gesture ownership: why the dismiss drag can't live behind the content
 
 A `NavigationStack` is backed by a real `UIViewController`. A SwiftUI
@@ -909,6 +1118,30 @@ app`-style memory note captures the reusable parts of the recipe (recording
    Lesson 1's "sparse during idle, bursts during real change" turned out to
    have a corollary: it can also go sparse *during* a sufficiently demanding
    change, not just between them.
+10. **A hung test and a slow-but-working one look identical from the outside
+    — `ps`'s CPU/state column is what tells them apart.** Rev 6's first
+    `LiveFlightGeometry` attempt made an `XCTest` accessibility query time
+    out after 175s; the natural read is "deadlock, something's blocked
+    forever." `ps aux | grep Turnip` during the hang showed the process at
+    98.5% CPU, state `R` (running), not `D`/blocked or `T`/stopped — it
+    wasn't stuck, it was burning CPU continuously reconstructing a
+    `NavigationStack` ~every rendered frame. That distinction changed the
+    fix entirely: a real deadlock needs a different class of investigation
+    (locks, semaphores, main-thread-blocking calls) than a tight CPU loop
+    does (what's being recomputed, how often, how expensive is it). Don't
+    assume "hung" means "blocked" without checking.
+11. **An `Animatable` conformance only gets per-frame live calls where the
+    primitive is actually meant to be animated at — layout modifiers inside
+    an `Animatable` `ViewModifier.body(content:)` don't count.**
+    `.frame`/`.position`/`.clipShape` request a *new layout*, which can
+    trigger a parent layout pass that re-invokes the modifier, which
+    requests another new layout — confirmed as tens of thousands of calls
+    in under a minute for what should be a ~60–120 Hz, ~1.5s flight. The
+    fix isn't about nesting order relative to other `Animatable` modifiers
+    (plausible-looking red herring, explored at length — see Rev 6 above);
+    it's using `GeometryEffect`, whose `effectValue(size:)` runs at render
+    time against an *already-settled* layout size and returns a transform,
+    with structurally no path back into another layout pass.
 
 `TurnipUITests/ExpansionTransitionVerificationTests.swift` is where Rev 2's
 own fix was actually verified against the running app rather than just

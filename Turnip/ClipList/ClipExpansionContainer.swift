@@ -118,12 +118,19 @@ struct ClipExpansionContainer: View {
     var body: some View {
         GeometryReader { screen in
             let destination = measuredDestination ?? fallbackDestination(in: screen.size)
-            let rect = currentRect(destination: destination)
             let editorOpacity = editorOpacity(for: progress)
-            let editorScale = rect.width / max(destination.width, 1)
-            let editorOffsetX = rect.minX - destination.minX * editorScale
-            let editorOffsetY = rect.minY - destination.minY * editorScale
-            let cornerRadius = sourceCornerRadius * (1 - progress)
+            // The *target* geometry — `progress`'s body-committed value, not a live one —
+            // used only to divide the raw preference report back out below. That report
+            // comes from `previewSection`'s `GeometryReader`, which lays out against
+            // SwiftUI's own model transform (this container's target `.scaleEffect`/
+            // `.offset`), not whatever's currently mid-spring on screen — so dividing out
+            // the *live* transform would divide out the wrong thing even setting aside
+            // `measuredDestination`'s own doc comment on why this has to stay decoupled
+            // from live re-interpolation regardless (Rev 3's self-referential livelock).
+            let targetRect = currentRect(destination: destination)
+            let targetEditorScale = targetRect.width / max(destination.width, 1)
+            let targetEditorOffsetX = targetRect.minX - destination.minX * targetEditorScale
+            let targetEditorOffsetY = targetRect.minY - destination.minY * targetEditorScale
 
             ZStack {
                 Color(.systemBackground)
@@ -140,40 +147,49 @@ struct ClipExpansionContainer: View {
                         dismissGesture: dismissDragGesture)
                 }
                 .frame(width: screen.size.width, height: screen.size.height)
-                .scaleEffect(editorScale, anchor: .topLeading)
-                .offset(x: editorOffsetX, y: editorOffsetY)
+                // Plain, body-level (`targetEditorScale`/`targetEditorOffsetX/Y`, not a
+                // live `GeometryEffect`) — deliberately, unlike the card's own
+                // `CardFlightEffect`. The editor is invisible (`CrossfadeCut`) for the
+                // entire flight until `progress` nears 1, by which point `destination`
+                // has long since stabilized (the real measurement consistently arrives
+                // within the first ~15% of the flight, per on-device timing — see
+                // `docs/EXPANSION_TRANSITIONS.md`'s Rev 6), so there's no visible snap
+                // left to fix here the way there was on the card. Tried making this live
+                // too (`EditorFlightEffect`, since removed): `previewSection`'s own
+                // `GeometryReader` reports its `.global` frame, which — once the editor's
+                // own transform is live — genuinely changes every rendered frame, so
+                // `onPreferenceChange` below fired continuously instead of a bounded few
+                // times, writing `measuredDestination` every frame and triggering a full
+                // re-render each time. Confirmed: tens of thousands of calls in under a
+                // minute, not a plausible per-frame rate for a ~1.5s flight — Rev 3's
+                // self-referential livelock, reintroduced through a different door.
+                .scaleEffect(targetEditorScale, anchor: .topLeading)
+                .offset(x: targetEditorOffsetX, y: targetEditorOffsetY)
                 .modifier(CrossfadeCut(
                     progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: true))
                 .allowsHitTesting(editorOpacity > 0.99)
                 .onPreferenceChange(ClipEditorPreviewFramePreferenceKey.self) { frame in
-                    // See `acceptsDestinationUpdates`'s own doc comment for why this stops
-                    // once a close begins instead of staying live for the whole lifetime.
-                    guard acceptsDestinationUpdates, frame != .zero, editorScale > 0 else { return }
-                    // See `docs/EXPANSION_TRANSITIONS.md`'s Rev 5/Rev 6 for why this is a
-                    // plain assignment and not `withAnimation` around it: wrapping it in a
-                    // short corrective spring fixes the unanimated jump this value's own
-                    // late arrival causes, but that short spring *retargets* the same
-                    // `.frame`/`.position` the main open/close spring is still animating —
-                    // SwiftUI's retargeting takes the newest animation's curve, so the
-                    // short correction wins and the geometry finishes in ~0.25s instead of
-                    // riding out the full flight, independent of `response` on the main
-                    // spring. Confirmed on-device: the card was fully settled by ~0.4s while
-                    // the crossfade cut (driven by the untouched, correctly-paced `progress`
-                    // spring) didn't land until ~1s — the two visibly decoupled. The real fix
-                    // needs `rect` computed from *live* progress via an `Animatable` modifier
-                    // (`CrossfadeCut`'s own technique, applied to geometry) so a destination
-                    // change is just a new per-frame lerp target, not a second animation.
+                    // See `acceptsDestinationUpdates`'s own doc comment for why this
+                    // stops once a close begins instead of staying live for the whole
+                    // lifetime.
+                    guard acceptsDestinationUpdates, frame != .zero, targetEditorScale > 0 else { return }
                     measuredDestination = CGRect(
-                        x: (frame.minX - editorOffsetX) / editorScale,
-                        y: (frame.minY - editorOffsetY) / editorScale,
-                        width: frame.width / editorScale,
-                        height: frame.height / editorScale)
+                        x: (frame.minX - targetEditorOffsetX) / targetEditorScale,
+                        y: (frame.minY - targetEditorOffsetY) / targetEditorScale,
+                        width: frame.width / targetEditorScale,
+                        height: frame.height / targetEditorScale)
                 }
 
-                cardLayer(rect: rect)
-                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+                cardLayer(destination: destination)
+                    // Linear in `progress`, same reasoning as the scrim's `.opacity(progress)`
+                    // above: interpolating this modifier's two endpoint outputs equals
+                    // evaluating it continuously would have, so it doesn't need to ride the
+                    // live path the way `CardFlightEffect`'s own transform does.
+                    .clipShape(RoundedRectangle(cornerRadius: sourceCornerRadius * (1 - progress)))
                     .modifier(CrossfadeCut(
                         progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: false))
+                    .modifier(CardFlightEffect(
+                        progress: progress, sourceFrame: sourceFrame, destination: destination))
                     .allowsHitTesting(editorOpacity < 0.99)
             }
             .opacity(deleteFadeOpacity)
@@ -194,8 +210,12 @@ struct ClipExpansionContainer: View {
         }
     }
 
+    /// Laid out at `destination`'s size/position — fixed, not animated — with
+    /// `CardFlightEffect` doing the actual flight as a render-time transform on top.
+    /// See that type's own doc comment for why laying this out at the live `rect`
+    /// directly (what a pre-`GeometryEffect` version of this fix did) isn't safe.
     @ViewBuilder
-    private func cardLayer(rect: CGRect) -> some View {
+    private func cardLayer(destination: CGRect) -> some View {
         Group {
             if let thumbnail {
                 Image(decorative: thumbnail, scale: 1, orientation: .up)
@@ -205,9 +225,9 @@ struct ClipExpansionContainer: View {
                 Color(.quaternarySystemFill)
             }
         }
-        .frame(width: rect.width, height: rect.height)
+        .frame(width: destination.width, height: destination.height)
         .clipped()
-        .position(x: rect.midX, y: rect.midY)
+        .position(x: destination.midX, y: destination.midY)
         // Lets a UI test read this layer's live laid-out frame (accessibility reports
         // geometry independent of its current opacity) to verify it tracks the real
         // destination rather than a placeholder — see `docs/EXPANSION_TRANSITIONS.md`'s
@@ -360,5 +380,91 @@ private struct CrossfadeCut: Animatable, ViewModifier {
         content
             .opacity(isVisible ? 1 : 0)
             .transaction { $0.animation = nil }
+    }
+}
+
+/// Linear interpolation between `sourceFrame` and `destination`, lerping center and
+/// size separately so the card grows from its own middle — the same formula
+/// `currentRect(destination:)` uses, factored out so both live geometry modifiers
+/// below can share it without duplicating the arithmetic (they still each compute
+/// their own `rect` independently at render time; see their own doc comments for why
+/// that's correct, not just convenient).
+private func liveRect(progress: CGFloat, sourceFrame: CGRect, destination: CGRect) -> CGRect {
+    let width = sourceFrame.width + (destination.width - sourceFrame.width) * progress
+    let height = sourceFrame.height + (destination.height - sourceFrame.height) * progress
+    let midX = sourceFrame.midX + (destination.midX - sourceFrame.midX) * progress
+    let midY = sourceFrame.midY + (destination.midY - sourceFrame.midY) * progress
+    return CGRect(x: midX - width / 2, y: midY - height / 2, width: width, height: height)
+}
+
+/// Flies `cardLayer(destination:)` — laid out at `destination`, fixed — to the live
+/// `rect` as a render-time `ProjectionTransform`, the `GeometryEffect` analog of what
+/// `CrossfadeCut` does for opacity via a plain `ViewModifier`. Without this, `rect`
+/// was a plain `body`-level value (computed once, from `progress`'s committed target
+/// only) — harmless for `progress` changes by themselves, since `liveRect` is linear
+/// in `progress` and interpolating a linear function's two endpoint *outputs* equals
+/// evaluating it continuously would have (why the geometry was never broken by the
+/// opacity bug `CrossfadeCut` fixes). But it broke the moment `destination` changed
+/// *mid-flight*, from an event independent of `progress` entirely (the real
+/// measurement arriving): recomputing `rect` from the new `destination` at whatever
+/// `progress` is already committed to has nothing to interpolate from on its own.
+/// Wrapping just that assignment in its own `withAnimation` (tried, reverted — see
+/// `docs/EXPANSION_TRANSITIONS.md`'s Rev 5 postscript) fixed the jump but
+/// *retargeted* the exact same `.frame`/`.position` the main spring was still
+/// animating — SwiftUI's retargeting takes the newest animation's curve, not a
+/// blend, so the short correction silently took over the whole geometry's pacing.
+///
+/// Applied only to the card, deliberately — not to the editor's own
+/// `.scaleEffect`/`.offset` (see those call sites' own comment for why making the
+/// editor's transform live too reintroduced Rev 3's self-referential livelock
+/// through a different door). The card is the only layer actually *visible* during
+/// the snap this fixes; the editor stays invisible (`CrossfadeCut`) until
+/// `destination` has long since stabilized.
+///
+/// Three shapes of "compute geometry from live `progress`" were tried; the first
+/// two caused confirmed hangs before landing on `GeometryEffect`, which is the
+/// primitive actually meant for this (a per-frame animatable render-time transform,
+/// composed *after* layout, with no way to feed back into it):
+/// - A `View` taking a `@ViewBuilder content` closure, built fresh every rendered
+///   frame — which included `NavigationStack { ClipEditorView(...) }`, so every
+///   frame of the ~1s open spring reconstructed that entire `UIViewController`-
+///   backed subtree from scratch. Confirmed: a sustained ~98% CPU hang.
+/// - A plain `ViewModifier` applying `.frame`/`.position`/`.clipShape` — *layout*
+///   modifiers, not render-time ones — inside `body(content:)`. Each per-frame call
+///   changed the laid-out size, which can trigger a parent layout pass, which
+///   re-invokes the `Animatable` body, which changes the size again: a layout
+///   feedback loop, confirmed as tens of thousands of calls in under a minute (not
+///   a plausible per-frame rate for a ~1.5s flight).
+/// - This type, applied to *both* card and editor: safe for the card (its own
+///   doc comment above), but applying the same live transform to the editor's
+///   `.scaleEffect`/`.offset` caused a *third* hang — see those call sites' own
+///   comment for that mechanism, different from the first two.
+///
+/// `GeometryEffect.effectValue(size:)` sidesteps the first two problems: layout
+/// sees `cardLayer`'s *fixed* `destination` size throughout (nothing for a layout
+/// pass to feed back into), and the transform it returns is applied after layout
+/// has already settled, purely for rendering. Independently scales width/height
+/// (not a single uniform factor): the card deliberately stretches its own
+/// thumbnail non-uniformly as it grows, since `liveRect`'s own aspect ratio
+/// changes from `sourceFrame`'s to `destination`'s over the flight, matching the
+/// real Photos app's own "uncropping" growth (see this doc's own research notes).
+private struct CardFlightEffect: GeometryEffect {
+    var progress: CGFloat
+    let sourceFrame: CGRect
+    let destination: CGRect
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        let rect = liveRect(progress: progress, sourceFrame: sourceFrame, destination: destination)
+        let scaleX = rect.width / max(destination.width, 1)
+        let scaleY = rect.height / max(destination.height, 1)
+        let offsetX = rect.minX - destination.minX * scaleX
+        let offsetY = rect.minY - destination.minY * scaleY
+        return ProjectionTransform(
+            CGAffineTransform(a: scaleX, b: 0, c: 0, d: scaleY, tx: offsetX, ty: offsetY))
     }
 }

@@ -77,8 +77,8 @@ struct HomeExpansionContainer<Content: View>: View {
     @Environment(\.dismiss) private var dismiss
     @State private var progress: CGFloat = 0
     /// Latches `sourceFrame()`'s value the instant a non-interactive close (back button, or a
-    /// committed swipe-to-dismiss) begins, then `currentRect` prefers this over the live lookup
-    /// for the rest of that flight — the same reasoning `ClipExpansionContainer` locks its own
+    /// committed swipe-to-dismiss) begins, then `body`'s own `source` resolution prefers this
+    /// over the live lookup for the rest of that flight — the same reasoning `ClipExpansionContainer` locks its own
     /// `measuredDestination`: once the flight is no longer driven by a live gesture, there's no
     /// reason for its endpoint to keep tracking a value that could still change underneath it.
     /// `sourceFrame()` stays live during an in-progress interactive drag (needed for the
@@ -104,7 +104,12 @@ struct HomeExpansionContainer<Content: View>: View {
     var body: some View {
         GeometryReader { screen in
             let destination = measuredDestination ?? fallbackDestination(in: screen.size)
-            let rect = currentRect(destination: destination)
+            // Resolved once per body evaluation — the same source `CardFlightEffect` below
+            // flies from — not read live inside a `GeometryEffect.effectValue(size:)` call:
+            // see `ClipExpansionContainer`'s identical `sourceFrame` (a plain `let` there,
+            // a resolved value here) for why a `GeometryEffect`'s own parameters have to be
+            // plain values, not something it re-evaluates itself.
+            let source = lockedSourceFrame ?? sourceFrame() ?? fallbackSourceFrame(in: destination.size)
             let contentOpacity = self.contentOpacity(for: progress)
             let cornerRadius = sourceCornerRadius * (1 - progress)
 
@@ -119,21 +124,14 @@ struct HomeExpansionContainer<Content: View>: View {
                     .allowsHitTesting(contentOpacity > 0.99)
                     .onPreferenceChange(ProcessingVideoFramePreferenceKey.self) { frame in
                         guard frame != .zero else { return }
-                        // See `ClipExpansionContainer`'s identical comment, and
-                        // `docs/EXPANSION_TRANSITIONS.md`'s Rev 5/Rev 6: this was briefly
-                        // wrapped in `withAnimation`, which fixed the unanimated jump but
-                        // broke the open spring's own pacing — a short corrective spring
-                        // retargeting the same `.frame`/`.position` the main spring is still
-                        // animating wins, so geometry finished in ~0.25s regardless of the
-                        // main spring's `response`. Reverted pending the live-progress
-                        // `Animatable` fix.
                         measuredDestination = frame
                     }
 
-                cardLayer(rect: rect)
+                cardLayer(destination: destination)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
                     .modifier(CrossfadeCut(
                         progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: false))
+                    .modifier(CardFlightEffect(progress: progress, sourceFrame: source, destination: destination))
                     .allowsHitTesting(contentOpacity < 0.99)
             }
         }
@@ -163,8 +161,12 @@ struct HomeExpansionContainer<Content: View>: View {
             })
     }
 
+    /// Laid out at `destination`'s size/position — fixed, not animated — with
+    /// `CardFlightEffect` doing the actual flight as a render-time transform on top.
+    /// See that type's own doc comment, and `ClipExpansionContainer`'s identical one,
+    /// for why.
     @ViewBuilder
-    private func cardLayer(rect: CGRect) -> some View {
+    private func cardLayer(destination: CGRect) -> some View {
         Group {
             if let thumbnail {
                 Image(uiImage: thumbnail)
@@ -174,9 +176,9 @@ struct HomeExpansionContainer<Content: View>: View {
                 Color(.quaternarySystemFill)
             }
         }
-        .frame(width: rect.width, height: rect.height)
+        .frame(width: destination.width, height: destination.height)
         .clipped()
-        .position(x: rect.midX, y: rect.midY)
+        .position(x: destination.midX, y: destination.midY)
         // Lets a UI test read this layer's live laid-out frame (accessibility reports
         // geometry independent of its current opacity) to verify it tracks the real
         // destination rather than a placeholder — see `docs/EXPANSION_TRANSITIONS.md`'s
@@ -192,20 +194,6 @@ struct HomeExpansionContainer<Content: View>: View {
     /// once the flight has committed to a direction, not frame-by-frame mid-flight.
     private func contentOpacity(for progress: CGFloat) -> CGFloat {
         progress >= crossfadeThreshold ? 1 : 0
-    }
-
-    /// Linear interpolation between the source frame (falling back to a centered, slightly-inset
-    /// square if the tile isn't on screen right now) and `destination` (the full screen, unless
-    /// `measuredDestination` has narrowed it to the real letterboxed video rect), lerping
-    /// center and size separately so the card grows from its own middle. The source is
-    /// `lockedSourceFrame` once `close()` has latched one, else the live `sourceFrame()`.
-    private func currentRect(destination: CGRect) -> CGRect {
-        let source = lockedSourceFrame ?? sourceFrame() ?? fallbackSourceFrame(in: destination.size)
-        let width = source.width + (destination.width - source.width) * progress
-        let height = source.height + (destination.height - source.height) * progress
-        let midX = source.midX + (destination.midX - source.midX) * progress
-        let midY = source.midY + (destination.midY - source.midY) * progress
-        return CGRect(x: midX - width / 2, y: midY - height / 2, width: width, height: height)
     }
 
     private func fallbackSourceFrame(in size: CGSize) -> CGRect {
@@ -293,5 +281,49 @@ private struct CrossfadeCut: Animatable, ViewModifier {
         content
             .opacity(isVisible ? 1 : 0)
             .transaction { $0.animation = nil }
+    }
+}
+
+/// Linear interpolation between `sourceFrame` and `destination`, lerping center and
+/// size separately so the card grows from its own middle — see `CardFlightEffect`'s
+/// own doc comment for why this needs to run from *live* `progress`.
+private func liveRect(progress: CGFloat, sourceFrame: CGRect, destination: CGRect) -> CGRect {
+    let width = sourceFrame.width + (destination.width - sourceFrame.width) * progress
+    let height = sourceFrame.height + (destination.height - sourceFrame.height) * progress
+    let midX = sourceFrame.midX + (destination.midX - sourceFrame.midX) * progress
+    let midY = sourceFrame.midY + (destination.midY - sourceFrame.midY) * progress
+    return CGRect(x: midX - width / 2, y: midY - height / 2, width: width, height: height)
+}
+
+/// Flies `cardLayer(destination:)` — laid out at `destination`, fixed — to the live
+/// `rect` as a render-time `ProjectionTransform`. Duplicated from
+/// `ClipExpansionContainer`'s identical type rather than shared (see this file's own
+/// doc comment for why the two containers are siblings, not a generic) — see that
+/// type's own doc comment for the full mechanism and the two hang-causing shapes
+/// ("compute geometry from live progress" via a content-building `View` closure, and
+/// via a plain `ViewModifier` applying layout modifiers) tried and ruled out before
+/// landing on `GeometryEffect`. Unlike `ClipExpansionContainer`, there's no
+/// editor-side counterpart here to also tempt into going live: `content` here never
+/// has a transform applied to it at all (only the opacity cut), so there's no
+/// self-referential divide-out risk to avoid in the first place — this container's
+/// own doc comment already covers why (no transform on `content`).
+private struct CardFlightEffect: GeometryEffect {
+    var progress: CGFloat
+    let sourceFrame: CGRect
+    let destination: CGRect
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func effectValue(size: CGSize) -> ProjectionTransform {
+        let rect = liveRect(progress: progress, sourceFrame: sourceFrame, destination: destination)
+        let scaleX = rect.width / max(destination.width, 1)
+        let scaleY = rect.height / max(destination.height, 1)
+        let offsetX = rect.minX - destination.minX * scaleX
+        let offsetY = rect.minY - destination.minY * scaleY
+        return ProjectionTransform(
+            CGAffineTransform(a: scaleX, b: 0, c: 0, d: scaleY, tx: offsetX, ty: offsetY))
     }
 }
