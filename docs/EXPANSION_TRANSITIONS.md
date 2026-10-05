@@ -131,12 +131,16 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
   source of a visible fade; the one that was visible was the crossfade this
   rev replaced.
 - `progress` is driven by a critically-damped spring (`.spring(response:
-  0.3, dampingFraction: 1)`) for tap-to-open, a slightly bouncier one
-  (`response: 0.3, dampingFraction: 0.85`) for the reverse close flight, and
+  1, dampingFraction: 1)`) for tap-to-open, a slightly bouncier one
+  (`response: 1, dampingFraction: 0.85`) for the reverse close flight, and
   1:1 by live drag translation for an interactive dismiss — the same
   geometry/opacity math serves all three, so there's no separate
   "interactive" rendering branch, only a different thing writing to
-  `progress`.
+  `progress`. `response` isn't literally the flight's duration — for
+  `dampingFraction: 1` it settles (per a `print()`-instrumented on-device
+  measurement, not the naive assumption that `response` ≈ duration) to 99%
+  in ~1.1s and fully by ~1.4s for `response: 1`, which is what "about a
+  one-second flight" actually maps to.
 - **Close** always runs the same two steps: animate `progress` back to 0,
   then — once that's visually landed (a fixed delay matching the spring's
   settle time, not a completion callback) — call the real `dismiss()`,
@@ -207,7 +211,7 @@ open spring does.** `ProcessingVideoFramePreferenceKey` only reports once
 doesn't even mount until `viewModel.path.last` resolves to a video. Per
 `HomeView.presentSlot`'s own doc comment, that PhotoKit resolve "can be
 anywhere from instant to several seconds" — so the track load that feeds the
-real measurement routinely starts *after* the ~0.3s open spring has already
+real measurement routinely starts *after* the open spring has already
 finished. The destination fallback before Rev 2 was blind to this: a plain
 full screen. The open flight grew toward the full screen the entire time,
 only narrowing to the correct letterboxed rect once the real measurement
@@ -366,15 +370,13 @@ frame, the cross-dissolve this feature exists to not have. The geometry
 gives the same answer as evaluating it continuously would — only the *step
 function* lost information by being evaluated solely at the endpoints.
 
-This also explains the "gap": since opacity and geometry were being interpolated
-by the identical spring curve, the moment either layer crossed into
-human-visibility (some non-trivial opacity) corresponded to the *same* fraction
-of the geometry's growth — on open, the card was still fading in size when it
-first became legible, so it visually seemed to stop short of the real frame; on
-close, the reverse. The settled, static endpoint was always pixel-correct (the
-existing `ExpansionTransitionVerificationTests` frame comparisons were measuring
-exactly that, long after the animation had finished, which is why they kept
-passing throughout) — the gap was only ever visible mid-flight.
+This was originally believed to also explain the reported "gap" between the
+expand/shrink motion's max size and the real destination frame — the theory
+being that since opacity and geometry were interpolated by the identical spring
+curve, the moment either layer crossed into human-visibility corresponded to a
+sub-final fraction of the geometry's growth. **That theory was wrong** — see
+"Rev 5: the gap was a second, unrelated bug" below, found after this fix shipped
+and the gap was reported to still be there.
 
 **Confirmed, not assumed** — this doc has enough history of fixes that looked
 right on paper and weren't (see "A verification note" below) to not repeat that
@@ -417,6 +419,121 @@ of each container's logic is independently implemented (see this doc's own
 intro). `editorOpacity`/`contentOpacity` stay, unchanged, as the (correct, since
 hit-testing only needs the two endpoints) gate for `allowsHitTesting` — they just
 no longer drive the layers' actual visibility.
+
+## Rev 5: the gap was a second, unrelated bug
+
+*2026-10-04, same day.* After Rev 4 shipped and the open/close spring's
+`response` was raised from `0.3`/`0.29` to `1` (an unrelated "make the flight
+last about a second" request), the previously-reported sizing gap was
+confirmed still present — Rev 4's theory that it was a side effect of the
+crossfade-opacity bug (and would therefore already be fixed by Rev 4) was
+wrong. The real cause: `measuredDestination`'s `onPreferenceChange` handler,
+in both containers, was a plain assignment —
+
+```swift
+measuredDestination = CGRect(/* divided-out report */)
+```
+
+— and `destination = measuredDestination ?? fallbackDestination(in:)` feeds
+directly into `currentRect`, which drives `rect`'s `.frame`/`.position`.
+Unlike the opacity bug, this isn't about `body` only seeing `progress`'s two
+endpoints — `currentRect` being linear in `progress` is exactly why the
+*geometry* survived that problem untouched (Rev 4's own reasoning). But a
+change to `destination` *itself*, arriving from a separate, later state
+update (the real measurement landing well after `fallbackDestination` has
+already been driving the flight for a while, since `ClipEditorPreviewFrame`/
+`ProcessingVideoFramePreferenceKey` both depend on an async load with no
+upper bound), recomputes `rect` at whatever `progress` is already committed
+to — and without `withAnimation` around *that specific* assignment, SwiftUI
+has nothing to interpolate from: `.frame`/`.position` snap straight to the
+new value in a single frame. The longer `response: 1` flight didn't create
+this bug — it just gave the async measurement far more time to land mid-flight
+instead of before the card had grown large enough for the jump to be
+noticeable, which is almost certainly why the original `response: 0.3`-era
+report called it "subtle."
+
+**What didn't work for verifying this, and why**, since getting this wrong
+cost real time again:
+- **XCUITest's `element.frame`, and a `GeometryReader`/`PreferenceKey`
+  reporting its own `.global` frame (the same mechanism `measuredDestination`
+  itself is built on), both report the current *model* value, not Core
+  Animation's live `presentation()` value.** Polling either one repeatedly
+  during an open flight returns the *same, already-settled* number on every
+  sample — confirmed directly: a poll loop sampling every 30ms from
+  immediately after the tap returned the final settled frame on its very
+  first sample, long before a `response: 1` spring could plausibly have
+  finished. Neither tool can tell "jumped" from "animated smoothly"; they can
+  only tell you a change happened, after the fact.
+- **A `UIViewRepresentable` probe reading `layer.presentation()?.frame` via a
+  `CADisplayLink`** seemed like the fix for the above, but a UIKit view
+  bridged into SwiftUI has its frame set by the SwiftUI↔UIKit bridge, not
+  necessarily driven through the same implicit Core Animation transaction a
+  native SwiftUI `.frame`/`.position` modifier uses — so it can't be trusted
+  to reflect what the native layer is actually doing either, and this
+  session's readings from it didn't hold up under scrutiny.
+- **`simctl io recordVideo` reliably dropped frames during the exact window
+  the animation was playing** — not an occasional flake: four separate
+  attempts (driving the real tap through `ClipListView` via XCUITest, a
+  direct-mount scratch harness with zero XCUITest overhead, and `xcodebuild
+  test-without-building` to remove compile-time CPU contention) each showed
+  multi-second gaps in the recorded timeline exactly spanning the open
+  flight, with the frame immediately before showing the stale fallback
+  square and the frame immediately after already fully settled. The
+  simulator appears to deprioritize screen recording under the same render
+  load the animation itself generates — the thing being measured competes
+  with the measurement.
+
+**What did work:** a *bordered* recording — temporary `.border()`s on
+`cardLayer` and on the editor's/processing view's own real content — doesn't
+need to catch the transition in flight, only to catch one frame on each side
+of it. That recording showed a frame with a `(48, 300, 1080, 1082)`-pixel
+bordered square (dividing out the 3x simulator scale: `(16, 100, 360, 361)`pt
+— `fallbackDestination`'s `screen.width - 32` square, pixel-exact) directly
+adjacent, 12–40ms later depending on the run, to a frame with the correct
+`(154, 388, 868, 1544)`-pixel rect (`(51, 129, 289, 515)`pt — the real
+letterboxed/preview destination). Two consecutive captured frames, not a
+gradual transition between them, is itself the proof of an unanimated snap —
+this doesn't need dense in-between sampling to be conclusive, which is why it
+survived the recording tool's frame-dropping where the duration measurements
+above didn't.
+
+**The fix:** wrap the assignment itself —
+
+```swift
+withAnimation(.spring(response: 0.25, dampingFraction: 1)) {
+    measuredDestination = next
+}
+```
+
+— in both containers' `onPreferenceChange` handlers. This is the standard
+SwiftUI idiom for exactly this shape of problem (a model value correction
+arriving asynchronously, independent of whatever `withAnimation` block
+produced the surrounding state), and — unlike the opacity bug — there's no
+`Animatable`-modifier trick needed here: `.frame`/`.position` are genuinely
+continuous, animatable modifiers, so retargeting them mid-flight with a short
+spring is the documented, interruptible-animation case, not a special one.
+`0.25`s (independent of the main flight's own `response`) is deliberately
+short: a correction, not a second flight. Every live update during the open
+flight gets this treatment, not just the first — consistent with
+`measuredDestination` already being designed to converge over a few reports
+(see "Measuring the destination without a race or a feedback loop" above);
+later, smaller corrections just become smaller nudges on top of whatever
+correction is already in flight, which is the same "retarget an in-progress
+spring" case SwiftUI already handles for the first one.
+
+**Left open:** `ClipExpansionContainer`'s divide-out (`editorScale`/
+`editorOffsetX`/`editorOffsetY`) still reads these as plain `body`-level
+values — which, per the opacity bug's own lesson, are `progress`'s *target*
+values, not a live in-flight transform — so the divide-out is only exactly
+correct once the surrounding spring (now including this new correction
+spring) has actually settled, same as before this rev. This wasn't changed
+here: doing so would mean threading live geometry through an `Animatable`
+modifier the way `CrossfadeCut` does for opacity, which touches the exact
+self-referential `measuredDestination`-feeds-the-transform-that-divides-out-
+the-next-`measuredDestination` relationship Rev 3's real-device livelock came
+from. If a real device still shows jitter or a lingering mismatch during the
+open flight after this fix, that's the next place to look — `verified, not
+assumed` applies especially there.
 
 ## Gesture ownership: why the dismiss drag can't live behind the content
 
@@ -700,7 +817,9 @@ app`-style memory note captures the reusable parts of the recipe (recording
    effect.** A UI test that samples the flying card's frame partway through
    a close, to verify it lands on the right `sourceFrame`, reliably timed
    out or hung for ~30s trying to take a snapshot during exactly the
-   ~0.42s–0.92s window `close()` holds animations disabled — reproduced
+   window `close()` holds animations disabled (the delay before `dismiss()`
+   plus the 0.5s hold after it — scales with the open/close spring's own
+   `response`, currently ~1.4s–1.9s) — reproduced
    across a simulator reboot, so not host flakiness. There's no known
    workaround short of not sampling in that window; the close direction's
    destination correctness has to be inferred from the open direction's
@@ -721,6 +840,37 @@ app`-style memory note captures the reusable parts of the recipe (recording
    then `progress=1.0`) — conclusive proof `body` only ever saw the two
    endpoints, in a way no amount of re-reading the `progress >=
    crossfadeThreshold` line would have surfaced.
+8. **Neither XCUITest's `element.frame` nor a `GeometryReader`/
+   `PreferenceKey` reports Core Animation's live, mid-flight `presentation()`
+   value — both report the current SwiftUI model value, settled or not.**
+   (Rev 5's own investigation, above.) These tools are the right ones for
+   proving a value *changed* (what this doc's other geometry tests already
+   use them for), but they cannot distinguish an animated transition from an
+   instant snap: polling either one on a timer during an active spring
+   returns the same already-final number on every sample. Proving a snap
+   needs either two adjacent frames of a recording (bordered, so the jump is
+   visually unambiguous — "two consecutive captured frames show different,
+   discrete states" is itself the proof, no dense in-between sampling
+   required) or counting how many times the producing code actually runs
+   (lesson 7's technique). A `UIViewRepresentable`-wrapped `CADisplayLink`
+   probe reading `layer.presentation()?.frame` looked like a fix for this but
+   wasn't trustworthy either: that view's frame is set by the SwiftUI↔UIKit
+   bridge, not necessarily through the same implicit animation a native
+   SwiftUI `.frame`/`.position` modifier uses.
+9. **`simctl io recordVideo` drops frames specifically during the CPU-heavy
+   window an animation is actually playing** — confirmed across four
+   independently-structured attempts in Rev 5's investigation (a real
+   `ClipListView` tap via XCUITest, a direct-mount scratch harness with no
+   XCUITest process running at all, and `xcodebuild test-without-building` to
+   remove compile-time load from the mix), each showing a multi-second gap in
+   the recorded timeline exactly spanning the open flight. The frame
+   immediately before the gap showed the stale state, the frame immediately
+   after showed the fully-settled one — the simulator appears to deprioritize
+   screen recording under the same render load the animation itself
+   generates, so the thing being measured competes with the measurement.
+   Lesson 1's "sparse during idle, bursts during real change" turned out to
+   have a corollary: it can also go sparse *during* a sufficiently demanding
+   change, not just between them.
 
 `TurnipUITests/ExpansionTransitionVerificationTests.swift` is where Rev 2's
 own fix was actually verified against the running app rather than just

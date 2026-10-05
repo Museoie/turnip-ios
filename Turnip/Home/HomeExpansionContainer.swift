@@ -119,7 +119,13 @@ struct HomeExpansionContainer<Content: View>: View {
                     .allowsHitTesting(contentOpacity > 0.99)
                     .onPreferenceChange(ProcessingVideoFramePreferenceKey.self) { frame in
                         guard frame != .zero else { return }
-                        measuredDestination = frame
+                        // See `ClipExpansionContainer`'s identical fix for why a plain
+                        // assignment here snaps `rect`'s `.frame`/`.position` straight to the
+                        // new `destination` instead of growing into it — confirmed the same
+                        // way, via a bordered recording of the open flight.
+                        withAnimation(.spring(response: 0.25, dampingFraction: 1)) {
+                            measuredDestination = frame
+                        }
                     }
 
                 cardLayer(rect: rect)
@@ -131,7 +137,7 @@ struct HomeExpansionContainer<Content: View>: View {
         }
         .ignoresSafeArea()
         .onAppear {
-            withAnimation(.spring(response: 0.3, dampingFraction: 1)) { progress = 1 }
+            withAnimation(.spring(response: 1, dampingFraction: 1)) { progress = 1 }
         }
     }
 
@@ -147,11 +153,11 @@ struct HomeExpansionContainer<Content: View>: View {
                 if committing {
                     close()
                 } else {
-                    withAnimation(.spring(response: 0.29, dampingFraction: 0.9)) { progress = 1 }
+                    withAnimation(.spring(response: 1, dampingFraction: 0.9)) { progress = 1 }
                 }
             },
             dismissCancelled: {
-                withAnimation(.spring(response: 0.29, dampingFraction: 0.9)) { progress = 1 }
+                withAnimation(.spring(response: 1, dampingFraction: 0.9)) { progress = 1 }
             })
     }
 
@@ -231,8 +237,8 @@ struct HomeExpansionContainer<Content: View>: View {
     /// did not.
     private func close() {
         lockedSourceFrame = sourceFrame()
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { progress = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+        withAnimation(.spring(response: 1, dampingFraction: 0.85)) { progress = 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
             UIView.setAnimationsEnabled(false)
             var transaction = Transaction()
             transaction.disablesAnimations = true

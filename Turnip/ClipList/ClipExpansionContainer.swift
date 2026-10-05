@@ -149,11 +149,28 @@ struct ClipExpansionContainer: View {
                     // See `acceptsDestinationUpdates`'s own doc comment for why this stops
                     // once a close begins instead of staying live for the whole lifetime.
                     guard acceptsDestinationUpdates, frame != .zero, editorScale > 0 else { return }
-                    measuredDestination = CGRect(
+                    let next = CGRect(
                         x: (frame.minX - editorOffsetX) / editorScale,
                         y: (frame.minY - editorOffsetY) / editorScale,
                         width: frame.width / editorScale,
                         height: frame.height / editorScale)
+                    // A plain assignment here is an un-animated jump: `rect`'s `.frame`/
+                    // `.position` are plain (non-Animatable-modifier) values recomputed once
+                    // per state change, same as any other `@State` mutation — the one thing
+                    // that keeps them looking continuous across the open/close springs is
+                    // that `currentRect` is linear in `progress`, so interpolating its two
+                    // endpoint outputs equals evaluating it continuously would have. Changing
+                    // `destination` itself isn't covered by that: at whatever `progress` is
+                    // already committed to (1, mid-open-spring, almost immediately), this
+                    // retargets `rect` straight to the new `destination`, with nothing to
+                    // interpolate from unless this specific change is itself inside a
+                    // `withAnimation` block. Confirmed via a bordered screen recording: the
+                    // card visibly snapped from `fallbackDestination`'s square to the real
+                    // letterboxed rect in a single frame the instant this report first
+                    // arrived, rather than growing toward it like the rest of the flight.
+                    withAnimation(.spring(response: 0.25, dampingFraction: 1)) {
+                        measuredDestination = next
+                    }
                 }
 
                 cardLayer(rect: rect)
@@ -166,7 +183,7 @@ struct ClipExpansionContainer: View {
         }
         .ignoresSafeArea()
         .onAppear {
-            withAnimation(.spring(response: 0.3, dampingFraction: 1)) { progress = 1 }
+            withAnimation(.spring(response: 1, dampingFraction: 1)) { progress = 1 }
         }
         .onChange(of: dragTranslation != nil) { isDraggingNow in
             guard !isDraggingNow else { return }
@@ -176,7 +193,7 @@ struct ClipExpansionContainer: View {
             }
             // `onEnded` never ran (system-cancelled) — fall back to the same
             // cancel-spring a normal non-committing release would use.
-            withAnimation(.spring(response: 0.29, dampingFraction: 0.9)) { progress = 1 }
+            withAnimation(.spring(response: 1, dampingFraction: 0.9)) { progress = 1 }
         }
     }
 
@@ -259,7 +276,7 @@ struct ClipExpansionContainer: View {
                     if committing {
                         close()
                     } else {
-                        withAnimation(.spring(response: 0.29, dampingFraction: 0.9)) { progress = 1 }
+                        withAnimation(.spring(response: 1, dampingFraction: 0.9)) { progress = 1 }
                     }
                 }
         )
@@ -278,8 +295,8 @@ struct ClipExpansionContainer: View {
     /// on just the next run loop turn still let the slide play out.
     private func close() {
         acceptsDestinationUpdates = false
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { progress = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+        withAnimation(.spring(response: 1, dampingFraction: 0.85)) { progress = 0 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
             UIView.setAnimationsEnabled(false)
             var transaction = Transaction()
             transaction.disablesAnimations = true
