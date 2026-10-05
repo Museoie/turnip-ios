@@ -51,7 +51,27 @@ struct ClipEditorView: View {
         onRequestDeleteClose: (() -> Void)? = nil,
         dismissGesture: AnyGesture<DragGesture.Value>? = nil
     ) {
-        _viewModel = StateObject(wrappedValue: ClipEditorViewModel(source: source))
+        self.init(
+            viewModel: ClipEditorViewModel(source: source),
+            onCommit: onCommit,
+            onDelete: onDelete,
+            onRequestClose: onRequestClose,
+            onRequestDeleteClose: onRequestDeleteClose,
+            dismissGesture: dismissGesture)
+    }
+
+    /// Renders a view model the presenter owns — `ClipExpansionContainer` keeps the same
+    /// player on screen in its flying card, so the editor and the card show the same
+    /// frame at the instant one replaces the other.
+    init(
+        viewModel: ClipEditorViewModel,
+        onCommit: @escaping (ClipEditorResult) -> Void,
+        onDelete: @escaping () -> Void,
+        onRequestClose: (() -> Void)? = nil,
+        onRequestDeleteClose: (() -> Void)? = nil,
+        dismissGesture: AnyGesture<DragGesture.Value>? = nil
+    ) {
+        _viewModel = StateObject(wrappedValue: viewModel)
         self.onCommit = onCommit
         self.onDelete = onDelete
         self.onRequestClose = onRequestClose
@@ -185,27 +205,17 @@ struct ClipEditorView: View {
                 y: overlay.cropRect.minY * scale,
                 width: overlay.cropRect.width * scale,
                 height: overlay.cropRect.height * scale)
-            // Resolution-independent: a fraction of the video's own bounds, so the
-            // gesture's anchor matches `ClipExportTransform.make`'s anchor (the crop
-            // rect's center) regardless of the on-screen container's point size.
-            let anchor = UnitPoint(
-                x: overlay.cropRect.midX / overlay.videoSize.width,
-                y: overlay.cropRect.midY / overlay.videoSize.height)
-            let liveScale = viewModel.cropAdjustment.scale * gestureScale
-            let liveRotation = Angle(radians: viewModel.cropAdjustment.rotationRadians) + gestureRotation
-            // `cropAdjustment.offset` is displayed-pixel space (`applyCropOffset`'s
-            // contract) while `gestureOffset` is the in-flight drag's own screen points —
-            // `* scale` converts the committed offset into the same screen-point space
-            // this view renders in before the two are summed.
-            let liveOffset = CGSize(
-                width: viewModel.cropAdjustment.offset.width * scale + gestureOffset.width,
-                height: viewModel.cropAdjustment.offset.height * scale + gestureOffset.height)
             ZStack {
-                BareVideoPlayerView(player: viewModel.player)
-                    .scaleEffect(liveScale, anchor: anchor)
-                    .rotationEffect(liveRotation, anchor: anchor)
-                    .offset(liveOffset)
-                    .clipped()
+                ClipEditorVideoSurface(
+                    player: viewModel.player,
+                    cropCenter: UnitPoint(
+                        x: overlay.cropRect.midX / overlay.videoSize.width,
+                        y: overlay.cropRect.midY / overlay.videoSize.height),
+                    adjustment: viewModel.cropAdjustment,
+                    pointsPerDisplayedPixel: scale,
+                    gestureScale: gestureScale,
+                    gestureRotation: gestureRotation,
+                    gestureOffset: gestureOffset)
                 CropOverlayShape(hole: hole)
                     .fill(.black.opacity(0.55), style: FillStyle(eoFill: true))
                     .allowsHitTesting(false)
@@ -279,6 +289,38 @@ struct ClipEditorView: View {
         }
         .buttonStyle(.bordered)
         .disabled(viewModel.cropAdjustment == .identity)
+    }
+}
+
+/// The video under the editor's crop marker: the player, transformed by the user's crop
+/// adjustment about the crop rect's center and clipped to its own bounds. Shared by the
+/// editor's preview and by `ClipExpansionContainer`'s flying card, so the card shows
+/// exactly the picture the editor will show — the same player, the same transform —
+/// and the cut between the two is invisible. Sized by its container to the displayed
+/// frame's aspect ratio; `pointsPerDisplayedPixel` converts the adjustment's committed
+/// offset (displayed-pixel space, `applyCropOffset`'s contract) into this view's own
+/// points, while the in-flight gesture values are already in points.
+struct ClipEditorVideoSurface: View {
+    let player: AVPlayer
+    /// The crop rect's center as a fraction of the video's bounds — resolution-independent,
+    /// so the gesture's anchor matches `ClipExportTransform.make`'s anchor regardless of
+    /// the on-screen size.
+    let cropCenter: UnitPoint
+    let adjustment: CropAdjustment
+    let pointsPerDisplayedPixel: CGFloat
+    var gestureScale: CGFloat = 1
+    var gestureRotation: Angle = .zero
+    var gestureOffset: CGSize = .zero
+    var onReadyForDisplay: (() -> Void)?
+
+    var body: some View {
+        BareVideoPlayerView(player: player, onReadyForDisplay: onReadyForDisplay)
+            .scaleEffect(adjustment.scale * gestureScale, anchor: cropCenter)
+            .rotationEffect(Angle(radians: adjustment.rotationRadians) + gestureRotation, anchor: cropCenter)
+            .offset(
+                x: adjustment.offset.width * pointsPerDisplayedPixel + gestureOffset.width,
+                y: adjustment.offset.height * pointsPerDisplayedPixel + gestureOffset.height)
+            .clipped()
     }
 }
 

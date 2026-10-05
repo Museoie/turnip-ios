@@ -62,6 +62,16 @@ final class ClipEditorViewModel: ObservableObject {
     /// discriminated this guard while it was unreadable.
     private(set) var isTrimming = false
 
+    /// `false` while a presenter is holding playback for its opening flight — see
+    /// `holdPlayback(at:)`. `prepare()` then arms the player without seeking or
+    /// playing, and `releasePlayback()` starts the loop once the flight has landed.
+    private var isPlaybackReleased = true
+    /// True while a presenter is scrubbing the player for an expansion flight. The
+    /// periodic observer's loop-back is suppressed meanwhile, the same way it is for a
+    /// handle drag: a scrub landing near the window's end would otherwise bounce back
+    /// to the start the moment it got there.
+    private var isPresenterScrubbing = false
+
     init(source: ClipEditorSource, calculator: CropRectCalculator = CropRectCalculator()) {
         self.source = source
         self.calculator = calculator
@@ -129,7 +139,65 @@ final class ClipEditorViewModel: ObservableObject {
             duration: assetDuration.seconds,
             naturalSize: naturalSize,
             preferredTransform: preferredTransform)
-        startPreview()
+        if isPlaybackReleased {
+            startPreview()
+        } else {
+            armPlayer()
+        }
+    }
+
+    /// The frame the player is currently showing, in asset time.
+    var currentTime: TimeInterval {
+        let time = player.currentTime()
+        return time.isNumeric ? time.seconds : window.startTime
+    }
+
+    /// Holds the preview loop back for a presenter's opening flight: attaches the player
+    /// item if needed, pauses, and seeks exactly to `time` — the frame the flight starts
+    /// on — without starting the loop. `prepare()` running afterwards leaves playback held
+    /// too; `releasePlayback()` is what starts it. Returns once the seek has completed, so
+    /// the caller knows the player can show that frame.
+    func holdPlayback(at time: TimeInterval) async {
+        isPlaybackReleased = false
+        isPresenterScrubbing = true
+        armPlayer()
+        player.pause()
+        await scrub(to: time)
+    }
+
+    /// Ends `holdPlayback(at:)`'s hold: starts the preview loop from the window's start if
+    /// media info has loaded, or lets `prepare()` start it when it does.
+    func releasePlayback() {
+        isPlaybackReleased = true
+        isPresenterScrubbing = false
+        if duration != nil {
+            startPreview()
+        }
+    }
+
+    /// Pauses the preview for a presenter's closing flight or interactive dismiss, keeping
+    /// `isPlaying` (the user's intent) as it was, and returns the frame the scrub starts
+    /// from. Safe to call again mid-scrub: it just reports the current frame.
+    func beginPresenterScrub() -> TimeInterval {
+        isPresenterScrubbing = true
+        player.pause()
+        return currentTime
+    }
+
+    /// Ends a presenter scrub that didn't close the editor after all (a cancelled
+    /// dismiss drag): resumes playback if the user hadn't paused it.
+    func endPresenterScrub() {
+        isPresenterScrubbing = false
+        if isPlaying {
+            player.play()
+        }
+    }
+
+    /// Seeks exactly to `time` and returns once the player has that frame.
+    func scrub(to time: TimeInterval) async {
+        let target = CMTime(seconds: time, preferredTimescale: 600)
+        _ = await player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        playbackTime = time
     }
 
     /// Stops playback and drops the time observer. Called when the view disappears.
@@ -334,6 +402,15 @@ final class ClipEditorViewModel: ObservableObject {
     /// loop always starts from a non-dragging state.
     private func startPreview() {
         isTrimming = false
+        armPlayer()
+        seek(to: window.startTime)
+        player.play()
+        isPlaying = true
+    }
+
+    /// Attaches the asset's item and the periodic observer, once each — everything the
+    /// preview loop needs short of seeking and playing.
+    private func armPlayer() {
         if player.currentItem == nil {
             player.replaceCurrentItem(with: AVPlayerItem(sdrAsset: source.asset))
         }
@@ -345,9 +422,6 @@ final class ClipEditorViewModel: ObservableObject {
                 }
             }
         }
-        seek(to: window.startTime)
-        player.play()
-        isPlaying = true
     }
 
     /// One preview tick: follows the playhead and loops the draft window. The loop-back
@@ -356,7 +430,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// preview back to the window start.
     private func tick(at time: TimeInterval) {
         playbackTime = time
-        if Self.shouldLoopBack(at: time, window: window, isTrimming: isTrimming) {
+        if Self.shouldLoopBack(at: time, window: window, isTrimming: isTrimming || isPresenterScrubbing) {
             seek(to: window.startTime)
         }
     }

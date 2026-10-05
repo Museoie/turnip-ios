@@ -29,6 +29,12 @@ import UIKit
 struct ClipListView: View {
     @StateObject private var viewModel: ClipListViewModel
     @State private var expandTarget: ExpandTarget?
+    /// The tile whose slot is emptied while its clip is expanded, Photos-style. Set by
+    /// `ClipExpansionContainer` the instant its opening flight starts moving — not at
+    /// presentation, since the container's card first waits for its video surface to be
+    /// able to show the tile's frame, and until then the tile itself is what's on screen.
+    /// Cleared when the cover is dismissed.
+    @State private var hiddenItemID: UUID?
     /// Whether the "No tricks found" glass notice is up — seeded from `showsNoTricksFound`
     /// at init, then owned here so a tap or the notice's own timeout can dismiss it.
     @State private var isShowingNoTricksNotice: Bool
@@ -64,11 +70,12 @@ struct ClipListView: View {
                         item: item,
                         viewModel: viewModel,
                         isSuspended: expandTarget != nil,
-                        isHidden: expandTarget?.id == item.id,
-                        onOpen: item.isOriginal ? nil : { frame, thumbnail in
+                        isHidden: hiddenItemID == item.id,
+                        onOpen: item.isOriginal ? nil : { frame, thumbnail, loopTime in
                             presentExpandTarget(ExpandTarget(
                                 id: item.id,
                                 sourceFrame: frame,
+                                sourceTime: loopTime ?? (item.window.startTime + item.window.endTime) / 2,
                                 thumbnail: thumbnail,
                                 // Snapshot now, rather than re-deriving from
                                 // `viewModel.binding(for:)` inside `editor(for:)`:
@@ -118,9 +125,9 @@ struct ClipListView: View {
         } message: {
             Text(viewModel.saveFailureMessage ?? "")
         }
-        .fullScreenCover(item: $expandTarget) { target in
+        .fullScreenCover(item: $expandTarget, onDismiss: { hiddenItemID = nil }, content: { target in
             editor(for: target)
-        }
+        })
         .overlay(alignment: .top) {
             if isShowingNoTricksNotice {
                 GlassNoticeView(message: "No tricks found", isPresented: $isShowingNoTricksNotice)
@@ -179,10 +186,12 @@ struct ClipListView: View {
     private func editor(for target: ExpandTarget) -> some View {
         let container = ClipExpansionContainer(
             sourceFrame: target.sourceFrame,
+            sourceTime: target.sourceTime,
             thumbnail: target.thumbnail,
             source: target.source,
             onCommit: { result in viewModel.applyEditorResult(result, to: target.id) },
-            onDelete: { viewModel.delete(target.id) }
+            onDelete: { viewModel.delete(target.id) },
+            onFlightStarted: { hiddenItemID = target.id }
         )
         // Lets the grid show through the cover while the card/scrim animate —
         // `ClipExpansionContainer` draws its own opaque scrim at `progress`, so
@@ -206,6 +215,9 @@ struct ClipListView: View {
 private struct ExpandTarget: Identifiable {
     let id: UUID
     let sourceFrame: CGRect
+    /// The frame the tile was showing at the tap, in asset time — see
+    /// `ClipExpansionContainer.sourceTime`.
+    let sourceTime: TimeInterval
     let thumbnail: CGImage?
     /// Snapshotted at tap time rather than re-derived from `viewModel.binding(for:)`
     /// later: Delete removes the item from `viewModel.items` synchronously, before
@@ -260,9 +272,10 @@ private struct ClipCardView: View {
     /// removing it) avoids any layout reflow in the grid underneath.
     let isHidden: Bool
     /// Opens the editor on this clip, passing the tile's own on-screen frame (global
-    /// space) and its already-decoded poster thumbnail so the presenter can fly open
-    /// from exactly here — `nil` for the original item, whose tile has no tap action.
-    let onOpen: ((CGRect, CGImage?) -> Void)?
+    /// space), its already-decoded poster thumbnail, and the asset time its loop is
+    /// paused on (`nil` without a loop) so the presenter can fly open from exactly here,
+    /// on exactly this frame — `nil` for the original item, whose tile has no tap action.
+    let onOpen: ((CGRect, CGImage?, TimeInterval?) -> Void)?
 
     @State private var thumbnail: CGImage?
     @State private var duration: TimeInterval?
@@ -273,7 +286,7 @@ private struct ClipCardView: View {
         viewModel: ClipListViewModel,
         isSuspended: Bool,
         isHidden: Bool,
-        onOpen: ((CGRect, CGImage?) -> Void)?
+        onOpen: ((CGRect, CGImage?, TimeInterval?) -> Void)?
     ) {
         self.item = item
         _viewModel = ObservedObject(wrappedValue: viewModel)
@@ -341,7 +354,7 @@ private struct ClipCardView: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .clipped()
                 .contentShape(Rectangle())
-                .onTapGesture { onOpen?(proxy.frame(in: .global), thumbnail) }
+                .onTapGesture { open(frame: proxy.frame(in: .global)) }
                 // The UI-test screenshot harness waits on this label to prove the
                 // thumbnail fallback actually engaged.
                 .accessibilityLabel(tileAccessibilityLabel)
@@ -352,6 +365,17 @@ private struct ClipCardView: View {
         .overlay(alignment: .topTrailing) { trashButton }
         .overlay(alignment: .bottom) { trimOverlay }
         .opacity(item.isTrashed ? 0.4 : 1)
+    }
+
+    /// Pauses the loop first, then reads its position: the frame handed to the presenter
+    /// has to be the one the tile keeps showing until it's hidden, and the suspension
+    /// `isSuspended` applies on the next render would let the loop advance a frame past
+    /// the time read here.
+    private func open(frame: CGRect) {
+        guard let onOpen else { return }
+        playback.setSuspended(true)
+        let loopTime = playback.loop.map { $0.player.currentTime() }
+        onOpen(frame, thumbnail, loopTime.flatMap { $0.isNumeric ? $0.seconds : nil })
     }
 
     private var tileAccessibilityLabel: String {

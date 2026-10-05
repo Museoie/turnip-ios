@@ -642,6 +642,9 @@ struct ProcessingView<Destination: View>: View {
             if let player {
                 BareVideoPlayerView(player: player)
                     .ignoresSafeArea()
+                    // Hands the player itself outward too, so the expansion transition's
+                    // card can draw the same frames this stage draws and scrub them on close.
+                    .preference(key: ProcessingPlayerPreferenceKey.self, value: ProcessingPlayerHandle(player: player))
             } else {
                 ProgressView().tint(.white)
             }
@@ -769,6 +772,29 @@ struct ProcessingView<Destination: View>: View {
 /// (matching `ClipEditorPreviewFramePreferenceKey`'s own `reduce`): `displaySize` is nil for
 /// the first render or two while the asset's track info loads, during which this view simply
 /// isn't in the tree yet, so the default `.zero` should never overwrite a real measurement.
+/// `videoStage`'s player, reported outward alongside its frame so a Photos-style expansion
+/// transition can render the same player in its flying card — see `HomeExpansionContainer`.
+/// Reduces to the latest non-nil value for the same reason `ProcessingVideoFramePreferenceKey`
+/// does: a state whose stage isn't in the tree reports nothing, and that shouldn't overwrite
+/// a real player.
+struct ProcessingPlayerPreferenceKey: PreferenceKey {
+    static var defaultValue = ProcessingPlayerHandle(player: nil)
+    static func reduce(value: inout ProcessingPlayerHandle, nextValue: () -> ProcessingPlayerHandle) {
+        let next = nextValue()
+        if next.player != nil { value = next }
+    }
+}
+
+/// `ProcessingPlayerPreferenceKey`'s value: a player compared by identity, since
+/// `onPreferenceChange` needs `Equatable` and `AVPlayer` isn't.
+struct ProcessingPlayerHandle: Equatable {
+    let player: AVPlayer?
+
+    static func == (lhs: ProcessingPlayerHandle, rhs: ProcessingPlayerHandle) -> Bool {
+        lhs.player === rhs.player
+    }
+}
+
 struct ProcessingVideoFramePreferenceKey: PreferenceKey {
     static var defaultValue: CGRect = .zero
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) {

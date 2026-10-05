@@ -149,6 +149,7 @@ struct HomeView: View {
         let container = HomeExpansionContainer(
             sourceFrame: { identifier.flatMap { tileFrames[$0] } },
             thumbnail: identifier.flatMap { tileThumbnails[$0] },
+            poster: identifier.flatMap { viewModel.thumbnails.cachedPoster(for: $0) },
             initialAspectRatio: slot.initialAspectRatio,
             content: { handlers in destinationContent(identifier: identifier, handlers: handlers) }
         )
