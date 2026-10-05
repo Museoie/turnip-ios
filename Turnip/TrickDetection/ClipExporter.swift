@@ -29,12 +29,34 @@ struct ExportedClip: Sendable {
 
 /// Failures a clip export can hit, typed so callers can tell a bad window (skip the clip)
 /// from an export-session failure (retryable) without parsing strings.
-enum ClipExportError: Error, Equatable {
+enum ClipExportError: LocalizedError, Equatable {
     case noVideoTrack
     case invalidTimeRange(window: TrickWindow)
     case invalidCropRect(window: TrickWindow)
     case exportFailed(reason: String)
     case cancelled
+
+    /// Human-readable copy for every case. The adapters that carry these errors to the
+    /// user (`exportOneClip` in `ClipListViewModel`) flatten them with
+    /// `localizedDescription`, so without this conformance every typed export failure
+    /// would surface as Swift's NSError-bridge placeholder ("The operation couldn't be
+    /// completed. (Turnip.ClipExportError error N.)") instead of a sentence — the same
+    /// flattening `ClipPhotosSaveError`'s own `LocalizedError` conformance already
+    /// fixed on the Photos side.
+    var errorDescription: String? {
+        switch self {
+        case .noVideoTrack:
+            return "This video has no video track to export."
+        case .invalidTimeRange:
+            return "This clip's time window is outside the video, so it couldn't be exported."
+        case .invalidCropRect:
+            return "This clip's crop area is invalid, so it couldn't be exported."
+        case .exportFailed(let reason):
+            return "Couldn't export this clip. (\(reason))"
+        case .cancelled:
+            return "The export was cancelled."
+        }
+    }
 }
 
 /// The render geometry for one exported clip, computed from pure inputs — no AVFoundation

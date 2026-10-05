@@ -261,4 +261,33 @@ final class ClipExporterTests: XCTestCase {
         // Must not throw: the first export to a fresh filename hits this path.
         try ClipExporter.removeExistingFile(at: url)
     }
+
+    // MARK: - ClipExportError messages
+
+    /// Every case carries its own human-readable message, asserted through
+    /// `localizedDescription` — the exact path the save-flow adapters use to flatten
+    /// these errors (`ClipSaveError.exportFailed(reason: error.localizedDescription)`).
+    /// Without the `LocalizedError` conformance each of these would surface as Swift's
+    /// NSError-bridge placeholder ("The operation couldn't be completed.
+    /// (Turnip.ClipExportError error N.)").
+    func testEachExportErrorCarriesItsOwnMessage() {
+        XCTAssertEqual(
+            ClipExportError.noVideoTrack.localizedDescription,
+            "This video has no video track to export.")
+        XCTAssertEqual(
+            ClipExportError.invalidTimeRange(
+                window: TrickWindow(startTime: 70, endTime: 75)).localizedDescription,
+            "This clip's time window is outside the video, so it couldn't be exported.")
+        XCTAssertEqual(
+            ClipExportError.invalidCropRect(
+                window: TrickWindow(startTime: 8, endTime: 20)).localizedDescription,
+            "This clip's crop area is invalid, so it couldn't be exported.")
+        XCTAssertEqual(
+            ClipExportError.exportFailed(reason: "could not create an export session")
+                .localizedDescription,
+            "Couldn't export this clip. (could not create an export session)")
+        XCTAssertEqual(
+            ClipExportError.cancelled.localizedDescription,
+            "The export was cancelled.")
+    }
 }
