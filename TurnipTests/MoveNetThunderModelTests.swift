@@ -8,7 +8,9 @@ final class MoveNetThunderModelTests: XCTestCase {
     /// The Thunder singlepose int8 variant's reported input shape is accepted.
     func testValidateInputShapeAcceptsThunderSingleposeInt8() throws {
         try MoveNetThunderModel.validateShape(
-            [1, 256, 256, 3], expected: MoveNetThunderModel.expectedInputShape, named: "input"
+            [1, 256, 256, 3], expected: MoveNetThunderModel.expectedInputShape,
+
+                named: "input", source: "Bundled model"
         )
     }
 
@@ -18,7 +20,9 @@ final class MoveNetThunderModelTests: XCTestCase {
     func testValidateInputShapeRejectsLightningVariant() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
-                [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape, named: "input"
+                [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape,
+
+                    named: "input", source: "Bundled model"
             )
         )
     }
@@ -26,7 +30,9 @@ final class MoveNetThunderModelTests: XCTestCase {
     func testValidateInputShapeRejectsWrongRank() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
-                [256, 256, 3], expected: MoveNetThunderModel.expectedInputShape, named: "input"
+                [256, 256, 3], expected: MoveNetThunderModel.expectedInputShape,
+
+                    named: "input", source: "Bundled model"
             )
         )
     }
@@ -34,7 +40,9 @@ final class MoveNetThunderModelTests: XCTestCase {
     func testValidateInputShapeRejectsWrongChannels() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
-                [1, 256, 256, 1], expected: MoveNetThunderModel.expectedInputShape, named: "input"
+                [1, 256, 256, 1], expected: MoveNetThunderModel.expectedInputShape,
+
+                    named: "input", source: "Bundled model"
             )
         )
     }
@@ -42,7 +50,9 @@ final class MoveNetThunderModelTests: XCTestCase {
     /// The Thunder singlepose int8 variant's reported output shape is accepted.
     func testValidateOutputShapeAcceptsThunderSingleposeInt8() throws {
         try MoveNetThunderModel.validateShape(
-            [1, 1, 17, 3], expected: MoveNetThunderModel.expectedOutputShape, named: "output"
+            [1, 1, 17, 3], expected: MoveNetThunderModel.expectedOutputShape,
+
+                named: "output", source: "Bundled model"
         )
     }
 
@@ -52,7 +62,9 @@ final class MoveNetThunderModelTests: XCTestCase {
     func testValidateOutputShapeRejectsWrongLayout() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
-                [1, 1, 17, 2], expected: MoveNetThunderModel.expectedOutputShape, named: "output"
+                [1, 1, 17, 2], expected: MoveNetThunderModel.expectedOutputShape,
+
+                    named: "output", source: "Bundled model"
             )
         )
     }
@@ -64,7 +76,9 @@ final class MoveNetThunderModelTests: XCTestCase {
     func testValidateInputShapeErrorNamesTheExpectedShape() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
-                [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape, named: "input"
+                [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape,
+
+                    named: "input", source: "Bundled model"
             )
         ) { error in
             guard case PoseError.wrongModelVariant(let message) = error else {
@@ -77,6 +91,31 @@ final class MoveNetThunderModelTests: XCTestCase {
             XCTAssertTrue(
                 message.contains("[1, 192, 192, 3]"),
                 "error should name the actual bundled shape: \(message)"
+            )
+        }
+    }
+
+    /// A wrong-variant staged OTA file must blame the OTA store, not the app
+    /// bundle — otherwise debugging goes to the wrong place when there is no
+    /// bundled model to fall back to.
+    func testValidateInputShapeErrorNamesStagedSource() {
+        XCTAssertThrowsError(
+            try MoveNetThunderModel.validateShape(
+                [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape,
+
+                    named: "input", source: "Staged OTA model"
+            )
+        ) { error in
+            guard case PoseError.wrongModelVariant(let message) = error else {
+                return XCTFail("expected PoseError.wrongModelVariant, got \(error)")
+            }
+            XCTAssertTrue(
+                message.contains("Staged OTA model"),
+                "error should name the staged source: \(message)"
+            )
+            XCTAssertFalse(
+                message.contains("Bundled model"),
+                "error must not blame the bundled model: \(message)"
             )
         }
     }

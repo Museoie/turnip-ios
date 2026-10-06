@@ -69,8 +69,12 @@ actor MoveNetThunderModel {
         guard let candidate else {
             throw PoseError.modelNotFound
         }
+        // Name the source under validation: when a staged OTA file is the
+        // wrong variant and there is no bundled fallback, the shape error
+        // must blame the OTA store, not the app bundle.
+        let source = candidate == bundledPath ? "Bundled model" : "Staged OTA model"
         do {
-            return try MoveNetThunderModel(modelPath: candidate)
+            return try MoveNetThunderModel(modelPath: candidate, source: source)
         } catch {
             // When the staged file fails the variant check (checksum passed but the bytes are
             // the wrong model), evict the staged record before falling back: the update service
@@ -88,7 +92,7 @@ actor MoveNetThunderModel {
             // than bare `throw`: a bare `throw` doesn't compile nested inside
             // this `guard-else`.)
             guard let bundledPath, candidate != bundledPath else { throw error }
-            return try MoveNetThunderModel(modelPath: bundledPath)
+            return try MoveNetThunderModel(modelPath: bundledPath, source: "Bundled model")
         }
     }
 
@@ -148,24 +152,26 @@ actor MoveNetThunderModel {
     /// without this a wrong file would again surface only as silently worse keypoints.
     static let expectedOutputShape = [1, 1, 17, 3]
 
-    /// Throws unless the bundled model's tensor matches `expected`. Checked at load so a
+    /// Throws unless the model's tensor matches `expected`. Checked at load so a
     /// wrong variant fails with a visible error instead of silently worse keypoints: TFLite
     /// still loads and allocates a wrong-variant file, and emits output the keypoint parser
     /// accepts. Throws `PoseError.wrongModelVariant` (not `inferenceFailed`) so `load()` can
     /// evict a bad staged record without dropping a good one on a transient load failure.
+    /// `source` names the model under validation ("Bundled model" or "Staged OTA model")
+    /// so the error sends debugging at the right place.
     /// Pure so it can be tested without the gitignored `.tflite` — see
     /// `MoveNetThunderModelTests`.
-    static func validateShape(_ shape: [Int], expected: [Int], named tensorName: String) throws {
+    static func validateShape(_ shape: [Int], expected: [Int], named tensorName: String, source: String) throws {
         guard shape == expected else {
             throw PoseError.wrongModelVariant(
-                "Bundled model \(tensorName) is \(shape), expected \(expected) for MoveNet Thunder "
+                "\(source) \(tensorName) is \(shape), expected \(expected) for MoveNet Thunder "
                     + "singlepose int8 — the file is probably the wrong variant. "
                     + "See Turnip/Models/README.md for how to get the right one."
             )
         }
     }
 
-    private init(modelPath: String) throws {
+    private init(modelPath: String, source: String) throws {
         do {
             interpreter = try Interpreter(modelPath: modelPath)
             try interpreter.allocateTensors()
@@ -183,9 +189,11 @@ actor MoveNetThunderModel {
                 "Model input wants \(inputTensor.dataType), the frame packing writes uInt8"
             )
         }
-        try Self.validateShape(inputTensor.shape.dimensions, expected: Self.expectedInputShape, named: "input")
+        try Self.validateShape(
+            inputTensor.shape.dimensions, expected: Self.expectedInputShape, named: "input", source: source)
         let outputTensor = try interpreter.output(at: 0)
-        try Self.validateShape(outputTensor.shape.dimensions, expected: Self.expectedOutputShape, named: "output")
+        try Self.validateShape(
+            outputTensor.shape.dimensions, expected: Self.expectedOutputShape, named: "output", source: source)
         preprocessor = try FramePreprocessor(inputShape: inputTensor.shape.dimensions)
     }
 
