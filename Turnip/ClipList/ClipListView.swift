@@ -39,9 +39,12 @@ struct ClipListView: View {
             return exported.fileURL
         } catch {
             if error is CancellationError { throw error }
-            // The export session resumes with its own cancelled error, not
-            // `CancellationError` — forward it as cancellation so the error
-            // type and the cancelled task stop disagreeing (issue #132).
+            // Defensive mapping: the export session resumes with its own
+            // cancelled error rather than `CancellationError` — forward it
+            // as cancellation so the error type and the cancelled task stop
+            // disagreeing (issue #132). The view model's `Task.isCancelled`
+            // check is what actually decides the cancelled path; this mapping
+            // changes no observable behavior.
             if (error as? ClipExportError) == .cancelled { throw CancellationError() }
             throw ExportConfirmationError.exportFailed(reason: error.localizedDescription)
         }
