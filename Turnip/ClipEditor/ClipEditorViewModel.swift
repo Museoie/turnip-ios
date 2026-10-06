@@ -112,8 +112,7 @@ final class ClipEditorViewModel: ObservableObject {
                   naturalSize: naturalSize,
                   preferredTransform: preferredTransform)
         else { return nil }
-        let videoSize = Self.displayedSize(
-            naturalSize: naturalSize, preferredTransform: preferredTransform)
+        let videoSize = naturalSize.displayed(through: preferredTransform)
         return (videoSize: videoSize, cropRect: crop)
     }
 
@@ -360,21 +359,10 @@ final class ClipEditorViewModel: ObservableObject {
         guard naturalSize.width > 0, naturalSize.height > 0 else { return nil }
         // cropRect is already normalized in display orientation, so denormalize in the
         // displayed size directly — no trip through preferredTransform needed.
-        let displayedSize = Self.displayedSize(
-            naturalSize: naturalSize, preferredTransform: preferredTransform)
+        let displayedSize = naturalSize.displayed(through: preferredTransform)
         let displayed = cropRect.denormalized(in: displayedSize)
         guard displayed.width > 0, displayed.height > 0 else { return nil }
         return displayed
-    }
-
-    /// The frame size as the player shows it: the encoded frame's corners through
-    /// `preferredTransform`, so a 90°-rotated track reports portrait dimensions.
-    nonisolated static func displayedSize(
-        naturalSize: CGSize, preferredTransform: CGAffineTransform
-    ) -> CGSize {
-        boundingBox(of: CGRect(origin: .zero, size: naturalSize).corners.map {
-            $0.applying(preferredTransform)
-        }).size
     }
 
     /// Re-derives the crop rect from the pose frames inside the draft window. When the
@@ -390,8 +378,7 @@ final class ClipEditorViewModel: ObservableObject {
         // ratio snap must use the displayed size — passing the encoded naturalSize
         // transposes the dimensions on rotated clips and silently produces a
         // wrongly-proportioned rect.
-        let renderedSize = Self.displayedSize(
-            naturalSize: naturalSize, preferredTransform: preferredTransform)
+        let renderedSize = naturalSize.displayed(through: preferredTransform)
         if let rect = calculator.cropRect(for: inWindow, renderedPixelSize: renderedSize) {
             cropRect = rect
         }
@@ -450,22 +437,5 @@ final class ClipEditorViewModel: ObservableObject {
             to: CMTime(seconds: time, preferredTimescale: 600),
             toleranceBefore: .zero, toleranceAfter: .zero)
         playbackTime = time
-    }
-
-    private nonisolated static func boundingBox(of points: [CGPoint]) -> CGRect {
-        let xValues = points.map(\.x), yValues = points.map(\.y)
-        guard let minX = xValues.min(), let maxX = xValues.max(),
-              let minY = yValues.min(), let maxY = yValues.max()
-        else { return .zero }
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-    }
-}
-
-private extension CGRect {
-    var corners: [CGPoint] {
-        [origin,
-         CGPoint(x: maxX, y: minY),
-         CGPoint(x: minX, y: maxY),
-         CGPoint(x: maxX, y: maxY)]
     }
 }

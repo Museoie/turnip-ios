@@ -181,8 +181,7 @@ actor ClipThumbnailLoader {
         guard naturalSize.width > 0, naturalSize.height > 0 else { return nil }
         // cropRect is already normalized in display orientation, so denormalize in the
         // displayed size directly — no trip through preferredTransform needed.
-        let displayedSize = Self.displayedFrameSize(
-            naturalSize: naturalSize, preferredTransform: preferredTransform)
+        let displayedSize = naturalSize.displayed(through: preferredTransform)
         let displayed = cropRect.denormalized(in: displayedSize)
         guard displayed.width > 0, displayed.height > 0 else { return nil }
         return displayed
@@ -206,33 +205,5 @@ actor ClipThumbnailLoader {
             return 9.0 / 16.0
         }
         return displayed.width / displayed.height
-    }
-
-    /// The displayed frame's size: the encoded frame's corners through
-    /// `preferredTransform`, so a 90°-rotated track reports portrait dimensions.
-    private static func displayedFrameSize(
-        naturalSize: CGSize,
-        preferredTransform: CGAffineTransform
-    ) -> CGSize {
-        boundingBox(of: CGRect(origin: .zero, size: naturalSize).corners.map {
-            $0.applying(preferredTransform)
-        }).size
-    }
-
-    private static func boundingBox(of points: [CGPoint]) -> CGRect {
-        let xValues = points.map(\.x), yValues = points.map(\.y)
-        guard let minX = xValues.min(), let maxX = xValues.max(),
-              let minY = yValues.min(), let maxY = yValues.max()
-        else { return .zero }
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-    }
-}
-
-private extension CGRect {
-    var corners: [CGPoint] {
-        [origin,
-         CGPoint(x: maxX, y: minY),
-         CGPoint(x: minX, y: maxY),
-         CGPoint(x: maxX, y: maxY)]
     }
 }

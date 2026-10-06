@@ -82,8 +82,7 @@ struct ClipExportTransform {
         // The displayed (upright) frame: the bounding box of the encoded frame's corners
         // through preferredTransform. On a 90°-rotated track this transposes naturalSize.
         let displayedFrame = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
-        let displayedSize = CGSize(
-            width: abs(displayedFrame.width), height: abs(displayedFrame.height))
+        let displayedSize = naturalSize.displayed(through: preferredTransform)
         let crop = cropRect.denormalized(in: displayedSize)
         guard crop.width > 0, crop.height > 0 else { return nil }
 
