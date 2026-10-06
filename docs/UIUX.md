@@ -1,9 +1,11 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
-*Rev 4 · 2026-10-02 · Documents the Photos-style tap-to-expand/collapse transition
-that replaced a plain push for Home → Processing and Clip List → Editor.*
+*Rev 5 · 2026-10-05 · States the principle that a gesture and the control
+that does the same thing play one animation, and applies it to the
+Camera/Home pager: tapping a tab icon now slides the page the way a swipe
+does instead of cutting to it.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation.")*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -28,6 +30,47 @@ no tricks are detected, and a confirmation state after export. Issue
 [#11](https://github.com/hoiekim/turnip-ios/issues/11) currently bundles all
 of this into one "Preview UI" issue; this doc exists to pin the flow down
 before that issue gets split.
+
+## A gesture and its button play one animation
+
+Whenever a gesture and a control lead to the same place, they play the same
+transition: the same motion, in the same direction, over the same geometry.
+The control plays the animation that the gesture would have driven, from
+start to finish. It never cuts, cross-fades or pushes when the gesture
+slides, grows or shrinks.
+
+The motion is how the user learns where a screen lives. A swipe teaches
+"Camera is to the left of Home." A tile that grows into Processing teaches
+"this screen *is* that video, enlarged." If the button for the same move
+then cuts straight to the destination, the button teaches nothing and
+contradicts what the gesture taught. The user ends up with two mental models
+of one layout, and the button reads as a glitch.
+
+How it's built: each transition has a single entry point that both the
+gesture and the control call. The control never reaches into the state some
+other way. A gesture can control the motion's progress directly (it follows
+the finger and can be cancelled), and a control plays that same motion all
+the way through on its own. Only who drives the progress differs. The
+destination and the motion are the same.
+
+Where it applies today:
+
+| Transition | Gesture | Control | Shared motion |
+|---|---|---|---|
+| Home ↔ Camera (Root navigation) | Horizontal page swipe | Floating bar's camera / gallery icons; Camera's cancel chevron | The pager's horizontal slide (`RootTabView.slide(to:)`) |
+| Tile ↔ Processing (§1, §2) | Swipe down outside the video surface | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
+| Clip List tile ↔ Clip Editor (§3, §4) | Swipe down outside the video surface | Back chevron | Same, with the card showing the editor's own player |
+
+Not every state change has a gesture counterpart that it owes an animation.
+A recording that finishes on Camera switches to Home *instantly*, because the
+same update opens the expansion cover over Home, and a page still sliding
+underneath would hand the cover's flight a moving source frame. The user
+sees the expansion, not the page change. That switch is the result of an
+operation finishing, not a navigation the user chose, so there is no gesture
+whose motion it would contradict.
+
+New screens follow the same rule: if a screen can be reached both ways,
+build the gesture's transition first and route the button through it.
 
 ## Screen inventory
 
@@ -69,7 +112,12 @@ custom floating pill bar overlaid at the bottom rather than the system tab
 bar: camera icon on the left, gallery-grid icon on the right, gallery
 selected by default. Tapping an icon or swiping the page (right reveals
 Camera, since it's the page before Home) both drive the same selection
-state. It also owns the one `VideoLibraryViewModel` shared by both pages —
+state *and the same motion*: a tap (or Camera's cancel chevron) pages
+through `slide(to:)`, which changes the selection inside an animated
+transaction. A page-style `TabView` only scrolls to a selection that changes
+that way, and cuts to it otherwise. So Camera slides in from the left on a
+tap exactly as it does under the finger (see "A gesture and its button play
+one animation" above). It also owns the one `VideoLibraryViewModel` shared by both pages —
 a finished recording needs to hand its asset into the same
 `select(_:)` a tapped gallery tile calls, then switch back to the gallery
 tab so the pick lands the way tapping a tile always has.
@@ -182,7 +230,8 @@ default empty state, so it never reads as "your library is empty."
 - One of the root tab view's two pages (see "Root navigation" above), not a
   modal — reached by tapping the floating bar's camera icon or swiping the
   page right from Home. Minimal v1 scope: full-screen back-camera preview, a
-  cancel chevron (switches back to the gallery tab), and one record button
+  cancel chevron (slides back to the gallery tab, the same slide a left
+  swipe plays), and one record button
   (tap to start, tap again to stop) — no flip camera, flash, or zoom
   (`Turnip/Camera/`).
 - Needs `NSCameraUsageDescription` and `NSMicrophoneUsageDescription`
