@@ -438,6 +438,52 @@ final class ProcessingViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isShowingClips)
     }
 
+    /// Back-navigation from the clip list flips `isShowingClips` false while the run stays
+    /// `.succeeded` with the result in memory. `showClips` must re-present the destination
+    /// from exactly that combination — without disturbing the finished run, since `start`
+    /// is guarded on `.idle` and re-running the pipeline here would be the bug returning.
+    func testShowClipsAfterBackNavigationRepresentsTheClips() async {
+        let viewModel = ProcessingViewModel(
+            runner: ScriptedRunner(behavior: .succeed(clips: [Self.clip]))
+        )
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntilNotRunning(viewModel)
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("expected the succeeded state, got \(viewModel.state)")
+        }
+        XCTAssertTrue(viewModel.isShowingClips)
+
+        // The clip list's back button dismisses the destination.
+        viewModel.isShowingClips = false
+
+        viewModel.showClips()
+        XCTAssertTrue(viewModel.isShowingClips, "the succeeded screen lost its way back to the clips")
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("showing the clips disturbed the finished run, got \(viewModel.state)")
+        }
+        XCTAssertEqual(viewModel.result?.clips, [Self.clip])
+    }
+
+    /// `showClips` must never present the destination with no result behind it: from any
+    /// state but `.succeeded`-with-a-result it is a no-op.
+    func testShowClipsWithoutASucceededResultIsANoOp() async {
+        let idle = ProcessingViewModel(
+            runner: ScriptedRunner(behavior: .succeed(clips: [Self.clip]))
+        )
+        idle.showClips()
+        XCTAssertFalse(idle.isShowingClips)
+
+        let failing = ProcessingViewModel(runner: ScriptedRunner(behavior: .fail(TestError.boom)))
+        failing.start(video: Self.video)
+        await Self.waitUntilNotRunning(failing)
+        guard case .failed = failing.state else {
+            return XCTFail("expected the failed state, got \(failing.state)")
+        }
+        failing.showClips()
+        XCTAssertFalse(failing.isShowingClips)
+    }
+
     func testStartWhileRunningIsIgnored() async {
         let flag = CancelFlag()
         let viewModel = ProcessingViewModel(

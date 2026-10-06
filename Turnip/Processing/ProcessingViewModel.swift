@@ -100,6 +100,17 @@ final class ProcessingViewModel: ObservableObject {
         start(video: video)
     }
 
+    /// Re-presents the clip list after the user navigated back to this screen from it.
+    /// Back-navigation from the success destination flips `isShowingClips` false while
+    /// `state` stays `.succeeded` and `result` stays in memory; `start` is guarded on
+    /// `.idle` and `cancel` is a no-op on a finished run, so without this the screen
+    /// strands the user on "Analysis complete." with the clips it will not show. The
+    /// guard keeps the destination from ever presenting with a nil result behind it.
+    func showClips() {
+        guard case .succeeded = state, result != nil else { return }
+        isShowingClips = true
+    }
+
     private func apply(_ progress: ProcessingProgress, from generation: Int) {
         guard generation == runGeneration else { return }
         state = .processing(progress)

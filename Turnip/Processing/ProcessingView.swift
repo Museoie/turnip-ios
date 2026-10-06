@@ -18,8 +18,10 @@ private enum DragAxis {
 /// navigates to `destination` with the detected clips — including a run that detected
 /// zero tricks, which still navigates there rather than stopping on this screen; the
 /// clip list itself puts up the "no tricks found" notice. Only the error state stays on
-/// this screen, with a way back. Like the other pushed screens, it declares no
-/// `NavigationStack` of its own.
+/// this screen, with a way back — though the succeeded branch resurfaces if the user
+/// backs out of the clip list, with a "View clips" button that re-presents the
+/// destination from the in-memory result instead of re-running the pipeline. Like the
+/// other pushed screens, it declares no `NavigationStack` of its own.
 ///
 /// The success destination is injected rather than hardcoded to the clip list, so
 /// `Processing` never depends on `ClipList`'s view type (`ClipListView`): the screen
@@ -319,11 +321,23 @@ struct ProcessingView<Destination: View>: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea()
         case .succeeded:
-            // Covered by the pushed destination; only visible when navigating back here.
-            Text("Analysis complete.")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea()
+            // Pushing the clip-list destination hides this branch; it resurfaces when the
+            // user navigates back here, with the result still in memory. `showClips`
+            // re-presents the destination rather than re-running the pipeline (`start` is
+            // guarded on `.idle`), so backing out of the clip list is never a dead end.
+            // The round trip rebuilds the clip list from `result` exactly like the first
+            // entry, so triage marks reset — hoisting the list's view model above the
+            // destination is a possible follow-up, deliberately not done here.
+            StatusStateView(
+                systemImage: "checkmark.circle",
+                title: "Analysis complete",
+                message: "Your clips are ready to review."
+            ) {
+                Button("View clips") { viewModel.showClips() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea()
         }
     }
 
