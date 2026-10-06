@@ -233,16 +233,16 @@ section below the player and trim controls.
   from the farm's current taxonomy — the farm is the authority on which
   vocabulary was in effect when the label landed. The client does not
   send it; it may keep the manifest's version locally for display only.
-- **Per-label windows deferred.** The farm schema allows
-  `labels.start_frame/end_frame` to tighten a clip window; MVP does not
-  expose this — labels inherit the clip window and the fields stay null
-  *(judgment call; the API already supports it if a later UI wants it).*
+- **No per-label windows.** The farm schema stores one label row per
+  `(clip_id, trick_name)` with no window columns — a label names the
+  trick for the clip's whole window (`DATABASE_DESIGN.md` §1.1). The
+  editor does not expose per-label window tightening; a later UI that
+  wants it needs a farm schema change first.
 
 The iOS API payload per clip is `{clip_id, start_frame, end_frame,
-auto_detected, labels: ["cork", ...]}` regardless of how the farm
-chooses to store the one-to-many Clip → Label relationship (N label
-rows vs. one row with `TEXT[]` is `DATABASE_DESIGN.md`'s call; the
-wire shape is unchanged either way).
+auto_detected, labels: ["cork", ...]}`; the farm stores one label row
+per `(clip_id, trick_name)` (`DATABASE_DESIGN.md` §1.1) — the wire
+shape (an array of names) is unchanged by that choice.
 
 ---
 
@@ -289,9 +289,10 @@ re-confirmation safe and idempotent.
 - An **outbox queue** in the app's local persistence holds pending
   uploads across app restarts. Failed attempts retry with exponential
   backoff; the user can cancel a pending upload. Order per source:
-  blob PUT first, then `POST /api/sources`.
-- If the blob PUT succeeded but the POST failed, retry the POST alone —
-  the farm dedups the blob by its SHA-256, so a repeated PUT is
+  `POST /api/sources` first (it returns the presigned `upload_url`),
+  then PUT the blob, then `POST /api/clips` (§5.1).
+- If the PUT succeeded but a later step failed, retry from the failed
+  step — the farm dedups the blob by its SHA-256, so a repeated PUT is
   harmless but unnecessary.
 - **Re-contribution dedups by construction**: the deterministic
   `video_id` means contributing the same video twice upserts the same
@@ -457,12 +458,9 @@ Per master plan §8, this doc records the following deltas against
 
 ## Open questions (for the maintainer)
 
-1. **Clip → Label cardinality.** The master plan's prose says
-   one-to-many at every level; its schema sketch says
-   `labels.clip_id UNIQUE` (one label-set row per clip, names in
-   `TEXT[]`). The iOS wire shape (`labels: [...]` per clip) is
-   identical either way — this doc takes no position beyond that —
-   but `DATABASE_DESIGN.md` must resolve it before implementation.
+1. ~~**Clip → Label cardinality.**~~ Resolved: one label row per
+   `(clip_id, trick_name)` (`DATABASE_DESIGN.md` §1.1); re-contribution
+   replaces a clip's whole label set atomically (§5.2).
 2. **Per-clip server delete.** No `DELETE /api/clips/:id` exists;
    post-contribution local trash leaves the server copy. Add the
    endpoint, or declare server copies immutable-by-design?
