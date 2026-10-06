@@ -14,13 +14,18 @@ struct CameraCaptureView: View {
 
     @StateObject private var viewModel = CameraCaptureViewModel()
     @State private var showExposureSlider = false
+    /// Whether this page has started the session and not yet stopped it — see
+    /// `CameraPreviewView.isLive`.
+    @State private var isPreviewLive = false
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             switch viewModel.authorization {
             case .authorized:
-                CameraPreviewView(session: viewModel.session, poseKeypoints: viewModel.livePoseKeypoints)
+                CameraPreviewView(
+                    session: viewModel.session, isLive: isPreviewLive,
+                    poseKeypoints: viewModel.livePoseKeypoints)
                     .ignoresSafeArea()
                     .overlay {
                         // A transparent gesture catcher, not `.gesture` directly on the
@@ -50,9 +55,13 @@ struct CameraCaptureView: View {
         }
         .task {
             viewModel.onFinished = onFinished
+            isPreviewLive = true
             await viewModel.start()
         }
-        .onDisappear { viewModel.stop() }
+        .onDisappear {
+            isPreviewLive = false
+            viewModel.stop()
+        }
         .alert("Couldn't record video", isPresented: errorPresented) {
             Button("OK") {}
         } message: {
