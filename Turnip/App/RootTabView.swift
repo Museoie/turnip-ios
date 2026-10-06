@@ -161,7 +161,6 @@ private struct FloatingTabBar: View {
                 buttons.background(.ultraThinMaterial, in: Capsule())
             }
         }
-        .padding(.bottom, 6)
     }
 
     private func tabButton(_ tab: MainTab, systemImage: String, label: String) -> some View {

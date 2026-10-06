@@ -6,8 +6,13 @@ import SwiftUI
 ///
 /// The skeleton is drawn in UIKit rather than a SwiftUI overlay because only the preview
 /// layer knows where a capture-device point lands on screen: `layerPointConverted` folds in
-/// the connection's rotation, the front camera's mirroring and the aspect-fill crop, none of
+/// the connection's rotation, the front camera's mirroring and the aspect-fit letterbox, none of
 /// which a SwiftUI `Canvas` over the view can see.
+///
+/// The video is aspect-fit and pinned to the top of the view rather than centered, so all of
+/// the letterbox falls below the picture, behind the bottom controls. The preview layer can
+/// only center, so it is a sublayer shifted up by the gap above the picture it reports; the
+/// skeleton layers ride inside it, keeping `layerPointConverted`'s coordinates valid.
 ///
 /// The preview stays fully transparent — showing the black behind it — until the layer is
 /// actually rendering frames, then fades in once. Left to itself the layer shows its last
@@ -24,7 +29,6 @@ struct CameraPreviewView: UIViewRepresentable {
     func makeUIView(context: Context) -> PreviewUIView {
         let view = PreviewUIView()
         view.videoPreviewLayer.session = session
-        view.videoPreviewLayer.videoGravity = .resizeAspectFill
         return view
     }
 
@@ -34,26 +38,19 @@ struct CameraPreviewView: UIViewRepresentable {
     }
 
     final class PreviewUIView: UIView {
-        override static var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
-
         private static let jointRadius: CGFloat = 5
         private static let fadeInDuration: TimeInterval = 0.3
         /// How long after going live the preview reveals itself even if the layer never
         /// reported rendering, so a missed `isPreviewing` change can't leave the camera black.
         private static let revealDeadline: TimeInterval = 1.5
+        let videoPreviewLayer = AVCaptureVideoPreviewLayer()
         private let limbLayer = CAShapeLayer()
         private let jointLayer = CAShapeLayer()
         private var previewingObservation: NSKeyValueObservation?
         private var isLive = false
         private var isRevealed = false
         private var revealDeadlineWork: DispatchWorkItem?
-
-        var videoPreviewLayer: AVCaptureVideoPreviewLayer {
-            guard let previewLayer = layer as? AVCaptureVideoPreviewLayer else {
-                fatalError("PreviewUIView.layerClass guarantees an AVCaptureVideoPreviewLayer")
-            }
-            return previewLayer
-        }
+        private var formatObserver: NSObjectProtocol?
 
         override init(frame: CGRect) {
             super.init(frame: frame)
@@ -62,8 +59,10 @@ struct CameraPreviewView: UIViewRepresentable {
             limbLayer.lineCap = .round
             limbLayer.fillColor = nil
             jointLayer.fillColor = UIColor.systemGreen.cgColor
-            layer.addSublayer(limbLayer)
-            layer.addSublayer(jointLayer)
+            videoPreviewLayer.videoGravity = .resizeAspect
+            videoPreviewLayer.addSublayer(limbLayer)
+            videoPreviewLayer.addSublayer(jointLayer)
+            layer.addSublayer(videoPreviewLayer)
             isAccessibilityElement = false
             alpha = 0
             // Only the rise to true matters: a lens flip or format change can briefly stop
@@ -71,12 +70,24 @@ struct CameraPreviewView: UIViewRepresentable {
             // is left to `setLive(false)`, which only leaving the page triggers.
             previewingObservation = videoPreviewLayer.observe(\.isPreviewing) { [weak self] layer, _ in
                 guard layer.isPreviewing else { return }
-                DispatchQueue.main.async { self?.revealIfLive() }
+                DispatchQueue.main.async {
+                    self?.setNeedsLayout()
+                    self?.revealIfLive()
+                }
+            }
+            // A lens flip or format change can change the picture's aspect ratio, and with it
+            // the gap the layer must be shifted by.
+            formatObserver = NotificationCenter.default.addObserver(
+                forName: AVCaptureInput.Port.formatDescriptionDidChangeNotification,
+                object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.setNeedsLayout()
             }
         }
 
         deinit {
             previewingObservation?.invalidate()
+            formatObserver.map(NotificationCenter.default.removeObserver)
             revealDeadlineWork?.cancel()
         }
 
@@ -111,8 +122,18 @@ struct CameraPreviewView: UIViewRepresentable {
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            limbLayer.frame = bounds
-            jointLayer.frame = bounds
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            videoPreviewLayer.frame = bounds
+            // The whole capture frame, in metadata-output terms, is the unit rect.
+            let picture = videoPreviewLayer.layerRectConverted(
+                fromMetadataOutputRect: CGRect(x: 0, y: 0, width: 1, height: 1))
+            if picture.minY.isFinite, picture.minY > 0 {
+                videoPreviewLayer.frame = bounds.offsetBy(dx: 0, dy: -picture.minY)
+            }
+            limbLayer.frame = videoPreviewLayer.bounds
+            jointLayer.frame = videoPreviewLayer.bounds
+            CATransaction.commit()
         }
 
         /// Redraws the skeleton. Implicit layer animations are disabled: at ten poses a second an

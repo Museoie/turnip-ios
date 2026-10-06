@@ -26,7 +26,9 @@ struct CameraCaptureView: View {
                 CameraPreviewView(
                     session: viewModel.session, isLive: isPreviewLive,
                     poseKeypoints: viewModel.livePoseKeypoints)
-                    .ignoresSafeArea()
+                    // The top inset is kept so the top-pinned picture starts just under the
+                    // status bar, with the cancel and settings buttons floating inside it.
+                    .ignoresSafeArea(edges: [.horizontal, .bottom])
                     .overlay {
                         // A transparent gesture catcher, not `.gesture` directly on the
                         // representable: the hosted `UIView` would otherwise hit-test the
