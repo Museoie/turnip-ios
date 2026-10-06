@@ -135,9 +135,9 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(app.buttons["Done"].exists)
     }
 
-    /// A derived clip's trash button removes its tile from the grid immediately,
-    /// unlike the original tile's reversible toggle above — no "Restore clip" label
-    /// ever appears for it.
+    /// A derived clip's trash button removes its tile from the grid outright (a 150ms
+    /// fade-and-reflow, which the poll below outlasts), unlike the original tile's
+    /// reversible toggle above — no "Restore clip" label ever appears for it.
     func testTrashButtonRemovesADerivedClipImmediately() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]

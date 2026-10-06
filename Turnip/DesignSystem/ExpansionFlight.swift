@@ -43,6 +43,38 @@ struct ExpansionFlightGeometry: Equatable {
         }
     }
 
+    /// The curve for what cross-fades alongside a flight, as distinct from the flight's own
+    /// ease-in-out: a component that is appearing eases in, one that is disappearing eases
+    /// out, over the flight's duration. `appearing` is about the component the user sees, so
+    /// the two layers a container fades take opposite values on the same flight: toward open,
+    /// the destination's chrome appears while the presenter under the scrim disappears (the
+    /// scrim rises on the disappearing curve); back toward the tile, the reverse.
+    ///
+    /// The two fades are also offset in time, not just curved differently: the disappearing
+    /// layer's fade occupies the first `crossfadeShare` of the flight and the appearing
+    /// layer's the last, so the steep part of the one leaving comes early and the steep part
+    /// of the one arriving comes late. Two full-length fades, even on cubic curves, still
+    /// read as a double exposure through the middle of the flight: on a black backdrop a
+    /// layer's perceived brightness runs well ahead of its opacity, so white chrome at 30%
+    /// already looks present and a tile at 35% still looks lit.
+    ///
+    /// Within each window the curve is cubic-power (Penner's easeInCubic / easeOutCubic as
+    /// Bézier control points) rather than the system's near-quadratic `.easeIn`/`.easeOut`.
+    static func crossfadeAnimation(appearing: Bool) -> Animation {
+        let duration = flightDuration * crossfadeShare
+        return appearing
+            ? .timingCurve(0.55, 0.055, 0.675, 0.19, duration: duration).delay(flightDuration - duration)
+            : .timingCurve(0.215, 0.61, 0.355, 1, duration: duration)
+    }
+
+    /// The share of the flight each cross-fade occupies — the disappearing layer's from the
+    /// flight's start, the appearing layer's up to its end. At `0.3` the leaving layer is gone
+    /// before the card has covered a third of its travel and the arriving one only starts
+    /// once it has covered two-thirds, with the middle of the flight showing just the card
+    /// over the backdrop; `1` would be two fades spanning the whole flight, which reads as a
+    /// double exposure however steep the curves (`0.6` still did).
+    static let crossfadeShare: TimeInterval = 0.3
+
     /// Whether a destination's chrome cross-fades in over the flying card. Needs the
     /// destination's navigation container to be see-through (`containerBackground`, iOS 18),
     /// or its opaque system background would dim the card underneath for the whole flight.

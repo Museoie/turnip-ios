@@ -94,6 +94,15 @@ struct HomeExpansionContainer<Content: View>: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var progress: CGFloat = 0
+    /// The destination chrome's opacity and the scrim's over the grid: `0` at the tile, `1`
+    /// fully open. Neither is derived from `progress`, even though a drag writes the same
+    /// value to all three, because each animates on its own curve: the flight eases in and
+    /// out, while a fade eases in for what appears and out for what disappears
+    /// (`ExpansionFlightGeometry.crossfadeAnimation`) — which on any one flight is the chrome
+    /// for one and the grid under the scrim for the other, so they can't share a value
+    /// either. A value computed from `progress` could only ever follow the flight's curve.
+    @State private var chromeOpacity: CGFloat = 0
+    @State private var scrimOpacity: CGFloat = 0
     /// `slideClose()`'s own clock, separate from `progress` (which stays at `1` — the
     /// destination is fully open while it leaves): `0` in place, `1` a full screen width
     /// off to the trailing edge.
@@ -154,7 +163,7 @@ struct HomeExpansionContainer<Content: View>: View {
 
             ZStack {
                 Color.black
-                    .opacity(progress)
+                    .opacity(scrimOpacity)
                     .ignoresSafeArea()
 
                 if !chromeCrossfades {
@@ -184,7 +193,7 @@ struct HomeExpansionContainer<Content: View>: View {
                     // those in their place. A plain `.opacity`, not a cut: it's meant to
                     // interpolate across the whole flight, which `.opacity` does on its own.
                     destinationContent()
-                        .opacity(progress)
+                        .opacity(chromeOpacity)
                 }
             }
             .offset(x: slideProgress * screen.size.width)
@@ -196,6 +205,7 @@ struct HomeExpansionContainer<Content: View>: View {
                 guard !isClosing, dragScrubOrigin == nil else { return }
                 setLanded(true)
             })
+            animateCrossfade(open: true)
         }
     }
 
@@ -223,6 +233,10 @@ struct HomeExpansionContainer<Content: View>: View {
                 setLanded(false)
                 let travel = max(0, translation)
                 progress = 1 - min(travel / dismissTravel, 1)
+                // Under the finger all three follow the drag 1:1; the curves only differ
+                // when they animate on their own.
+                chromeOpacity = progress
+                scrimOpacity = progress
                 let origin = dragScrubOrigin ?? beginPresenterScrub()
                 dragScrubOrigin = origin
                 scrubber.request(origin.time * progress)
@@ -278,6 +292,16 @@ struct HomeExpansionContainer<Content: View>: View {
         .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("expansion-card")
         .position(x: destination.midX, y: destination.midY)
+    }
+
+    /// Fades the chrome and the scrim toward fully open or back toward the tile, each on the
+    /// curve for its own direction: toward open the destination's chrome appears while the
+    /// grid under the scrim disappears; back toward the tile, the reverse. Not called under a
+    /// drag, which writes both 1:1 from the finger instead.
+    private func animateCrossfade(open: Bool) {
+        let target: CGFloat = open ? 1 : 0
+        withAnimation(ExpansionFlightGeometry.crossfadeAnimation(appearing: open)) { chromeOpacity = target }
+        withAnimation(ExpansionFlightGeometry.crossfadeAnimation(appearing: !open)) { scrimOpacity = target }
     }
 
     /// Writes `hasLanded` with animations disabled, so the card/destination swap it drives
@@ -337,6 +361,7 @@ struct HomeExpansionContainer<Content: View>: View {
                 guard dragScrubOrigin == nil, !isClosing else { return }
                 setLanded(true)
             })
+            animateCrossfade(open: true)
         } else {
             // The drag never moved the card (it only ever went up), so there is nothing to
             // animate and no completion to wait for.
@@ -379,6 +404,7 @@ struct HomeExpansionContainer<Content: View>: View {
         let origin = beginPresenterScrub()
         dragScrubOrigin = nil
         withAnimation(.easeInOut(duration: flightDuration)) { progress = 0 }
+        animateCrossfade(open: false)
         if destinationPlayer != nil {
             scrubber.animate(from: origin.time, to: 0, duration: flightDuration)
         }

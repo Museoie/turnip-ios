@@ -143,8 +143,10 @@ a button that opens a picker sheet. No account, no settings required for v1
 scrollable grid (`Turnip/Home/HomeView.swift`, `VideoGalleryView`), newest
 videos first, top-to-bottom, three columns. The "Turnip" wordmark (app mark
 beside the title, the mark 1.2x the title text's height) heads the grid as
-scroll content, so it scrolls away with the tiles rather than floating over
-them, and the tiles run under the status bar. Home's nav bar is empty,
+scroll content, leading-aligned, so it scrolls away with the tiles rather
+than floating over them, and the tiles run under the status bar. The filter
+and settings controls sit at the trailing end of the same band — filter,
+then gear. Home's nav bar is visually empty,
 transparent, and takes no space: the content ignores the band the bar would
 reserve, so at rest the wordmark sits directly under the status bar with no
 empty gap above it. The bar exists only so iOS 26 draws its scroll-edge glass
@@ -181,8 +183,9 @@ out-of-process picker, so it needs real Photos access. As built:
   visible rows, over 60-asset pages, so a library with hundreds of
   videos scrolls without stalling on first load.
 
-**Filter** (shipped, `Turnip/Home/GalleryFilter.swift`): a `Menu` button beside
-the settings gear, mirroring the Photos app's own filter — All Items,
+**Filter** (shipped, `Turnip/Home/GalleryFilter.swift`): a `Menu` button just
+before the settings gear at the header band's trailing end, mirroring the
+Photos app's own filter — All Items,
 Favorites, or a specific user album (nested submenu). The filter changes the
 underlying `PHFetchOptions`/`PHAssetCollection` fetch itself, not a
 post-filter of the loaded grid, so paging and Processing's swipe-to-browse
@@ -318,7 +321,10 @@ default empty state, so it never reads as "your library is empty."
   since its window is the whole video.
 - One control overlays each tile's top-trailing corner: a trash button,
   filled red while trashed. Trashing a derived clip removes its tile from
-  the grid immediately, with no restore. Trashing the original tile is a
+  the grid, with no restore: the tile fades out to the background (ease-out)
+  while the tiles after it slide to their new slots (ease-in-out), both over
+  150ms — the editor's Delete (§4) removes the tile the same way behind its
+  own fade. Trashing the original tile is a
   reversible toggle — tap again to restore it — that marks the source video
   itself for deletion from Photos once Done runs.
 - Tapping a derived clip's tile flies it open, Photos-style, into the full
