@@ -166,6 +166,30 @@ final class ClipListTests: XCTestCase {
         }
     }
 
+    /// A loader whose decode the test drives by hand: `thumbnail(for:in:)` suspends
+    /// until the test calls `complete(with:)`, so a test can land an editor commit
+    /// mid-decode and prove the stale result is dropped instead of re-caching.
+    private actor GatedThumbnailLoader: ClipThumbnailLoading {
+        private(set) var calls = 0
+        private var continuations: [CheckedContinuation<CGImage?, Never>] = []
+
+        func thumbnail(for item: ClipListItem, in asset: AVAsset) async -> CGImage? {
+            calls += 1
+            return await withCheckedContinuation { continuation in
+                continuations.append(continuation)
+            }
+        }
+
+        /// Releases every suspended decode with `image`.
+        func complete(with image: CGImage?) {
+            let pending = continuations
+            continuations.removeAll()
+            for continuation in pending {
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
     @MainActor
     func testApplyEditorResultEvictsThumbnailWhenGeometryChanges() async {
         let loader = CountingThumbnailLoader(image: Self.testImage(width: 4, height: 2))
@@ -174,7 +198,8 @@ final class ClipListTests: XCTestCase {
 
         let first = await viewModel.thumbnail(for: target)
         XCTAssertNotNil(first)
-        XCTAssertEqual(await loader.calls, 1)
+        let calls = await loader.calls
+        XCTAssertEqual(calls, 1)
 
         // A trim commit changes the window: the cached frame (decoded at the old
         // midpoint) must be evicted, so the next fetch decodes again.
@@ -187,7 +212,8 @@ final class ClipListTests: XCTestCase {
 
         let second = await viewModel.thumbnail(for: viewModel.items[0])
         XCTAssertNotNil(second)
-        XCTAssertEqual(await loader.calls, 2)
+        let calls = await loader.calls
+        XCTAssertEqual(calls, 2)
     }
 
     @MainActor
@@ -198,7 +224,8 @@ final class ClipListTests: XCTestCase {
 
         let first = await viewModel.thumbnail(for: target)
         XCTAssertNotNil(first)
-        XCTAssertEqual(await loader.calls, 1)
+        let calls = await loader.calls
+        XCTAssertEqual(calls, 1)
 
         // A keep/discard commit leaves the geometry alone: no eviction, no
         // re-decode — the card keeps its cached thumbnail.
@@ -208,7 +235,60 @@ final class ClipListTests: XCTestCase {
 
         let second = await viewModel.thumbnail(for: viewModel.items[0])
         XCTAssertNotNil(second)
-        XCTAssertEqual(await loader.calls, 1)
+        let calls = await loader.calls
+        XCTAssertEqual(calls, 1)
+    }
+
+    @MainActor
+    func testStaleDecodeDoesNotRepopulateTheCache() async {
+        // The stale-decode guard in `thumbnail(for:)`: a decode that finishes after
+        // its item's geometry changed drops its result instead of re-poisoning the
+        // cache. The stale frame (4x2) and the fresh frame (8x4) are different sizes
+        // so the test can tell which one a later fetch serves.
+        let loader = GatedThumbnailLoader()
+        let target = makeItem()
+        let viewModel = ClipListViewModel(items: [target], asset: dummyAsset(), loader: loader)
+
+        // Start a decode and wait until it is genuinely in flight.
+        let staleFetch = Task { @MainActor in await viewModel.thumbnail(for: target) }
+        var spins = 0
+        while await loader.calls < 1, spins < 1000 {
+            await Task.yield()
+            spins += 1
+        }
+        let callsAfterStart = await loader.calls
+        XCTAssertEqual(callsAfterStart, 1)
+
+        // Land an editor commit mid-decode: the new window evicts the stale cache
+        // entry and cancels the in-flight decode.
+        viewModel.applyEditorResult(
+            ClipEditorResult(
+                window: TrickWindow(startTime: 10, endTime: 12),
+                cropRect: fullFrame,
+                isKept: true),
+            to: target.id)
+
+        // The old decode finishes late with its stale frame. The caller still gets
+        // its result — it is just not allowed back into the cache.
+        await loader.complete(with: Self.testImage(width: 4, height: 2))
+        let staleResult = await staleFetch.value
+        XCTAssertEqual(staleResult?.width, 4)
+
+        // The next fetch must decode again: had the stale frame re-populated the
+        // cache, this would be a cache hit and `calls` would stay at 1.
+        let freshFetch = Task { @MainActor in await viewModel.thumbnail(for: viewModel.items[0]) }
+        spins = 0
+        while await loader.calls < 2, spins < 1000 {
+            await Task.yield()
+            spins += 1
+        }
+        await loader.complete(with: Self.testImage(width: 8, height: 4))
+        let freshResult = await freshFetch.value
+
+        let finalCalls = await loader.calls
+        XCTAssertEqual(finalCalls, 2)
+        XCTAssertEqual(freshResult?.width, 8)
+        XCTAssertEqual(freshResult?.height, 4)
     }
 
     @MainActor
