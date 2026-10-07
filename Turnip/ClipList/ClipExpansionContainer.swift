@@ -283,7 +283,8 @@ struct ClipExpansionContainer: View {
     /// Fades the chrome and the scrim toward fully open or back toward the tile, each on the
     /// curve for its own direction: toward open the editor's chrome appears while the clip
     /// list under the scrim disappears; back toward the tile, the reverse. Not called under a
-    /// drag, which writes both 1:1 from the finger instead.
+    /// drag, which writes both from the finger's travel instead
+    /// (`ExpansionFlightGeometry.dragCrossfade`).
     private func animateCrossfade(open: Bool) {
         let target: CGFloat = open ? 1 : 0
         withAnimation(ExpansionFlightGeometry.crossfadeAnimation(appearing: open)) { chromeOpacity = target }
@@ -377,10 +378,11 @@ struct ClipExpansionContainer: View {
                     dragScrubOrigin = origin
                     let travel = max(0, value.translation.height)
                     progress = 1 - min(travel / dismissTravel, 1)
-                    // Under the finger all three follow the drag 1:1; the curves only differ
-                    // when they animate on their own.
-                    chromeOpacity = progress
-                    scrimOpacity = progress
+                    // The same cross-fade the back button plays, driven by travel instead of
+                    // time — see `ExpansionFlightGeometry.dragCrossfade`.
+                    let crossfade = ExpansionFlightGeometry.dragCrossfade(progress: progress)
+                    chromeOpacity = crossfade.chrome
+                    scrimOpacity = crossfade.scrim
                     scrubber.request(origin + (landingTime - origin) * (1 - progress))
                 }
                 .onEnded { value in

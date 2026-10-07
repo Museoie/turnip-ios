@@ -67,6 +67,25 @@ struct ExpansionFlightGeometry: Equatable {
             : .timingCurve(0.215, 0.61, 0.355, 1, duration: duration)
     }
 
+    /// The chrome's and scrim's opacity under an interactive dismiss at `progress` (`1` fully
+    /// open, `0` at the tile): the same windows and curves `crossfadeAnimation` spans in time,
+    /// mapped onto the drag's travel so the finger drives the cross-fade the back button
+    /// plays (docs/UIUX.md, "A gesture and its button play one animation"). The chrome is gone
+    /// once the card has travelled the first `crossfadeShare` of the way back, and the
+    /// presenter under the scrim only returns over the last `crossfadeShare`. A release then
+    /// animates each from wherever this left it.
+    static func dragCrossfade(progress: CGFloat) -> (chrome: CGFloat, scrim: CGFloat) {
+        let travel = min(max(1 - progress, 0), 1)
+        let share = CGFloat(crossfadeShare)
+        let leaving = min(travel / share, 1)
+        let arriving = min(max((travel - (1 - share)) / share, 0), 1)
+        // easeOutCubic for what leaves, easeInCubic for what arrives — the closed forms of
+        // the Bézier control points `crossfadeAnimation` uses.
+        let chrome = pow(1 - leaving, 3)
+        let scrim = 1 - pow(arriving, 3)
+        return (chrome, scrim)
+    }
+
     /// The share of the flight each cross-fade occupies — the disappearing layer's from the
     /// flight's start, the appearing layer's up to its end. At `0.3` the leaving layer is gone
     /// before the card has covered a third of its travel and the arriving one only starts

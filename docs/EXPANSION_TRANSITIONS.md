@@ -6,8 +6,8 @@ fade on two separate states in each container instead of reading `progress`,
 which could only ever give them the flight's curve: whatever is appearing
 eases in and whatever is disappearing eases out — on an open that is the chrome
 appearing (ease-in) while the presenter under the scrim disappears (the scrim
-rises on ease-out), and on a close the reverse. Under a drag both still follow
-the finger 1:1. See "Rev 10" near the end.
+rises on ease-out), and on a close the reverse. Under a drag the same windows
+are driven by travel instead of time. See "Rev 10" near the end.
 
 *Rev 9 · 2026-10-05.* The flight is 250ms. The destination's chrome now
 cross-fades in *over* the flying card for the whole flight instead of appearing
@@ -1235,8 +1235,8 @@ animated states, `chromeOpacity` (the destination layer) and `scrimOpacity`
 (the backdrop over the presenter), written together by `animateCrossfade(open:)`
 in separate `withAnimation`s from `animateFlight`'s own — putting them inside
 its closure would hand them the flight's curve again — and assigned
-`= progress` directly by the interactive drag, so under the finger all three
-still move together.
+from the drag's travel by the interactive dismiss (see "The drag plays the
+same cross-fade" below).
 
 Why two states and not one: "appearing" and "disappearing" are about what the
 user sees, and on any one flight the two layers are on opposite sides of it.
@@ -1267,15 +1267,24 @@ the last 60% (`.delay`) — and the user "didn't feel like anything changed". Th
 shipped value is `0.3`: the leaving layer is gone before the card has covered
 a third of its travel, the arriving one starts only once it has covered
 two-thirds, and the middle of the flight is just the card over the backdrop.
-Each window keeps its cubic curve. The drag path is unaffected — it writes all
-three values 1:1 from the finger.
+Each window keeps its cubic curve.
+
+**The drag plays the same cross-fade, by travel.** The first Rev 10 builds had
+the interactive dismiss write chrome and scrim `= progress`, so a swipe held
+halfway showed both layers at 50% — the double exposure the button path no
+longer had, and a break of the gesture/button rule in `UIUX.md`.
+`ExpansionFlightGeometry.dragCrossfade(progress:)` now maps the same windows
+onto travel: the chrome is gone (easeOutCubic) once the card has travelled the
+first `crossfadeShare` of the way back, and the presenter only returns
+(easeInCubic) over the last `crossfadeShare`. A release animates each layer on
+from wherever the drag left it; a cancel animates them back the open way.
 
 **Verification** that doesn't depend on knowing when a frame was captured
 (the recorder keeps 3–6 frames of a 250ms flight at irregular spacing — lesson
 1): read the geometry and both fades off the *same* frame and compare. With
 `.opacity(progress)` all three were equal on every frame; with this change the
-order is `chrome < p < scrim` on every mid-flight frame in both directions, and
-all three equal only under the finger. Clip (the `-screenshotClipListMedia` tap
+order is `chrome < p < scrim` on every mid-flight frame in both directions,
+animated or dragged. Clip (the `-screenshotClipListMedia` tap
 flow through the scratch driver): `p` from the card's left edge lerped between
 the tile's (592px) and the editor preview's (163px); scrim from the clip list's
 Done button showing through (`1 − blue/255`); chrome from the brightest pixel of
@@ -1295,6 +1304,11 @@ Shipped (`crossfadeShare = 0.3`, cubic) fades:
 - Home open: scrim 1.00 from `p` 0.34; chrome 0.04 at 0.91, 0.45 at 0.99, full
   landed. Home close: chrome 0.21 at `p` 0.96, 0 from 0.66; scrim 1.00 through
   `p` 0.43, 0.94 at 0.06, 0.51 → 0 at the tile.
+- Clip interactive drag (slow, held at `p` ≈ 0.79, then released): under the
+  finger chrome 0.75 → 0.37 → 0.17 → 0.04 at `p` 0.98 → 0.92 → 0.86 → 0.80
+  with the scrim at 1.00 throughout; the hold shows chrome 0.02, scrim 1.00 —
+  the card alone over the backdrop; on release the scrim stays 1.00 through
+  `p` 0.11 and then clears 0.82 → 0.51 → 0 at the tile.
 
 The `0.6` build, for the record: clip open scrim 0.73 → 0.91 → 0.99 against `p`
 0.06 → 0.22 → 0.44 with chrome 0 → 0 → 0.01 → 0.11 at `p` 0.77; clip close
@@ -1309,10 +1323,11 @@ much, too soon): clip open chrome 0.04 → 0.13 → 0.25 → 0.56 against `p` 0.
 → 0.44 → 0.67 → 0.93 and scrim 0.63 → 0.85 → 0.93 → 0.99. The ordering was
 right in both; only the offset made one layer leave before the other arrives.
 
-- Clip interactive drag (slow, held partway, first build — the drag path is
-  unchanged): `p`/scrim 0.93/0.93, 0.88/0.88, 0.83/0.82, 0.64/0.65 — 1:1
-  within the measurement's 0.01 bias. On release the order appears at once:
-  chrome 0.48/0.36/0.26, `p` 0.53/0.47/0.36, scrim 0.55/0.50/0.44.
+- Clip interactive drag, first builds (chrome and scrim `= progress`):
+  `p`/scrim 0.93/0.93, 0.88/0.88, 0.83/0.82, 0.64/0.65 — 1:1 within the
+  measurement's 0.01 bias, i.e. the double exposure under the finger that
+  `dragCrossfade` replaced. See the drag entry under "Shipped" for the
+  travel-mapped numbers.
 - `ExpansionTransitionVerificationTests` and the Home/clip-list
   `ScreenshotTests` pass on the shipped build.
 - Idle editor, 30 `XCUIScreen.main.screenshot()` samples over ~3s: Done-blue 0

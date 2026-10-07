@@ -65,4 +65,30 @@ final class ExpansionFlightGeometryTests: XCTestCase {
         XCTAssertLessThan(FlightScrubber.easeInOut(0.25), 0.25)
         XCTAssertGreaterThan(FlightScrubber.easeInOut(0.75), 0.75)
     }
+
+    /// A dragged dismiss plays the button's cross-fade by travel: the chrome is gone once
+    /// the card has travelled the first `crossfadeShare` of the way back, the presenter
+    /// under the scrim only returns over the last `crossfadeShare`, and in between the
+    /// card sits alone over the backdrop.
+    func testDragCrossfadeMapsTheFadeWindowsOntoTravel() {
+        let share = CGFloat(ExpansionFlightGeometry.crossfadeShare)
+        let open = ExpansionFlightGeometry.dragCrossfade(progress: 1)
+        XCTAssertEqual(open.chrome, 1, accuracy: 0.0001)
+        XCTAssertEqual(open.scrim, 1, accuracy: 0.0001)
+        let tile = ExpansionFlightGeometry.dragCrossfade(progress: 0)
+        XCTAssertEqual(tile.chrome, 0, accuracy: 0.0001)
+        XCTAssertEqual(tile.scrim, 0, accuracy: 0.0001)
+
+        let halfwayOut = ExpansionFlightGeometry.dragCrossfade(progress: 1 - share / 2)
+        XCTAssertLessThan(halfwayOut.chrome, 0.5)
+        XCTAssertEqual(halfwayOut.scrim, 1, accuracy: 0.0001)
+
+        let between = ExpansionFlightGeometry.dragCrossfade(progress: 0.5)
+        XCTAssertEqual(between.chrome, 0, accuracy: 0.0001)
+        XCTAssertEqual(between.scrim, 1, accuracy: 0.0001)
+
+        let halfwayIn = ExpansionFlightGeometry.dragCrossfade(progress: share / 2)
+        XCTAssertEqual(halfwayIn.chrome, 0, accuracy: 0.0001)
+        XCTAssertGreaterThan(halfwayIn.scrim, 0.5)
+    }
 }
