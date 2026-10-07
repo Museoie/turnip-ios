@@ -15,7 +15,7 @@ trick-detection model. It does not change the v1 screens or flows in
 [Turnip Farm + ML Master Plan](https://github.com/hoiekim/turnip-farm/blob/main/docs/MASTER_PLAN.md)
 (Rev 3). Companion docs: the farm's forthcoming `BACKEND_DESIGN.md` and
 `POSE_FORMAT.md` (the wire-format authority; until they land, master plan §3 is
-the TKP1 spec), and `turnip-ml`'s `MODEL_CONTRACT.md` (the trick-model
+the pose format spec), and `turnip-ml`'s `MODEL_CONTRACT.md` (the trick-model
 input/output authority). Where this doc makes a call the master plan
 doesn't cover, it says so inline as *(judgment call)*.
 
@@ -113,9 +113,9 @@ Keypoint order is MoveNet 17 in COCO order, exactly as the farm expects:
 recorded as-is when they fall outside `[0,1]` in letterbox-pad regions
 (the existing `DESIGN.md` convention — consistent with the farm spec).
 
-### 2.2 TKP1 encoding
+### 2.2 pose-format encoding
 
-The farm's TKP1 spec (master plan §3; `POSE_FORMAT.md` when it lands) is the
+The farm's pose format spec (master plan §3; `POSE_FORMAT.md` when it lands) is the
 authority. iOS-side rules:
 
 - Encode at the **analysis rate** (the rate the frames were actually
@@ -259,10 +259,10 @@ authenticated action — the sheet prompts sign-in when needed):
    upload_url, upload_expires_at, blob_present}`.
    - `frame_count` / `start_frame` / `end_frame` are indices into the
      **canonical 10 Hz** sequence. The client maps its analysis-rate
-     indices through the TKP1 §6 resampling map — the same mapping §7.2
+     indices through the POSE_FORMAT.md §6 resampling map — the same mapping §7.2
      uses to display inference segments — so storage, validation,
      training, and model output all share one coordinate space.
-2. `PUT` the TKP1 blob to `upload_url` (full source pose sequence,
+2. `PUT` the pose-format blob to `upload_url` (full source pose sequence,
    once per `source_id`; skipped when `blob_present` is true).
 3. `POST /api/clips` with `{clips: [{clip_id, source_id,
    start_frame, end_frame, auto_detected, labels: [...]}]}` — batch
@@ -359,7 +359,7 @@ launch, failed download) — the UI never distinguishes proposal sources.
 
 ### 7.2 On-device inference integration
 
-- **Input**: the TKP1 pose sequence the pipeline already produced —
+- **Input**: the pose-format pose sequence the pipeline already produced —
   no re-decode, no second inference pass over video.
 - **Model**: Core ML (exported via `coremltools` per the master plan),
   run once per analysis on the existing background queue (not per
@@ -393,7 +393,7 @@ identifiers, contacts, thumbnails, the video file itself.
 **Leaves only on explicit per-clip opt-in** (the Contribute
 confirmation, §3.3):
 - `video_id` — opaque deterministic ID (§1)
-- TKP1 pose keypoint sequence — stick figures, no face, no background,
+- pose-format keypoint sequence — stick figures, no face, no background,
   no identity (residual honesty per the master plan: gait-from-keypoints
   re-identification is real research; minimization is the mitigation)
 - confirmed clip windows + free-text trick names
