@@ -115,10 +115,15 @@ struct ClipListView: View {
         .toolbar {
             // The default back chevron would step back to the processing screen;
             // the flow's "back" is Home, so this screen draws its own chevron —
-            // Photos-style, chevron only, no text label.
-            ToolbarItem(placement: .navigationBarLeading) {
-                BackChevronButton(accessibilityLabel: "Back to Home", action: popToRoot)
-                    .disabled(viewModel.isSaving)
+            // Photos-style, chevron only, no text label. The same 44 pt glass circle
+            // the editor and Processing draw, so the chevron reads as one control
+            // across the flow: on iOS 26 the bar would otherwise wrap the item in its
+            // own wider pill, so that shared background is hidden under it.
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .navigationBarLeading) { backButton }
+                    .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .navigationBarLeading) { backButton }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -150,6 +155,11 @@ struct ClipListView: View {
                     .accessibilityIdentifier("no-tricks-notice")
             }
         }
+    }
+
+    private var backButton: some View {
+        ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home", action: popToRoot)
+            .disabled(viewModel.isSaving)
     }
 
     private var savingOverlay: some View {

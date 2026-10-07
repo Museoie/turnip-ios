@@ -343,7 +343,11 @@ default empty state, so it never reads as "your library is empty."
   an alert naming the failure, so Done can be retried without risking the
   user's only copy of a trick that never actually saved.
 - The back chevron pops to Home, not to Processing; the title sits centered
-  inline on the same line as the chevron, Photos-app style. The pop is a
+  inline on the same line as the chevron, Photos-app style. The chevron is
+  the same glass circle every other screen's chevron is (`ScrimIconButton`),
+  drawn in place of the bar's own wider item pill, so the control reads the
+  same across the flow and lands exactly on the editor's chevron through the
+  expansion cross-fade. The pop is a
   sideways slide, like any navigation pop — not a shrink back into the
   video's tile, since this screen's tiles are the clips cut from the video,
   not the video itself (`EXPANSION_TRANSITIONS.md`, Rev 9).
@@ -385,7 +389,11 @@ default empty state, so it never reads as "your library is empty."
     row and the band above it (the crop pinch/rotate/drag gesture keeps sole
     ownership of the video itself). The screen draws that top row (back
     chevron, title, Delete) as its own content rather than a navigation bar,
-    the same way Processing does, so no bar sits over the swipe band.
+    the same way Processing does, so no bar sits over the swipe band — laid
+    out in the band a bar would occupy, with the chevron and title at the same
+    positions as Clip List's, so the two headers line up through the
+    cross-fade (`ScreenHeaderBand`; every bar-less screen's corner controls
+    share the same placement).
 
 ## Out of scope for this doc
 

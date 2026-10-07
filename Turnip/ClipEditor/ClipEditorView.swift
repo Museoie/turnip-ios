@@ -108,14 +108,16 @@ struct ClipEditorView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            topRow
-            previewSection
-            resetCropButton
-            TrimSliderView(viewModel: viewModel)
-            Spacer(minLength: 0)
+        VStack(spacing: 0) {
+            ScreenHeaderBand { topRow }
+            VStack(spacing: 16) {
+                previewSection
+                resetCropButton
+                TrimSliderView(viewModel: viewModel)
+                Spacer(minLength: 0)
+            }
+            .padding()
         }
-        .padding()
         // Behind this view's own content rather than wrapping it, so the dismiss
         // gesture only ever sees the margins/empty space this content doesn't already
         // claim with its own gesture (the crop surface, the trim slider, the buttons)
@@ -124,9 +126,9 @@ struct ClipEditorView: View {
         .background(dismissGestureLayer)
         // No navigation bar: the bar is the stack's own view laid over this screen, so a
         // drag that starts in its band never reaches the dismiss gesture behind this
-        // content. `topRow` draws the same controls as content instead, which leaves the
-        // whole area above the video to that gesture — `ProcessingView` hides its bar for
-        // the same reason.
+        // content. `topRow` draws the same controls as content instead, in the band the
+        // bar would occupy (`ScreenHeaderBand`), which leaves the whole area above the
+        // video to that gesture — `ProcessingView` hides its bar for the same reason.
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
         .task {
@@ -138,7 +140,8 @@ struct ClipEditorView: View {
     }
 
     /// The screen's own top row in place of a navigation bar (see `body`): the back chevron
-    /// leading, the title centered, Delete trailing.
+    /// leading, the title centered, Delete trailing — the same arrangement, at the same
+    /// positions, as the clip list's titled bar this screen flies open from.
     private var topRow: some View {
         ZStack {
             Text("Edit clip")

@@ -1,9 +1,11 @@
 import XCTest
 
-/// Scratch verification for the sizing/fade fixes in `docs/EXPANSION_TRANSITIONS.md` Rev 2.
-/// Not wired into CI — run manually while debugging this feature. Reads `"expansion-card"`'s
-/// laid-out frame via the accessibility tree (reported independent of its current opacity)
-/// rather than screenshots/pixels, since that gives an exact rect instead of a color guess.
+/// Verification of the expansion transitions in `docs/EXPANSION_TRANSITIONS.md`: the
+/// containers' geometry, and what their close paths hand back. Runs with the rest of
+/// `TurnipUITests` in the scheme's test action, so CI's `xcodebuild test` covers it. Reads
+/// element frames via the accessibility tree (reported independent of an element's current
+/// opacity) rather than screenshots/pixels, since that gives an exact rect instead of a
+/// color guess.
 final class ExpansionTransitionVerificationTests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -79,6 +81,92 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         XCTAssertEqual(cardFrame.minY, previewFrame.minY, accuracy: 2)
         XCTAssertEqual(cardFrame.width, previewFrame.width, accuracy: 2)
         XCTAssertEqual(cardFrame.height, previewFrame.height, accuracy: 2)
+    }
+
+    /// The editor's own top row (`ScreenHeaderBand`) against the clip list's titled bar it
+    /// flies open from: the back chevron and the title cross-fade over the list's through
+    /// the flight, so they have to sit at the same height, with the title at the same
+    /// center, or the header visibly jumps at the cut. Compares the two screens' element
+    /// frames in one flow, on whichever OS the run is on — the band's metrics branch per OS.
+    func testClipEditorHeaderLinesUpWithTheClipListsBar() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipListMedia"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        let listBack = settledFrame(of: app.buttons["Back to Home"].firstMatch)
+        let listTitle = settledFrame(of: app.navigationBars["Clips"].staticTexts["Clips"].firstMatch)
+        let tile = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Open clip'"))
+            .firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 15))
+        tile.tap()
+        let editorTitle = app.staticTexts["clip-editor-title"]
+        XCTAssertTrue(editorTitle.waitForExistence(timeout: 15))
+        let editorBack = settledFrame(of: app.buttons["Back to clips"].firstMatch)
+        let editorTitleFrame = settledFrame(of: editorTitle)
+        print("VERIFY_LIST_BACK:\(listBack) VERIFY_EDITOR_BACK:\(editorBack)")
+        print("VERIFY_LIST_TITLE:\(listTitle) VERIFY_EDITOR_TITLE:\(editorTitleFrame)")
+        XCTAssertEqual(editorBack.midY, listBack.midY, accuracy: 1)
+        XCTAssertEqual(editorTitleFrame.midY, listTitle.midY, accuracy: 1)
+        XCTAssertEqual(editorTitleFrame.midX, listTitle.midX, accuracy: 1)
+        // Both are the same `ScrimIconButton` circle, the list's with the bar's own wider
+        // pill hidden under it, so the frames match outright, not just the glyph.
+        XCTAssertEqual(editorBack.midX, listBack.midX, accuracy: 1)
+        XCTAssertEqual(editorBack.size.width, listBack.size.width, accuracy: 1)
+        XCTAssertEqual(editorBack.size.height, listBack.size.height, accuracy: 1)
+    }
+
+    /// Swipe-to-dismiss is the editor's back-navigation by another route, so it has to hand
+    /// the edits back the way the back chevron does: trim the clip, swipe down from the
+    /// header band, and the tile's caption must show the new duration. The harness's two
+    /// clips both start at 1.5s; dragging the end handle right lengthens the first one.
+    func testSwipeToDismissCommitsTheEdit() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipListMedia"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["1.5s"].firstMatch.waitForExistence(timeout: 15))
+        let tile = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Open clip'"))
+            .firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 15))
+        tile.tap()
+        XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
+        let trimEnd = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Trim end'"))
+            .firstMatch
+        // Longer than the usual wait: the handle only exists once the sample movie's
+        // duration has loaded, the same real wall-clock work `testClipEditor` waits on.
+        XCTAssertTrue(trimEnd.waitForExistence(timeout: 45))
+        Thread.sleep(forTimeInterval: 1)
+        // Strictly horizontal: vertical travel slows the handle (`ScrubCalculator`).
+        let grab = trimEnd.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        grab.press(
+            forDuration: 0.1, thenDragTo: grab.withOffset(CGVector(dx: 80, dy: 0)),
+            withVelocity: XCUIGestureVelocity(300), thenHoldForDuration: 0.2)
+        let trimmed = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH 'Trim range'"))
+            .firstMatch
+        XCTAssertTrue(trimmed.waitForExistence(timeout: 5))
+        XCTAssertNotEqual(trimmed.label, "Trim range 0.5s to 2.0s", "the drag didn't move the end handle")
+
+        // Down from the title itself — the top row's band, which the dismiss gesture owns
+        // (the video surface keeps a downward drag for its own crop gesture) — so the
+        // start point doesn't depend on the device's status-bar height.
+        let start = app.staticTexts["clip-editor-title"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(
+            forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 550)),
+            withVelocity: XCUIGestureVelocity(900), thenHoldForDuration: 0.05)
+        // `ClipExpansionContainer.dismissAfterLanding` disables UIKit animations for ~0.5s
+        // after the flight, during which accessibility queries can't complete — wait it out.
+        Thread.sleep(forTimeInterval: 2)
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 10))
+        let captions = app.staticTexts
+            .matching(NSPredicate(format: "label MATCHES '[0-9.]+s'"))
+            .allElementsBoundByIndex.map(\.label)
+        print("VERIFY_CAPTIONS_AFTER_SWIPE:\(captions)")
+        XCTAssertEqual(captions.count, 2)
+        XCTAssertTrue(captions.contains { $0 != "1.5s" }, "the swipe-dismissed edit never reached the tile")
     }
 
     // A close-direction counterpart (sampling the card mid-flight after tapping "Back to

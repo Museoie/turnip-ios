@@ -1,5 +1,14 @@
 # Photos-style expansion transitions
 
+*Rev 11 · 2026-10-07.* The editor's swipe-to-dismiss now commits the edit the
+way its back chevron does (it closed without handing the draft back). Every
+bar-less screen's header — the editor's top row, Processing's chevron,
+Camera's corner controls — sits where the system inline bar lays its items
+(`ScreenHeaderBand`, measured on both iOS 26 and pre-26), and the clip list's
+chevron is the same 44 pt glass circle as the others rather than the bar's
+wider pill, so the list and editor headers land on each other through the
+cross-fade. See "Rev 11" near the end.
+
 *Rev 10 · 2026-10-07.* The cross-fade has its own curve. The flight's geometry
 is unchanged (250ms ease-in-out); the destination's chrome and the scrim each
 fade on an ease-in-out of the card's *travel* whose inflection point — where
@@ -1332,6 +1341,52 @@ interleave, not the app; the recorder can also emit a flight's frames *late*
 shifts the frame's overall brightness while the editor idles (the harness
 movie's grey level is its frame index), so a whole-screen brightness change
 there is not a transition.
+
+## Rev 11: the swipe commits the edit, and every header sits where the bar's items do
+
+*2026-10-07.* Two reports: an edit made in the editor was lost when the
+editor was swiped closed rather than closed with the chevron, and the
+editor's header sat at a different height than the clip list's.
+
+**The swipe commits.** `ClipExpansionContainer.dismissDragGesture`'s
+committing release called `close()` alone; the editor's back chevron calls
+`onCommit(viewModel.result)` and *then* its close. The draft lives in the
+editor's view state until it is left, and nothing else delivers it, so the
+swipe path dropped it. The committing branch now commits first, exactly as
+the chevron does; a cancelled drag still commits nothing. (Committing inside
+`close()` instead would apply the result twice on the chevron path.)
+`landingTime` already distinguished an edited landing from an unchanged one,
+so the rest of the close was ready for this.
+
+**The header band.** Rev 9's `topRow` was a plain row inside the editor's
+16 pt-padded `VStack`, so on iOS 26 it sat 16 pt lower and 6 pt further in
+than the clip list's bar items it cross-fades over (measured by element
+frames: chevron center 97 vs 81, 38 vs 44). Processing's chevron and Camera's
+corner controls had the same bare padding. All of them now go through
+`ScreenHeaderBand`/`screenHeaderItemPlacement()`
+(`Turnip/DesignSystem/ScreenHeaderBand.swift`), which encodes the system
+inline bar's measured geometry: a 54 pt band on iOS 26 (44 before), items
+centered in the band's top 44 pt, a 20 pt side inset on iOS 26 (16 before),
+and — pre-26 only — the bar hanging from the status bar's bottom edge, 5 pt
+above the top safe-area inset on Dynamic Island devices (read from
+`statusBarManager`; on iOS 26 the bar starts at the inset itself). Home's
+pre-26 overlay uses the same placement without that overhang, since it sits
+beside the wordmark header rather than a bar. The clip list's chevron, the
+one chevron the system drew, was then the odd one out — iOS 26 wraps a toolbar
+item in a 48×36 glass pill — so its `ToolbarItem` now holds the same
+`ScrimIconButton` circle with the bar's own background hidden under it
+(`sharedBackgroundVisibility(.hidden)`); `BackChevronButton` is gone.
+
+**Verification**, by element frames through the scratch driver on an
+iPhone 15 (iOS 26.2, and a throwaway iOS 18.5 simulator for the pre-26
+branch), not screenshots: list and editor chevrons both at `x 20, y 59,
+44×44` and titles at center `y 81` on 26.2; editor/Processing/Camera at
+center 76 against the bar's 75.67 on 18.5, Home's pre-26 gear at 81 level
+with the wordmark. Trim-then-swipe: the tile caption went 1.5s → 2.8s on the
+fixed build, unchanged on the old one. Both are regression tests in
+`ExpansionTransitionVerificationTests` (`testClipEditorHeaderLinesUpWithTheClipListsBar`,
+`testSwipeToDismissCommitsTheEdit`); the swipe test starts its drag from the
+title element so it doesn't depend on the device's status-bar height.
 
 ## Gesture ownership: why the dismiss drag can't live behind the content
 

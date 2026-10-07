@@ -822,9 +822,6 @@ struct PhotosAccessDeniedView: View {
 /// manually-styled corner overlay instead. Internal so the DEBUG screenshot harness and
 /// previews match.
 struct HomeNavigationBar: ViewModifier {
-    /// The inline bar's height on iOS 26 (measured: the top safe area with the bar minus
-    /// the top safe area without it). There is no public constant for it.
-    private static let barHeight: CGFloat = 54
     /// The gap between the two pre-26 overlay controls — the same spacing Camera's own
     /// corner-control row uses.
     private static let overlaySpacing: CGFloat = 12
@@ -846,7 +843,8 @@ struct HomeNavigationBar: ViewModifier {
                     // lone spinner (the not-yet-determined state) centered.
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .safeAreaInset(edge: .top, spacing: 0) {
-                        Color.clear.frame(height: max(proxy.safeAreaInsets.top - Self.barHeight, 0))
+                        Color.clear.frame(
+                            height: max(proxy.safeAreaInsets.top - ScreenHeaderMetrics.barHeight, 0))
                     }
                     .ignoresSafeArea(.container, edges: .top)
             }
@@ -888,7 +886,10 @@ struct HomeNavigationBar: ViewModifier {
                         GalleryFilterButton(viewModel: viewModel, placement: .overlay)
                         HomeSettingsButton(action: showSettings)
                     }
-                    .padding()
+                    // The same placement every other bar-less screen's corner controls use,
+                    // but level with the wordmark header's row (laid out from the safe-area
+                    // top as content) rather than where a bar's items would hang.
+                    .screenHeaderItemPlacement(hangsFromStatusBar: false)
                 }
         }
     }

@@ -329,7 +329,8 @@ struct ProcessingView<Destination: View>: View {
 
     /// Back to Home, or — while a run is in flight — cancel it, which also leaves. The same
     /// scrim-circle button the Camera page floats over its preview, since with no navigation
-    /// bar this screen's chrome sits over its media the same way. A sibling of the draggable
+    /// bar this screen's chrome sits over its media the same way, placed where a bar's own
+    /// leading item would sit so every screen's header lines up. A sibling of the draggable
     /// strip in `body`, so neither a horizontal browse-swipe nor a vertical dismiss-swipe
     /// carries it along.
     @ViewBuilder
@@ -338,12 +339,12 @@ struct ProcessingView<Destination: View>: View {
             ScrimIconButton(systemImage: "xmark", accessibilityLabel: "Cancel") {
                 handleBackAction()
             }
-            .padding()
+            .screenHeaderItemPlacement()
         } else {
             ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home") {
                 handleBackAction()
             }
-            .padding()
+            .screenHeaderItemPlacement()
         }
     }
 

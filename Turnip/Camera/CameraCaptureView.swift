@@ -71,10 +71,12 @@ struct CameraCaptureView: View {
         }
     }
 
+    /// Placed where a navigation bar's leading item would sit (`screenHeaderItemPlacement`),
+    /// level with Home's own bar controls across the pager swipe.
     private var cancelButton: some View {
         ScrimIconButton(
             systemImage: "xmark", accessibilityLabel: "Cancel", style: .scrim, action: onCancel)
-            .padding()
+            .screenHeaderItemPlacement()
     }
 
     private var bottomControls: some View {
@@ -165,7 +167,7 @@ struct CameraCaptureView: View {
                 flipButton
             }
         }
-        .padding()
+        .screenHeaderItemPlacement()
     }
 
     private var exposureToggleButton: some View {
