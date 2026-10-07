@@ -1,13 +1,14 @@
 # Photos-style expansion transitions
 
-*Rev 10 · 2026-10-06.* The cross-fade has its own curves. The flight's geometry
-is unchanged (250ms ease-in-out); the destination's chrome and the scrim now
-fade on two separate states in each container instead of reading `progress`,
-which could only ever give them the flight's curve: whatever is appearing
-eases in and whatever is disappearing eases out — on an open that is the chrome
-appearing (ease-in) while the presenter under the scrim disappears (the scrim
-rises on ease-out), and on a close the reverse. Under a drag the same windows
-are driven by travel instead of time. See "Rev 10" near the end.
+*Rev 10 · 2026-10-07.* The cross-fade has its own curve. The flight's geometry
+is unchanged (250ms ease-in-out); the destination's chrome and the scrim each
+fade on an ease-in-out of the card's *travel* whose inflection point — where
+the fade crosses half — is movable: 40% of the travel for the chrome, 60% for
+the scrim, so the layer disappearing on any flight is half gone at 60% of the
+way and the layer appearing is half in at 40%. Applied per frame by an
+`Animatable` modifier keyed on `progress`, so a swipe and the back button play
+the same cross-fade. See "Rev 10" near the end, including the three measured
+shapes it replaced.
 
 *Rev 9 · 2026-10-05.* The flight is 250ms. The destination's chrome now
 cross-fades in *over* the flying card for the whole flight instead of appearing
@@ -1221,129 +1222,107 @@ chevron and `ResolvingDestination`'s cancel still fly back into the tile.
   Processing view (two runs) all read the video's pixels at center, never the
   grid's. `simctl io recordVideo` interleaving two sources; lesson 19.
 
-## Rev 10: the fade's curve is not the flight's
+## Rev 10: the cross-fade has its own curve, with a movable inflection point
 
-*2026-10-06.* Request: keep the slide exactly as it is; during the cross-fade,
-disappearing components should ease out and appearing ones ease in.
+*2026-10-06/07.* Request: keep the slide exactly as it is; during the
+cross-fade, disappearing components should ease out and appearing components
+ease in — refined over several rounds to: each fade spans the whole flight,
+and its *inflection point* (where it crosses half, its steepest moment) sits
+at 60% of the travel for the disappearing layer and 40% for the appearing
+layer, so the two are both past half across the middle fifth.
 
-Through Rev 9 the scrim and the destination chrome were `.opacity(progress)`,
-so they inherited the flight's ease-in-out — gentle at both ends. Deriving a
-different curve from `progress` isn't possible: `body` only sees the two
-endpoints (Rev 4), and even an `Animatable` remap would be composing against
-the flight's curve rather than replacing it. So each container carries two more
-animated states, `chromeOpacity` (the destination layer) and `scrimOpacity`
-(the backdrop over the presenter), written together by `animateCrossfade(open:)`
-in separate `withAnimation`s from `animateFlight`'s own — putting them inside
-its closure would hand them the flight's curve again — and assigned
-from the drag's travel by the interactive dismiss (see "The drag plays the
-same cross-fade" below).
+**What shipped.** `ExpansionFlightGeometry.crossfadeOpacity(progress:
+inflection:)` is an ease-in-out of the card's *travel* (`progress`, `0` at the
+tile, `1` open) whose halves meet at `inflection` instead of the middle: a
+cubic ease-in from `0` to `0.5` over `[0, inflection]`, a cubic ease-out from
+`0.5` to `1` over `[inflection, 1]` (`crossfadeSteepness = 3`; the system's
+near-quadratic curves would already show a layer clearly where this still
+holds it within a few percent of its start). Each container applies it to its
+two layers through `ExpansionCrossfade`, an `Animatable` modifier keyed on
+`progress` — the Rev 4 lesson: a plain `.opacity(f(progress))` in `body` only
+ever sees the two endpoints and would interpolate linearly between them; an
+`Animatable` gets every interpolated value and applies the curve per frame.
+Under a drag `progress` is written directly and the same curve applies, so
+the swipe and the button share the cross-fade by construction (`UIUX.md`,
+"A gesture and its button play one animation").
 
-Why two states and not one: "appearing" and "disappearing" are about what the
-user sees, and on any one flight the two layers are on opposite sides of it.
-Opening, the editor's chrome *appears* and the clip list under the scrim
-*disappears* — so `chromeOpacity` rises on `.easeIn(duration: flightDuration)`
-and `scrimOpacity` rises on `.easeOut`, the list dropping away fast while the
-chrome arrives late: a fade through the dark backdrop, the same shape as the
-list's own delete fade. Closing (`close()`), the chrome disappears on ease-out
-and the list reappears on ease-in (the scrim falls on ease-in); a cancelled
-drag's snap-back is an open again. `ExpansionFlightGeometry.crossfadeAnimation
-(appearing:)` picks the curve, and `animateCrossfade` passes it `open` for the
-chrome and `!open` for the scrim. Delete's in-place fade (`deleteFadeOpacity`)
-was already ease-out and the pre-iOS 18 hard cut is untouched.
+**Why one inflection per layer serves both directions.** The roles swap with
+the direction and the two readings land on the same point. Opening, the
+chrome is the layer *appearing* — half in at 40% of the way out, i.e.
+`progress = 0.4`; closing, it is the layer *disappearing* — half gone at 60%
+of the way back, also `progress = 0.4`. The scrim is the mirror: the
+presenter under it disappears on an open (half covered at 60% out) and
+reappears on a close (half back at 40% back), `progress = 0.6` either way. So
+`chromeCrossfadeInflection = 0.4`, `scrimCrossfadeInflection = 0.6`, no
+per-direction state, no separate animated values.
 
-**The fades are offset in time, on cubic curves.** The first build used
-`.easeIn` / `.easeOut` over the whole flight and measured exactly as specified
-in opacity terms (chrome 0.30 and scrim 0.65 when the card was 44% of the way),
-yet read on screen as the old layer lingering and the new one arriving early.
-Opacity isn't brightness: on a black backdrop, white chrome at 30% opacity
-already looks present and a tile at 35% still looks lit, so two fades that
-overlap across the whole flight read as a double exposure in the middle. A
-second build kept the full-length overlap on steeper cubic curves (Penner's
-easeInCubic / easeOutCubic as `.timingCurve` control points — 0.125 at the
-midpoint instead of 0.315); still too much overlap, too soon. A third build
-moved the inflection points instead — `crossfadeShare = 0.6`, the disappearing
-layer's fade over the first 60% of the flight and the appearing layer's over
-the last 60% (`.delay`) — and the user "didn't feel like anything changed".
-`0.3` (gone within the first third, arriving only in the last third, the
-middle of the flight just the card over the backdrop) was the first value that
-read as intended, and `0.5` (the windows meeting at the midpoint) followed;
-the shipped value is `0.6`, chosen after seeing both: the leaving layer's
-window runs to 60% and the arriving layer's starts at 40%, a fifth of overlap
-in which the leaving layer is already within a few percent of gone on its
-cubic and the arriving one has barely begun. What makes `0.6` read differently
-now than the earlier `0.6` build is that the dragged dismiss then still wrote
-chrome and scrim `= progress` (see "The drag plays the same cross-fade"). Each
-window keeps its cubic curve. The per-frame numbers below are from the `0.3`
-build; the mechanism is unchanged.
+**How it got here**, since each step was measured and the measurements are
+what ruled the earlier shapes out:
 
-**The drag plays the same cross-fade, by travel.** The first Rev 10 builds had
-the interactive dismiss write chrome and scrim `= progress`, so a swipe held
-halfway showed both layers at 50% — the double exposure the button path no
-longer had, and a break of the gesture/button rule in `UIUX.md`.
-`ExpansionFlightGeometry.dragCrossfade(progress:)` now maps the same windows
-onto travel: the chrome is gone (easeOutCubic) once the card has travelled the
-first `crossfadeShare` of the way back, and the presenter only returns
-(easeInCubic) over the last `crossfadeShare`. A release animates each layer on
-from wherever the drag left it; a cancel animates them back the open way.
+1. *Full-length `.easeIn`/`.easeOut` on two extra animated states* (chrome
+   and scrim), the fade's direction picking the curve. Measured exactly as
+   specified in opacity terms — clip open chrome 0.17 → 0.30 → 0.47 → 0.62
+   against card 0.22 → 0.44 → 0.67 → 0.86 and scrim 0.49 → 0.65 → 0.79 →
+   0.90 — and seen as the old layer lingering and the new one arriving early.
+   Opacity isn't brightness: on black, white chrome at 30% already looks
+   present and a tile at 35% still looks lit.
+2. *Same, on cubic Bézier curves* (0.125 at the midpoint instead of 0.315):
+   chrome 0.04 → 0.13 → 0.25 → 0.56, scrim 0.63 → 0.85 → 0.93 → 0.99. Still
+   too much overlap, too soon.
+3. *The fades offset in time* — the disappearing layer over the first
+   `crossfadeShare` of the flight, the appearing layer `.delay`ed into the
+   last — at 0.6, then 0.3, 0.5 and 0.6 again, with the drag mapped onto the
+   same windows by travel. This was a misreading of "inflection point" as the
+   start/end of each fade: at 0.3 the chrome was 0 until the card was at
+   86% and the list 96% covered at 6%, i.e. two near-cuts with the card alone
+   in between. The request was for full-span fades whose *midpoints* move.
+4. The shipped curve above.
 
 **Verification** that doesn't depend on knowing when a frame was captured
 (the recorder keeps 3–6 frames of a 250ms flight at irregular spacing — lesson
-1): read the geometry and both fades off the *same* frame and compare. With
-`.opacity(progress)` all three were equal on every frame; with this change the
-order is `chrome < p < scrim` on every mid-flight frame in both directions,
-animated or dragged. Clip (the `-screenshotClipListMedia` tap
-flow through the scratch driver): `p` from the card's left edge lerped between
-the tile's (592px) and the editor preview's (163px); scrim from the clip list's
-Done button showing through (`1 − blue/255`); chrome from the brightest pixel of
-the editor's Delete pill (nothing of the list under it) over its landed value.
-Home (the seeded library, second tile): `p` from the card's top edge (345px →
-836px); scrim from the untapped top-left tile; chrome from the scrub bar's
-track over a tile with no blue of its own.
+1): read the geometry and both fades off the *same* frame and compare each
+fade with the curve's prediction at that frame's `progress`. Clip (the
+`-screenshotClipListMedia` tap flow through the scratch driver): `p` from the
+card's left edge lerped between the tile's (592px) and the editor preview's
+(163px); scrim from the clip list's Done button showing through (`1 −
+blue/255`); chrome from the brightest pixel of the editor's Delete pill
+(nothing of the list under it) over its landed value. Home (the seeded
+library, second tile): `p` from the card's top edge (345px → 836px); scrim
+from the untapped top-left tile; chrome from the scrub bar's track over a
+tile with no blue of its own.
 
-Measured at `crossfadeShare = 0.3` (shipped: `0.6`, same mechanism):
+Measured against the curve's prediction at each frame's own `p` (chrome =
+`crossfadeOpacity(p, 0.4)`, scrim = `crossfadeOpacity(p, 0.6)`), measured →
+predicted:
 
-- Clip open: scrim 0.96 at `p` 0.06 and 1.00 from 0.22 on; chrome 0.00
-  through `p` 0.86, 0.55 on the landing frame, then full — the list is gone
-  before the card has visibly moved and the chrome arrives as the card lands.
-- Clip back-button close: chrome 0.48 → 0.05 → 0.00 against `p` 1.00 → 0.93 →
-  0.77, scrim 1.00 through `p` 0.22, 0.94 at 0.06, then 0.82 → clear with the
-  card at the tile.
-- Home open: scrim 1.00 from `p` 0.34; chrome 0.04 at 0.91, 0.45 at 0.99, full
-  landed. Home close: chrome 0.21 at `p` 0.96, 0 from 0.66; scrim 1.00 through
-  `p` 0.43, 0.94 at 0.06, 0.51 → 0 at the tile.
-- Clip interactive drag (slow, held at `p` ≈ 0.79, then released): under the
-  finger chrome 0.75 → 0.37 → 0.17 → 0.04 at `p` 0.98 → 0.92 → 0.86 → 0.80
-  with the scrim at 1.00 throughout; the hold shows chrome 0.02, scrim 1.00 —
-  the card alone over the backdrop; on release the scrim stays 1.00 through
-  `p` 0.11 and then clears 0.82 → 0.51 → 0 at the tile.
+- Clip open, `p` 0.22 / 0.43 / 0.67 / 0.86: chrome 0.11 / 0.62 / 0.91 / 0.98 →
+  0.08 / 0.57 / 0.92 / 0.99; scrim 0.03 / 0.20 / 0.73 / 0.98 → 0.02 / 0.19 /
+  0.72 / 0.98.
+- Clip back-button close, `p` 0.93 / 0.77 / 0.55 / 0.32 / 0.13: chrome 1.00 /
+  0.98 / 0.83 / 0.30 / 0.02 → 1.00 / 0.97 / 0.79 / 0.26 / 0.02; scrim 1.00 /
+  0.91 / 0.40 / 0.09 / 0.01 → 1.00 / 0.91 / 0.39 / 0.07 / 0.00.
+- Clip swipe, under the finger at `p` 0.79 / 0.78 and held at 0.55: chrome
+  0.99 / 0.98 / 0.81 → 0.98 / 0.98 / 0.79; scrim 0.93 / 0.91 / 0.40 → 0.93 /
+  0.92 / 0.39. Released, `p` 0.51 / 0.36 / 0.23: chrome 0.74 / 0.43 / 0.12 →
+  0.72 / 0.36 / 0.10; scrim 0.31 / 0.12 / 0.04 → 0.30 / 0.10 / 0.02. The same
+  curve the button plays, at every sampled point of the drag.
+- Home open, `p` 0.41 / 0.79: scrim 0.18 / 0.94 → 0.16 / 0.93; chrome (scrub
+  track) 0.55 / 0.97 → 0.53 / 0.98. Home close, `p` 0.96 / 0.76 / 0.43: scrim
+  1.00 / 0.91 / 0.21 → 1.00 / 0.91 / 0.18; chrome 0.98 at 0.76 → 0.97, and at
+  0.43 the frame shows the controls at roughly half (predicted 0.56) — the
+  track probe can't read it there, since the bar's played/unplayed split has
+  moved since the landed reference and the tab bar's highlight sits under the
+  button.
 
-The `0.6` build, for the record: clip open scrim 0.73 → 0.91 → 0.99 against `p`
-0.06 → 0.22 → 0.44 with chrome 0 → 0 → 0.01 → 0.11 at `p` 0.77; clip close
-chrome 0.75 → 0.18 → 0.05 → 0 against `p` 1.00 → 0.86 → 0.67 → 0.44 with the
-scrim still 1.00, then clearing over `p` 0.44 → tile.
-
-For comparison, the same reads under the two earlier builds. Full-length
-`.easeIn`/`.easeOut` (seen as the old layer lingering and the new arriving
-early): clip open chrome 0.17 → 0.30 → 0.47 → 0.62 against `p` 0.22 → 0.44 →
-0.67 → 0.86 and scrim 0.49 → 0.65 → 0.79 → 0.90. Full-length cubic (still too
-much, too soon): clip open chrome 0.04 → 0.13 → 0.25 → 0.56 against `p` 0.13
-→ 0.44 → 0.67 → 0.93 and scrim 0.63 → 0.85 → 0.93 → 0.99. The ordering was
-right in both; only the offset made one layer leave before the other arrives.
-
-- Clip interactive drag, first builds (chrome and scrim `= progress`):
-  `p`/scrim 0.93/0.93, 0.88/0.88, 0.83/0.82, 0.64/0.65 — 1:1 within the
-  measurement's 0.01 bias, i.e. the double exposure under the finger that
-  `dragCrossfade` replaced. See the drag entry under "Shipped" for the
-  travel-mapped numbers.
-- `ExpansionTransitionVerificationTests` and the Home/clip-list
-  `ScreenshotTests` pass on the shipped build.
-- Idle editor, 30 `XCUIScreen.main.screenshot()` samples over ~3s: Done-blue 0
-  on all — the three "nearly closed" frames the recorder emitted 1.7s before
-  the drag began, alternating with a list frame that had no card and a hidden
-  slot, were lesson 19's interleave again, not the app. The looping preview
-  also shifts the frame's overall brightness while the editor idles (the
-  harness movie's grey level is its frame index), so a whole-screen brightness
-  change there is not a transition.
+Also on the record from the earlier rounds: an idle editor sampled 30 times
+over ~3s with `XCUIScreen.main.screenshot()` read Done-blue 0 on all — the
+"nearly closed" frames the recorder emitted while the app idled, alternating
+with a list frame that had no card and a hidden slot, were lesson 19's
+interleave, not the app; the recorder can also emit a flight's frames *late*
+(the clip open's frames once showed up after the close). The looping preview
+shifts the frame's overall brightness while the editor idles (the harness
+movie's grey level is its frame index), so a whole-screen brightness change
+there is not a transition.
 
 ## Gesture ownership: why the dismiss drag can't live behind the content
 

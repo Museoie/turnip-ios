@@ -66,36 +66,32 @@ final class ExpansionFlightGeometryTests: XCTestCase {
         XCTAssertGreaterThan(FlightScrubber.easeInOut(0.75), 0.75)
     }
 
-    /// A dragged dismiss plays the button's cross-fade by travel: the chrome is gone once
-    /// the card has travelled the first `crossfadeShare` of the way back, the presenter
-    /// under the scrim only starts returning once `crossfadeShare` of the travel remains,
-    /// and at the midpoint the card sits (all but) alone over the backdrop — exactly alone
-    /// when the windows don't overlap, within a few percent when they do.
-    func testDragCrossfadeMapsTheFadeWindowsOntoTravel() {
-        let share = CGFloat(ExpansionFlightGeometry.crossfadeShare)
-        let open = ExpansionFlightGeometry.dragCrossfade(progress: 1)
-        XCTAssertEqual(open.chrome, 1, accuracy: 0.0001)
-        XCTAssertEqual(open.scrim, 1, accuracy: 0.0001)
-        let tile = ExpansionFlightGeometry.dragCrossfade(progress: 0)
-        XCTAssertEqual(tile.chrome, 0, accuracy: 0.0001)
-        XCTAssertEqual(tile.scrim, 0, accuracy: 0.0001)
-
-        // The leaving window's end: chrome gone. The arriving window's start: scrim intact.
-        let leavingEnd = ExpansionFlightGeometry.dragCrossfade(progress: 1 - share)
-        XCTAssertEqual(leavingEnd.chrome, 0, accuracy: 0.0001)
-        let arrivingStart = ExpansionFlightGeometry.dragCrossfade(progress: share)
-        XCTAssertEqual(arrivingStart.scrim, 1, accuracy: 0.0001)
-
-        let halfwayOut = ExpansionFlightGeometry.dragCrossfade(progress: 1 - share / 2)
-        XCTAssertLessThan(halfwayOut.chrome, 0.5)
-        XCTAssertGreaterThan(halfwayOut.scrim, 0.95)
-
-        let between = ExpansionFlightGeometry.dragCrossfade(progress: 0.5)
-        XCTAssertLessThan(between.chrome, 0.05)
-        XCTAssertGreaterThan(between.scrim, 0.95)
-
-        let halfwayIn = ExpansionFlightGeometry.dragCrossfade(progress: share / 2)
-        XCTAssertLessThan(halfwayIn.chrome, 0.05)
-        XCTAssertGreaterThan(halfwayIn.scrim, 0.5)
+    /// Each cross-fading layer's opacity is a function of the card's travel that spans the
+    /// whole flight and crosses half exactly at its inflection — later for the scrim than for
+    /// the chrome, so the middle fifth of the travel has both layers past half while each
+    /// holds near its start value until close to its own inflection.
+    func testCrossfadeOpacityCrossesHalfAtTheInflectionAndSpansTheFlight() {
+        let chrome = ExpansionFlightGeometry.chromeCrossfadeInflection
+        let scrim = ExpansionFlightGeometry.scrimCrossfadeInflection
+        XCTAssertLessThan(chrome, scrim)
+        for inflection in [chrome, scrim] {
+            let opacity = { ExpansionFlightGeometry.crossfadeOpacity(progress: $0, inflection: inflection) }
+            XCTAssertEqual(opacity(0), 0, accuracy: 0.0001)
+            XCTAssertEqual(opacity(1), 1, accuracy: 0.0001)
+            XCTAssertEqual(opacity(inflection), 0.5, accuracy: 0.0001)
+            // Still within a few percent of its start value halfway to the inflection.
+            XCTAssertLessThan(opacity(inflection / 2), 0.1)
+            // Monotonic.
+            var last: CGFloat = -1
+            for step in 0...20 {
+                let value = opacity(CGFloat(step) / 20)
+                XCTAssertGreaterThanOrEqual(value, last)
+                last = value
+            }
+        }
+        // The overlap: past half for both between the two inflections.
+        let mid = (chrome + scrim) / 2
+        XCTAssertGreaterThan(ExpansionFlightGeometry.crossfadeOpacity(progress: mid, inflection: chrome), 0.5)
+        XCTAssertLessThan(ExpansionFlightGeometry.crossfadeOpacity(progress: mid, inflection: scrim), 0.5)
     }
 }

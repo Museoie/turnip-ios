@@ -43,57 +43,42 @@ struct ExpansionFlightGeometry: Equatable {
         }
     }
 
-    /// The curve for what cross-fades alongside a flight, as distinct from the flight's own
-    /// ease-in-out: a component that is appearing eases in, one that is disappearing eases
-    /// out, over the flight's duration. `appearing` is about the component the user sees, so
-    /// the two layers a container fades take opposite values on the same flight: toward open,
-    /// the destination's chrome appears while the presenter under the scrim disappears (the
-    /// scrim rises on the disappearing curve); back toward the tile, the reverse.
+    /// The opacity of a layer that cross-fades alongside a flight, at `progress` (`0` at the
+    /// tile, `1` fully open), for a layer whose fade crosses half at `inflection` — an
+    /// ease-in-out that spans the whole flight but whose steepest point sits at `inflection`
+    /// rather than the middle: a cubic ease-in from `0` to half over `[0, inflection]` and a
+    /// cubic ease-out from half to `1` over `[inflection, 1]`.
     ///
-    /// The two fades are also offset in time, not just curved differently: the disappearing
-    /// layer's fade occupies the first `crossfadeShare` of the flight and the appearing
-    /// layer's the last, so the steep part of the one leaving comes early and the steep part
-    /// of the one arriving comes late. Two full-length fades, even on cubic curves, still
-    /// read as a double exposure through the middle of the flight: on a black backdrop a
-    /// layer's perceived brightness runs well ahead of its opacity, so white chrome at 30%
-    /// already looks present and a tile at 35% still looks lit.
-    ///
-    /// Within each window the curve is cubic-power (Penner's easeInCubic / easeOutCubic as
-    /// Bézier control points) rather than the system's near-quadratic `.easeIn`/`.easeOut`.
-    static func crossfadeAnimation(appearing: Bool) -> Animation {
-        let duration = flightDuration * crossfadeShare
-        return appearing
-            ? .timingCurve(0.55, 0.055, 0.675, 0.19, duration: duration).delay(flightDuration - duration)
-            : .timingCurve(0.215, 0.61, 0.355, 1, duration: duration)
+    /// A function of the card's travel, not of time, so a dragged dismiss and the back
+    /// button's flight play the same cross-fade (docs/UIUX.md, "A gesture and its button
+    /// play one animation"); the containers apply it per frame through
+    /// `ExpansionCrossfade`.
+    static func crossfadeOpacity(progress: CGFloat, inflection: CGFloat) -> CGFloat {
+        let travel = min(max(progress, 0), 1)
+        if travel <= inflection {
+            return 0.5 * pow(travel / inflection, crossfadeSteepness)
+        }
+        return 1 - 0.5 * pow((1 - travel) / (1 - inflection), crossfadeSteepness)
     }
 
-    /// The chrome's and scrim's opacity under an interactive dismiss at `progress` (`1` fully
-    /// open, `0` at the tile): the same windows and curves `crossfadeAnimation` spans in time,
-    /// mapped onto the drag's travel so the finger drives the cross-fade the back button
-    /// plays (docs/UIUX.md, "A gesture and its button play one animation"). The chrome is gone
-    /// once the card has travelled the first `crossfadeShare` of the way back, and the
-    /// presenter under the scrim only returns over the last `crossfadeShare`. A release then
-    /// animates each from wherever this left it.
-    static func dragCrossfade(progress: CGFloat) -> (chrome: CGFloat, scrim: CGFloat) {
-        let travel = min(max(1 - progress, 0), 1)
-        let share = CGFloat(crossfadeShare)
-        let leaving = min(travel / share, 1)
-        let arriving = min(max((travel - (1 - share)) / share, 0), 1)
-        // easeOutCubic for what leaves, easeInCubic for what arrives — the closed forms of
-        // the Bézier control points `crossfadeAnimation` uses.
-        let chrome = pow(1 - leaving, 3)
-        let scrim = 1 - pow(arriving, 3)
-        return (chrome, scrim)
-    }
-
-    /// The share of the flight each cross-fade occupies — the disappearing layer's from the
-    /// flight's start, the appearing layer's up to its end. At `0.6` the leaving layer's
-    /// window runs to 60% of the flight and the arriving layer's starts at 40%, so the two
-    /// overlap over the middle fifth — where the leaving layer is already within a few
-    /// percent of gone on its cubic and the arriving one has barely begun. `0.5` would make
-    /// them meet with no overlap; `1` would be two fades spanning the whole flight, which
-    /// reads as a double exposure however steep the curves.
-    static let crossfadeShare: TimeInterval = 0.6
+    /// Where the destination chrome's fade crosses half, as a fraction of the card's travel.
+    /// Stated once for both directions because the roles swap with the direction and the two
+    /// readings agree: opening, the chrome is the layer *appearing* and crosses half at 40% of
+    /// the way out; closing, it is the layer *disappearing* and crosses half at 60% of the way
+    /// back — which is the same point, `progress = 0.4`.
+    static let chromeCrossfadeInflection: CGFloat = 0.4
+    /// Where the scrim's fade crosses half — the presenter under it is the layer disappearing
+    /// on an open (half gone at 60% of the way out) and appearing on a close (half back at
+    /// 40% of the way back): `progress = 0.6` either way. Together with
+    /// `chromeCrossfadeInflection` this leaves the middle fifth of the travel where both
+    /// layers are past half — the deliberate overlap — while each holds near its start value
+    /// until close to its own inflection.
+    static let scrimCrossfadeInflection: CGFloat = 0.6
+    /// The power of each half of `crossfadeOpacity`'s curve: `3` holds a layer within a few
+    /// percent of its start value for the first half of its run-up to the inflection, where
+    /// the near-quadratic system curves would already show it clearly — on a black backdrop a
+    /// layer's perceived brightness runs well ahead of its opacity.
+    static let crossfadeSteepness: Double = 3
 
     /// Whether a destination's chrome cross-fades in over the flying card. Needs the
     /// destination's navigation container to be see-through (`containerBackground`, iOS 18),
@@ -359,5 +344,32 @@ final class FlightScrubber: ObservableObject {
         fraction < 0.5
             ? 2 * fraction * fraction
             : 1 - pow(-2 * fraction + 2, 2) / 2
+    }
+}
+
+/// Fades a layer alongside a flight on `ExpansionFlightGeometry.crossfadeOpacity`'s curve,
+/// from the live `progress`: `Animatable`, so SwiftUI calls `body(content:)` with every
+/// interpolated value of an animated flight and the curve is applied per frame — a plain
+/// `.opacity(f(progress))` in a container's `body` would only ever see `progress`'s two
+/// endpoints and interpolate the opacity linearly between them (docs/EXPANSION_TRANSITIONS.md,
+/// Rev 4). Under a drag, `progress` is written directly and the same curve applies.
+struct ExpansionCrossfade: ViewModifier, Animatable {
+    var progress: CGFloat
+    let inflection: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.opacity(ExpansionFlightGeometry.crossfadeOpacity(progress: progress, inflection: inflection))
+    }
+}
+
+extension View {
+    /// See `ExpansionCrossfade`.
+    func expansionCrossfade(progress: CGFloat, inflection: CGFloat) -> some View {
+        modifier(ExpansionCrossfade(progress: progress, inflection: inflection))
     }
 }

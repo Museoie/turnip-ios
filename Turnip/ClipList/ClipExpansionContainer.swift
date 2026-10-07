@@ -52,15 +52,6 @@ struct ClipExpansionContainer: View {
     @StateObject private var viewModel: ClipEditorViewModel
     @StateObject private var scrubber: FlightScrubber
     @State private var progress: CGFloat = 0
-    /// The editor chrome's opacity and the scrim's over the clip list: `0` at the tile, `1`
-    /// fully open. Neither is derived from `progress`, even though a drag writes the same
-    /// value to all three, because each animates on its own curve: the flight eases in and
-    /// out, while a fade eases in for what appears and out for what disappears
-    /// (`ExpansionFlightGeometry.crossfadeAnimation`) — which on any one flight is the chrome
-    /// for one and the list under the scrim for the other, so they can't share a value
-    /// either. A value computed from `progress` could only ever follow the flight's curve.
-    @State private var chromeOpacity: CGFloat = 0
-    @State private var scrimOpacity: CGFloat = 0
     /// The editor's real preview frame, as `ClipEditorPreviewFramePreferenceKey` reports
     /// it. Live through the opening flight — a newly mounted view's first reports settle
     /// over a few passes — and frozen from the moment a close can begin, see
@@ -154,7 +145,8 @@ struct ClipExpansionContainer: View {
 
             ZStack {
                 Color(.systemBackground)
-                    .opacity(scrimOpacity)
+                    .expansionCrossfade(
+                        progress: progress, inflection: ExpansionFlightGeometry.scrimCrossfadeInflection)
                     .ignoresSafeArea()
 
                 if !chromeCrossfades {
@@ -186,7 +178,8 @@ struct ClipExpansionContainer: View {
                     // the card has landed. A plain `.opacity`, not a cut: it's meant to
                     // interpolate across the whole flight, which `.opacity` does on its own.
                     editor(size: screen.size)
-                        .opacity(chromeOpacity)
+                        .expansionCrossfade(
+                            progress: progress, inflection: ExpansionFlightGeometry.chromeCrossfadeInflection)
                 }
             }
             .opacity(deleteFadeOpacity)
@@ -280,17 +273,6 @@ struct ClipExpansionContainer: View {
         }
     }
 
-    /// Fades the chrome and the scrim toward fully open or back toward the tile, each on the
-    /// curve for its own direction: toward open the editor's chrome appears while the clip
-    /// list under the scrim disappears; back toward the tile, the reverse. Not called under a
-    /// drag, which writes both from the finger's travel instead
-    /// (`ExpansionFlightGeometry.dragCrossfade`).
-    private func animateCrossfade(open: Bool) {
-        let target: CGFloat = open ? 1 : 0
-        withAnimation(ExpansionFlightGeometry.crossfadeAnimation(appearing: open)) { chromeOpacity = target }
-        withAnimation(ExpansionFlightGeometry.crossfadeAnimation(appearing: !open)) { scrimOpacity = target }
-    }
-
     /// Writes `hasLanded` with animations disabled, so the card/editor swap it drives is
     /// an instant cut even when it lands in the same update as an animated `progress`
     /// change (a close's first frame).
@@ -354,7 +336,6 @@ struct ClipExpansionContainer: View {
             setLanded(true)
             viewModel.releasePlayback()
         })
-        animateCrossfade(open: true)
         scrubber.animate(from: sourceTime, to: viewModel.window.startTime, duration: flightDuration)
     }
 
@@ -378,11 +359,6 @@ struct ClipExpansionContainer: View {
                     dragScrubOrigin = origin
                     let travel = max(0, value.translation.height)
                     progress = 1 - min(travel / dismissTravel, 1)
-                    // The same cross-fade the back button plays, driven by travel instead of
-                    // time — see `ExpansionFlightGeometry.dragCrossfade`.
-                    let crossfade = ExpansionFlightGeometry.dragCrossfade(progress: progress)
-                    chromeOpacity = crossfade.chrome
-                    scrimOpacity = crossfade.scrim
                     scrubber.request(origin + (landingTime - origin) * (1 - progress))
                 }
                 .onEnded { value in
@@ -407,7 +383,6 @@ struct ClipExpansionContainer: View {
                 guard dragTranslation == nil, !isClosing else { return }
                 setLanded(true)
             })
-            animateCrossfade(open: true)
         } else {
             // The drag never moved the card (it only ever went up), so there is nothing to
             // animate and no completion to wait for.
@@ -442,7 +417,6 @@ struct ClipExpansionContainer: View {
         let from = viewModel.beginPresenterScrub()
         dragScrubOrigin = nil
         withAnimation(.easeInOut(duration: flightDuration)) { progress = 0 }
-        animateCrossfade(open: false)
         scrubber.animate(from: from, to: landingTime, duration: flightDuration)
         dismissAfterLanding(delay: flightDuration + 0.05)
     }
