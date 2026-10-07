@@ -1266,11 +1266,15 @@ layer's fade over the first 60% of the flight and the appearing layer's over
 the last 60% (`.delay`) — and the user "didn't feel like anything changed".
 `0.3` (gone within the first third, arriving only in the last third, the
 middle of the flight just the card over the backdrop) was the first value that
-read as intended; the shipped value is `0.5`, chosen after seeing `0.3`: the
-two windows meet at the flight's midpoint, so the leaving layer is gone exactly
-as the arriving one starts, with neither a dark gap nor an overlap. Each window
-keeps its cubic curve. The per-frame numbers below are from the `0.3` build;
-`0.5` only stretches each window to the midpoint.
+read as intended, and `0.5` (the windows meeting at the midpoint) followed;
+the shipped value is `0.6`, chosen after seeing both: the leaving layer's
+window runs to 60% and the arriving layer's starts at 40%, a fifth of overlap
+in which the leaving layer is already within a few percent of gone on its
+cubic and the arriving one has barely begun. What makes `0.6` read differently
+now than the earlier `0.6` build is that the dragged dismiss then still wrote
+chrome and scrim `= progress` (see "The drag plays the same cross-fade"). Each
+window keeps its cubic curve. The per-frame numbers below are from the `0.3`
+build; the mechanism is unchanged.
 
 **The drag plays the same cross-fade, by travel.** The first Rev 10 builds had
 the interactive dismiss write chrome and scrim `= progress`, so a swipe held
@@ -1296,7 +1300,7 @@ Home (the seeded library, second tile): `p` from the card's top edge (345px →
 836px); scrim from the untapped top-left tile; chrome from the scrub bar's
 track over a tile with no blue of its own.
 
-Measured at `crossfadeShare = 0.3` (shipped: `0.5`, same mechanism):
+Measured at `crossfadeShare = 0.3` (shipped: `0.6`, same mechanism):
 
 - Clip open: scrim 0.96 at `p` 0.06 and 1.00 from 0.22 on; chrome 0.00
   through `p` 0.86, 0.55 on the landing frame, then full — the list is gone

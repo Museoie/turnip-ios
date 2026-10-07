@@ -68,8 +68,9 @@ final class ExpansionFlightGeometryTests: XCTestCase {
 
     /// A dragged dismiss plays the button's cross-fade by travel: the chrome is gone once
     /// the card has travelled the first `crossfadeShare` of the way back, the presenter
-    /// under the scrim only returns over the last `crossfadeShare`, and in between the
-    /// card sits alone over the backdrop.
+    /// under the scrim only starts returning once `crossfadeShare` of the travel remains,
+    /// and at the midpoint the card sits (all but) alone over the backdrop — exactly alone
+    /// when the windows don't overlap, within a few percent when they do.
     func testDragCrossfadeMapsTheFadeWindowsOntoTravel() {
         let share = CGFloat(ExpansionFlightGeometry.crossfadeShare)
         let open = ExpansionFlightGeometry.dragCrossfade(progress: 1)
@@ -79,16 +80,22 @@ final class ExpansionFlightGeometryTests: XCTestCase {
         XCTAssertEqual(tile.chrome, 0, accuracy: 0.0001)
         XCTAssertEqual(tile.scrim, 0, accuracy: 0.0001)
 
+        // The leaving window's end: chrome gone. The arriving window's start: scrim intact.
+        let leavingEnd = ExpansionFlightGeometry.dragCrossfade(progress: 1 - share)
+        XCTAssertEqual(leavingEnd.chrome, 0, accuracy: 0.0001)
+        let arrivingStart = ExpansionFlightGeometry.dragCrossfade(progress: share)
+        XCTAssertEqual(arrivingStart.scrim, 1, accuracy: 0.0001)
+
         let halfwayOut = ExpansionFlightGeometry.dragCrossfade(progress: 1 - share / 2)
         XCTAssertLessThan(halfwayOut.chrome, 0.5)
-        XCTAssertEqual(halfwayOut.scrim, 1, accuracy: 0.0001)
+        XCTAssertGreaterThan(halfwayOut.scrim, 0.95)
 
         let between = ExpansionFlightGeometry.dragCrossfade(progress: 0.5)
-        XCTAssertEqual(between.chrome, 0, accuracy: 0.0001)
-        XCTAssertEqual(between.scrim, 1, accuracy: 0.0001)
+        XCTAssertLessThan(between.chrome, 0.05)
+        XCTAssertGreaterThan(between.scrim, 0.95)
 
         let halfwayIn = ExpansionFlightGeometry.dragCrossfade(progress: share / 2)
-        XCTAssertEqual(halfwayIn.chrome, 0, accuracy: 0.0001)
+        XCTAssertLessThan(halfwayIn.chrome, 0.05)
         XCTAssertGreaterThan(halfwayIn.scrim, 0.5)
     }
 }

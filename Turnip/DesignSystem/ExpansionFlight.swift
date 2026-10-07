@@ -87,11 +87,13 @@ struct ExpansionFlightGeometry: Equatable {
     }
 
     /// The share of the flight each cross-fade occupies — the disappearing layer's from the
-    /// flight's start, the appearing layer's up to its end. At `0.5` the two windows meet at
-    /// the flight's midpoint — the leaving layer is gone exactly as the arriving one starts,
-    /// with neither a gap nor an overlap; `1` would be two fades spanning the whole flight,
-    /// which reads as a double exposure however steep the curves (`0.6` still did).
-    static let crossfadeShare: TimeInterval = 0.5
+    /// flight's start, the appearing layer's up to its end. At `0.6` the leaving layer's
+    /// window runs to 60% of the flight and the arriving layer's starts at 40%, so the two
+    /// overlap over the middle fifth — where the leaving layer is already within a few
+    /// percent of gone on its cubic and the arriving one has barely begun. `0.5` would make
+    /// them meet with no overlap; `1` would be two fades spanning the whole flight, which
+    /// reads as a double exposure however steep the curves.
+    static let crossfadeShare: TimeInterval = 0.6
 
     /// Whether a destination's chrome cross-fades in over the flying card. Needs the
     /// destination's navigation container to be see-through (`containerBackground`, iOS 18),
