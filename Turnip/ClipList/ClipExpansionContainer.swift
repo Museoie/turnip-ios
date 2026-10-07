@@ -5,9 +5,10 @@ import SwiftUI
 /// Two layers share one `progress` clock (`0` = exactly at the tile, `1` = fully open).
 /// A "card" carries the geometry the whole way: the editor's own video surface
 /// (`ClipEditorVideoSurface`, rendering the very same `AVPlayer` the editor renders),
-/// laid out at the editor's settled preview frame and shown through a window that
-/// uncrops from the part the tile showed — the crop rect's center square — to the whole
-/// frame, scaled uniformly so the picture is cropped as it grows, never stretched
+/// laid out edge to edge exactly as the editor's stage lays it out — the video placed so
+/// its crop rect fills the editor's fixed crop marker — and shown through a window that
+/// uncrops from the part the tile showed — the marker's center square — to the whole
+/// screen, scaled uniformly so the picture is cropped as it grows, never stretched
 /// (`ExpansionFlightGeometry`). The real `ClipEditorView` is hidden for the entire
 /// flight and cut in instantly once the card has arrived (`crossfadeThreshold`); since
 /// both layers draw the same player at the same frame in the same place, the cut is
@@ -52,12 +53,12 @@ struct ClipExpansionContainer: View {
     @StateObject private var viewModel: ClipEditorViewModel
     @StateObject private var scrubber: FlightScrubber
     @State private var progress: CGFloat = 0
-    /// The editor's real preview frame, as `ClipEditorPreviewFramePreferenceKey` reports
-    /// it. Live through the opening flight — a newly mounted view's first reports settle
-    /// over a few passes — and frozen from the moment a close can begin, see
-    /// `acceptsDestinationUpdates`.
-    @State private var measuredDestination: CGRect?
-    /// Gates `measuredDestination` updates: `true` through the opening flight, `false`
+    /// The editor's crop marker frame, as `ClipEditorCropMarkerFramePreferenceKey` reports
+    /// it — the flight's focus. Live through the opening flight — a newly mounted view's
+    /// first reports settle over a few passes — and frozen from the moment a close can
+    /// begin, see `acceptsDestinationUpdates`.
+    @State private var measuredMarker: CGRect?
+    /// Gates `measuredMarker` updates: `true` through the opening flight, `false`
     /// from the first touch-move of an interactive drag, or from the moment
     /// `close()`/`closeForDelete()` runs, whichever comes first — for the rest of this
     /// container's life. Once the user could be leaving, the flight's endpoint shouldn't
@@ -137,10 +138,13 @@ struct ClipExpansionContainer: View {
 
     var body: some View {
         GeometryReader { screen in
-            let destination = measuredDestination ?? fallbackDestination(in: screen.size)
-            // The crop rect in the card's own coordinates: what the tile shows, and so the
-            // part of the frame the card's window starts on.
-            let focus = viewModel.cropRect.denormalized(in: destination.size)
+            // The card is the editor's whole stage: the full screen, with the video placed
+            // in it exactly as the editor places it, so the settled card and the editor's
+            // own surface are the same picture.
+            let destination = CGRect(origin: .zero, size: screen.size)
+            // The editor's crop marker, in the card's own coordinates: what the tile shows,
+            // and so the part of the screen the card's window starts on.
+            let focus = measuredMarker ?? fallbackMarker(in: destination)
             let chromeCrossfades = ExpansionFlightGeometry.destinationChromeCrossfades
 
             ZStack {
@@ -203,7 +207,7 @@ struct ClipExpansionContainer: View {
     }
 
     /// The real editor in its own navigation stack, with `hasLanded` handed down for its
-    /// video-surface cut and its preview frame handed back up. Built by one of the two
+    /// video-surface cut and its crop marker frame handed back up. Built by one of the two
     /// branches in `body`. The stack's own background is made see-through so the editor can
     /// fade in over the card; this container's scrim is its backdrop instead.
     private func editor(size: CGSize) -> some View {
@@ -220,9 +224,9 @@ struct ClipExpansionContainer: View {
         .frame(width: size.width, height: size.height)
         .environment(\.expansionHasLanded, hasLanded)
         .allowsHitTesting(hasLanded)
-        .onPreferenceChange(ClipEditorPreviewFramePreferenceKey.self) { frame in
+        .onPreferenceChange(ClipEditorCropMarkerFramePreferenceKey.self) { frame in
             guard acceptsDestinationUpdates, frame != .zero else { return }
-            measuredDestination = frame
+            measuredMarker = frame
         }
     }
 
@@ -238,16 +242,14 @@ struct ClipExpansionContainer: View {
             if hasStartedOpenFlight {
                 poster(in: focus)
             }
+            // The same placement the editor's stage uses, from the same marker: the
+            // surface itself hides the player until the displayed size is known, so no
+            // guessed geometry ever shows over the tile before `prepare()` finishes.
             ClipEditorVideoSurface(
                 player: viewModel.player,
-                cropCenter: UnitPoint(
-                    x: CGFloat(viewModel.cropRect.minX + viewModel.cropRect.maxX) / 2,
-                    y: CGFloat(viewModel.cropRect.minY + viewModel.cropRect.maxY) / 2),
+                geometry: viewModel.previewOverlay,
+                marker: focus,
                 adjustment: viewModel.cropAdjustment,
-                // No offset at all until the displayed size is known: scale and rotation
-                // are unit-agnostic, but a pan converted at a guessed scale would throw
-                // the picture off the card for the frames before `prepare()` finishes.
-                pointsPerDisplayedPixel: viewModel.previewOverlay.map { destination.width / $0.videoSize.width } ?? 0,
                 onReadyForDisplay: surfaceDidBecomeReady)
             .opacity(isSeekedToSource ? 1 : 0)
         }
@@ -261,7 +263,7 @@ struct ClipExpansionContainer: View {
         .position(x: destination.midX, y: destination.midY)
     }
 
-    /// The tile's poster at the crop rect — it's the crop rect's content, already
+    /// The tile's poster at the crop marker — it's the crop rect's content, already
     /// adjusted the way the tile shows it — or the tile's placeholder fill without one.
     @ViewBuilder
     private func poster(in focus: CGRect) -> some View {
@@ -287,13 +289,14 @@ struct ClipExpansionContainer: View {
         withTransaction(transaction) { hasLanded = landed }
     }
 
-    /// A placeholder destination for the brief window before `ClipEditorView`'s own
-    /// preference report arrives (its aspect ratio needs the asset's track info,
-    /// loaded asynchronously in `prepare()`) — close enough that the retarget once the
-    /// real frame lands isn't a visible jump.
-    private func fallbackDestination(in size: CGSize) -> CGRect {
-        let side = size.width - 32
-        return CGRect(x: 16, y: 100, width: side, height: side)
+    /// A placeholder marker for the brief window before `ClipEditorView`'s own preference
+    /// report arrives: the marker depends only on the editor's layout, not on media, so the
+    /// real frame lands with the editor's first layout pass — before the flight, which waits
+    /// on the player, can start. The same marker rule over a rough stage band, so even that
+    /// first frame is close.
+    private func fallbackMarker(in destination: CGRect) -> CGRect {
+        let stage = destination.insetBy(dx: 0, dy: destination.height * 0.15)
+        return ClipEditorStage.markerRect(in: stage, aspectRatio: viewModel.targetAspectRatio)
     }
 
     /// The frame a closing flight scrubs to: `sourceTime` when the tile will show the

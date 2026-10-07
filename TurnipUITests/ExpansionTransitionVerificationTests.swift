@@ -46,15 +46,16 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
             "card settled near the full window height — the fallback regressed to full screen")
     }
 
-    /// `ClipExpansionContainer`'s destination measurement, over the real
-    /// `-screenshotClipListMedia` flow `testClipListTapOpensEditor` already exercises for
-    /// reachability. At `progress == 1` the card's `rect` always exactly equals whatever
-    /// `destination` resolved to (by `currentRect`'s own lerp), so comparing the settled,
-    /// invisible-but-still-laid-out card frame against the real preview's independently
-    /// reported accessibility frame proves whether `measuredDestination` converged to the
-    /// true frame or stayed stuck on the old placeholder square (`x:16,y:100`, `screenWidth-32`
-    /// wide) that the removed `progress > 0.98` gate used to leave it on.
-    func testClipExpansionOpenConvergesToTheEditorsRealPreviewFrame() throws {
+    /// `ClipExpansionContainer`'s focus measurement, over the real `-screenshotClipListMedia`
+    /// flow `testClipListTapOpensEditor` already exercises for reachability. The card is laid
+    /// out as the editor's whole stage, with the tile's poster placed at the editor's crop
+    /// marker (`focus`) — and the card's reported accessibility frame is that poster's, the
+    /// one child with a SwiftUI frame of its own. Comparing it against the editor's own
+    /// marker element proves `measuredMarker` converged to the real marker rather than
+    /// staying on the container's fallback; a mismatch is a picture that pops at the cut.
+    /// The editor's crop gesture surface, by contrast, covers the whole band between the
+    /// header and the controls, so it and the marker are different things on purpose.
+    func testClipExpansionCardLandsOnTheEditorsCropMarker() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
@@ -73,14 +74,30 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         let card = app.descendants(matching: .any).matching(identifier: "expansion-card").firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 5))
 
+        let marker = app.descendants(matching: .any).matching(identifier: "crop-marker").firstMatch
+        XCTAssertTrue(marker.waitForExistence(timeout: 5))
+
+        let window = app.windows.firstMatch.frame
         let previewFrame = settledFrame(of: preview)
+        let markerFrame = settledFrame(of: marker)
         let cardFrame = settledFrame(of: card)
         print("VERIFY_CLIP_PREVIEW_FRAME:\(previewFrame)")
+        print("VERIFY_CLIP_MARKER_FRAME:\(markerFrame)")
         print("VERIFY_CLIP_CARD_FRAME:\(cardFrame)")
-        XCTAssertEqual(cardFrame.minX, previewFrame.minX, accuracy: 2)
-        XCTAssertEqual(cardFrame.minY, previewFrame.minY, accuracy: 2)
-        XCTAssertEqual(cardFrame.width, previewFrame.width, accuracy: 2)
-        XCTAssertEqual(cardFrame.height, previewFrame.height, accuracy: 2)
+        // The marker element is the 2 pt stroke, which reports 1 pt outside the rect it
+        // outlines on every side; hence the tolerance.
+        XCTAssertEqual(cardFrame.minX, markerFrame.minX, accuracy: 3)
+        XCTAssertEqual(cardFrame.minY, markerFrame.minY, accuracy: 3)
+        XCTAssertEqual(cardFrame.width, markerFrame.width, accuracy: 3)
+        XCTAssertEqual(cardFrame.height, markerFrame.height, accuracy: 3)
+        // The marker is the export's 9:16, centered in the gesture surface, which is the
+        // stage band: full width, strictly between the header and the controls.
+        XCTAssertEqual(markerFrame.width / markerFrame.height, 9.0 / 16.0, accuracy: 0.01)
+        XCTAssertEqual(markerFrame.midX, previewFrame.midX, accuracy: 1)
+        XCTAssertEqual(markerFrame.midY, previewFrame.midY, accuracy: 1)
+        XCTAssertEqual(previewFrame.width, window.width, accuracy: 2)
+        XCTAssertGreaterThan(previewFrame.minY, window.minY + 44)
+        XCTAssertLessThan(previewFrame.maxY, window.maxY - 44)
     }
 
     /// The editor's own top row (`ScreenHeaderBand`) against the clip list's titled bar it

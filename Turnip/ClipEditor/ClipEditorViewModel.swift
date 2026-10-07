@@ -102,9 +102,16 @@ final class ClipEditorViewModel: ObservableObject {
         return 0...duration
     }
 
-    /// The overlay geometry in one value: the displayed (upright) frame size plus the crop
-    /// rect mapped into that space. Nil until media info loads; the view draws the dimmed
-    /// surround from it.
+    /// The crop marker's aspect ratio (width over height): the calculator's own target, which
+    /// every rect it produces has in pixels — so the fixed marker is exactly the crop rect's
+    /// shape and the video maps onto it by one uniform scale (`ClipEditorStage`).
+    var targetAspectRatio: CGFloat {
+        CGFloat(calculator.targetAspectRatio)
+    }
+
+    /// The stage geometry in one value: the displayed (upright) frame size plus the crop
+    /// rect mapped into that space. Nil until media info loads; the view lays the video out
+    /// under the fixed marker from it.
     var previewOverlay: (videoSize: CGSize, cropRect: CGRect)? {
         guard let naturalSize,
               let crop = Self.displayedCropRect(
@@ -228,11 +235,11 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     /// Applies a drag's cumulative translation since the gesture started. `screenPoints`
-    /// is the raw gesture translation in the preview's on-screen point space;
-    /// `previewScale` is the preview's on-screen points per displayed pixel
-    /// (`proxy.size.width / overlay.videoSize.width` in `ClipEditorView.fullFramePreview`).
-    /// Dividing by it converts into the displayed-pixel space `ClipExportTransform.make`
-    /// and `ClipThumbnailLoader` both expect `cropAdjustment.offset` to already be in.
+    /// is the raw gesture translation in the stage's on-screen point space;
+    /// `previewScale` is the stage's on-screen points per displayed pixel
+    /// (`ClipEditorStage.VideoPlacement.pointsPerDisplayedPixel`). Dividing by it converts
+    /// into the displayed-pixel space `ClipExportTransform.make` and `ClipThumbnailLoader`
+    /// both expect `cropAdjustment.offset` to already be in.
     func applyCropOffset(_ screenPoints: CGSize, previewScale: CGFloat) {
         guard screenPoints.width.isFinite, screenPoints.height.isFinite,
               previewScale.isFinite, previewScale > 0

@@ -134,7 +134,7 @@ Output: list of `(start_time, end_time)` in seconds.
 - Grow a box smaller than 5% of the rendered frame's shorter axis around its own center: a one-keypoint or tight-cluster window is not a located athlete, and without the floor it collapses to a zero-area (or near-zero-area) rect the export then upscales to the full output size
 - Expand 25% each side for breathing room + pose undershoot at edges
 - Snap to target aspect ratio (9:16 for Reels default): grow the shorter axis around the box center. The ratio is measured on the box's *pixel* size, not its normalized size — a normalized unit is a fraction of its own axis, so a normalized 9:16 rect on a 1080x1920 source is 9:16 twice over
-- Slide back inside `[0, 1]` if expansion pushes past a frame edge, which keeps the ratio; an axis longer than the frame takes the frame's full extent instead and the clip letterboxes on that axis rather than cropping tighter
+- Slide back inside `[0, 1]` if expansion pushes past a frame edge, which keeps the ratio; an axis longer than the frame stays longer and is centered on the frame instead, overhanging it equally at both ends, so the rect is always the target ratio — the editor's fixed crop marker and the export's output size both rely on that — and the clip letterboxes (black beyond the frame) on that axis rather than cropping tighter
 - Denormalize by multiplying by source video's pixel dimensions → final `(min_x, max_x, min_y, max_y)`
 
 Static crop (one rect per clip) is Rev 1's choice — simpler, works well when the athlete stays roughly in one area. Dynamic crop (Ken Burns-style, rect changes per frame) is a v2 nice-to-have.

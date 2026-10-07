@@ -3,6 +3,8 @@ import Foundation
 
 /// A rect in the decoded frames' normalized coordinate space, matching the pose keypoints it is
 /// built from: both axes run 0-1 across the frame and `y` is measured down from the top edge.
+/// A rect can extend past `[0, 1]` on an axis — `CropRectCalculator` keeps its target aspect
+/// ratio over fitting inside the frame — and every consumer renders black beyond the frame.
 ///
 /// Frames come out of `VideoFrameSampler` in display orientation, so pass `SampledFrame.renderSize`
 /// as the pixel size for `cropRect(for:renderedPixelSize:)` and `denormalized(in:)`.
@@ -67,7 +69,9 @@ struct CropRectCalculator: Sendable {
     /// rendered-frame dimensions are unknown — in either case the athlete cannot be located in pixels.
     /// A box smaller than `minimumExtentFraction` of the shorter rendered axis is grown to
     /// that floor before padding: a one-keypoint or tight-cluster window is not a located
-    /// athlete, but it still yields a clip rather than a degenerate rect.
+    /// athlete, but it still yields a clip rather than a degenerate rect. The result is
+    /// always `targetAspectRatio` in pixels; it can extend past `[0, 1]` on an axis the
+    /// athlete's box outgrows (see `fittedInFrame`).
     func cropRect(for frames: [PoseFrameResult], renderedPixelSize: CGSize) -> NormalizedRect? {
         guard renderedPixelSize.width > 0, renderedPixelSize.height > 0,
               let athlete = boundingBox(across: frames) else { return nil }
@@ -141,9 +145,11 @@ struct CropRectCalculator: Sendable {
     }
 
     /// Slides the rect back inside the frame, which preserves the ratio just snapped. An axis
-    /// longer than the frame has nowhere useful to slide, so it takes the frame's full extent
-    /// instead: the clip letterboxes on that axis rather than being squeezed, or re-cropped
-    /// tight enough to cut the athlete off.
+    /// longer than the frame has nowhere to slide, so it stays longer and is centered on the
+    /// frame instead, overhanging it equally at both ends: the rect keeps the target ratio
+    /// — every consumer relies on that, from the editor's fixed crop marker to the export's
+    /// output size — and the clip letterboxes on that axis (black beyond the frame) rather
+    /// than being squeezed or re-cropped tight enough to cut the athlete off.
     private func fittedInFrame(_ box: NormalizedRect) -> NormalizedRect {
         let (minX, maxX) = fitted(lower: box.minX, upper: box.maxX)
         let (minY, maxY) = fitted(lower: box.minY, upper: box.maxY)
@@ -152,7 +158,7 @@ struct CropRectCalculator: Sendable {
 
     private func fitted(lower: Float, upper: Float) -> (Float, Float) {
         let size = upper - lower
-        guard size < 1 else { return (0, 1) }
+        guard size < 1 else { return ((1 - size) / 2, (1 + size) / 2) }
         if lower < 0 { return (0, size) }
         if upper > 1 { return (1 - size, 1) }
         return (lower, upper)

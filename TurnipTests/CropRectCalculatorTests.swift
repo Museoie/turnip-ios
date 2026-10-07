@@ -104,16 +104,17 @@ final class CropRectCalculatorTests: XCTestCase {
         assertRect(rect, minX: 0, maxX: 0.15, minY: 0.3166667, maxY: 0.5833333)
     }
 
-    func testRectTallerThanTheFrameClampsAndAcceptsLetterbox() throws {
+    func testRectTallerThanTheFrameOverhangsItCenteredAndKeepsTheTargetRatio() throws {
         let frames = [frame(confident([(x: 0.30, y: 0.35), (x: 0.70, y: 0.65)]))]
 
         let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: square))
 
         // 9:16 on a 0.6-wide box wants 1.0667 of height, which no slide can fit. Width keeps
-        // the whole athlete rather than shrinking to restore the ratio.
-        assertRect(rect, minX: 0.2, maxX: 0.8, minY: 0, maxY: 1)
+        // the whole athlete rather than shrinking to restore the ratio, and the height
+        // overhangs the frame equally top and bottom — the rect stays 9:16, letterboxed.
+        assertRect(rect, minX: 0.2, maxX: 0.8, minY: -0.0333333, maxY: 1.0333333)
         let pixels = rect.denormalized(in: square)
-        XCTAssertEqual(Float(pixels.width / pixels.height), 0.6, accuracy: 0.00001)
+        XCTAssertEqual(Float(pixels.width / pixels.height), 9.0 / 16.0, accuracy: 0.00001)
     }
 
     func testLowConfidenceKeypointsAreExcludedFromTheBox() {

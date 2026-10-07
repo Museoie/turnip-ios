@@ -866,11 +866,15 @@ struct HomeNavigationBar: ViewModifier {
                             .opacity(0)
                             .accessibilityHidden(true)
                     }
-                    // Filter first, then the gear, in one trailing group — which iOS 26
-                    // draws as a single shared glass capsule, its native treatment for
-                    // adjacent bar buttons.
-                    ToolbarItemGroup(placement: .topBarTrailing) {
+                    // Filter first, then the gear, as two separate items: adjacent trailing
+                    // items share one glass capsule by default on iOS 26, and the fixed
+                    // spacer between them is what splits that into two circles — the same
+                    // two circles the pre-26 overlay row below draws.
+                    ToolbarItem(placement: .topBarTrailing) {
                         GalleryFilterButton(viewModel: viewModel, placement: .toolbar)
+                    }
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                    ToolbarItem(placement: .topBarTrailing) {
                         Button(action: showSettings) {
                             Image(systemName: "gearshape")
                         }

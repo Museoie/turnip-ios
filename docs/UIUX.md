@@ -59,7 +59,7 @@ Where it applies today:
 |---|---|---|---|
 | Home ↔ Camera (Root navigation) | Horizontal page swipe | Floating bar's camera / gallery icons; Camera's cancel chevron | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Tile ↔ Processing (§1, §2) | Swipe down outside the video surface | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
-| Clip List tile ↔ Clip Editor (§3, §4) | Swipe down outside the video surface | Back chevron | Same, with the card showing the editor's own player |
+| Clip List tile ↔ Clip Editor (§3, §4) | Swipe down outside the crop stage | Back chevron | Same, with the card showing the editor's own player |
 
 Not every state change has a gesture counterpart that it owes an animation.
 A recording that finishes on Camera switches to Home *instantly*, because the
@@ -357,15 +357,22 @@ default empty state, so it never reads as "your library is empty."
 - Reached by tapping a derived clip's tile in Clip List (§3) — the tile's
   single detail entry point, not a separate pencil icon. Full-screen, one
   clip at a time:
-  - Video player showing the trimmed clip looping, full frame, with the crop area's
-    marker rectangle drawn over it at a fixed position — the dimmed surround marks
-    what export cuts away. No default AVKit playback chrome; the only controls this
-    screen shows are the custom play/pause and mute buttons and the scrub bar below.
+  - Video player showing the trimmed clip looping under the crop marker: one
+    rectangle of the export's aspect ratio, the same size at the same place on screen
+    for every clip, centered in the band between the header row and the controls.
+    The video is laid out so the clip's crop rect fills the marker exactly — a
+    different clip, or a trim that moves the crop rect, moves and scales the video,
+    never the marker — and the rest of the frame shows dimmed around it, edge to
+    edge, running under the header and the controls rather than clipped to a box.
+    The marker is what export cuts to. No default AVKit playback chrome; the only
+    controls this screen shows are the custom play/pause and mute buttons and the
+    scrub bar below.
   - The crop area is directly editable: pinch to zoom, rotate with two fingers, and
     drag with one finger to reposition the video underneath the fixed marker
-    rectangle — the video zooms/rotates/moves, the marker never does. A "Reset crop
-    area" button discards the manual adjustment and returns to the algorithm's own
-    framing (issue #9).
+    rectangle — the video zooms/rotates/moves, the marker never does, and whatever
+    the adjustment pushes outside the frame's own rect stays visible instead of
+    being cut off. A "Reset crop area" button discards the manual adjustment and
+    returns to the algorithm's own framing (issue #9).
   - Scrub bar spanning the whole source video (not a zoomed range around the
     window) with drag handles on start/end — adjusts the trick window from
     issue #8's output; live-updates the crop rect per issue #9 if the window
@@ -385,9 +392,10 @@ default empty state, so it never reads as "your library is empty."
   - Back to Clip List commits the edits and shrinks the screen back into its
     tile — the reverse of the tap that opened it, no separate "save" step
     needed since edits are held in view state until back-navigation. A swipe
-    down anywhere outside the video surface does the same — including the top
+    down anywhere outside the crop stage does the same — including the top
     row and the band above it (the crop pinch/rotate/drag gesture keeps sole
-    ownership of the video itself). The screen draws that top row (back
+    ownership of the band the marker sits in, even though the video itself
+    runs under the whole screen). The screen draws that top row (back
     chevron, title, Delete) as its own content rather than a navigation bar,
     the same way Processing does, so no bar sits over the swipe band — laid
     out in the band a bar would occupy, with the chevron and title at the same

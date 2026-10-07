@@ -148,6 +148,12 @@ actor ClipThumbnailLoader {
             return nil
         }
 
+        // Black where the crop reaches past the frame — a crop rect taller or wider than the
+        // source (`CropRectCalculator.fittedInFrame`) or a zoomed-out/rotated adjustment —
+        // the same thing the export's video composition renders there, so the tile and the
+        // exported clip agree on the letterbox.
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
         // Outer flip into layerTransform's top-left/y-down space, then scale down to the
         // bounded pixel size, then apply the composited crop/adjustment transform.
         context.translateBy(x: 0, y: CGFloat(pixelHeight))

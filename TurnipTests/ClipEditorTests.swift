@@ -462,6 +462,90 @@ final class ClipEditorTests: XCTestCase {
             preferredTransform: .identity))
     }
 
+    // MARK: - Stage geometry
+
+    func testMarkerRectIsTheLargestTargetRatioRectCenteredInTheInsetStage() {
+        let stage = CGRect(x: 0, y: 113, width: 393, height: 500)
+
+        let marker = ClipEditorStage.markerRect(in: stage, aspectRatio: 9.0 / 16.0)
+
+        // 393 - 2*24 = 345 wide would need 613 of height; 500 - 2*12 = 476 fits instead.
+        XCTAssertEqual(marker.height, 476, accuracy: 0.001)
+        XCTAssertEqual(marker.width, 476 * 9 / 16, accuracy: 0.001)
+        XCTAssertEqual(marker.midX, stage.midX, accuracy: 0.001)
+        XCTAssertEqual(marker.midY, stage.midY, accuracy: 0.001)
+    }
+
+    func testMarkerRectIsWidthBoundOnAShortStage() {
+        let stage = CGRect(x: 0, y: 0, width: 393, height: 1000)
+
+        let marker = ClipEditorStage.markerRect(in: stage, aspectRatio: 9.0 / 16.0)
+
+        XCTAssertEqual(marker.width, 345, accuracy: 0.001)
+        XCTAssertEqual(marker.height, 345 * 16 / 9, accuracy: 0.001)
+    }
+
+    func testMarkerRectDoesNotDependOnTheClip() {
+        let stage = CGRect(x: 0, y: 113, width: 393, height: 500)
+
+        XCTAssertEqual(
+            ClipEditorStage.markerRect(in: stage, aspectRatio: 9.0 / 16.0),
+            ClipEditorStage.markerRect(in: stage, aspectRatio: 9.0 / 16.0))
+    }
+
+    func testVideoPlacementLandsTheCropRectOnTheMarker() throws {
+        // A 1080x1920 frame with a 540x960 crop at its right edge: the crop must fill the
+        // marker, so the video is twice the marker's size and hangs off its left.
+        let marker = CGRect(x: 36, y: 125, width: 320, height: 320.0 * 16 / 9)
+
+        let placement = try XCTUnwrap(ClipEditorStage.videoPlacement(
+            videoSize: CGSize(width: 1080, height: 1920),
+            cropRect: CGRect(x: 540, y: 480, width: 540, height: 960),
+            marker: marker))
+
+        let scale = 320.0 / 540.0
+        XCTAssertEqual(placement.pointsPerDisplayedPixel, scale, accuracy: 0.0001)
+        XCTAssertEqual(placement.frame.width, 1080 * scale, accuracy: 0.001)
+        XCTAssertEqual(placement.frame.height, 1920 * scale, accuracy: 0.001)
+        // The crop's center (810, 960) lands on the marker's center.
+        XCTAssertEqual(placement.frame.minX + 810 * scale, marker.midX, accuracy: 0.001)
+        XCTAssertEqual(placement.frame.minY + 960 * scale, marker.midY, accuracy: 0.001)
+    }
+
+    func testVideoPlacementOfALandscapeFrameRunsPastTheScreen() throws {
+        // A 1920x1080 landscape frame whose 9:16 crop overhangs it top and bottom
+        // (`CropRectCalculator.fittedInFrame`): the crop still fills the marker, so the
+        // frame is laid out far wider than any screen, with the overhang above and below
+        // it empty.
+        let marker = CGRect(x: 36, y: 125, width: 320, height: 320.0 * 16 / 9)
+        let cropHeight: CGFloat = 750.0 * 16 / 9
+        let overhang = (cropHeight - 1080) / 2
+        let crop = CGRect(x: 600, y: -overhang, width: 750, height: cropHeight)
+
+        let placement = try XCTUnwrap(ClipEditorStage.videoPlacement(
+            videoSize: CGSize(width: 1920, height: 1080), cropRect: crop, marker: marker))
+
+        let scale = 320.0 / 750.0
+        XCTAssertEqual(placement.pointsPerDisplayedPixel, scale, accuracy: 0.0001)
+        XCTAssertEqual(placement.frame.width, 1920 * scale, accuracy: 0.001)
+        XCTAssertGreaterThan(placement.frame.width, 393)
+        // The frame sits inside the marker vertically, centered: the bars above and below
+        // are the overhang at this scale.
+        XCTAssertEqual(placement.frame.minY, marker.minY + overhang * scale, accuracy: 0.01)
+        XCTAssertEqual(placement.frame.maxY, marker.maxY - overhang * scale, accuracy: 0.01)
+    }
+
+    func testVideoPlacementReturnsNilForDegenerateInputs() {
+        let marker = CGRect(x: 0, y: 0, width: 320, height: 568)
+        XCTAssertNil(ClipEditorStage.videoPlacement(
+            videoSize: .zero, cropRect: CGRect(x: 0, y: 0, width: 1, height: 1), marker: marker))
+        XCTAssertNil(ClipEditorStage.videoPlacement(
+            videoSize: CGSize(width: 100, height: 100), cropRect: .zero, marker: marker))
+        XCTAssertNil(ClipEditorStage.videoPlacement(
+            videoSize: CGSize(width: 100, height: 100),
+            cropRect: CGRect(x: 0, y: 0, width: 1, height: 1), marker: .zero))
+    }
+
     // MARK: - Load failure
 
     /// `/dev/null` isn't a video, so the track loads fail: `prepare()` must surface

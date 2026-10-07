@@ -1,5 +1,13 @@
 # Photos-style expansion transitions
 
+*Rev 12 · 2026-10-07.* The editor's crop marker is now one fixed rectangle
+on screen and its video runs edge to edge under the chrome, so the card is
+laid out as the whole screen — the same `ClipEditorVideoSurface` placement
+the editor's stage uses — and the measured value is the marker's frame
+(`ClipEditorCropMarkerFramePreferenceKey`), which is where the window starts:
+it uncrops from the marker's center square to the whole screen. See "Rev 12"
+near the end.
+
 *Rev 11 · 2026-10-07.* The editor's swipe-to-dismiss now commits the edit the
 way its back chevron does (it closed without handing the draft back). Every
 bar-less screen's header — the editor's top row, Processing's chevron,
@@ -251,8 +259,8 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
 
 | | `ClipExpansionContainer` | `HomeExpansionContainer` |
 |---|---|---|
-| Destination frame | Measured via a `PreferenceKey` the editor's own preview surface reports (`ClipEditorPreviewFramePreferenceKey`) — the editor's full-frame preview (the crop rect's position within it is what the card's window starts on), not the full screen. Since Rev 8 the report is used as-is: the container no longer transforms the editor, so there is nothing to divide back out (Revs 2–7 recovered the frame algebraically through the editor's own scale/offset — see "Measuring the destination without a race or a feedback loop" below). Live through the opening flight, frozen once a close can begin (`acceptsDestinationUpdates`). A fallback square stands in only until the very first report arrives | Defaults to a synchronous aspect-ratio estimate from the tapped `PHAsset`'s own pixel dimensions (full screen only when no estimate applies, e.g. a destination that goes straight to `ClipListView`), narrowing to `ProcessingView`'s real, letterboxed video rect once it reports one via `ProcessingVideoFramePreferenceKey` — see "Matching the destination's real content rect" and "Measuring the destination without a race or a feedback loop" below. Never locked — stays live, the same `sourceFrame` is, so browsing to a neighbor with a different aspect ratio retargets it rather than flying toward the first video's letterbox rect |
-| Card content | The editor's own `ClipEditorVideoSurface`, rendering the container-owned `ClipEditorViewModel`'s `AVPlayer` (the editor renders the same object), over the tile's poster thumbnail placed at the crop rect. The window starts on the crop rect's center square (what the tile's aspect-filled loop shows) | The tile's square thumbnail at the frame's center square, the cached full-frame poster where there is one, and `ProcessingView`'s live player once reported |
+| Destination frame | The full screen: the card is laid out as the editor's whole stage, with the video placed in it exactly as the editor places it (`ClipEditorStage.videoPlacement`, from the same marker rect), so the settled card and the editor's own surface are the same picture. What is measured instead is the *focus* — the editor's fixed crop marker, reported via a `PreferenceKey` (`ClipEditorCropMarkerFramePreferenceKey`), independent of media and so available from the editor's first layout pass; a fallback marker over a rough stage band stands in only until then. Live through the opening flight, frozen once a close can begin (`acceptsDestinationUpdates`). Revs 2–11 measured the editor's aspect-fit preview frame as the destination instead; see "Measuring the destination without a race or a feedback loop" below for how that measurement was made reliable | Defaults to a synchronous aspect-ratio estimate from the tapped `PHAsset`'s own pixel dimensions (full screen only when no estimate applies, e.g. a destination that goes straight to `ClipListView`), narrowing to `ProcessingView`'s real, letterboxed video rect once it reports one via `ProcessingVideoFramePreferenceKey` — see "Matching the destination's real content rect" and "Measuring the destination without a race or a feedback loop" below. Never locked — stays live, the same `sourceFrame` is, so browsing to a neighbor with a different aspect ratio retargets it rather than flying toward the first video's letterbox rect |
+| Card content | The editor's own `ClipEditorVideoSurface`, rendering the container-owned `ClipEditorViewModel`'s `AVPlayer` (the editor renders the same object), over the tile's poster thumbnail placed at the crop marker. The window starts on the marker's center square (what the tile's aspect-filled loop shows) | The tile's square thumbnail at the frame's center square, the cached full-frame poster where there is one, and `ProcessingView`'s live player once reported |
 | Source frame / time | Both captured once, at tap time: `sourceFrame: CGRect`, and `sourceTime` — the tile's paused loop position (the tile pauses *before* reading it), or its poster's midpoint time without a loop | A **live closure** (`sourceFrame: () -> CGRect?`), re-read continuously — a close after `ProcessingView`'s own swipe-to-browse-neighbors must land on whichever tile is *now* current, not the one first tapped |
 | Dismiss gesture | Owns one itself, planted into `ClipEditorView`'s background (see "Gesture ownership" below) | Doesn't own one — the destination (`ProcessingView`) already has its own vertical swipe, reported *into* the container via `HomeExpansionCloseHandlers` |
 | Delete | Its own close path: fades out in place rather than flying, since the tile's grid slot holds different content (or nothing) by the time delete runs | N/A — Home has no per-tile delete |
@@ -1387,6 +1395,59 @@ fixed build, unchanged on the old one. Both are regression tests in
 `ExpansionTransitionVerificationTests` (`testClipEditorHeaderLinesUpWithTheClipListsBar`,
 `testSwipeToDismissCommitsTheEdit`); the swipe test starts its drag from the
 title element so it doesn't depend on the device's status-bar height.
+
+## Rev 12: a fixed crop marker, the video under the whole screen
+
+*2026-10-07.* Two requests on the editor: the crop boundary should be the
+same size at the same place no matter the clip, with the video moving and
+scaling under it to show what the crop will be; and the video should cover
+the whole screen rather than a center rectangle that cut off whatever a
+pinch or rotation pushed outside it.
+
+**The stage.** `ClipEditorView` is now a `ZStack`: an edge-to-edge stage
+(the video surface, the dimmed surround with a hole at the marker, the
+marker's outline, the crop gesture over the stage band only) under the
+chrome column (header row, a measuring placeholder where the stage band is,
+reset button, trim slider). The marker is `ClipEditorStage.markerRect`: the
+largest rect of the export's aspect ratio centered in that band, which
+depends only on the device's layout. The video is `ClipEditorStage.videoPlacement`:
+one uniform scale that maps the clip's crop rect onto the marker, the crop's
+center on the marker's center, the rest of the frame laid out around it —
+routinely wider than the screen on a landscape source — and never clipped.
+For that mapping to be uniform the crop rect has to have the marker's
+aspect ratio, so `CropRectCalculator.fittedInFrame` no longer clamps an
+over-long axis to the frame: it centers the rect on the frame and lets it
+overhang equally at both ends, and the export, the tile thumbnail
+(`ClipThumbnailLoader` now fills black first) and the tile loop all render
+black there. The editor's marker is therefore exactly what export cuts to.
+
+**The card.** With the surface laid out full screen in the editor, the card
+is laid out full screen too, from the same placement function and the same
+marker, so at `progress == 1` it is pixel-identical to the editor's surface
+for any adjustment — a per-clip destination rect would have clipped a
+zoomed or rotated picture at the card's edge and let it pop in at the cut.
+The measured value is now the marker (`ClipEditorCropMarkerFramePreferenceKey`),
+which is the window's starting rect; it needs no media, so it is reported
+on the editor's first layout pass, before the flight (which waits on the
+player) can start. `ExpansionFlightGeometry` is unchanged.
+
+**One mistake worth recording.** The stage band's own `PreferenceKey` first
+reduced with `value = nextValue()`; the placeholder's siblings in the chrome
+column contribute the zero default, and the last of them won, so the marker
+stayed empty and the stage rendered black. Every frame-reporting key in this
+codebase keeps the latest non-zero value for that reason.
+
+**Verification.** `-screenshotClipEditor` screenshots on an iPhone 15
+(iOS 26.2): the marker at `(48, 124, 296×526)` with the video filling it
+and the dimmed frame running under the header and the controls. A scratch
+XCUITest driver dragged, pinched and rotated the stage: the marker's
+element frame was identical before and after each gesture, the video's
+edge moved under it, and Reset restored it. A recording of the open flight
+over `-screenshotClipListMedia` showed the tile growing into the marker
+with the chrome fading in and no size or frame pop at the landing cut.
+`testClipExpansionCardLandsOnTheEditorsCropMarker` (replacing the
+preview-frame convergence test) checks the card's settled frame against the
+marker element; the header-alignment and swipe-commit tests still pass.
 
 ## Gesture ownership: why the dismiss drag can't live behind the content
 
