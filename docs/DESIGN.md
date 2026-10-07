@@ -2,7 +2,7 @@
 
 *Rev 9 · 2026-10-06 · Draft for review.*
 
-*(Rev 1 targeted iOS-only, personal-use. Rev 2 expanded to open-source app + backend + community labeling + continuous ML training. Rev 3 depersonalized for public repo and added the pose-model escalation ladder + motion-signal blur mitigations. Rev 4 swapped GitHub OAuth for Sign in with Apple, added iOS Share Sheet for social-media publishing, and added v2 social features — following relationships + video feed. Rev 5 tightens the Sign in with Apple validation contract (`iss` + `exp` on top of `aud` + signature), adds the videos-side feed indexes, adds a self-follow guard, and pins MoveNet Thunder's quantization variant. Rev 6 resolves the seven open questions into recorded decisions and adds the screen-flow companion doc pointer. Rev 7 records that camera takes run steps 1-3 live during recording and skip the post-recording decode when that covered the take. Rev 8 notes the analysis sample rate is a Settings-screen preference, not a fixed constant, defaulting to the 10/sec this doc otherwise assumes. Rev 9 applies the merged turnip-farm master plan (§8): the backend is rewritten around TKP1 pose blobs (no video upload or storage anywhere), labels become free-text multi-labels with no server crop rects, the ML program is retargeted at trick detection, Decision #2 is reversed and #4 mooted plus a new keypoints-only privacy decision, the two-model OTA story replaces the pose+action language, the label editor moves into the clip confirmation flow (the server labeling queue is dropped), a new video-identity section is added, the social feed is deferred, and the problem statement is restated.)*
+*(Rev 1 targeted iOS-only, personal-use. Rev 2 expanded to open-source app + backend + community labeling + continuous ML training. Rev 3 depersonalized for public repo and added the pose-model escalation ladder + motion-signal blur mitigations. Rev 4 swapped GitHub OAuth for Sign in with Apple, added iOS Share Sheet for social-media publishing, and added v2 social features — following relationships + video feed. Rev 5 tightens the Sign in with Apple validation contract (`iss` + `exp` on top of `aud` + signature), adds the videos-side feed indexes, adds a self-follow guard, and pins MoveNet Thunder's quantization variant. Rev 6 resolves the seven open questions into recorded decisions and adds the screen-flow companion doc pointer. Rev 7 records that camera takes run steps 1-3 live during recording and skip the post-recording decode when that covered the take. Rev 8 notes the analysis sample rate is a Settings-screen preference, not a fixed constant, defaulting to the 10/sec this doc otherwise assumes. Rev 9 applies the merged turnip-farm master plan (§8): the backend is rewritten around pose-format blobs (no video upload or storage anywhere), labels become free-text multi-labels with no server crop rects, the ML program is retargeted at trick detection, Decision #2 is reversed and #4 mooted plus a new keypoints-only privacy decision, the two-model OTA story replaces the pose+action language, the label editor moves into the clip confirmation flow (the server labeling queue is dropped), a new video-identity section is added, the social feed is deferred, and the problem statement is restated.)*
 
 *Screen-level flow for the v1 app lives in [`UIUX.md`](UIUX.md). Running the pose pass during recording, rather than after, is designed in [`LIVE_POSE.md`](LIVE_POSE.md).*
 
@@ -46,7 +46,7 @@ The app is open source, and doubles as a **community labeling + continuous train
 
 Three public repos, Apache 2.0:
 
-- **`turnip-ios`** — Swift/SwiftUI iOS app. Bundles MoveNet Thunder TFLite. Handles capture, on-device clip detection, preview UI, export, and (v2) contribution of TKP1 pose keypoints + confirmed clips/labels to the backend training dataset (video never leaves the device).
+- **`turnip-ios`** — Swift/SwiftUI iOS app. Bundles MoveNet Thunder TFLite. Handles capture, on-device clip detection, preview UI, export, and (v2) contribution of pose-format keypoints + confirmed clips/labels to the backend training dataset (video never leaves the device).
 - **`turnip-farm`** — Bun + TypeScript + Postgres backend. Grows the labeled dataset. Serves pose-blob ingest, confirmed clip/label upserts, user accounts, moderation, quality scoring, dataset export for the training pipeline, and the trick-model manifest. No video anywhere in the stack.
 - **`turnip-ml`** — Python + TensorFlow training pipeline. Fetches the labeled pose dataset from turnip-farm, trains the trick-detection model (pose sequence → trick segments + names), evaluates on a held-out set, exports to Core ML, and publishes through the farm's model manifest endpoint that the app polls.
 
@@ -81,7 +81,7 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
   one implementation for both sources. Design and acceptance gate: [`LIVE_POSE.md`](LIVE_POSE.md).
 
 - **Preview UI**: thumbnail per detected clip, tap-preview, drag-adjust start/end, keep/discard toggles.
-- **Contribution** (v2): opt-in per clip. "Contribute to the training dataset" toggle. Uploads the TKP1 pose keypoint sequence plus the confirmed clip windows and free-text trick names to `turnip-farm` — keypoints only, video never leaves the device. The farm upserts on ID match, so re-contribution is safe and idempotent. Full design: [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md).
+- **Contribution** (v2): opt-in per clip. "Contribute to the training dataset" toggle. Uploads the pose-format keypoint sequence plus the confirmed clip windows and free-text trick names to `turnip-farm` — keypoints only, video never leaves the device. The farm upserts on ID match, so re-contribution is safe and idempotent. Full design: [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md).
 - **OTA model updates**: two models. Bundled MoveNet Thunder does pose detection (unchanged). The trick-detection model arrives over the air: on launch and foreground, poll `GET /api/models/current` for the manifest (version, URL, checksum, `taxonomy_version`, vocabulary); download in background, verify the checksum, atomic-replace. The trick model proposes clip windows *and* trick names; the heuristic detector stays as the offline fallback. (The old "pose+action model" language is retired.)
 
 ### Performance targets
@@ -175,7 +175,7 @@ The pipeline handles this at multiple layers:
 ### Backend (`turnip-farm`)
 
 - **Stack**: Bun + TypeScript + Postgres. Standard modern TypeScript backend.
-- **Object storage**: **Cloudflare R2** (S3-compatible, **$0 egress**, $15/TB storage). TKP1 pose blobs (`.tkp1.gz`, ~2 KB/s at 10 Hz) and trained model artifacts live here, not on the droplet FS — the droplet doesn't grow with content volume. No video anywhere: no video bytes in any table, blob, log, or error payload.
+- **Object storage**: **Cloudflare R2** (S3-compatible, **$0 egress**, $15/TB storage). pose-format blobs (`.tkp1.gz`, ~2 KB/s at 10 Hz) and trained model artifacts live here, not on the droplet FS — the droplet doesn't grow with content volume. No video anywhere: no video bytes in any table, blob, log, or error payload.
 - **Auth**: **Sign in with Apple** — iOS-native, one-tap Face ID / Touch ID, no browser bounce. The iOS app sends the Apple identity token as `Authorization: Bearer <token>` on every request; the server verifies it per Apple's server-side validation guidance — signature against Apple's public JWKS (`appleid.apple.com/auth/keys`) with the correct `kid`; `iss == "https://appleid.apple.com"`; `aud` matches the app bundle id; `exp > now` (reject expired / replayed tokens) — and only then creates or looks up a `users` row keyed by the token's `sub` claim. Stateless verification per request (no session cookie). Matches App Store guideline 4.8; no email/password fallback keeps the auth surface minimal. The training pipeline authenticates with a pre-shared service key instead.
 - **Endpoints (v2 MVP)** — every write upserts on ID match (the IDs *are* the idempotency keys):
   - **Contribution:**
@@ -185,7 +185,7 @@ The pipeline handles this at multiple layers:
   - **Reconciliation + owner reads:**
     - `GET /api/sources` — list my sources (id, frame_count, clip/label counts) for the reinstall reconciliation UI
     - `GET /api/sources/:id` — source with its confirmed clips + labels
-    - `GET /api/sources/:id/pose` — owner-only presigned R2 GET of the TKP1 blob (skeleton restore on a device without the video)
+    - `GET /api/sources/:id/pose` — owner-only presigned R2 GET of the pose-format blob (skeleton restore on a device without the video)
     - `DELETE /api/sources/:id` — owner-only hard delete (row + R2 blob); the retention policy is "keep forever, user-deletable" (see § "Decisions" #4)
   - **Models:**
     - `GET /api/models/current` — trick-model manifest (version, URL, checksum, `taxonomy_version`, vocabulary)
@@ -242,16 +242,16 @@ Meta's content-publishing endpoints only accept **Business or Creator** accounts
 
 The in-app social feed is **deferred**, explicitly. A server video feed cannot exist without server video: the privacy contract (§ "Decisions" #8, master plan §1) means the farm never holds footage to serve, so the `follows` table and the feed endpoints described in earlier revisions are removed, not postponed.
 
-What stays: the iOS Share Sheet integration (§ "Publishing to social media") already covers one-tap publishing to Instagram / TikTok / YouTube Shorts / Photos with zero server involvement — that is the social story for v2. The only feed-compatible future is client-rendered skeleton previews: keypoint sequences re-animated on-device from TKP1 blobs, no pixels involved. Revisit when and if a concrete product need demands it.
+What stays: the iOS Share Sheet integration (§ "Publishing to social media") already covers one-tap publishing to Instagram / TikTok / YouTube Shorts / Photos with zero server involvement — that is the social story for v2. The only feed-compatible future is client-rendered skeleton previews: keypoint sequences re-animated on-device from pose-format blobs, no pixels involved. Revisit when and if a concrete product need demands it.
 
 ### ML pipeline (`turnip-ml`)
 
 - **Language**: Python + TensorFlow + `coremltools` for export.
-- **Task**: trick detection + naming. Input: pose key sequence (`T × 17 × 3`, canonical 10 Hz TKP1). Output per source: trick segments in source-frame coordinates, each with `trick_names: [...]` and derived `is_combo` (`len > 1`); a combo is one segment with N names — no sub-segmentation for MVP.
+- **Task**: trick detection + naming. Input: pose key sequence (`T × 17 × 3`, canonical 10 Hz pose format). Output per source: trick segments in source-frame coordinates, each with `trick_names: [...]` and derived `is_combo` (`len > 1`); a combo is one segment with N names — no sub-segmentation for MVP.
 - **Trigger**: cron (nightly) or on-demand via GitHub Actions workflow_dispatch. Only runs if new labels since the last watermark exceed a threshold (start: 50).
 - **Steps**:
   1. Fetch the labeled dataset from turnip-farm (`GET /api/labels/export?since=<last>`) — pose blob refs, clip windows, free-text labels. Quarantined sources are excluded by construction.
-  2. Resolve the TKP1 pose blobs from R2.
+  2. Resolve the pose-format blobs from R2.
   3. Canonicalize raw label strings via `label_taxonomy` (combo strings like `"hook - scoot - gainer - cartfull (combo)"` split into N canonical names on one window); raw strings are never discarded.
   4. Split 80/10/10 train/val/holdout, stratified by user_id so no user's clips leak across splits (bootstrap guard: unstratified random splits until ~20 contributors or 50 clips per split).
   5. Train the trick-detection candidate — baseline: temporal encoder (dilated TCN or small Transformer) over the keypoint sequence with a segment-proposal head and a per-segment multi-label classification head; sliding-window classifier + NMS is an acceptable MVP.
@@ -274,7 +274,7 @@ What stays: the iOS Share Sheet integration (§ "Publishing to social media") al
 
 **MVP stack**:
 - **1× Basic Droplet** — $6/mo (1 GB RAM, 25 GB SSD, 1 TB transfer). Runs turnip-farm (Bun), Postgres, and the ML pipeline (nightly). Nginx/Caddy fronts everything.
-- **Cloudflare R2 bucket** — TKP1 pose blobs + trained model artifacts. First 10 GB free, then $0.015/GB/mo storage, **$0 egress**. Two zeros: no bandwidth bill for pose-blob downloads, no bandwidth bill for the app fetching the model.
+- **Cloudflare R2 bucket** — pose-format blobs + trained model artifacts. First 10 GB free, then $0.015/GB/mo storage, **$0 egress**. Two zeros: no bandwidth bill for pose-blob downloads, no bandwidth bill for the app fetching the model.
 - **Domain**: ~$15/yr on Namecheap/Porkbun.
 - **Managed Postgres** ($15/mo) OR **self-hosted Postgres on the droplet** ($0). Start self-hosted; migrate to managed when you cross 1 GB of DB or 10 QPS sustained.
 - **Object storage costs** — pose blobs run ~2 KB/s at the canonical 10 Hz: 100 contributed sessions × ~120 KB ≈ 12 MB → free tier. 10,000 sessions ≈ 1.2 GB → still free tier. 1M sessions ≈ 120 GB ≈ $1.65/mo.
@@ -359,7 +359,7 @@ Resolved 2026-09-04. Each records the decision, the reason, and the trigger that
 1. **Model bundling vs OTA-only → Bundle.** The int8 model is ~7 MB against the App Store's 200 MB cellular download limit, so "saving 7 MB" buys nothing, and OTA-only breaks first launch offline. OTA updates (§ "OTA model updates") layer on top of the bundled model as a replacement path, never a prerequisite. *Reopen if:* the escalation ladder lands on a model > ~50 MB.
 2. **Trick classification in v2 → REVERSED 2026-10-06: the detector IS the ML program.** The v2 pipeline trains a trick-detection model (pose sequence → trick segments + names) from the contributed dataset from day one — detection and naming are the program, not a future phase. (Reversal of the Rev 6 decision, per the merged master plan.) *Reopen if:* contribution volume never reaches the training threshold and the program stalls.
 3. **Labeling incentive → Reputation score + a "your contributions" stats screen. Defer badges and notifications.** Reputation is already required for moderation (§ "Label quality + abuse"), so surfacing it is free. Badges are a design project with no evidence they're needed at v2 volumes. *Reopen if:* labeling throughput stalls with active users who aren't labeling.
-4. **Storage retention → MOOT 2026-10-06: there are no videos to keep.** The farm stores TKP1 pose blobs (~2 KB/s) and labels, never video — 10,000 contributed sessions are ~1.2 GB, still inside R2's free tier. The retention posture transfers to sources: keep forever, user-deletable via `DELETE /api/sources/:id` (owner-only) from day 1. (Mooted by the no-video privacy contract, per the merged master plan.) *Reopen if:* pose-blob storage passes ~1 TB.
+4. **Storage retention → MOOT 2026-10-06: there are no videos to keep.** The farm stores pose-format blobs (~2 KB/s) and labels, never video — 10,000 contributed sessions are ~1.2 GB, still inside R2's free tier. The retention posture transfers to sources: keep forever, user-deletable via `DELETE /api/sources/:id` (owner-only) from day 1. (Mooted by the no-video privacy contract, per the merged master plan.) *Reopen if:* pose-blob storage passes ~1 TB.
 5. **Moderation model → Single admin at launch.** The `moderation_events` log and trusted-user spot checks already in § "Label quality + abuse" are the on-ramp. Add a moderator role when the open report queue exceeds what one person clears in a week — a measurable trigger, not a guess.
 6. **CLA → Skip.** Decided in issue #4; Apache 2.0 § 5 covers contributions. `CONTRIBUTING.md` already states this.
 7. **Analytics → None in v1.** Crash reports and hang/launch metrics come from Xcode Organizer + MetricKit, which are opt-in through iOS's own "Share With App Developers" setting — no SDK, no consent UI, and the "nothing leaves your device" claim in the README stays literally true. If v2 needs product analytics, prefer TelemetryDeck (Swift-native, anonymous signals, no consent prompt) over self-hosted PostHog, which is a full platform to operate on a $6 droplet. *Reopen when:* v2 backend ships and there's a product question only usage data can answer.
