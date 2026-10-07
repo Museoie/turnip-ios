@@ -13,8 +13,8 @@ trick-detection model. It does not change the v1 screens or flows in
 
 **Authority.** The contract this doc implements is the
 [Turnip Farm + ML Master Plan](https://github.com/hoiekim/turnip-farm/blob/main/docs/MASTER_PLAN.md)
-(Rev 3). Companion docs: the farm's forthcoming `DATABASE_DESIGN.md` and
-`TKP1.md` (the wire-format authority; until they land, master plan §3 is
+(Rev 3). Companion docs: the farm's forthcoming `BACKEND_DESIGN.md` and
+`POSE_FORMAT.md` (the wire-format authority; until they land, master plan §3 is
 the TKP1 spec), and `turnip-ml`'s `MODEL_CONTRACT.md` (the trick-model
 input/output authority). Where this doc makes a call the master plan
 doesn't cover, it says so inline as *(judgment call)*.
@@ -115,7 +115,7 @@ recorded as-is when they fall outside `[0,1]` in letterbox-pad regions
 
 ### 2.2 TKP1 encoding
 
-The farm's TKP1 spec (master plan §3; `TKP1.md` when it lands) is the
+The farm's TKP1 spec (master plan §3; `POSE_FORMAT.md` when it lands) is the
 authority. iOS-side rules:
 
 - Encode at the **analysis rate** (the rate the frames were actually
@@ -235,13 +235,13 @@ section below the player and trim controls.
   send it; it may keep the manifest's version locally for display only.
 - **No per-label windows.** The farm schema stores one label row per
   `(clip_id, trick_name)` with no window columns — a label names the
-  trick for the clip's whole window (`DATABASE_DESIGN.md` §1.1). The
+  trick for the clip's whole window (`BACKEND_DESIGN.md` §1.1). The
   editor does not expose per-label window tightening; a later UI that
   wants it needs a farm schema change first.
 
 The iOS API payload per clip is `{clip_id, start_frame, end_frame,
 auto_detected, labels: ["cork", ...]}`; the farm stores one label row
-per `(clip_id, trick_name)` (`DATABASE_DESIGN.md` §1.1) — the wire
+per `(clip_id, trick_name)` (`BACKEND_DESIGN.md` §1.1) — the wire
 shape (an array of names) is unchanged by that choice.
 
 ---
@@ -459,7 +459,7 @@ Per master plan §8, this doc records the following deltas against
 ## Open questions (for the maintainer)
 
 1. ~~**Clip → Label cardinality.**~~ Resolved: one label row per
-   `(clip_id, trick_name)` (`DATABASE_DESIGN.md` §1.1); re-contribution
+   `(clip_id, trick_name)` (`BACKEND_DESIGN.md` §1.1); re-contribution
    replaces a clip's whole label set atomically (§5.2).
 2. **Per-clip server delete.** No `DELETE /api/clips/:id` exists;
    post-contribution local trash leaves the server copy. Add the
