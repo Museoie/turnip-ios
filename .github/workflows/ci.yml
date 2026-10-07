@@ -72,6 +72,21 @@ jobs:
       - name: Check the documented directory list against the tree
         run: ci_scripts/check-directory-list.sh
 
+      # A build that calls a required-reason API without declaring its category
+      # in PrivacyInfo.xcprivacy is rejected at upload with ITMS-91053. Nothing
+      # else here would catch it: CI never produces a distribution archive, so
+      # the manifest is never submitted for validation and the first observation
+      # would be the first TestFlight upload. Runs before the Xcode steps so the
+      # answer costs seconds rather than a full build.
+      - name: Check the privacy manifest against the required-reason APIs in use
+        run: ci_scripts/check-privacy-manifest.sh
+
+      # The gate above fails open on a typo: a misspelled pattern leaves the
+      # API unmatched and still prints that every referenced category is
+      # declared, so the build stays green on the violation it exists to stop.
+      - name: Test the privacy-manifest check
+        run: ci_scripts/test-check-privacy-manifest.sh
+
       # screenshots-comment.yml runs on workflow_run against main, so a pull
       # request can never exercise post_screenshots_comment.py end to end —
       # this stdlib-only suite is the script's only pre-merge verification.

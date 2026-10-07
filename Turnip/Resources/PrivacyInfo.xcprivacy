@@ -11,9 +11,12 @@
 	<!-- Required-reason API declarations. FileTimestamp/C617.1 covers
 	     PhotoVideoResolver.deleteOrphanedTemporaryExports reading
 	     .creationDateKey on files inside the app's own tmp/ container;
-	     SystemBootTime/35F9.1 covers ProgressReportClock measuring elapsed
-	     time between in-app progress reports via ProcessInfo.systemUptime.
-	     See docs/PRIVACY.md for the audit. -->
+	     SystemBootTime/35F9.1 covers measuring elapsed time via
+	     ProcessInfo.systemUptime in ProgressReportClock and the live-pose
+	     inference and thermal accounting; UserDefaults/CA92.1 covers
+	     TurnipSettingsStore persisting the four settings keys, all readable
+	     only by the app itself. ci_scripts/check-privacy-manifest.sh holds
+	     this array to the tree; see docs/PRIVACY.md for the audit. -->
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
 		<dict>
@@ -30,6 +33,14 @@
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<array>
 				<string>35F9.1</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
 			</array>
 		</dict>
 	</array>
