@@ -155,7 +155,9 @@ struct HomeExpansionContainer<Content: View>: View {
             ZStack {
                 Color.black
                     .expansionCrossfade(
-                        progress: progress, inflection: ExpansionFlightGeometry.scrimCrossfadeInflection)
+                        progress: progress,
+                        inflection: ExpansionFlightGeometry.scrimCrossfadeInflection,
+                        steepness: ExpansionFlightGeometry.scrimCrossfadeSteepness)
                     .ignoresSafeArea()
 
                 if !chromeCrossfades {
@@ -186,7 +188,9 @@ struct HomeExpansionContainer<Content: View>: View {
                     // interpolate across the whole flight, which `.opacity` does on its own.
                     destinationContent()
                         .expansionCrossfade(
-                            progress: progress, inflection: ExpansionFlightGeometry.chromeCrossfadeInflection)
+                            progress: progress,
+                            inflection: ExpansionFlightGeometry.chromeCrossfadeInflection,
+                            steepness: ExpansionFlightGeometry.chromeCrossfadeSteepness)
                 }
             }
             .offset(x: slideProgress * screen.size.width)

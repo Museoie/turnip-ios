@@ -146,7 +146,9 @@ struct ClipExpansionContainer: View {
             ZStack {
                 Color(.systemBackground)
                     .expansionCrossfade(
-                        progress: progress, inflection: ExpansionFlightGeometry.scrimCrossfadeInflection)
+                        progress: progress,
+                        inflection: ExpansionFlightGeometry.scrimCrossfadeInflection,
+                        steepness: ExpansionFlightGeometry.scrimCrossfadeSteepness)
                     .ignoresSafeArea()
 
                 if !chromeCrossfades {
@@ -179,7 +181,9 @@ struct ClipExpansionContainer: View {
                     // interpolate across the whole flight, which `.opacity` does on its own.
                     editor(size: screen.size)
                         .expansionCrossfade(
-                            progress: progress, inflection: ExpansionFlightGeometry.chromeCrossfadeInflection)
+                            progress: progress,
+                            inflection: ExpansionFlightGeometry.chromeCrossfadeInflection,
+                            steepness: ExpansionFlightGeometry.chromeCrossfadeSteepness)
                 }
             }
             .opacity(deleteFadeOpacity)

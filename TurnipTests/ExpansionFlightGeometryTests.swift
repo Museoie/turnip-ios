@@ -67,15 +67,21 @@ final class ExpansionFlightGeometryTests: XCTestCase {
     }
 
     /// Each cross-fading layer's opacity is a function of the card's travel that spans the
-    /// whole flight and crosses half exactly at its inflection — later for the scrim than for
-    /// the chrome, so the middle fifth of the travel has both layers past half while each
-    /// holds near its start value until close to its own inflection.
+    /// whole flight, crosses half exactly at its inflection, and holds near its start value
+    /// until close to it. Checked for the shipped constants and for a sweep of others, since
+    /// where the inflections sit and how steep the halves are is tuning, not behaviour.
     func testCrossfadeOpacityCrossesHalfAtTheInflectionAndSpansTheFlight() {
         let chrome = ExpansionFlightGeometry.chromeCrossfadeInflection
         let scrim = ExpansionFlightGeometry.scrimCrossfadeInflection
-        XCTAssertLessThan(chrome, scrim)
-        for inflection in [chrome, scrim] {
-            let opacity = { ExpansionFlightGeometry.crossfadeOpacity(progress: $0, inflection: inflection) }
+        let layers: [(inflection: CGFloat, steepness: CGFloat)] = [
+            (chrome, ExpansionFlightGeometry.chromeCrossfadeSteepness),
+            (scrim, ExpansionFlightGeometry.scrimCrossfadeSteepness),
+            (0.2, 3), (0.5, 3), (0.8, 5)
+        ]
+        for (inflection, steepness) in layers {
+            let opacity = {
+                ExpansionFlightGeometry.crossfadeOpacity(progress: $0, inflection: inflection, steepness: steepness)
+            }
             XCTAssertEqual(opacity(0), 0, accuracy: 0.0001)
             XCTAssertEqual(opacity(1), 1, accuracy: 0.0001)
             XCTAssertEqual(opacity(inflection), 0.5, accuracy: 0.0001)
@@ -89,9 +95,5 @@ final class ExpansionFlightGeometryTests: XCTestCase {
                 last = value
             }
         }
-        // The overlap: past half for both between the two inflections.
-        let mid = (chrome + scrim) / 2
-        XCTAssertGreaterThan(ExpansionFlightGeometry.crossfadeOpacity(progress: mid, inflection: chrome), 0.5)
-        XCTAssertLessThan(ExpansionFlightGeometry.crossfadeOpacity(progress: mid, inflection: scrim), 0.5)
     }
 }
