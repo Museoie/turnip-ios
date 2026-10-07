@@ -1263,11 +1263,14 @@ easeInCubic / easeOutCubic as `.timingCurve` control points — 0.125 at the
 midpoint instead of 0.315); still too much overlap, too soon. A third build
 moved the inflection points instead — `crossfadeShare = 0.6`, the disappearing
 layer's fade over the first 60% of the flight and the appearing layer's over
-the last 60% (`.delay`) — and the user "didn't feel like anything changed". The
-shipped value is `0.3`: the leaving layer is gone before the card has covered
-a third of its travel, the arriving one starts only once it has covered
-two-thirds, and the middle of the flight is just the card over the backdrop.
-Each window keeps its cubic curve.
+the last 60% (`.delay`) — and the user "didn't feel like anything changed".
+`0.3` (gone within the first third, arriving only in the last third, the
+middle of the flight just the card over the backdrop) was the first value that
+read as intended; the shipped value is `0.5`, chosen after seeing `0.3`: the
+two windows meet at the flight's midpoint, so the leaving layer is gone exactly
+as the arriving one starts, with neither a dark gap nor an overlap. Each window
+keeps its cubic curve. The per-frame numbers below are from the `0.3` build;
+`0.5` only stretches each window to the midpoint.
 
 **The drag plays the same cross-fade, by travel.** The first Rev 10 builds had
 the interactive dismiss write chrome and scrim `= progress`, so a swipe held
@@ -1293,7 +1296,7 @@ Home (the seeded library, second tile): `p` from the card's top edge (345px →
 836px); scrim from the untapped top-left tile; chrome from the scrub bar's
 track over a tile with no blue of its own.
 
-Shipped (`crossfadeShare = 0.3`, cubic) fades:
+Measured at `crossfadeShare = 0.3` (shipped: `0.5`, same mechanism):
 
 - Clip open: scrim 0.96 at `p` 0.06 and 1.00 from 0.22 on; chrome 0.00
   through `p` 0.86, 0.55 on the landing frame, then full — the list is gone
