@@ -350,6 +350,12 @@ struct ClipExpansionContainer: View {
     /// player in step with it. Per the real Photos app, there's no real distance
     /// threshold on release: any downward-released drag (or one still moving down)
     /// commits; only a drag released while still moving upward snaps back.
+    ///
+    /// A committing release is the editor's back-navigation by another route
+    /// (`docs/UIUX.md` § "Clip Detail / Editor"), so it hands the edits back through
+    /// `onCommit` exactly as `ClipEditorView`'s own back chevron does before closing —
+    /// the editor holds its draft in view state until it's left, and nothing else
+    /// delivers it. A cancelled drag commits nothing: the editor stays open.
     private var dismissDragGesture: AnyGesture<DragGesture.Value> {
         AnyGesture(
             DragGesture(minimumDistance: 8)
@@ -370,6 +376,7 @@ struct ClipExpansionContainer: View {
                     let committing = value.translation.height > 12
                         || value.predictedEndTranslation.height > value.translation.height
                     if committing {
+                        onCommit(viewModel.result)
                         close()
                     } else {
                         cancelDrag()
