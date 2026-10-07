@@ -194,7 +194,7 @@ The pipeline handles this at multiple layers:
     - `GET /api/labels/export?since=` — training pipeline pull (labels + pose blob refs; excludes quarantined sources)
     - `POST /api/reports` — report a bad label/clip
   - Dropped from earlier drafts: `GET /api/labels/pending` — there is no labeling queue; labeling happens on-device by the clip owner.
-- **Database schema (v2, additive-only)** — full design in `turnip-farm`'s `DATABASE_DESIGN.md`:
+- **Database schema (v2, additive-only)** — full design in `turnip-farm`'s `BACKEND_DESIGN.md`:
   - `users` — id (Apple `sub`, TEXT PK — no name, no email), reputation, is_blocked, created_at
   - `sources` — id CHAR(64) (deterministic SHA-256 hex `video_id`, PK), user_id FK, frame_count (canonical 10 Hz), sample_rate (as-sent, provenance), keypoint_format, r2_key (`poses/<id>.tkp1.gz`), sha256 (blob integrity)
   - `clips` — id UUID (client-minted once, PK), source_id FK, start_frame, end_frame (canonical 10 Hz indices), auto_detected
