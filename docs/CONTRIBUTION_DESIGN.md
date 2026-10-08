@@ -292,8 +292,9 @@ re-confirmation safe and idempotent.
   `POST /api/sources` first (it returns the presigned `upload_url`),
   then PUT the blob, then `POST /api/clips` (§5.1).
 - If the PUT succeeded but a later step failed, retry from the failed
-  step — the farm dedups the blob by its SHA-256, so a repeated PUT is
-  harmless but unnecessary.
+  step — the PUT targets the same staging key, so a repeated PUT
+  overwrites identical bytes and is harmless but unnecessary
+  (BACKEND_DESIGN.md §7.3).
 - **Re-contribution dedups by construction**: the deterministic
   `video_id` means contributing the same video twice upserts the same
   source row — never duplicate training data.
