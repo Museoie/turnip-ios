@@ -4,8 +4,8 @@ import Foundation
 
 /// The clip editor's state (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
-/// Holds the draft trim window, the live crop rect, and the user's manual crop
-/// adjustment (pinch/rotate/drag on top of the algorithmic crop rect); the view commits
+/// Holds the draft trim window, the live crop rect, and the crop adjustment on top of it
+/// (pinch/rotate/drag, or the Auto crop and Auto rotate fits); the view commits
 /// `result` on back-navigation or Delete — no separate save step, per the design doc.
 /// Trimming re-derives the crop rect from the pose frames in play via `CropRectCalculator`:
 /// the rect is a function of the window, so it has to follow the handles. Playback loops
@@ -36,6 +36,16 @@ final class ClipEditorViewModel: ObservableObject {
     /// Set when `prepare()` can't load the asset: the view swaps the loading
     /// spinner for an error message instead of spinning forever.
     @Published private(set) var failedToLoad = false
+    /// True while Auto rotate is sampling the window's frames for a horizon: the button
+    /// shows a spinner and a second tap is ignored until the first detection lands.
+    @Published private(set) var isDetectingHorizon = false
+    /// Set when Auto rotate found no horizon in the window, so the view can say so — a
+    /// button whose tap changes nothing reads as broken. Cleared by the notice itself.
+    @Published var isShowingNoHorizonNotice = false
+
+    /// The pinch's committed scale is clamped here, and Auto crop's fitted scale too, so
+    /// neither can shrink the video to a sliver or blow it up past usefulness.
+    nonisolated static let scaleRange: ClosedRange<CGFloat> = 0.2...8
 
     /// The player the view renders. Created up front so `VideoPlayer` never sees a nil
     /// player; the item is attached in `prepare()`.
@@ -46,6 +56,9 @@ final class ClipEditorViewModel: ObservableObject {
     private var timeObserver: Any?
     private var naturalSize: CGSize?
     private var preferredTransform = CGAffineTransform.identity
+    /// The in-flight Auto rotate detection, kept so `teardown()` can cancel it: the
+    /// decode outlives a closed editor otherwise.
+    private var horizonTask: Task<Void, Never>?
 
     /// True while a handle drag is in flight. The drag's programmatic seek lands exactly on
     /// the moved handle, and without this guard the periodic time observer would read that
@@ -212,6 +225,9 @@ final class ClipEditorViewModel: ObservableObject {
     /// `onEnded` never fired, and re-appearing must re-arm a clean loop via `prepare()`.
     func teardown() {
         isTrimming = false
+        horizonTask?.cancel()
+        horizonTask = nil
+        isDetectingHorizon = false
         if let timeObserver {
             player.removeTimeObserver(timeObserver)
             self.timeObserver = nil
@@ -225,7 +241,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// usefulness.
     func applyCropScale(_ delta: CGFloat) {
         guard delta.isFinite, delta > 0 else { return }
-        cropAdjustment.scale = min(max(cropAdjustment.scale * delta, 0.2), 8)
+        cropAdjustment.scale = Self.clampedScale(cropAdjustment.scale * delta)
     }
 
     /// Applies a two-finger rotation's cumulative angle since the gesture started.
@@ -248,10 +264,95 @@ final class ClipEditorViewModel: ObservableObject {
         cropAdjustment.offset.height += screenPoints.height / previewScale
     }
 
-    /// The "Reset crop area" action: discards the manual adjustment and returns to the
-    /// algorithm's own framing.
-    func resetCropAdjustment() {
-        cropAdjustment = .identity
+    /// The "Auto crop" action: frames every located keypoint in the draft window inside the
+    /// marker, at the current rotation. The rotation itself is kept — Auto rotate (or two
+    /// fingers) owns it — and the scale and offset are replaced by the fit, so a manual
+    /// pinch or drag is discarded. At zero rotation the fit is the algorithm's own framing,
+    /// which `cropRect` already follows as the handles move, so the adjustment returns to
+    /// identity. A window with no located keypoints leaves the adjustment alone, the way
+    /// the trim recompute keeps its last good rect.
+    func autoCrop() {
+        guard let overlay = previewOverlay,
+              let adjustment = Self.autoCropAdjustment(
+                  normalizedKeypoints: CropRectCalculator.locatedPoints(in: framesInWindow),
+                  cropRect: overlay.cropRect,
+                  videoSize: overlay.videoSize,
+                  rotationRadians: cropAdjustment.rotationRadians,
+                  calculator: calculator)
+        else { return }
+        cropAdjustment = adjustment
+    }
+
+    /// The adjustment that frames `normalizedKeypoints` in the marker at `rotationRadians`,
+    /// or `nil` when there is nothing to frame. Pure, so the fit is unit-testable without a
+    /// player; the rotated case is the discriminating one.
+    ///
+    /// The marker shows the video turned by the rotation about the crop rect's center, so
+    /// the fit runs in that turned space: each keypoint is rotated about the center, the
+    /// same calculator that produced `cropRect` frames the rotated set — minus its slide
+    /// back into the frame, whose edges aren't axis-aligned in the turned space and would
+    /// slide the rect off a keypoint the rotation carried past them — and the rect it
+    /// produces is expressed as what scale and offset land it on the marker: the marker is
+    /// `cropRect`'s size, so the scale is their ratio, and the offset moves the rect's
+    /// center onto the marker's in screen space, after the scale. Zero rotation short-
+    /// circuits to identity rather than rotating by zero, so the identity is exact.
+    nonisolated static func autoCropAdjustment(
+        normalizedKeypoints: [CGPoint],
+        cropRect: CGRect,
+        videoSize: CGSize,
+        rotationRadians: Double,
+        calculator: CropRectCalculator
+    ) -> CropAdjustment? {
+        guard !normalizedKeypoints.isEmpty, cropRect.width > 0, cropRect.height > 0 else { return nil }
+        guard rotationRadians != 0 else { return .identity }
+        let center = CGPoint(x: cropRect.midX, y: cropRect.midY)
+        let rotation = CGAffineTransform(rotationAngle: rotationRadians)
+        let turnedKeypoints = normalizedKeypoints.map { point -> CGPoint in
+            let turned = CGPoint(
+                x: point.x * videoSize.width - center.x,
+                y: point.y * videoSize.height - center.y
+            ).applying(rotation)
+            return CGPoint(
+                x: (turned.x + center.x) / videoSize.width,
+                y: (turned.y + center.y) / videoSize.height)
+        }
+        guard let fit = calculator.cropRect(
+                  around: turnedKeypoints, renderedPixelSize: videoSize, slidIntoFrame: false)?
+                  .denormalized(in: videoSize),
+              fit.width > 0, fit.height > 0
+        else { return nil }
+        let scale = clampedScale(min(cropRect.width / fit.width, cropRect.height / fit.height))
+        return CropAdjustment(
+            scale: scale,
+            rotationRadians: rotationRadians,
+            offset: CGSize(width: (center.x - fit.midX) * scale, height: (center.y - fit.midY) * scale))
+    }
+
+    /// The "Auto rotate" action: levels the horizon as `HorizonLeveler` reads it off frames
+    /// sampled across the draft window. Replaces the rotation rather than adding to it —
+    /// the tilt is measured on the source frames, not on the rotated preview. Scale and
+    /// offset stay as they are; Auto crop refits them if the turn carries a limb out of
+    /// the marker. One detection at a time: a tap while one is running is ignored, and
+    /// `teardown()` cancels it. Finding no horizon raises the notice and changes nothing.
+    func autoRotate() {
+        guard !isDetectingHorizon, duration != nil else { return }
+        isDetectingHorizon = true
+        let asset = source.asset
+        let window = window
+        horizonTask = Task { [weak self] in
+            let rotation = try? await HorizonLeveler.levelingRotation(in: asset, window: window)
+            guard let self, !Task.isCancelled else { return }
+            isDetectingHorizon = false
+            if let rotation {
+                cropAdjustment.rotationRadians = rotation
+            } else {
+                isShowingNoHorizonNotice = true
+            }
+        }
+    }
+
+    nonisolated private static func clampedScale(_ scale: CGFloat) -> CGFloat {
+        min(max(scale, scaleRange.lowerBound), scaleRange.upperBound)
     }
 
     /// The custom play/pause control, standing in for the default player chrome this
@@ -390,17 +491,22 @@ final class ClipEditorViewModel: ObservableObject {
     /// handle through a low-confidence stretch.
     private func recomputeCropRect() {
         guard let naturalSize else { return }
-        let inWindow = source.poseFrames.filter {
-            $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
-        }
         // The keypoints are measured in rendered (displayed-orientation) space, so the
         // ratio snap must use the displayed size — passing the encoded naturalSize
         // transposes the dimensions on rotated clips and silently produces a
         // wrongly-proportioned rect.
         let renderedSize = Self.displayedSize(
             naturalSize: naturalSize, preferredTransform: preferredTransform)
-        if let rect = calculator.cropRect(for: inWindow, renderedPixelSize: renderedSize) {
+        if let rect = calculator.cropRect(for: framesInWindow, renderedPixelSize: renderedSize) {
             cropRect = rect
+        }
+    }
+
+    /// The sampled pose frames inside the draft window: what the crop rect, and Auto crop,
+    /// are derived from.
+    private var framesInWindow: [PoseFrameResult] {
+        source.poseFrames.filter {
+            $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
         }
     }
 

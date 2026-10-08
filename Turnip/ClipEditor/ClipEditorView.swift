@@ -6,8 +6,9 @@ import SwiftUI
 /// one clip at a time — the trimmed clip looping under a crop marker that is one fixed
 /// rectangle on screen, with the video laid out so the clip's crop rect fills it and the
 /// rest of the frame showing dimmed around it, edge to edge (pinch to zoom, rotate with
-/// two fingers, drag to reposition the video under the marker), plus a scrub bar with
-/// start/end drag handles.
+/// two fingers, drag to reposition the video under the marker), the Auto crop and Auto
+/// rotate buttons that fit the video under the marker for the user, plus a scrub bar
+/// with start/end drag handles.
 ///
 /// Back-navigation and Delete both close the editor via the toolbar's own actions —
 /// `onCommit`/`onDelete` fire synchronously from those taps, before the enclosing
@@ -160,8 +161,11 @@ struct ClipEditorView: View {
                     key: ClipEditorStageFramePreferenceKey.self, value: proxy.frame(in: .global))
             }
             .allowsHitTesting(false)
+            // Over the placeholder, not inside it: the placeholder passes touches through,
+            // and the notice has to keep its own tap-to-dismiss.
+            .overlay(alignment: .top) { noHorizonNotice }
             VStack(spacing: 16) {
-                resetCropButton
+                autoFramingButtons
                 TrimSliderView(viewModel: viewModel)
             }
             .padding()
@@ -331,17 +335,48 @@ struct ClipEditorView: View {
         .padding(.bottom, 12)
     }
 
-    /// Discards the manual crop adjustment and returns to the algorithm's own framing —
-    /// replaces the old full-frame/cropped-preview toggle now that the crop area is
-    /// directly editable.
-    private var resetCropButton: some View {
-        Button {
-            viewModel.resetCropAdjustment()
-        } label: {
-            Label("Reset crop area", systemImage: "arrow.counterclockwise")
+    /// The two automatic fits, side by side above the trim slider: Auto crop frames every
+    /// located keypoint in the window inside the marker at the current rotation, Auto
+    /// rotate levels the horizon over the window. Both wait for media info — before it
+    /// there is no stage geometry to fit and no window to sample — and Auto rotate shows
+    /// its detection in place of its icon while it runs.
+    private var autoFramingButtons: some View {
+        HStack(spacing: 12) {
+            Button {
+                viewModel.autoCrop()
+            } label: {
+                Label("Auto crop", systemImage: "crop")
+            }
+            .accessibilityIdentifier("auto-crop-button")
+            Button {
+                viewModel.autoRotate()
+            } label: {
+                Label {
+                    Text("Auto rotate")
+                } icon: {
+                    if viewModel.isDetectingHorizon {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "level")
+                    }
+                }
+            }
+            .disabled(viewModel.isDetectingHorizon)
+            .accessibilityIdentifier("auto-rotate-button")
         }
         .buttonStyle(.bordered)
-        .disabled(viewModel.cropAdjustment == .identity)
+        .disabled(viewModel.previewOverlay == nil)
+    }
+
+    /// Auto rotate's answer when the window shows no horizon the detector can find: the
+    /// rotation stays as it was, and the notice says why.
+    @ViewBuilder
+    private var noHorizonNotice: some View {
+        if viewModel.isShowingNoHorizonNotice {
+            GlassNoticeView(message: "No horizon found", isPresented: $viewModel.isShowingNoHorizonNotice)
+                .padding(.top, 8)
+                .accessibilityIdentifier("no-horizon-notice")
+        }
     }
 }
 

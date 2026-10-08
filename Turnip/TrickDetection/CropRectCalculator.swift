@@ -73,28 +73,52 @@ struct CropRectCalculator: Sendable {
     /// always `targetAspectRatio` in pixels; it can extend past `[0, 1]` on an axis the
     /// athlete's box outgrows (see `fittedInFrame`).
     func cropRect(for frames: [PoseFrameResult], renderedPixelSize: CGSize) -> NormalizedRect? {
+        cropRect(around: Self.locatedPoints(in: frames), renderedPixelSize: renderedPixelSize)
+    }
+
+    /// The same rect, around points already located in the frame's normalized space — the
+    /// clip editor's Auto Crop hands in the window's keypoints rotated about the crop
+    /// center, so the rect frames them as the rotated video shows them. In that rotated
+    /// space the frame's own edges are no longer axis-aligned, which is what
+    /// `slidIntoFrame` is for: the slide treats `[0, 1]` as the frame, and a point that
+    /// rotation carried past 1 would be slid out of the rect — so a rotated caller passes
+    /// `false` and keeps every point in the rect at the cost of the overhang the rotation
+    /// causes anyway. `nil` for no points or an unknown frame size.
+    func cropRect(
+        around points: [CGPoint], renderedPixelSize: CGSize, slidIntoFrame: Bool = true
+    ) -> NormalizedRect? {
         guard renderedPixelSize.width > 0, renderedPixelSize.height > 0,
-              let athlete = boundingBox(across: frames) else { return nil }
+              let athlete = boundingBox(around: points) else { return nil }
 
         let flooredBox = flooredToMinimumExtent(athlete, renderedPixelSize: renderedPixelSize)
         let paddedBox = padded(flooredBox)
-        return fittedInFrame(snappedToTargetRatio(paddedBox, renderedPixelSize: renderedPixelSize))
+        let snapped = snappedToTargetRatio(paddedBox, renderedPixelSize: renderedPixelSize)
+        return slidIntoFrame ? fittedInFrame(snapped) : snapped
     }
 
-    private func boundingBox(across frames: [PoseFrameResult]) -> NormalizedRect? {
-        let located = frames.flatMap { frame in
-            frame.keypoints.filter { $0.confidence > PoseKeypoint.confidenceThreshold }
+    /// The keypoints above the confidence threshold across `frames`, as normalized points:
+    /// the one place the "located" rule lives, for both entry points above.
+    static func locatedPoints(in frames: [PoseFrameResult]) -> [CGPoint] {
+        frames.flatMap { frame in
+            frame.keypoints.lazy
+                .filter { $0.confidence > PoseKeypoint.confidenceThreshold }
+                .map { CGPoint(x: CGFloat($0.x), y: CGFloat($0.y)) }
         }
-        guard let first = located.first else { return nil }
+    }
 
-        return located.dropFirst().reduce(
-            NormalizedRect(minX: first.x, maxX: first.x, minY: first.y, maxY: first.y)
-        ) { box, keypoint in
-            NormalizedRect(
-                minX: min(box.minX, keypoint.x),
-                maxX: max(box.maxX, keypoint.x),
-                minY: min(box.minY, keypoint.y),
-                maxY: max(box.maxY, keypoint.y)
+    private func boundingBox(around points: [CGPoint]) -> NormalizedRect? {
+        guard let first = points.first else { return nil }
+        let firstX = Float(first.x), firstY = Float(first.y)
+
+        return points.dropFirst().reduce(
+            NormalizedRect(minX: firstX, maxX: firstX, minY: firstY, maxY: firstY)
+        ) { box, point in
+            let x = Float(point.x), y = Float(point.y)
+            return NormalizedRect(
+                minX: min(box.minX, x),
+                maxX: max(box.maxX, x),
+                minY: min(box.minY, y),
+                maxY: max(box.maxY, y)
             )
         }
     }

@@ -1,11 +1,11 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
-*Rev 5 · 2026-10-05 · States the principle that a gesture and the control
-that does the same thing play one animation, and applies it to the
-Camera/Home pager: tapping a tab icon now slides the page the way a swipe
-does instead of cutting to it.*
+*Rev 6 · 2026-10-07 · Replaces the Clip Editor's "Reset crop area" button
+with two fits: "Auto crop", which frames every located body part in the clip
+range at the current rotation, and "Auto rotate", which levels the horizon
+read off the clip range's frames.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation.")*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 adds the Clip Editor's Auto crop and Auto rotate.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -371,8 +371,20 @@ default empty state, so it never reads as "your library is empty."
     drag with one finger to reposition the video underneath the fixed marker
     rectangle — the video zooms/rotates/moves, the marker never does, and whatever
     the adjustment pushes outside the frame's own rect stays visible instead of
-    being cut off. A "Reset crop area" button discards the manual adjustment and
-    returns to the algorithm's own framing (issue #9).
+    being cut off. Two buttons fit the video under the marker for the user:
+    "Auto crop" frames every body part the pose model located in the clip
+    range inside the marker, at whatever rotation the video currently has —
+    so after a trim, or after a turn, one tap refits the crop to the range
+    (issue #9); at no rotation that is the algorithm's own framing, and a
+    manual pinch or drag is discarded. "Auto rotate" levels the horizon: it
+    reads the horizon's tilt off frames sampled across the clip range,
+    averages the tilt over the range (the roll can drift during a clip), and
+    turns the video so the horizon lies along the screen's horizontal. The
+    recordings carry no motion data, so the horizon in the picture *is* the
+    roll; a clip with no horizon to find says so in a notice and keeps its
+    rotation. The two are independent one-shot fits: Auto rotate changes only
+    the rotation, so a limb the turn carries out of the marker is Auto crop's
+    to bring back.
   - Scrub bar spanning the whole source video (not a zoomed range around the
     window) with drag handles on start/end — adjusts the trick window from
     issue #8's output; live-updates the crop rect per issue #9 if the window

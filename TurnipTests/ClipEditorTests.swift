@@ -313,16 +313,181 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(viewModel.cropAdjustment.offset, CGSize(width: 190, height: -95))
     }
 
+    // MARK: - Auto crop
+
     @MainActor
-    func testResetCropAdjustmentReturnsToIdentity() {
+    func testAutoCropAtZeroRotationReturnsToTheAlgorithmsOwnFraming() {
+        // `cropRect` already follows the window, so at zero rotation the fit is exactly
+        // that rect: the manual pinch and drag go, and the adjustment is identity — exactly,
+        // not within float dust, since the zero case never rotates.
         let viewModel = makeViewModel()
 
         viewModel.applyCropScale(2)
-        viewModel.applyCropRotation(.pi)
         viewModel.applyCropOffset(CGSize(width: 10, height: 10), previewScale: 1)
-        viewModel.resetCropAdjustment()
+        viewModel.autoCrop()
 
         XCTAssertEqual(viewModel.cropAdjustment, .identity)
+    }
+
+    /// Keypoints at the corners of a box three times as tall as it is wide, on a portrait
+    /// frame. The calculator pads each side by a quarter and then widens the box to the
+    /// target ratio, so the marker has room to spare around a small turn; a 45° turn of
+    /// this tall box carries its lower corners out of the marker's sides.
+    private func tallBoxFrames() -> [PoseFrameResult] {
+        [
+            PoseFixture.frame(index: 20, hip: (x: 0.7, y: 0.8), upperBody: (x: 0.3, y: 0.2)),
+            PoseFixture.frame(index: 21, hip: (x: 0.3, y: 0.8), upperBody: (x: 0.7, y: 0.2))
+        ]
+    }
+
+    /// Where a displayed-pixel keypoint lands relative to the marker's center under
+    /// `adjustment` — the editor's and the export's shared mapping: scale and rotation
+    /// about the crop center, then the offset in screen space.
+    private func markerPosition(
+        of point: CGPoint, cropRect: CGRect, adjustment: CropAdjustment
+    ) -> CGPoint {
+        let turned = CGPoint(x: point.x - cropRect.midX, y: point.y - cropRect.midY)
+            .applying(CGAffineTransform(rotationAngle: adjustment.rotationRadians))
+        return CGPoint(
+            x: turned.x * adjustment.scale + adjustment.offset.width,
+            y: turned.y * adjustment.scale + adjustment.offset.height)
+    }
+
+    @MainActor
+    func testAutoCropKeepsEveryKeypointInsideTheMarkerAtTheCurrentRotation() throws {
+        let frames = tallBoxFrames()
+        let viewModel = ClipEditorViewModel(
+            source: makeSource(window: TrickWindow(startTime: 2, endTime: 2.3), frames: frames))
+        viewModel.setMediaInfo(
+            duration: duration, naturalSize: CGSize(width: 100, height: 200), preferredTransform: .identity)
+        let rotation = Double.pi / 4
+        viewModel.applyCropRotation(rotation)
+        let overlay = try XCTUnwrap(viewModel.previewOverlay)
+        let keypoints = CropRectCalculator.locatedPoints(in: frames).map {
+            CGPoint(x: $0.x * overlay.videoSize.width, y: $0.y * overlay.videoSize.height)
+        }
+        let halfWidth = overlay.cropRect.width / 2, halfHeight = overlay.cropRect.height / 2
+        // Sanity: the turn alone pushes a keypoint out of the marker, so the fit has
+        // something to do.
+        XCTAssertTrue(keypoints.contains { point in
+            let position = markerPosition(
+                of: point, cropRect: overlay.cropRect, adjustment: viewModel.cropAdjustment)
+            return abs(position.x) > halfWidth || abs(position.y) > halfHeight
+        })
+
+        viewModel.autoCrop()
+
+        let adjustment = viewModel.cropAdjustment
+        XCTAssertEqual(adjustment.rotationRadians, rotation, accuracy: 0.0001)
+        XCTAssertNotEqual(adjustment, .identity)
+        for point in keypoints {
+            let position = markerPosition(of: point, cropRect: overlay.cropRect, adjustment: adjustment)
+            XCTAssertLessThanOrEqual(abs(position.x), halfWidth + 0.01, "\(point) left the marker")
+            XCTAssertLessThanOrEqual(abs(position.y), halfHeight + 0.01, "\(point) left the marker")
+        }
+    }
+
+    @MainActor
+    func testAutoCropWithNoKeypointsInTheWindowLeavesTheAdjustmentAlone() {
+        // No frames fall in this window: there is nothing to frame, and a fit to nothing
+        // must not stomp the adjustment.
+        let viewModel = makeViewModel(window: TrickWindow(startTime: 10, endTime: 13))
+
+        viewModel.applyCropScale(2)
+        viewModel.autoCrop()
+
+        XCTAssertEqual(viewModel.cropAdjustment.scale, 2, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testAutoCropBeforeMediaInfoLoadsIsANoOp() {
+        let viewModel = ClipEditorViewModel(source: makeSource(frames: twoPositionFrames()))
+
+        viewModel.applyCropScale(2)
+        viewModel.autoCrop()
+
+        XCTAssertEqual(viewModel.cropAdjustment.scale, 2, accuracy: 0.0001)
+    }
+
+    func testCalculatorKeepsAPointPastTheFrameEdgeWhenNotSlidIntoFrame() throws {
+        // The rotated fit's reason for skipping the slide: a point rotation carried past
+        // the frame edge must stay in the rect, where the slide would push the rect off it.
+        let calculator = CropRectCalculator()
+        let points = [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 1.05, y: 0.6)]
+        let size = CGSize(width: 200, height: 100)
+
+        let slid = try XCTUnwrap(calculator.cropRect(around: points, renderedPixelSize: size))
+        let unslid = try XCTUnwrap(
+            calculator.cropRect(around: points, renderedPixelSize: size, slidIntoFrame: false))
+
+        XCTAssertEqual(slid.maxX, 1, accuracy: 0.0001)
+        XCTAssertGreaterThanOrEqual(unslid.maxX, 1.05)
+        XCTAssertEqual(slid.width, unslid.width, accuracy: 0.0001)
+    }
+
+    // MARK: - Auto rotate
+
+    /// A view model over a one-second clip whose horizon tilts `HorizonVideoFixture.tilt`
+    /// clockwise, with media info loaded so Auto rotate has a window to sample. The movie
+    /// file goes with the test's teardown.
+    @MainActor
+    private func makeHorizonViewModel() async throws -> ClipEditorViewModel {
+        let url = try await HorizonVideoFixture.write(tilt: HorizonVideoFixture.tilt, width: 320, height: 180)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        let viewModel = ClipEditorViewModel(source: ClipEditorSource(
+            window: TrickWindow(startTime: 0, endTime: 1),
+            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+            asset: AVURLAsset(url: url),
+            poseFrames: []))
+        viewModel.setMediaInfo(
+            duration: 1, naturalSize: CGSize(width: 320, height: 180), preferredTransform: .identity)
+        return viewModel
+    }
+
+    @MainActor
+    func testAutoRotateBeforeMediaInfoLoadsIsANoOp() {
+        let viewModel = ClipEditorViewModel(source: makeSource(frames: []))
+
+        viewModel.autoRotate()
+
+        XCTAssertFalse(viewModel.isDetectingHorizon)
+    }
+
+    @MainActor
+    func testTeardownCancelsADetectionInFlight() async throws {
+        let viewModel = try await makeHorizonViewModel()
+
+        viewModel.autoRotate()
+        XCTAssertTrue(viewModel.isDetectingHorizon)
+        viewModel.teardown()
+
+        XCTAssertFalse(viewModel.isDetectingHorizon)
+        // A cancelled detection must not land late: give it the time it would have taken.
+        try await Task.sleep(for: .seconds(2))
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0)
+        XCTAssertFalse(viewModel.isShowingNoHorizonNotice)
+    }
+
+    @MainActor
+    func testAutoRotateLevelsTheWindowsHorizon() async throws {
+        // A clip whose horizon tilts clockwise on screen: the button must turn the video
+        // counterclockwise by the same angle, replacing (not adding to) the rotation in place.
+        let viewModel = try await makeHorizonViewModel()
+        viewModel.applyCropRotation(1)
+        viewModel.applyCropScale(2)
+
+        viewModel.autoRotate()
+        XCTAssertTrue(viewModel.isDetectingHorizon)
+        let deadline = Date().addingTimeInterval(20)
+        while viewModel.isDetectingHorizon, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        XCTAssertFalse(viewModel.isDetectingHorizon)
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, -HorizonVideoFixture.tilt, accuracy: 0.03)
+        // The fit only touches the rotation.
+        XCTAssertEqual(viewModel.cropAdjustment.scale, 2, accuracy: 0.0001)
+        XCTAssertFalse(viewModel.isShowingNoHorizonNotice)
     }
 
     @MainActor
