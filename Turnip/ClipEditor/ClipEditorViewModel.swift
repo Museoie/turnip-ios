@@ -302,15 +302,12 @@ final class ClipEditorViewModel: ObservableObject {
     ///
     /// The marker shows the video turned by the rotation about the crop rect's center, so
     /// the fit runs in that turned space: each keypoint is rotated about the center, the
-    /// same calculator that produced the pipeline's rects frames the rotated set, and the
-    /// rect it produces is expressed as what scale and offset land it on the marker: the
-    /// marker spans `markerBox` in displayed pixels, so the scale is the two widths'
-    /// ratio, and the offset moves the rect's center onto the marker's in screen space,
-    /// after the scale. The calculator's
-    /// slide back into the frame applies only at zero rotation, where it reproduces the
-    /// pipeline's own rect for the window: in a turned space the frame's edges aren't
-    /// axis-aligned, and the slide would move the rect off a keypoint the rotation carried
-    /// past them.
+    /// same calculator that produced the pipeline's rects frames the rotated set (minus
+    /// its slide back into the frame — `containedInFrame` does that, for any rotation),
+    /// the rect is moved and if need be shrunk to lie inside the video, and the result is
+    /// expressed as what scale and offset land it on the marker: the marker spans
+    /// `markerBox` in displayed pixels, so the scale is the two widths' ratio, and the
+    /// offset moves the rect's center onto the marker's in screen space, after the scale.
     nonisolated static func autoCropAdjustment(
         normalizedKeypoints: [CGPoint],
         cropRect: CGRect,
@@ -332,15 +329,58 @@ final class ClipEditorViewModel: ObservableObject {
                 y: (turned.y + center.y) / videoSize.height)
         }
         guard let fit = calculator.cropRect(
-                  around: turnedKeypoints, renderedPixelSize: videoSize, slidIntoFrame: rotationRadians == 0)?
+                  around: turnedKeypoints, renderedPixelSize: videoSize, slidIntoFrame: false)?
                   .denormalized(in: videoSize),
               fit.width > 0, fit.height > 0
         else { return nil }
-        let scale = clampedScale(min(marker.width / fit.width, marker.height / fit.height))
+        let contained = containedInFrame(
+            fit.offsetBy(dx: -center.x, dy: -center.y),
+            frameSize: videoSize, cropCenter: center, rotationRadians: rotationRadians)
+        let scale = clampedScale(marker.width / contained.width)
         return CropAdjustment(
             scale: scale,
             rotationRadians: rotationRadians,
-            offset: CGSize(width: (center.x - fit.midX) * scale, height: (center.y - fit.midY) * scale))
+            offset: CGSize(width: -contained.midX * scale, height: -contained.midY * scale))
+    }
+
+    /// `box` — an axis-aligned rect in the turned space, relative to the crop center —
+    /// moved, and if it has to be shrunk at its own aspect ratio, so that it lies inside
+    /// the video: the crop then shows video in every part of it, never the black beyond
+    /// the frame's edge. In the turned space the frame is its own rect turned by the
+    /// rotation about the crop center, so "inside" is measured along the frame's own two
+    /// axes: the box's extent along the frame's width axis is `|cos| · w + |sin| · h`
+    /// (and `|sin| · w + |cos| · h` along its height), it fits when both are no more than
+    /// the frame's, and its center may then sit anywhere within the slack that leaves —
+    /// a rect in the frame's axes, so the nearest allowed center is the box's own center
+    /// clamped axis by axis. A box too big to fit is shrunk to the widest that does and
+    /// centered where the slack is zero; the keypoints it was fitted to may then fall
+    /// outside it, since no crop of this ratio can hold them all and stay inside the video.
+    /// At zero rotation this is the calculator's own slide back into the frame, except
+    /// that an axis longer than the frame shrinks to it rather than overhanging it.
+    nonisolated static func containedInFrame(
+        _ box: CGRect, frameSize: CGSize, cropCenter: CGPoint, rotationRadians: Double
+    ) -> CGRect {
+        guard box.width > 0, box.height > 0, frameSize.width > 0, frameSize.height > 0 else { return box }
+        let cosine = cos(rotationRadians), sine = sin(rotationRadians)
+        let ratio = box.width / box.height
+        let widestFitting = min(
+            frameSize.width / (abs(cosine) + abs(sine) / ratio),
+            frameSize.height / (abs(sine) + abs(cosine) / ratio))
+        let width = min(box.width, widestFitting), height = width / ratio
+        let slackAlongWidth = max(0, (frameSize.width - (abs(cosine) * width + abs(sine) * height)) / 2)
+        let slackAlongHeight = max(0, (frameSize.height - (abs(sine) * width + abs(cosine) * height)) / 2)
+        // The frame's center and axes in the turned space.
+        let frameCenter = CGPoint(
+            x: frameSize.width / 2 - cropCenter.x, y: frameSize.height / 2 - cropCenter.y
+        ).applying(CGAffineTransform(rotationAngle: rotationRadians))
+        let widthAxis = CGPoint(x: cosine, y: sine), heightAxis = CGPoint(x: -sine, y: cosine)
+        let delta = CGPoint(x: box.midX - frameCenter.x, y: box.midY - frameCenter.y)
+        let alongWidth = min(max(delta.x * widthAxis.x + delta.y * widthAxis.y, -slackAlongWidth), slackAlongWidth)
+        let alongHeight = min(max(delta.x * heightAxis.x + delta.y * heightAxis.y, -slackAlongHeight), slackAlongHeight)
+        let center = CGPoint(
+            x: frameCenter.x + alongWidth * widthAxis.x + alongHeight * heightAxis.x,
+            y: frameCenter.y + alongWidth * widthAxis.y + alongHeight * heightAxis.y)
+        return CGRect(x: center.x - width / 2, y: center.y - height / 2, width: width, height: height)
     }
 
     /// The crop marker's extent in displayed pixels: the smallest rect of `aspectRatio`

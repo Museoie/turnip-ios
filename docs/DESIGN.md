@@ -67,7 +67,7 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
   3. Run pose detection, extract hip-midpoint per frame
   4. Motion signal = frame-to-frame hip displacement, smoothed (3-sample moving average)
   5. Peak detection with sustained-above-threshold logic → list of trick windows
-  6. Crop rect = union of 17 keypoints across window (confidence-filtered), expanded 25%, snapped to aspect ratio
+  6. Crop rect = union of 17 keypoints across window (confidence-filtered), expanded 10%, snapped to aspect ratio
   7. Export N clips per input
 
   See "Interpreting pose output" below for the concrete algorithm turning pose keypoints into `(start_time, end_time)[]` clip ranges and `(min_x, max_x, min_y, max_y)` crop rects.
@@ -132,7 +132,7 @@ Output: list of `(start_time, end_time)` in seconds.
 - Per-frame bounding box = min/max of confidence-filtered (`> 0.3`) keypoints
 - Union across all frames in the window
 - Grow a box smaller than 5% of the rendered frame's shorter axis around its own center: a one-keypoint or tight-cluster window is not a located athlete, and without the floor it collapses to a zero-area (or near-zero-area) rect the export then upscales to the full output size
-- Expand 25% each side for breathing room + pose undershoot at edges
+- Expand 10% each side: the keypoints are joints, so the box stops at the eyes, wrists and ankles, and a tenth reaches the top of the head, the hands and the feet with a little air (25% framed the athlete loosely enough to read as the crop missing them)
 - Snap to target aspect ratio (9:16 for Reels default): grow the shorter axis around the box center. The ratio is measured on the box's *pixel* size, not its normalized size — a normalized unit is a fraction of its own axis, so a normalized 9:16 rect on a 1080x1920 source is 9:16 twice over
 - Slide back inside `[0, 1]` if expansion pushes past a frame edge, which keeps the ratio; an axis longer than the frame stays longer and is centered on the frame instead, overhanging it equally at both ends, so the rect is always the target ratio — the editor's fixed crop marker and the export's output size both rely on that — and the clip letterboxes (black beyond the frame) on that axis rather than cropping tighter
 - Denormalize by multiplying by source video's pixel dimensions → final `(min_x, max_x, min_y, max_y)`

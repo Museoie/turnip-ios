@@ -42,8 +42,11 @@ struct NormalizedRect: Hashable, Sendable {
 struct CropRectCalculator: Sendable {
     /// Width over height of the exported clip, in pixels.
     let targetAspectRatio: Float
-    /// Fraction of the athlete's bounding box added to each of its four sides, covering both
-    /// breathing room and the pose model's tendency to undershoot limbs at the frame edge.
+    /// Fraction of the athlete's bounding box added to each of its four sides. The keypoints
+    /// are joints, so the box stops at the eyes, wrists and ankles; a tenth of the box per
+    /// side reaches the top of the head, the hands and the feet with a little air around
+    /// them and no more — a quarter framed the athlete loosely enough to read as the crop
+    /// missing them.
     let paddingFraction: Float
     /// Minimum extent of the athlete's bounding box, as a fraction of the rendered frame's
     /// shorter axis. Applied to the raw box before padding: a box smaller than this is not a
@@ -55,7 +58,7 @@ struct CropRectCalculator: Sendable {
     /// on both orientations.
     let minimumExtentFraction: Float
 
-    init(targetAspectRatio: Float = 9.0 / 16.0, paddingFraction: Float = 0.25,
+    init(targetAspectRatio: Float = 9.0 / 16.0, paddingFraction: Float = 0.1,
          minimumExtentFraction: Float = 0.05) {
         precondition(targetAspectRatio > 0, "targetAspectRatio is width over height and must be positive")
         precondition(paddingFraction >= 0, "paddingFraction adds to each side and cannot be negative")
@@ -77,13 +80,12 @@ struct CropRectCalculator: Sendable {
     }
 
     /// The same rect, around points already located in the frame's normalized space — the
-    /// clip editor's Auto Crop hands in the window's keypoints rotated about the crop
+    /// clip editor's Auto crop hands in the window's keypoints rotated about the crop
     /// center, so the rect frames them as the rotated video shows them. In that rotated
     /// space the frame's own edges are no longer axis-aligned, which is what
-    /// `slidIntoFrame` is for: the slide treats `[0, 1]` as the frame, and a point that
-    /// rotation carried past 1 would be slid out of the rect — so a rotated caller passes
-    /// `false` and keeps every point in the rect at the cost of the overhang the rotation
-    /// causes anyway. `nil` for no points or an unknown frame size.
+    /// `slidIntoFrame` is for: the slide treats `[0, 1]` as the frame, which is only the
+    /// frame when nothing is rotated — so the editor passes `false` and slides (or shrinks)
+    /// the rect into the turned frame itself. `nil` for no points or an unknown frame size.
     func cropRect(
         around points: [CGPoint], renderedPixelSize: CGSize, slidIntoFrame: Bool = true
     ) -> NormalizedRect? {

@@ -77,8 +77,13 @@ final class ClipEditorTests: XCTestCase {
     /// alone when the window is narrowed back.
     @MainActor
     func testAutoCropFitsTheTrimmedWindowsKeypoints() throws {
+        // A portrait frame: the athlete's whole travel fits a 9:16 crop inside it, so the
+        // fit can hold every keypoint without reaching past the frame.
         let frames = twoPositionFrames()
-        let viewModel = makeViewModel(window: TrickWindow(startTime: 0, endTime: 3.9), frames: frames)
+        let viewModel = ClipEditorViewModel(
+            source: makeSource(window: TrickWindow(startTime: 0, endTime: 3.9), frames: frames))
+        viewModel.setMediaInfo(
+            duration: duration, naturalSize: CGSize(width: 100, height: 200), preferredTransform: .identity)
         let overlay = try XCTUnwrap(viewModel.previewOverlay)
 
         viewModel.autoCrop()
@@ -108,8 +113,8 @@ final class ClipEditorTests: XCTestCase {
     @MainActor
     func testAutoCropAtZeroRotationReproducesThePipelinesFraming() {
         // A clip that opens on the pipeline's rect for its window: the fit is that same
-        // rect, so a manual pinch and drag go and the adjustment is identity — exactly,
-        // since the same calculator runs on the same frames.
+        // rect, so a manual pinch and drag go and the adjustment is identity — to within
+        // the float dust the pipeline's Float rect carries into the marker's ratio.
         let frames = twoPositionFrames()
         let window = TrickWindow(startTime: 2, endTime: 3.9)
         let pipelineRect = CropRectCalculator().cropRect(
@@ -127,7 +132,10 @@ final class ClipEditorTests: XCTestCase {
         viewModel.applyCropOffset(CGSize(width: 10, height: 10), previewScale: 1)
         viewModel.autoCrop()
 
-        XCTAssertEqual(viewModel.cropAdjustment, .identity)
+        XCTAssertEqual(viewModel.cropAdjustment.scale, 1, accuracy: 0.00001)
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0)
+        XCTAssertEqual(viewModel.cropAdjustment.offset.width, 0, accuracy: 0.001)
+        XCTAssertEqual(viewModel.cropAdjustment.offset.height, 0, accuracy: 0.001)
     }
 
     @MainActor
@@ -371,15 +379,48 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(viewModel.cropAdjustment.offset, CGSize(width: 190, height: -95))
     }
 
-    /// Keypoints at the corners of a box three times as tall as it is wide, on a portrait
-    /// frame. The calculator pads each side by a quarter and then widens the box to the
-    /// target ratio, so the marker has room to spare around a small turn; a 45° turn of
-    /// this tall box carries its lower corners out of the marker's sides.
-    private func tallBoxFrames() -> [PoseFrameResult] {
+    /// Keypoints at the corners of a box in the middle of a portrait frame, small enough
+    /// that its fit at a modest turn still lies inside the frame.
+    private func centeredBoxFrames() -> [PoseFrameResult] {
         [
-            PoseFixture.frame(index: 20, hip: (x: 0.7, y: 0.8), upperBody: (x: 0.3, y: 0.2)),
-            PoseFixture.frame(index: 21, hip: (x: 0.3, y: 0.8), upperBody: (x: 0.7, y: 0.2))
+            PoseFixture.frame(index: 20, hip: (x: 0.65, y: 0.7), upperBody: (x: 0.35, y: 0.3)),
+            PoseFixture.frame(index: 21, hip: (x: 0.35, y: 0.7), upperBody: (x: 0.65, y: 0.3))
         ]
+    }
+
+    /// The video point a position relative to the marker's center shows, under
+    /// `adjustment`: the inverse of `markerPosition`.
+    private func videoPoint(
+        atMarkerPosition position: CGPoint, cropRect: CGRect, adjustment: CropAdjustment
+    ) -> CGPoint {
+        let unscaled = CGPoint(
+            x: (position.x - adjustment.offset.width) / adjustment.scale,
+            y: (position.y - adjustment.offset.height) / adjustment.scale)
+        let unturned = unscaled.applying(CGAffineTransform(rotationAngle: -adjustment.rotationRadians))
+        return CGPoint(x: unturned.x + cropRect.midX, y: unturned.y + cropRect.midY)
+    }
+
+    /// Asserts the marker shows video in every part of it: its four corners map to points
+    /// inside the frame.
+    private func assertMarkerInsideTheVideo(
+        overlay: (videoSize: CGSize, cropRect: CGRect), adjustment: CropAdjustment,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let marker = ClipEditorViewModel.markerBox(around: overlay.cropRect, aspectRatio: 9.0 / 16.0)
+        for (signX, signY) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            let corner = CGPoint(x: signX * marker.width / 2, y: signY * marker.height / 2)
+            let shown = videoPoint(atMarkerPosition: corner, cropRect: overlay.cropRect, adjustment: adjustment)
+            XCTAssertGreaterThanOrEqual(
+                shown.x, -0.01, "corner \(corner) shows past the left edge", file: file, line: line)
+            XCTAssertGreaterThanOrEqual(
+                shown.y, -0.01, "corner \(corner) shows past the top edge", file: file, line: line)
+            XCTAssertLessThanOrEqual(
+                shown.x, overlay.videoSize.width + 0.01, "corner \(corner) shows past the right edge",
+                file: file, line: line)
+            XCTAssertLessThanOrEqual(
+                shown.y, overlay.videoSize.height + 0.01, "corner \(corner) shows past the bottom edge",
+                file: file, line: line)
+        }
     }
 
     /// Where a displayed-pixel keypoint lands relative to the marker's center under
@@ -397,21 +438,22 @@ final class ClipEditorTests: XCTestCase {
 
     @MainActor
     func testAutoCropKeepsEveryKeypointInsideTheMarkerAtTheCurrentRotation() throws {
-        let frames = tallBoxFrames()
+        let frames = centeredBoxFrames()
         let viewModel = ClipEditorViewModel(
             source: makeSource(window: TrickWindow(startTime: 2, endTime: 2.3), frames: frames))
         viewModel.setMediaInfo(
             duration: duration, naturalSize: CGSize(width: 100, height: 200), preferredTransform: .identity)
-        let rotation = Double.pi / 4
+        let rotation = Double.pi / 18
         viewModel.applyCropRotation(rotation)
+        // Zoomed in by hand: the keypoints sit outside the marker, so the fit has
+        // something to do.
+        viewModel.applyCropScale(3)
         let overlay = try XCTUnwrap(viewModel.previewOverlay)
         let keypoints = CropRectCalculator.locatedPoints(in: frames).map {
             CGPoint(x: $0.x * overlay.videoSize.width, y: $0.y * overlay.videoSize.height)
         }
         let marker = ClipEditorViewModel.markerBox(around: overlay.cropRect, aspectRatio: 9.0 / 16.0)
         let halfWidth = marker.width / 2, halfHeight = marker.height / 2
-        // Sanity: the turn alone pushes a keypoint out of the marker, so the fit has
-        // something to do.
         XCTAssertTrue(keypoints.contains { point in
             let position = markerPosition(
                 of: point, cropRect: overlay.cropRect, adjustment: viewModel.cropAdjustment)
@@ -422,11 +464,102 @@ final class ClipEditorTests: XCTestCase {
 
         let adjustment = viewModel.cropAdjustment
         XCTAssertEqual(adjustment.rotationRadians, rotation, accuracy: 0.0001)
-        XCTAssertNotEqual(adjustment, .identity)
         for point in keypoints {
             let position = markerPosition(of: point, cropRect: overlay.cropRect, adjustment: adjustment)
             XCTAssertLessThanOrEqual(abs(position.x), halfWidth + 0.01, "\(point) left the marker")
             XCTAssertLessThanOrEqual(abs(position.y), halfHeight + 0.01, "\(point) left the marker")
+        }
+        assertMarkerInsideTheVideo(overlay: overlay, adjustment: adjustment)
+    }
+
+    /// The whole crop shows video: on a landscape clip whose athlete spans most of the
+    /// width, a 9:16 crop around all of it would reach past the top and bottom of the
+    /// frame, so the fit zooms to the frame's height instead of letterboxing.
+    @MainActor
+    func testAutoCropKeepsTheMarkerInsideTheVideo() throws {
+        let viewModel = makeViewModel(window: TrickWindow(startTime: 0, endTime: 4), frames: twoPositionFrames())
+        let overlay = try XCTUnwrap(viewModel.previewOverlay)
+        XCTAssertEqual(overlay.videoSize, CGSize(width: 200, height: 100))
+
+        viewModel.autoCrop()
+
+        assertMarkerInsideTheVideo(overlay: overlay, adjustment: viewModel.cropAdjustment)
+        // Zoomed in: the crop's footprint is the frame's full height, a 56.25-wide box
+        // shown in the marker — which, around this landscape full-frame anchor, is the
+        // anchor's 200 width tall enough for 9:16.
+        XCTAssertEqual(viewModel.cropAdjustment.scale, 200 / 56.25, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testAutoCropKeepsTheMarkerInsideTheVideoWhenRotated() throws {
+        let viewModel = makeViewModel(window: TrickWindow(startTime: 0, endTime: 4), frames: twoPositionFrames())
+        viewModel.applyCropRotation(.pi / 9)
+        let overlay = try XCTUnwrap(viewModel.previewOverlay)
+
+        viewModel.autoCrop()
+
+        assertMarkerInsideTheVideo(overlay: overlay, adjustment: viewModel.cropAdjustment)
+    }
+
+    // MARK: - Containment
+
+    func testContainedBoxInsideTheFrameIsUnchanged() {
+        let box = CGRect(x: -20, y: -40, width: 45, height: 80)
+        let contained = ClipEditorViewModel.containedInFrame(
+            box, frameSize: CGSize(width: 1080, height: 1920), cropCenter: CGPoint(x: 540, y: 960), rotationRadians: 0)
+
+        XCTAssertEqual(contained, box)
+    }
+
+    func testContainedBoxPastAnEdgeSlidesBackByItsOverhang() {
+        // Crop center at (100, 100) in a 200x100 frame: a box reaching x 130 in the turned
+        // space shows the frame's right edge at x 100. It slides left by 30 and keeps its size.
+        let box = CGRect(x: 80, y: -20, width: 50, height: 40)
+        let contained = ClipEditorViewModel.containedInFrame(
+            box, frameSize: CGSize(width: 200, height: 100), cropCenter: CGPoint(x: 100, y: 50), rotationRadians: 0)
+
+        XCTAssertEqual(contained.maxX, 100, accuracy: 0.0001)
+        XCTAssertEqual(contained.size, box.size)
+        XCTAssertEqual(contained.midY, box.midY, accuracy: 0.0001)
+    }
+
+    func testContainedBoxTallerThanTheFrameShrinksToItAtItsOwnRatio() {
+        let box = CGRect(x: -30, y: -80, width: 60, height: 160)
+        let contained = ClipEditorViewModel.containedInFrame(
+            box, frameSize: CGSize(width: 200, height: 100), cropCenter: CGPoint(x: 100, y: 50), rotationRadians: 0)
+
+        XCTAssertEqual(contained.height, 100, accuracy: 0.0001)
+        XCTAssertEqual(contained.width, 37.5, accuracy: 0.0001)
+        XCTAssertEqual(contained.midY, 0, accuracy: 0.0001)
+    }
+
+    func testContainedBoxFitsTheTurnedFrame() {
+        // A 200x100 frame turned a quarter turn about its center is 100 wide and 200 tall
+        // in the turned space: a 60x160 box fits it whole, where it couldn't unturned.
+        let box = CGRect(x: -30, y: -80, width: 60, height: 160)
+        let contained = ClipEditorViewModel.containedInFrame(
+            box, frameSize: CGSize(width: 200, height: 100), cropCenter: CGPoint(x: 100, y: 50),
+            rotationRadians: .pi / 2)
+
+        XCTAssertEqual(contained.size.width, 60, accuracy: 0.0001)
+        XCTAssertEqual(contained.size.height, 160, accuracy: 0.0001)
+    }
+
+    func testContainedBoxCornersLieInsideAnObliquelyTurnedFrame() {
+        let frame = CGSize(width: 200, height: 100), center = CGPoint(x: 60, y: 30), rotation = 0.5
+        let box = CGRect(x: 50, y: 10, width: 90, height: 160)
+        let contained = ClipEditorViewModel.containedInFrame(
+            box, frameSize: frame, cropCenter: center, rotationRadians: rotation)
+
+        XCTAssertEqual(contained.width / contained.height, box.width / box.height, accuracy: 0.0001)
+        let unturn = CGAffineTransform(rotationAngle: -rotation)
+        for corner in [CGPoint(x: contained.minX, y: contained.minY), CGPoint(x: contained.maxX, y: contained.minY),
+                       CGPoint(x: contained.minX, y: contained.maxY), CGPoint(x: contained.maxX, y: contained.maxY)] {
+            let shown = corner.applying(unturn)
+            XCTAssertGreaterThanOrEqual(shown.x + center.x, -0.01)
+            XCTAssertGreaterThanOrEqual(shown.y + center.y, -0.01)
+            XCTAssertLessThanOrEqual(shown.x + center.x, frame.width + 0.01)
+            XCTAssertLessThanOrEqual(shown.y + center.y, frame.height + 0.01)
         }
     }
 
@@ -453,8 +586,9 @@ final class ClipEditorTests: XCTestCase {
     }
 
     func testCalculatorKeepsAPointPastTheFrameEdgeWhenNotSlidIntoFrame() throws {
-        // The rotated fit's reason for skipping the slide: a point rotation carried past
-        // the frame edge must stay in the rect, where the slide would push the rect off it.
+        // Auto crop's reason for skipping the calculator's slide: in a turned space the
+        // frame isn't `[0, 1]`, so the editor contains the rect itself, and the calculator
+        // must hand it the unslid rect around every point.
         let calculator = CropRectCalculator()
         let points = [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 1.05, y: 0.6)]
         let size = CGSize(width: 200, height: 100)

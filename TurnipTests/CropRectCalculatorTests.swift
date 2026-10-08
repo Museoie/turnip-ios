@@ -71,18 +71,18 @@ final class CropRectCalculatorTests: XCTestCase {
 
         let rect = CropRectCalculator().cropRect(for: frames, renderedPixelSize: square)
 
-        // Union x 0.40-0.55, y 0.35-0.65; padded to 0.225 x 0.45; 9:16 wants 0.253125 wide.
-        assertRect(rect, minX: 0.3484375, maxX: 0.6015625, minY: 0.275, maxY: 0.725)
+        // Union x 0.40-0.55, y 0.35-0.65; padded to 0.18 x 0.36; 9:16 wants 0.2025 wide.
+        assertRect(rect, minX: 0.37375, maxX: 0.57625, minY: 0.32, maxY: 0.68)
     }
 
-    func testPaddingExpandsEachSideByAQuarterOfTheBox() {
-        // 0.09 x 0.16 is already 9:16 on a square source, and padding scales both axes by 1.5,
+    func testPaddingExpandsEachSideByATenthOfTheBox() {
+        // 0.09 x 0.16 is already 9:16 on a square source, and padding scales both axes by 1.2,
         // so the aspect snap is a no-op here and the assertion sees padding alone.
         let frames = [frame(confident([(x: 0.455, y: 0.42), (x: 0.545, y: 0.58)]))]
 
         let rect = CropRectCalculator().cropRect(for: frames, renderedPixelSize: square)
 
-        assertRect(rect, minX: 0.4325, maxX: 0.5675, minY: 0.38, maxY: 0.62)
+        assertRect(rect, minX: 0.446, maxX: 0.554, minY: 0.404, maxY: 0.596)
     }
 
     func testBoxTallerThanTargetRatioGrowsWidthAroundTheCenter() {
@@ -90,29 +90,29 @@ final class CropRectCalculatorTests: XCTestCase {
 
         let rect = CropRectCalculator().cropRect(for: frames, renderedPixelSize: square)
 
-        // Padded 0.15 x 0.90. Height is untouched; width grows to 0.9 * 9/16 around x 0.5.
-        assertRect(rect, minX: 0.246875, maxX: 0.753125, minY: 0.05, maxY: 0.95)
+        // Padded 0.12 x 0.72. Height is untouched; width grows to 0.72 * 9/16 around x 0.5.
+        assertRect(rect, minX: 0.2975, maxX: 0.7025, minY: 0.14, maxY: 0.86)
     }
 
     func testRectOverhangingTheFrameEdgeSlidesInsideAndKeepsTheTargetRatio() {
-        let frames = [frame(confident([(x: 0.02, y: 0.40), (x: 0.12, y: 0.50)]))]
+        let frames = [frame(confident([(x: 0.00, y: 0.40), (x: 0.10, y: 0.50)]))]
 
         let rect = CropRectCalculator().cropRect(for: frames, renderedPixelSize: square)
 
-        // Padding pushes minX to -0.005; the rect still fits, so it slides right instead of
-        // being cut down, and stays 0.15 x 0.2666 = 9:16.
-        assertRect(rect, minX: 0, maxX: 0.15, minY: 0.3166667, maxY: 0.5833333)
+        // Padding pushes minX to -0.01; the rect still fits, so it slides right instead of
+        // being cut down, and stays 0.12 x 0.2133 = 9:16.
+        assertRect(rect, minX: 0, maxX: 0.12, minY: 0.3433333, maxY: 0.5566667)
     }
 
     func testRectTallerThanTheFrameOverhangsItCenteredAndKeepsTheTargetRatio() throws {
-        let frames = [frame(confident([(x: 0.30, y: 0.35), (x: 0.70, y: 0.65)]))]
+        let frames = [frame(confident([(x: 0.20, y: 0.35), (x: 0.80, y: 0.65)]))]
 
         let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: square))
 
-        // 9:16 on a 0.6-wide box wants 1.0667 of height, which no slide can fit. Width keeps
+        // 9:16 on a 0.72-wide box wants 1.28 of height, which no slide can fit. Width keeps
         // the whole athlete rather than shrinking to restore the ratio, and the height
         // overhangs the frame equally top and bottom — the rect stays 9:16, letterboxed.
-        assertRect(rect, minX: 0.2, maxX: 0.8, minY: -0.0333333, maxY: 1.0333333)
+        assertRect(rect, minX: 0.14, maxX: 0.86, minY: -0.14, maxY: 1.14)
         let pixels = rect.denormalized(in: square)
         XCTAssertEqual(Float(pixels.width / pixels.height), 9.0 / 16.0, accuracy: 0.00001)
     }
@@ -130,12 +130,12 @@ final class CropRectCalculatorTests: XCTestCase {
 
         let rect = CropRectCalculator().cropRect(for: frames, renderedPixelSize: square)
 
-        assertRect(rect, minX: 0.425, maxX: 0.575, minY: 0.3666667, maxY: 0.6333333)
+        assertRect(rect, minX: 0.44, maxX: 0.56, minY: 0.3933333, maxY: 0.6066667)
     }
 
     func testAspectRatioIsSnappedInPixelSpaceNotNormalizedSpace() throws {
         let landscape = CGSize(width: 1920, height: 1080)
-        let frames = [frame(confident([(x: 0.45, y: 0.40), (x: 0.55, y: 0.60)]))]
+        let frames = [frame(confident([(x: 0.4375, y: 0.375), (x: 0.5625, y: 0.625)]))]
 
         let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: landscape))
 
@@ -147,7 +147,7 @@ final class CropRectCalculatorTests: XCTestCase {
 
     func testDenormalizedRectIsInSourcePixels() throws {
         let portrait = CGSize(width: 1080, height: 1920)
-        let frames = [frame(confident([(x: 0.40, y: 0.45), (x: 0.60, y: 0.55)]))]
+        let frames = [frame(confident([(x: 0.375, y: 0.4375), (x: 0.625, y: 0.5625)]))]
 
         let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: portrait))
 
@@ -160,7 +160,7 @@ final class CropRectCalculatorTests: XCTestCase {
 
         let rect = CropRectCalculator(targetAspectRatio: 1).cropRect(for: frames, renderedPixelSize: square)
 
-        assertRect(rect, minX: 0.35, maxX: 0.65, minY: 0.35, maxY: 0.65)
+        assertRect(rect, minX: 0.38, maxX: 0.62, minY: 0.38, maxY: 0.62)
     }
 
     func testReturnsNilWhenNoKeypointIsConfident() {
@@ -183,7 +183,7 @@ final class CropRectCalculatorTests: XCTestCase {
 
         // One keypoint is a zero-area box, not a located athlete: the 5%-of-shorter-axis floor
         // grows it to 0.05 x 0.05 around the center before padding and the aspect snap.
-        assertRect(rect, minX: 0.4625, maxX: 0.5375, minY: 0.4333333, maxY: 0.5666667)
+        assertRect(rect, minX: 0.47, maxX: 0.53, minY: 0.4466667, maxY: 0.5533333)
         // The old suite pinned (0.5, 0.5, 0.5, 0.5) here as "finite"; a zero-area rect that
         // every later stage preserves is exactly what the floor exists to prevent.
         let pixels = rect.denormalized(in: square)
@@ -200,24 +200,24 @@ final class CropRectCalculatorTests: XCTestCase {
         let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: portrait))
 
         // The 5%-of-1080 floor grows the 0.01 x 0.005 box to 0.05 x 0.028125 around its
-        // center; padding and the 9:16 snap then give a 0.075 x 0.075 normalized rect.
-        assertRect(rect, minX: 0.4625, maxX: 0.5375, minY: 0.4625, maxY: 0.5375)
-        assertPixelRect(rect.denormalized(in: portrait), x: 499.5, y: 888, width: 81, height: 144)
+        // center; padding and the 9:16 snap then give a 0.06 x 0.06 normalized rect.
+        assertRect(rect, minX: 0.47, maxX: 0.53, minY: 0.47, maxY: 0.53)
+        assertPixelRect(rect.denormalized(in: portrait), x: 507.6, y: 902.4, width: 64.8, height: 115.2)
     }
 
     func testFloorMeansTheSamePixelSizeOnLandscape() throws {
         let landscape = CGSize(width: 1920, height: 1080)
         // The floor is measured against the shorter axis (1080 here), so a single keypoint on
-        // a landscape source lands on the same 81 x 144-pixel rect as the portrait fixture —
-        // only the normalized shape differs (0.0421875 x 0.1333333) because the normalized
+        // a landscape source lands on the same 64.8 x 115.2-pixel rect as the portrait fixture
+        // — only the normalized shape differs (0.03375 x 0.1066667) because the normalized
         // unit is a fraction of each axis. A regression that floored each axis against its
         // own axis (minWidth = 5% of the width, minHeight = 5% of the height) would pad the
-        // single keypoint to 144 x 81 pixels, snap to 144 x 256, and fail this test.
+        // single keypoint to 115.2 x 64.8 pixels, snap to 115.2 x 204.8, and fail this test.
         let frames = [frame(confident([(x: 0.5, y: 0.5)]))]
 
         let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: landscape))
 
-        assertRect(rect, minX: 0.4789063, maxX: 0.5210938, minY: 0.4333333, maxY: 0.5666667)
-        assertPixelRect(rect.denormalized(in: landscape), x: 919.5, y: 468, width: 81, height: 144)
+        assertRect(rect, minX: 0.483125, maxX: 0.516875, minY: 0.4466667, maxY: 0.5533333)
+        assertPixelRect(rect.denormalized(in: landscape), x: 927.6, y: 482.4, width: 64.8, height: 115.2)
     }
 }
