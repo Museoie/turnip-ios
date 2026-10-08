@@ -98,13 +98,16 @@ struct CropRectCalculator: Sendable {
         return slidIntoFrame ? fittedInFrame(snapped) : snapped
     }
 
-    /// The keypoints above the confidence threshold across `frames`, as normalized points:
-    /// the one place the "located" rule lives, for both entry points above.
+    /// The keypoints above the confidence threshold across `frames`, as normalized points
+    /// clamped into the frame: the one place the "located" rule lives, for both entry
+    /// points above. A joint the model places past the frame's edge (`PoseKeypoint`'s
+    /// pad-region values) is a body part the crop can't show anyway, so it counts as
+    /// sitting on the edge rather than pulling the box out past the frame.
     static func locatedPoints(in frames: [PoseFrameResult]) -> [CGPoint] {
         frames.flatMap { frame in
             frame.keypoints.lazy
                 .filter { $0.confidence > PoseKeypoint.confidenceThreshold }
-                .map { CGPoint(x: CGFloat($0.x), y: CGFloat($0.y)) }
+                .map { CGPoint(x: min(max(CGFloat($0.x), 0), 1), y: min(max(CGFloat($0.y), 0), 1)) }
         }
     }
 
@@ -170,21 +173,24 @@ struct CropRectCalculator: Sendable {
         return box.resizedVertically(to: pixelWidth / targetAspectRatio / renderedHeight)
     }
 
-    /// Slides the rect back inside the frame, which preserves the ratio just snapped. An axis
-    /// longer than the frame has nowhere to slide, so it stays longer and is centered on the
-    /// frame instead, overhanging it equally at both ends: the rect keeps the target ratio
-    /// — every consumer relies on that, from the editor's fixed crop marker to the export's
-    /// output size — and the clip letterboxes on that axis (black beyond the frame) rather
-    /// than being squeezed or re-cropped tight enough to cut the athlete off.
+    /// Brings the rect inside the frame, keeping the ratio just snapped: a rect that fits
+    /// slides back in, and one longer than the frame on an axis first shrinks about its
+    /// center — uniformly, so the ratio holds — until it fits, then slides. The rect never
+    /// reaches past the frame: the crop shows video in every part of it, never the black
+    /// beyond the frame's edge, which outranks holding every body part (`docs/UIUX.md`
+    /// § "Clip Detail / Editor") — an athlete crossing more of a landscape frame than a
+    /// 9:16 crop of its height can hold is cut, not letterboxed.
     private func fittedInFrame(_ box: NormalizedRect) -> NormalizedRect {
-        let (minX, maxX) = fitted(lower: box.minX, upper: box.maxX)
-        let (minY, maxY) = fitted(lower: box.minY, upper: box.maxY)
+        guard box.width > 0, box.height > 0 else { return box }
+        // A uniform pixel scale is the same factor on both normalized axes.
+        let shrunk = box.scaled(by: min(1, 1 / box.width, 1 / box.height))
+        let (minX, maxX) = fitted(lower: shrunk.minX, upper: shrunk.maxX)
+        let (minY, maxY) = fitted(lower: shrunk.minY, upper: shrunk.maxY)
         return NormalizedRect(minX: minX, maxX: maxX, minY: minY, maxY: maxY)
     }
 
     private func fitted(lower: Float, upper: Float) -> (Float, Float) {
         let size = upper - lower
-        guard size < 1 else { return ((1 - size) / 2, (1 + size) / 2) }
         if lower < 0 { return (0, size) }
         if upper > 1 { return (1 - size, 1) }
         return (lower, upper)
@@ -194,6 +200,10 @@ struct CropRectCalculator: Sendable {
 private extension NormalizedRect {
     var centerX: Float { (minX + maxX) / 2 }
     var centerY: Float { (minY + maxY) / 2 }
+
+    func scaled(by factor: Float) -> NormalizedRect {
+        resizedHorizontally(to: width * factor).resizedVertically(to: height * factor)
+    }
 
     func resizedHorizontally(to width: Float) -> NormalizedRect {
         NormalizedRect(minX: centerX - width / 2, maxX: centerX + width / 2, minY: minY, maxY: maxY)

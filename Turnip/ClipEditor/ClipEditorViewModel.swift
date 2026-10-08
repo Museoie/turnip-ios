@@ -64,6 +64,11 @@ final class ClipEditorViewModel: ObservableObject {
     private let source: ClipEditorSource
     private let calculator: CropRectCalculator
     private var timeObserver: Any?
+    /// The item's end-of-playback observer: a window ending at the asset's end plays the
+    /// item out, which pauses the player on its own (`AVPlayer`'s default
+    /// `actionAtItemEnd`), and the periodic tick's loop-back seek alone would land on a
+    /// paused player — the preview would stop at the end of the clip instead of looping.
+    private var didPlayToEndObserver: NSObjectProtocol?
     private var naturalSize: CGSize?
     private var preferredTransform = CGAffineTransform.identity
     /// The in-flight Auto rotate detection, kept so `teardown()` can cancel it: the
@@ -241,6 +246,10 @@ final class ClipEditorViewModel: ObservableObject {
         if let timeObserver {
             player.removeTimeObserver(timeObserver)
             self.timeObserver = nil
+        }
+        if let didPlayToEndObserver {
+            NotificationCenter.default.removeObserver(didPlayToEndObserver)
+            self.didPlayToEndObserver = nil
         }
         player.pause()
     }
@@ -576,8 +585,8 @@ final class ClipEditorViewModel: ObservableObject {
         isPlaying = true
     }
 
-    /// Attaches the asset's item and the periodic observer, once each — everything the
-    /// preview loop needs short of seeking and playing.
+    /// Attaches the asset's item, the periodic observer and the end-of-item observer, once
+    /// each — everything the preview loop needs short of seeking and playing.
     private func armPlayer() {
         if player.currentItem == nil {
             player.replaceCurrentItem(with: AVPlayerItem(sdrAsset: source.asset))
@@ -590,6 +599,15 @@ final class ClipEditorViewModel: ObservableObject {
                 }
             }
         }
+        if didPlayToEndObserver == nil {
+            didPlayToEndObserver = NotificationCenter.default.addObserver(
+                forName: AVPlayerItem.didPlayToEndTimeNotification, object: player.currentItem, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.tick(at: self?.window.endTime ?? 0)
+                }
+            }
+        }
     }
 
     /// One preview tick: follows the playhead and loops the draft window. The loop-back
@@ -599,7 +617,18 @@ final class ClipEditorViewModel: ObservableObject {
     private func tick(at time: TimeInterval) {
         playbackTime = time
         if Self.shouldLoopBack(at: time, window: window, isTrimming: isTrimming || isPresenterScrubbing) {
-            seek(to: window.startTime)
+            loopBack()
+        }
+    }
+
+    /// Returns the preview to the window's start and keeps it playing. The player pauses
+    /// itself when the item plays out — a window ending at the asset's end gets there —
+    /// so a seek alone would leave the preview stopped on the first frame; `isPlaying`
+    /// is the user's intent, and the player follows it.
+    private func loopBack() {
+        seek(to: window.startTime)
+        if isPlaying, player.rate == 0 {
+            player.play()
         }
     }
 

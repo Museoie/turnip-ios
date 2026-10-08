@@ -104,17 +104,30 @@ final class CropRectCalculatorTests: XCTestCase {
         assertRect(rect, minX: 0, maxX: 0.12, minY: 0.3433333, maxY: 0.5566667)
     }
 
-    func testRectTallerThanTheFrameOverhangsItCenteredAndKeepsTheTargetRatio() throws {
+    func testRectTallerThanTheFrameShrinksToItAndKeepsTheTargetRatio() throws {
         let frames = [frame(confident([(x: 0.20, y: 0.35), (x: 0.80, y: 0.65)]))]
 
         let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: square))
 
-        // 9:16 on a 0.72-wide box wants 1.28 of height, which no slide can fit. Width keeps
-        // the whole athlete rather than shrinking to restore the ratio, and the height
-        // overhangs the frame equally top and bottom — the rect stays 9:16, letterboxed.
-        assertRect(rect, minX: 0.14, maxX: 0.86, minY: -0.14, maxY: 1.14)
+        // 9:16 on a 0.72-wide box wants 1.28 of height, which no slide can fit. The rect
+        // shrinks about its center until the height is the frame's — the crop shows video
+        // in every part of it rather than letterboxing — and stays 9:16, cutting the
+        // athlete's sides rather than showing black above and below.
+        assertRect(rect, minX: 0.21875, maxX: 0.78125, minY: 0, maxY: 1)
         let pixels = rect.denormalized(in: square)
         XCTAssertEqual(Float(pixels.width / pixels.height), 9.0 / 16.0, accuracy: 0.00001)
+    }
+
+    func testKeypointPastTheFrameEdgeCountsAsOnTheEdge() throws {
+        // A joint the model places outside the frame (a pad-region keypoint) can't be
+        // shown, so it must not pull the box out past the frame: the box stops at the edge.
+        let frames = [frame(confident([(x: 0.90, y: 0.50), (x: 1.30, y: 0.50)]))]
+
+        let rect = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: square))
+
+        // Box 0.90-1.00 (floored to 0.05 tall), padded to 0.12 x 0.06, snapped, slid to the
+        // edge; a box reaching 1.30 would have come out 0.48 wide instead.
+        assertRect(rect, minX: 0.88, maxX: 1, minY: 0.3933333, maxY: 0.6066667)
     }
 
     func testLowConfidenceKeypointsAreExcludedFromTheBox() {

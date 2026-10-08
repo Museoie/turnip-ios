@@ -257,6 +257,30 @@ final class ClipEditorTests: XCTestCase {
 
     // MARK: - Preview loop
 
+    /// A detected window's trailing buffer routinely ends at the asset's end. Playing the
+    /// item out pauses the player on its own, and the loop has to restart it — otherwise
+    /// the preview stops on the clip's last frame instead of looping.
+    @MainActor
+    func testPreviewKeepsLoopingWhenTheWindowEndsAtTheAssetsEnd() async throws {
+        let url = try await HorizonVideoFixture.write(tilt: HorizonVideoFixture.tilt, width: 160, height: 90)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        let viewModel = ClipEditorViewModel(source: ClipEditorSource(
+            window: TrickWindow(startTime: 0.4, endTime: 1),
+            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+            asset: AVURLAsset(url: url),
+            poseFrames: []))
+        addTeardownBlock { viewModel.teardown() }
+
+        await viewModel.prepare()
+        XCTAssertTrue(viewModel.isPlaying)
+        // Four times the window: the item has played out at least once by now.
+        try await Task.sleep(for: .seconds(2.5))
+
+        XCTAssertGreaterThan(viewModel.player.rate, 0, "the preview stopped instead of looping")
+        XCTAssertLessThan(viewModel.currentTime, 1, "the preview is parked on the last frame")
+        XCTAssertTrue(viewModel.isPlaying)
+    }
+
     func testLoopBackFiresAtWindowEndDuringPlayback() {
         let window = TrickWindow(startTime: 2, endTime: 6)
 
@@ -597,9 +621,11 @@ final class ClipEditorTests: XCTestCase {
         let unslid = try XCTUnwrap(
             calculator.cropRect(around: points, renderedPixelSize: size, slidIntoFrame: false))
 
-        XCTAssertEqual(slid.maxX, 1, accuracy: 0.0001)
+        // Slid, the rect is brought inside the frame (shrunk, here, since 9:16 on this box
+        // is taller than the frame); unslid, it still reaches the point past the edge.
+        XCTAssertLessThanOrEqual(slid.maxX, 1)
         XCTAssertGreaterThanOrEqual(unslid.maxX, 1.05)
-        XCTAssertEqual(slid.width, unslid.width, accuracy: 0.0001)
+        XCTAssertGreaterThan(unslid.width, slid.width)
     }
 
     // MARK: - Auto rotate
@@ -843,10 +869,10 @@ final class ClipEditorTests: XCTestCase {
     }
 
     func testVideoPlacementOfALandscapeFrameRunsPastTheScreen() throws {
-        // A 1920x1080 landscape frame whose 9:16 crop overhangs it top and bottom
-        // (`CropRectCalculator.fittedInFrame`): the crop still fills the marker, so the
-        // frame is laid out far wider than any screen, with the overhang above and below
-        // it empty.
+        // A 1920x1080 landscape frame with a 9:16 crop rect overhanging it top and bottom
+        // (a hand-added clip's full-frame rect carries the marker past the frame the same
+        // way): the crop still fills the marker, so the frame is laid out far wider than
+        // any screen, with the overhang above and below it empty.
         let marker = CGRect(x: 36, y: 125, width: 320, height: 320.0 * 16 / 9)
         let cropHeight: CGFloat = 750.0 * 16 / 9
         let overhang = (cropHeight - 1080) / 2

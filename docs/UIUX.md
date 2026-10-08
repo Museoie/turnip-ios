@@ -1,10 +1,11 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
-*Rev 9 · 2026-10-07 · "Auto crop" pads the body parts' box by a tenth
-rather than a quarter, and keeps the crop inside the video: its footprint
-is slid into the frame, or zoomed to the frame's edge when it can't fit.*
+*Rev 10 · 2026-10-08 · Detection's crop rects keep inside the video the
+way Auto crop's do, so a detected clip opens the way Auto crop would frame
+it; the editor's preview keeps looping on a window that ends at the
+asset's end.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -421,7 +422,9 @@ default empty state, so it never reads as "your library is empty."
     frame at the crop's ratio (an athlete crossing most of a landscape
     frame), the crop zooms in to the frame's edge and parts of the athlete
     leave it: no black beyond the frame's edge ever shows in the crop, which
-    outranks holding every body part. "Auto rotate" levels the horizon: it
+    outranks holding every body part. Detection's own crop rects (DESIGN.md
+    step 6) follow the same rule, so a clip opens the way Auto crop would
+    frame it. "Auto rotate" levels the horizon: it
     reads the horizon's tilt off frames sampled across the clip range,
     averages the tilt over the range (the roll can drift during a clip), and
     turns the video so the horizon lies along the screen's horizontal. The
