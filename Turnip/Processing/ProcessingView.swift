@@ -245,6 +245,15 @@ struct ProcessingView<Destination: View>: View {
                 destination(result, popToRoot)
             }
         }
+        .onChange(of: viewModel.isShowingClips) { showing in
+            // A swipe-back from the clip list dismisses the destination without going
+            // through its back button (which pops to root): without this, the revealed
+            // `.succeeded` branch would be a blank page. Leaving the list leaves the
+            // flow, so a swipe-back pops to root exactly like the back button does.
+            if !showing, case .succeeded = viewModel.state {
+                popToRoot()
+            }
+        }
         .task {
             if player == nil {
                 let newPlayer = AVPlayer(playerItem: AVPlayerItem(sdrAsset: video.asset))
@@ -320,9 +329,10 @@ struct ProcessingView<Destination: View>: View {
                 .ignoresSafeArea()
         case .succeeded:
             // No completion page: `finish()` sets `.succeeded` and pushes the clip-list
-            // destination in the same tick, and the destination's back button pops to
-            // root, so this branch never renders. Removed per maintainer decision —
-            // unreachable views go away rather than get polished.
+            // destination in the same tick. The destination's back button pops to root,
+            // and a swipe-back dismissal is caught by the `isShowingClips` observer above
+            // which pops to root too — so this branch never stays on screen. Removed per
+            // maintainer decision: unreachable views go away rather than get polished.
             EmptyView()
         }
     }
