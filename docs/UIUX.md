@@ -1,11 +1,10 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
-*Rev 6 · 2026-10-07 · Replaces the Clip Editor's "Reset crop area" button
-with two fits: "Auto crop", which frames every located body part in the clip
-range at the current rotation, and "Auto rotate", which levels the horizon
-read off the clip range's frames.*
+*Rev 7 · 2026-10-07 · States the principle that an automatic change moves
+the screen continuously to its result rather than cutting to it, and
+applies it to the Clip Editor's Auto crop and Auto rotate.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 adds the Clip Editor's Auto crop and Auto rotate.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts.")*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -71,6 +70,42 @@ whose motion it would contradict.
 
 New screens follow the same rule: if a screen can be reached both ways,
 build the gesture's transition first and route the button through it.
+
+## An automatic change moves, it never cuts
+
+When the app changes something on the user's behalf that the user could
+have changed by hand — a fit, a reset, a re-framing, a reorder — the screen
+moves continuously from where it is to the result. It never cuts. The
+change travels along the same geometry the hand gesture would have driven:
+a fit that zooms, turns and shifts the video plays as a zoom, a turn and a
+shift, over an easing curve, not as a new picture replacing the old one.
+
+A cut tells the user *that* something changed and nothing else. The motion
+tells them *what* changed and *by how much*: a horizon that visibly turns
+five degrees to level teaches what Auto rotate measured, and a crop that
+visibly pulls in around the athlete teaches what Auto crop found. It also
+keeps the result reversible in the user's head — they saw where the video
+came from, so they know what pulling it back by hand would mean. A cut
+reads as the app having replaced their work; a motion reads as the app
+having adjusted it.
+
+How it's built: the automatic change writes the same state the gesture
+writes, inside an animated transaction. Nothing else differs — no
+separate animated path, no snapshot cross-fade. A result that arrives
+asynchronously (a detection that had to sample frames) animates when it
+lands, from whatever the state is at that moment.
+
+Where it applies today:
+
+| Change | By hand | Automatic | Shared motion |
+|---|---|---|---|
+| Clip Editor crop fit (§4) | Pinch / rotate / drag the video under the marker | "Auto crop" | The video's scale, rotation and offset about the crop center, eased over 0.4 s |
+| Clip Editor leveling (§4) | Two-finger rotate | "Auto rotate" | The video's rotation about the crop center, eased over 0.4 s |
+
+This is the companion of the principle above: that one says a button plays
+the gesture's *transition*; this one says an automatic change plays the
+gesture's *adjustment*. Both come from the same idea — the motion is how
+the user learns what the screen did.
 
 ## Screen inventory
 
@@ -248,8 +283,9 @@ default empty state, so it never reads as "your library is empty."
   way a tapped gallery tile does: `RootTabView` calls
   `VideoLibraryViewModel.select(_:detectedClips:)` on the newly-created
   asset and switches to the gallery tab. When live inference covered the
-  whole take, its clips travel with the selection and the take lands on
-  Clip List directly (§3) with no analysis step; otherwise it lands on
+  whole take, its clips travel with the selection — with the scored
+  frames they were cut from, which the editor's crop fits need — and the
+  take lands on Clip List directly (§3) with no analysis step; otherwise it lands on
   Processing's idle state exactly as if the user had tapped a tile.
 
 ### 2. Processing
@@ -384,7 +420,8 @@ default empty state, so it never reads as "your library is empty."
     roll; a clip with no horizon to find says so in a notice and keeps its
     rotation. The two are independent one-shot fits: Auto rotate changes only
     the rotation, so a limb the turn carries out of the marker is Auto crop's
-    to bring back.
+    to bring back. Both move the video to their result rather than cutting
+    to it ("An automatic change moves, it never cuts", above).
   - Scrub bar spanning the whole source video (not a zoomed range around the
     window) with drag handles on start/end — adjusts the trick window from
     issue #8's output; live-updates the crop rect per issue #9 if the window

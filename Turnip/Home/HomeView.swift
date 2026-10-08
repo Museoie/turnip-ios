@@ -126,14 +126,15 @@ struct HomeView: View {
     }
 
     private func clipList(
-        for video: SelectedVideo, clips: [ProcessedClip], asset: AVURLAsset, popToRoot: @escaping () -> Void
+        for video: SelectedVideo, detection: DetectedClips, asset: AVURLAsset, popToRoot: @escaping () -> Void
     ) -> ClipListView {
         ClipListView(
-            items: clips.map { ClipListItem(window: $0.window, cropRect: $0.cropRect) },
+            items: detection.clips.map { ClipListItem(window: $0.window, cropRect: $0.cropRect) },
+            poseFrames: detection.poseFrames,
             asset: asset,
             assetIdentifier: video.assetIdentifier,
             duration: video.duration,
-            showsNoTricksFound: clips.isEmpty,
+            showsNoTricksFound: detection.clips.isEmpty,
             popToRoot: popToRoot
         )
     }
@@ -193,8 +194,10 @@ struct HomeView: View {
         NavigationStack {
             Group {
                 if let video = viewModel.path.last {
-                    if let clips = video.detectedClips {
-                        clipList(for: video, clips: clips, asset: video.asset, popToRoot: handlers.onRequestSlideClose)
+                    if let detection = video.detectedClips {
+                        clipList(
+                            for: video, detection: detection, asset: video.asset,
+                            popToRoot: handlers.onRequestSlideClose)
                             // The list has no backdrop of its own and the stack's is made
                             // see-through below, so it gets one here — hidden, like a video
                             // surface, until the flying card has landed.
@@ -224,7 +227,9 @@ struct HomeView: View {
                             onEnded: handlers.dismissEnded,
                             onCancelled: handlers.dismissCancelled),
                             destination: { result, popToRoot in
-                                clipList(for: video, clips: result.clips, asset: result.asset, popToRoot: popToRoot)
+                                clipList(
+                                    for: video, detection: result.detection, asset: result.asset,
+                                    popToRoot: popToRoot)
                             }
                         )
                         // Ties the screen's identity to the video it's showing: without this,

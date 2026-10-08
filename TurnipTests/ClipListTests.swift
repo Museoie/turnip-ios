@@ -27,6 +27,7 @@ final class ClipListTests: XCTestCase {
     @MainActor
     private func makeViewModel(
         items: [ClipListItem],
+        poseFrames: [PoseFrameResult] = [],
         asset: AVURLAsset? = nil,
         assetIdentifier: String = "asset-1",
         duration: TimeInterval = 30,
@@ -37,6 +38,7 @@ final class ClipListTests: XCTestCase {
     ) -> ClipListViewModel {
         ClipListViewModel(
             items: items,
+            poseFrames: poseFrames,
             asset: asset ?? dummyAsset(),
             assetIdentifier: assetIdentifier,
             duration: duration,
@@ -431,6 +433,20 @@ final class ClipListTests: XCTestCase {
         XCTAssertEqual(source.cropRect, item.cropRect)
         XCTAssertEqual(source.cropAdjustment, item.cropAdjustment)
         XCTAssertTrue(source.asset === asset)
+    }
+
+    /// The video's scored frames reach the editor whole — not just the item's window's —
+    /// since a trim can pull frames outside the window into the crop, and Auto crop has
+    /// nothing to fit without them.
+    @MainActor
+    func testEditorSourceCarriesTheVideosPoseFrames() {
+        let frames = PoseFixture.frames(hipXPositions: [0.3, 0.4, 0.5, 0.6])
+        let item = makeItem()
+        let viewModel = makeViewModel(items: [item], poseFrames: frames)
+
+        let source = viewModel.editorSource(for: item)
+
+        XCTAssertEqual(source.poseFrames, frames)
     }
 
     // MARK: - save()

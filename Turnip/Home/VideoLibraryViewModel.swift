@@ -341,7 +341,7 @@ final class VideoLibraryViewModel: ObservableObject {
     /// `detectedClips` travels with the pushed video when the caller already has them — a take
     /// the camera scored while recording — and Home then lands on the clip list instead of
     /// Processing. A tapped tile has none.
-    func select(_ asset: PHAsset, detectedClips: [ProcessedClip]? = nil) {
+    func select(_ asset: PHAsset, detectedClips: DetectedClips? = nil) {
         resolveAndInsert(asset, detectedClips: detectedClips, replacingTop: false)
     }
 
@@ -410,7 +410,7 @@ final class VideoLibraryViewModel: ObservableObject {
     /// Returns `false` without doing anything while another resolution is in flight.
     @discardableResult
     private func resolveAndInsert(
-        _ asset: PHAsset, detectedClips: [ProcessedClip]?, replacingTop: Bool
+        _ asset: PHAsset, detectedClips: DetectedClips?, replacingTop: Bool
     ) -> Bool {
         guard resolution == nil else { return false }
         errorMessage = nil

@@ -140,6 +140,11 @@ final class ClipListViewModel: ObservableObject {
     private var thumbnails: [UUID: (key: ThumbnailCacheKey, image: CGImage)] = [:]
 
     private let asset: AVAsset
+    /// Every scored frame of the source video (`DetectedClips.poseFrames`), handed to the
+    /// editor so it can re-derive a clip's crop from the frames a trim pulls in and fit the
+    /// crop around the keypoints in the window. Empty when nothing analyzed the video (the
+    /// screenshot harness), in which case the editor keeps the crop rect it was given.
+    private let poseFrames: [PoseFrameResult]
     /// The source video's `PHAsset.localIdentifier`, for deleting it from Photos
     /// when the original tile is trashed at `save()` time.
     private let assetIdentifier: String
@@ -182,6 +187,7 @@ final class ClipListViewModel: ObservableObject {
     /// re-deriving.
     init(
         items: [ClipListItem],
+        poseFrames: [PoseFrameResult] = [],
         asset: AVAsset,
         assetIdentifier: String,
         duration: TimeInterval,
@@ -197,6 +203,7 @@ final class ClipListViewModel: ObservableObject {
             cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
             isOriginal: true)
         self.items = [original] + items
+        self.poseFrames = poseFrames
         self.asset = asset
         self.assetIdentifier = assetIdentifier
         self.loader = loader
@@ -212,23 +219,16 @@ final class ClipListViewModel: ObservableObject {
     var sourceAsset: AVAsset { asset }
 
     /// Builds the editor's input for one list item: its window, crop rect, and crop
-    /// adjustment plus the analyzed asset. Trash stays the list's own decision — the
-    /// editor no longer surfaces or edits it. Never called for the original item —
-    /// its tile doesn't open the editor.
-    ///
-    /// `poseFrames` is empty — the pipeline's sampled frames don't reach the
-    /// list yet (the Home → Processing wiring threads them through when it
-    /// lands), so the editor keeps the pipeline-computed crop rect instead of
-    /// re-deriving it when a trim handle drags outward past the original
-    /// window. Trimming and the live crop preview both work; only the
-    /// re-derivation for newly included frames waits on the frames.
+    /// adjustment plus the analyzed asset and the video's scored frames. Trash stays the
+    /// list's own decision — the editor no longer surfaces or edits it. Never called for
+    /// the original item — its tile doesn't open the editor.
     func editorSource(for item: ClipListItem) -> ClipEditorSource {
         ClipEditorSource(
             window: item.window,
             cropRect: item.cropRect,
             cropAdjustment: item.cropAdjustment,
             asset: asset,
-            poseFrames: [])
+            poseFrames: poseFrames)
     }
 
     /// Applies the editor's commit to the item with the given id: the window, crop rect,

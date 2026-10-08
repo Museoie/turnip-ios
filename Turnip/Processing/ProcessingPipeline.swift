@@ -60,12 +60,26 @@ struct ProcessedClip: Hashable, Sendable {
     let cropRect: NormalizedRect
 }
 
-/// The pipeline's terminal output: what the success destination needs.
-struct ProcessingResult: Sendable {
+/// What detection yields for one video: the clips, with every sampled frame they were cut
+/// from. The frames travel with the clips because the editor needs frames beyond a clip's
+/// own window — a trim handle dragged outward pulls new frames into the crop rect's
+/// derivation, and Auto crop frames whatever keypoints the trimmed window holds — and
+/// both the file pipeline and the camera's live scoring are sources of them.
+struct DetectedClips: Hashable, Sendable {
     /// One clip per detected trick window, in video order.
     let clips: [ProcessedClip]
+    /// Every scored frame of the video, in video order, in the display-orientation
+    /// normalized space the clips' crop rects were computed in.
+    let poseFrames: [PoseFrameResult]
+}
+
+/// The pipeline's terminal output: what the success destination needs.
+struct ProcessingResult: Sendable {
+    let detection: DetectedClips
     /// The analyzed asset, for thumbnail loading downstream.
     let asset: AVURLAsset
+
+    var clips: [ProcessedClip] { detection.clips }
 }
 
 /// The seam between the pipeline and frame decoding, so tests can feed canned frames without
@@ -176,7 +190,10 @@ struct ProcessingPipeline: Sendable {
         // `.zero` marks it unknown, which the calculator treats as unlocatable and buildClips
         // turns into the full-frame fallback.
         let renderedPixelSize = await accumulator.renderSize ?? .zero
-        return ProcessingResult(clips: detectClips(in: frames, renderedPixelSize: renderedPixelSize), asset: asset)
+        return ProcessingResult(
+            detection: DetectedClips(
+                clips: detectClips(in: frames, renderedPixelSize: renderedPixelSize), poseFrames: frames),
+            asset: asset)
     }
 
     /// Steps 4-6 over frames that have already been scored: motion signal, trick windows, crop

@@ -217,6 +217,8 @@ final class ProcessingPipelineRunTests: XCTestCase {
         let result = try await pipeline.run(video: video) { _ in }
 
         XCTAssertEqual(result.clips.count, 1, "expected the single-peak fixture to yield one window")
+        // Every scored frame travels with the clips, for the editor's own crop fits.
+        XCTAssertEqual(result.detection.poseFrames.count, fixtures.count)
         let window = result.clips[0].window
         let inWindow = fixtures.filter {
             $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
@@ -556,7 +558,7 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
     ) async throws -> ProcessingResult {
         switch behavior {
         case .succeed(let clips):
-            return ProcessingResult(clips: clips, asset: video.asset)
+            return ProcessingResult(detection: DetectedClips(clips: clips, poseFrames: []), asset: video.asset)
         case .fail(let error):
             throw error
         case .reportThenHang(let flag):
@@ -567,11 +569,11 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
                 await flag.noteCancelled()
                 throw error
             }
-            return ProcessingResult(clips: [], asset: video.asset)
+            return ProcessingResult(detection: DetectedClips(clips: [], poseFrames: []), asset: video.asset)
         case .relayProgress(let relay):
             await relay.capture(onProgress)
             try await Task.sleep(nanoseconds: 30_000_000_000)
-            return ProcessingResult(clips: [], asset: video.asset)
+            return ProcessingResult(detection: DetectedClips(clips: [], poseFrames: []), asset: video.asset)
         }
     }
 }

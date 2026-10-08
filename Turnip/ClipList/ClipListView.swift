@@ -56,6 +56,7 @@ struct ClipListView: View {
 
     init(
         items: [ClipListItem],
+        poseFrames: [PoseFrameResult] = [],
         asset: AVAsset,
         assetIdentifier: String,
         duration: TimeInterval,
@@ -64,7 +65,7 @@ struct ClipListView: View {
         popToRoot: @escaping () -> Void = {}
     ) {
         _viewModel = StateObject(wrappedValue: ClipListViewModel(
-            items: items, asset: asset, assetIdentifier: assetIdentifier,
+            items: items, poseFrames: poseFrames, asset: asset, assetIdentifier: assetIdentifier,
             duration: duration, loader: loader))
         _isShowingNoTricksNotice = State(initialValue: showsNoTricksFound)
         self.popToRoot = popToRoot

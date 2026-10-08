@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreGraphics
 import Foundation
+import SwiftUI
 
 /// The clip editor's state (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
@@ -46,6 +47,11 @@ final class ClipEditorViewModel: ObservableObject {
     /// The pinch's committed scale is clamped here, and Auto crop's fitted scale too, so
     /// neither can shrink the video to a sliver or blow it up past usefulness.
     nonisolated static let scaleRange: ClosedRange<CGFloat> = 0.2...8
+
+    /// How Auto crop and Auto rotate move the video to their result: along the same
+    /// scale/rotation/offset the fingers drive, over this curve, so the user sees what
+    /// changed and from where (`docs/UIUX.md` § "An automatic change moves, it never cuts").
+    nonisolated static let fitAnimation: Animation = .easeInOut(duration: 0.4)
 
     /// The player the view renders. Created up front so `VideoPlayer` never sees a nil
     /// player; the item is attached in `prepare()`.
@@ -270,7 +276,8 @@ final class ClipEditorViewModel: ObservableObject {
     /// pinch or drag is discarded. At zero rotation the fit is the algorithm's own framing,
     /// which `cropRect` already follows as the handles move, so the adjustment returns to
     /// identity. A window with no located keypoints leaves the adjustment alone, the way
-    /// the trim recompute keeps its last good rect.
+    /// the trim recompute keeps its last good rect. The video moves to the fit over
+    /// `fitAnimation` rather than cutting to it.
     func autoCrop() {
         guard let overlay = previewOverlay,
               let adjustment = Self.autoCropAdjustment(
@@ -280,7 +287,9 @@ final class ClipEditorViewModel: ObservableObject {
                   rotationRadians: cropAdjustment.rotationRadians,
                   calculator: calculator)
         else { return }
-        cropAdjustment = adjustment
+        withAnimation(Self.fitAnimation) {
+            cropAdjustment = adjustment
+        }
     }
 
     /// The adjustment that frames `normalizedKeypoints` in the marker at `rotationRadians`,
@@ -333,7 +342,8 @@ final class ClipEditorViewModel: ObservableObject {
     /// the tilt is measured on the source frames, not on the rotated preview. Scale and
     /// offset stay as they are; Auto crop refits them if the turn carries a limb out of
     /// the marker. One detection at a time: a tap while one is running is ignored, and
-    /// `teardown()` cancels it. Finding no horizon raises the notice and changes nothing.
+    /// `teardown()` cancels it. Finding no horizon raises the notice and changes nothing;
+    /// finding one turns the video to level over `fitAnimation` rather than cutting to it.
     func autoRotate() {
         guard !isDetectingHorizon, duration != nil else { return }
         isDetectingHorizon = true
@@ -344,9 +354,14 @@ final class ClipEditorViewModel: ObservableObject {
             guard let self, !Task.isCancelled else { return }
             isDetectingHorizon = false
             if let rotation {
-                cropAdjustment.rotationRadians = rotation
+                withAnimation(Self.fitAnimation) {
+                    cropAdjustment.rotationRadians = rotation
+                }
             } else {
-                isShowingNoHorizonNotice = true
+                // Inside a transaction so the notice's slide-and-fade transition plays.
+                withAnimation(Self.fitAnimation) {
+                    isShowingNoHorizonNotice = true
+                }
             }
         }
     }
