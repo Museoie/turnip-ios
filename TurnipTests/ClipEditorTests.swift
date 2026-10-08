@@ -42,78 +42,136 @@ final class ClipEditorTests: XCTestCase {
         return viewModel
     }
 
-    // MARK: - Live crop recompute
+    // MARK: - Trimming leaves the framing alone
 
+    /// The framing is what the user last set, and a handle drag is a trim, not a re-crop:
+    /// widening the window over the athlete's whole travel must not grow the crop (which
+    /// showed as the video shrinking under the fixed marker). Only Auto crop refits.
     @MainActor
-    func testTrimStartRecomputesCropRectFromFramesInPlay() {
-        let frames = twoPositionFrames()
-        let viewModel = makeViewModel(window: TrickWindow(startTime: 0, endTime: 3.9), frames: frames)
+    func testTrimmingNeverChangesTheCropRectOrTheAdjustment() {
+        let viewModel = makeViewModel(window: TrickWindow(startTime: 2, endTime: 2.5), frames: twoPositionFrames())
+        viewModel.applyCropScale(2)
+        let cropRect = viewModel.cropRect, adjustment = viewModel.cropAdjustment
 
-        let before = viewModel.cropRect
-        // Sanity: the full window's rect covers the athlete's whole travel, x 0.28...0.72.
-        XCTAssertLessThan(before.minX, 0.3)
+        viewModel.trimStart(to: 0)
+        viewModel.trimEnd(to: 3.9)
 
-        // Trim the start past the early position: only the late frames drive the rect now.
-        viewModel.trimStart(to: 2.0)
-
-        let after = viewModel.cropRect
-        guard let expected = CropRectCalculator().cropRect(
-            for: frames.filter { $0.timestamp >= 2.0 && $0.timestamp <= 3.9 },
-            renderedPixelSize: naturalSize)
-        else {
-            return XCTFail("the trimmed window's frames should yield a crop rect")
-        }
-        XCTAssertEqual(after, expected)
-        // Discriminating: the rect moved right with the window, so a recompute that ignored
-        // the new window — or never ran — fails here.
-        XCTAssertGreaterThan(after.minX, before.minX)
+        XCTAssertEqual(viewModel.window, TrickWindow(startTime: 0, endTime: 3.9))
+        XCTAssertEqual(viewModel.cropRect, cropRect)
+        XCTAssertEqual(viewModel.cropAdjustment, adjustment)
     }
 
     @MainActor
-    func testRecomputeUsesDisplayedSizeOnRotatedClips() {
-        // 90°-rotated track: the encoded 200x100 is really a 100x200 portrait video.
-        // The keypoints are measured in displayed space, so the ratio snap must use the
-        // displayed size — passing the encoded naturalSize transposes the dimensions and
-        // produces a wrongly-proportioned rect.
+    func testLoadingMediaInfoLeavesTheCropRectAlone() {
+        // The clip opens on the framing it arrived with, even when the window's own
+        // frames would fit differently (here, the source's full-frame rect).
+        let viewModel = makeViewModel(window: TrickWindow(startTime: 0, endTime: 3.9))
+
+        XCTAssertEqual(viewModel.cropRect, NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1))
+    }
+
+    // MARK: - Auto crop
+
+    /// Auto crop is the one way the framing follows the window: after widening the window
+    /// over the athlete's whole travel, the fit frames all of it, and the trimmed-in half
+    /// alone when the window is narrowed back.
+    @MainActor
+    func testAutoCropFitsTheTrimmedWindowsKeypoints() throws {
+        let frames = twoPositionFrames()
+        let viewModel = makeViewModel(window: TrickWindow(startTime: 0, endTime: 3.9), frames: frames)
+        let overlay = try XCTUnwrap(viewModel.previewOverlay)
+
+        viewModel.autoCrop()
+        let wide = viewModel.cropAdjustment
+        viewModel.trimStart(to: 2.0)
+        viewModel.autoCrop()
+        let narrow = viewModel.cropAdjustment
+
+        // Both fits keep every keypoint in play inside the marker...
+        let marker = ClipEditorViewModel.markerBox(around: overlay.cropRect, aspectRatio: 9.0 / 16.0)
+        for (window, adjustment) in [(TrickWindow(startTime: 0, endTime: 3.9), wide),
+                                     (TrickWindow(startTime: 2, endTime: 3.9), narrow)] {
+            let inWindow = frames.filter { $0.timestamp >= window.startTime && $0.timestamp <= window.endTime }
+            for point in CropRectCalculator.locatedPoints(in: inWindow) {
+                let pixel = CGPoint(x: point.x * overlay.videoSize.width, y: point.y * overlay.videoSize.height)
+                let position = markerPosition(of: pixel, cropRect: overlay.cropRect, adjustment: adjustment)
+                XCTAssertLessThanOrEqual(abs(position.x), marker.width / 2 + 0.01)
+                XCTAssertLessThanOrEqual(abs(position.y), marker.height / 2 + 0.01)
+            }
+        }
+        // ...and the narrower window zooms in: the athlete's late position alone needs
+        // less of the frame than the whole travel does.
+        XCTAssertGreaterThan(narrow.scale, wide.scale)
+        XCTAssertEqual(narrow.rotationRadians, 0)
+    }
+
+    @MainActor
+    func testAutoCropAtZeroRotationReproducesThePipelinesFraming() {
+        // A clip that opens on the pipeline's rect for its window: the fit is that same
+        // rect, so a manual pinch and drag go and the adjustment is identity — exactly,
+        // since the same calculator runs on the same frames.
+        let frames = twoPositionFrames()
+        let window = TrickWindow(startTime: 2, endTime: 3.9)
+        let pipelineRect = CropRectCalculator().cropRect(
+            for: frames.filter { $0.timestamp >= window.startTime && $0.timestamp <= window.endTime },
+            renderedPixelSize: naturalSize)
+        let viewModel = ClipEditorViewModel(source: ClipEditorSource(
+            window: window,
+            cropRect: pipelineRect ?? NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+            asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
+            poseFrames: frames))
+        viewModel.setMediaInfo(duration: duration, naturalSize: naturalSize, preferredTransform: .identity)
+        XCTAssertNotNil(pipelineRect)
+
+        viewModel.applyCropScale(2)
+        viewModel.applyCropOffset(CGSize(width: 10, height: 10), previewScale: 1)
+        viewModel.autoCrop()
+
+        XCTAssertEqual(viewModel.cropAdjustment, .identity)
+    }
+
+    @MainActor
+    func testAutoCropFitsInDisplayedSpaceOnRotatedClips() throws {
+        // 90°-rotated track: the encoded 200x100 is really a 100x200 portrait video. The
+        // keypoints are measured in displayed space, so the fit's ratio snap must use the
+        // displayed size — the encoded naturalSize transposes the dimensions and lands a
+        // wrongly-proportioned rect, which the marker (also displayed-space) wouldn't fit.
         let rotate90 = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 100, ty: 0)
         let frames = twoPositionFrames()
-        let viewModel = ClipEditorViewModel(
-            source: makeSource(window: TrickWindow(startTime: 0, endTime: 3.9), frames: frames))
-        viewModel.setMediaInfo(
-            duration: duration, naturalSize: naturalSize, preferredTransform: rotate90)
+        // Ends past the last frame's 39 × 0.1 s timestamp, which floating point puts a
+        // hair beyond 3.9, so the window holds every frame `expected` below is built from.
+        let window = TrickWindow(startTime: 0, endTime: 4)
+        let viewModel = ClipEditorViewModel(source: makeSource(window: window, frames: frames))
+        viewModel.setMediaInfo(duration: duration, naturalSize: naturalSize, preferredTransform: rotate90)
+        let overlay = try XCTUnwrap(viewModel.previewOverlay)
+        XCTAssertEqual(overlay.videoSize, CGSize(width: 100, height: 200))
 
-        let displayedSize = ClipEditorViewModel.displayedSize(
-            naturalSize: naturalSize, preferredTransform: rotate90)
-        // Sanity: the displayed size is the transpose.
-        XCTAssertEqual(displayedSize, CGSize(width: 100, height: 200))
+        viewModel.autoCrop()
 
-        guard let expected = CropRectCalculator().cropRect(
-            for: frames.filter { $0.timestamp >= 0 && $0.timestamp <= 3.9 },
-            renderedPixelSize: displayedSize)
-        else {
-            return XCTFail("the window's frames should yield a crop rect")
-        }
-        // Discriminating: with the encoded naturalSize (200x100) the 9:16 snap produces
-        // a different rect than with the displayed size (100x200); this fails if the
-        // implementation passes the wrong pixel space.
-        XCTAssertEqual(viewModel.cropRect, expected)
+        // The fit is the pipeline's rect for these frames in displayed space, expressed
+        // on the full-frame anchor: the marker's width over the rect's is the scale.
+        let expected = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: overlay.videoSize))
+        let marker = ClipEditorViewModel.markerBox(around: overlay.cropRect, aspectRatio: 9.0 / 16.0)
+        let expectedScale = marker.width / expected.denormalized(in: overlay.videoSize).width
+        XCTAssertEqual(viewModel.cropAdjustment.scale, expectedScale, accuracy: 0.0001)
     }
 
-    @MainActor
-    func testCropRectHoldsWhenTrimmedIntoKeypointFreeFrames() {
-        // Frames 20..<40 carry no usable keypoints; trimming into them must not yank the
-        // preview to the full frame mid-drag.
-        let positioned = (0..<20).map { 0.48 + 0.04 * Float($0) / 19 }
-        let frames = PoseFixture.frames(
-            hipXPositions: positioned + [Float](repeating: 0.5, count: 20),
-            blankFrames: Set(20..<40))
-        let viewModel = makeViewModel(window: TrickWindow(startTime: 0, endTime: 3.9), frames: frames)
+    func testMarkerBoxIsTheSmallestTargetRatioRectAroundTheCropRect() {
+        // A 9:16 rect is its own marker box; a 1:2 full frame gets a wider one, centered.
+        let own = CGRect(x: 10, y: 20, width: 90, height: 160)
+        XCTAssertEqual(ClipEditorViewModel.markerBox(around: own, aspectRatio: 9.0 / 16.0), own)
 
-        let before = viewModel.cropRect
-        viewModel.trimStart(to: 2.5)
+        let tall = ClipEditorViewModel.markerBox(
+            around: CGRect(x: 0, y: 0, width: 100, height: 200), aspectRatio: 9.0 / 16.0)
+        XCTAssertEqual(tall.width, 112.5, accuracy: 0.0001)
+        XCTAssertEqual(tall.height, 200, accuracy: 0.0001)
+        XCTAssertEqual(tall.midX, 50, accuracy: 0.0001)
 
-        XCTAssertEqual(viewModel.window.startTime, 2.5, accuracy: 0.0001)
-        XCTAssertEqual(viewModel.cropRect, before)
+        let wide = ClipEditorViewModel.markerBox(
+            around: CGRect(x: 0, y: 0, width: 200, height: 100), aspectRatio: 9.0 / 16.0)
+        XCTAssertEqual(wide.width, 200, accuracy: 0.0001)
+        XCTAssertEqual(wide.height, 200 * 16 / 9, accuracy: 0.0001)
+        XCTAssertEqual(wide.midY, 50, accuracy: 0.0001)
     }
 
     // MARK: - Trim clamping
@@ -313,22 +371,6 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(viewModel.cropAdjustment.offset, CGSize(width: 190, height: -95))
     }
 
-    // MARK: - Auto crop
-
-    @MainActor
-    func testAutoCropAtZeroRotationReturnsToTheAlgorithmsOwnFraming() {
-        // `cropRect` already follows the window, so at zero rotation the fit is exactly
-        // that rect: the manual pinch and drag go, and the adjustment is identity — exactly,
-        // not within float dust, since the zero case never rotates.
-        let viewModel = makeViewModel()
-
-        viewModel.applyCropScale(2)
-        viewModel.applyCropOffset(CGSize(width: 10, height: 10), previewScale: 1)
-        viewModel.autoCrop()
-
-        XCTAssertEqual(viewModel.cropAdjustment, .identity)
-    }
-
     /// Keypoints at the corners of a box three times as tall as it is wide, on a portrait
     /// frame. The calculator pads each side by a quarter and then widens the box to the
     /// target ratio, so the marker has room to spare around a small turn; a 45° turn of
@@ -366,7 +408,8 @@ final class ClipEditorTests: XCTestCase {
         let keypoints = CropRectCalculator.locatedPoints(in: frames).map {
             CGPoint(x: $0.x * overlay.videoSize.width, y: $0.y * overlay.videoSize.height)
         }
-        let halfWidth = overlay.cropRect.width / 2, halfHeight = overlay.cropRect.height / 2
+        let marker = ClipEditorViewModel.markerBox(around: overlay.cropRect, aspectRatio: 9.0 / 16.0)
+        let halfWidth = marker.width / 2, halfHeight = marker.height / 2
         // Sanity: the turn alone pushes a keypoint out of the marker, so the fit has
         // something to do.
         XCTAssertTrue(keypoints.contains { point in
@@ -488,18 +531,6 @@ final class ClipEditorTests: XCTestCase {
         // The fit only touches the rotation.
         XCTAssertEqual(viewModel.cropAdjustment.scale, 2, accuracy: 0.0001)
         XCTAssertFalse(viewModel.isShowingNoHorizonNotice)
-    }
-
-    @MainActor
-    func testTrimmingNeverResetsTheCropAdjustment() {
-        // The adjustment is orthogonal to trimming: re-deriving `cropRect` from a
-        // handle drag must not stomp a manual pinch/rotate/drag the user already made.
-        let viewModel = makeViewModel()
-
-        viewModel.applyCropScale(2)
-        viewModel.trimStart(to: 3)
-
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 2, accuracy: 0.0001)
     }
 
     // MARK: - Playback and mute

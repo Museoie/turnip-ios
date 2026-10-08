@@ -1,10 +1,10 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
-*Rev 7 · 2026-10-07 · States the principle that an automatic change moves
-the screen continuously to its result rather than cutting to it, and
-applies it to the Clip Editor's Auto crop and Auto rotate.*
+*Rev 8 · 2026-10-07 · The Clip Editor's trim handles no longer re-derive
+the crop rect from the window: a handle drag is a trim, not a re-crop, and
+"Auto crop" is the one tap that refits the framing to the range.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts.")*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -397,7 +397,7 @@ default empty state, so it never reads as "your library is empty."
     rectangle of the export's aspect ratio, the same size at the same place on screen
     for every clip, centered in the band between the header row and the controls.
     The video is laid out so the clip's crop rect fills the marker exactly — a
-    different clip, or a trim that moves the crop rect, moves and scales the video,
+    different clip, or an adjustment to the framing, moves and scales the video,
     never the marker — and the rest of the frame shows dimmed around it, edge to
     edge, running under the header and the controls rather than clipped to a box.
     The marker is what export cuts to. No default AVKit playback chrome; the only
@@ -411,8 +411,9 @@ default empty state, so it never reads as "your library is empty."
     "Auto crop" frames every body part the pose model located in the clip
     range inside the marker, at whatever rotation the video currently has —
     so after a trim, or after a turn, one tap refits the crop to the range
-    (issue #9); at no rotation that is the algorithm's own framing, and a
-    manual pinch or drag is discarded. "Auto rotate" levels the horizon: it
+    (issue #9), and it is the only thing that does; at no rotation that is
+    the algorithm's own framing for the range, and a manual pinch or drag is
+    discarded. "Auto rotate" levels the horizon: it
     reads the horizon's tilt off frames sampled across the clip range,
     averages the tilt over the range (the roll can drift during a clip), and
     turns the video so the horizon lies along the screen's horizontal. The
@@ -424,9 +425,13 @@ default empty state, so it never reads as "your library is empty."
     to it ("An automatic change moves, it never cuts", above).
   - Scrub bar spanning the whole source video (not a zoomed range around the
     window) with drag handles on start/end — adjusts the trick window from
-    issue #8's output; live-updates the crop rect per issue #9 if the window
-    changes, since the crop rect is a function of which frames are in play. The
-    manual crop adjustment above is independent of this and survives a trim.
+    issue #8's output. A handle drag is a trim, not a re-crop: the framing
+    — the crop rect the clip opened with plus the adjustment above — never
+    moves while the handles do. Re-deriving the crop from the window on
+    every drag made the crop grow with the range (every keypoint the wider
+    window held pulled the box out, and the video visibly shrank under the
+    fixed marker); the framing is what the user last set, and "Auto crop"
+    is the one tap that refits it to the trimmed range.
     Full-video handles are naturally imprecise on a long clip, so dragging
     farther vertically from the track slows the handle down (common
     photo/video trim gesture): near the track it tracks the touch 1:1; drag
@@ -490,7 +495,9 @@ Resolved 2026-09-04.
    pinch/rotate/drag directly on the crop area, on top of the algorithm's own
    framing, with "Reset crop area" to undo it. The trim handles still re-derive
    the base crop rect from the window; the manual adjustment composes with that
-   rather than replacing it.
+   rather than replacing it. *Superseded in part, recorded 2026-10-07 (Rev 8):
+   the handles no longer re-derive the crop — a trim is not a re-crop, and
+   "Auto crop" (Rev 6) is the one tap that refits the framing to the range.*
 2. **Bulk keep/discard → Not in v1.** Every clip defaults to "kept"; a user
    discards by tapping individual cards. At ~10 clips per session that's a
    few taps. Add "discard all" only if feedback asks for it.

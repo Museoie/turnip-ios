@@ -62,9 +62,9 @@ struct ProcessedClip: Hashable, Sendable {
 
 /// What detection yields for one video: the clips, with every sampled frame they were cut
 /// from. The frames travel with the clips because the editor needs frames beyond a clip's
-/// own window — a trim handle dragged outward pulls new frames into the crop rect's
-/// derivation, and Auto crop frames whatever keypoints the trimmed window holds — and
-/// both the file pipeline and the camera's live scoring are sources of them.
+/// own window — Auto crop frames whatever keypoints the trimmed window holds, and a trim
+/// handle dragged outward pulls in frames the clip didn't start with — and both the file
+/// pipeline and the camera's live scoring are sources of them.
 struct DetectedClips: Hashable, Sendable {
     /// One clip per detected trick window, in video order.
     let clips: [ProcessedClip]

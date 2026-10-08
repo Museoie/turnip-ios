@@ -141,9 +141,10 @@ final class ClipListViewModel: ObservableObject {
 
     private let asset: AVAsset
     /// Every scored frame of the source video (`DetectedClips.poseFrames`), handed to the
-    /// editor so it can re-derive a clip's crop from the frames a trim pulls in and fit the
-    /// crop around the keypoints in the window. Empty when nothing analyzed the video (the
-    /// screenshot harness), in which case the editor keeps the crop rect it was given.
+    /// editor so Auto crop can fit the crop around the keypoints in the trimmed window,
+    /// including frames a trim pulled in from outside the clip's original window. Empty
+    /// when nothing analyzed the video (the screenshot harness), in which case Auto crop
+    /// has nothing to fit.
     private let poseFrames: [PoseFrameResult]
     /// The source video's `PHAsset.localIdentifier`, for deleting it from Photos
     /// when the original tile is trashed at `save()` time.

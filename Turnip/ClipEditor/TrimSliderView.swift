@@ -14,7 +14,7 @@ import SwiftUI
 /// control; dragging downward is neutral. Dragging anywhere on the timeline grabs the
 /// nearer handle, and the drag's time mapping is frozen for the gesture so the draft
 /// window's own growth can't shift the scale mid-drag. Handle drags report through the
-/// view model, so the crop rect re-derives live.
+/// view model; they move the window only, never the crop.
 struct TrimSliderView: View {
     @ObservedObject var viewModel: ClipEditorViewModel
     @GestureState private var drag: TimelineDrag?
