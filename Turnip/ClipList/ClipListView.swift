@@ -40,8 +40,23 @@ struct ClipListView: View {
     @State private var isShowingNoTricksNotice: Bool
     let popToRoot: () -> Void
 
+    /// How the grid reflows when a derived clip is removed: the tiles after it (and the "+"
+    /// tile) slide to their new slots on this curve. Wrapped around the removal itself at
+    /// both call sites — a tile's trash button and the editor's Delete — rather than attached
+    /// to the grid with `.animation(_:value:)`, so an edit commit or the original tile's
+    /// trash toggle, which change `items` without removing anything, stay unanimated.
+    static let removalAnimation: Animation = .easeInOut(duration: removalDuration)
+    /// How the removed tile itself leaves: a fade to the background on its own ease-out,
+    /// carried by the transition so it isn't the ease-in-out the reflow around it plays.
+    /// Insertion stays a cut — the "+" tile appends a clip with no animated transaction.
+    static let removalTransition: AnyTransition = .asymmetric(
+        insertion: .identity,
+        removal: .opacity.animation(.easeOut(duration: removalDuration)))
+    private static let removalDuration: TimeInterval = 0.15
+
     init(
         items: [ClipListItem],
+        poseFrames: [PoseFrameResult] = [],
         asset: AVAsset,
         assetIdentifier: String,
         duration: TimeInterval,
@@ -50,7 +65,7 @@ struct ClipListView: View {
         popToRoot: @escaping () -> Void = {}
     ) {
         _viewModel = StateObject(wrappedValue: ClipListViewModel(
-            items: items, asset: asset, assetIdentifier: assetIdentifier,
+            items: items, poseFrames: poseFrames, asset: asset, assetIdentifier: assetIdentifier,
             duration: duration, loader: loader))
         _isShowingNoTricksNotice = State(initialValue: showsNoTricksFound)
         self.popToRoot = popToRoot
@@ -85,6 +100,7 @@ struct ClipListView: View {
                                 // point would come back nil.
                                 source: viewModel.editorSource(for: item)))
                         })
+                    .transition(Self.removalTransition)
                 }
                 AddClipTile { Task { await viewModel.addClip() } }
             }
@@ -100,10 +116,15 @@ struct ClipListView: View {
         .toolbar {
             // The default back chevron would step back to the processing screen;
             // the flow's "back" is Home, so this screen draws its own chevron —
-            // Photos-style, chevron only, no text label.
-            ToolbarItem(placement: .navigationBarLeading) {
-                BackChevronButton(accessibilityLabel: "Back to Home", action: popToRoot)
-                    .disabled(viewModel.isSaving)
+            // Photos-style, chevron only, no text label. The same 44 pt glass circle
+            // the editor and Processing draw, so the chevron reads as one control
+            // across the flow: on iOS 26 the bar would otherwise wrap the item in its
+            // own wider pill, so that shared background is hidden under it.
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .navigationBarLeading) { backButton }
+                    .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .navigationBarLeading) { backButton }
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -135,6 +156,11 @@ struct ClipListView: View {
                     .accessibilityIdentifier("no-tricks-notice")
             }
         }
+    }
+
+    private var backButton: some View {
+        ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home", action: popToRoot)
+            .disabled(viewModel.isSaving)
     }
 
     private var savingOverlay: some View {
@@ -190,7 +216,7 @@ struct ClipListView: View {
             thumbnail: target.thumbnail,
             source: target.source,
             onCommit: { result in viewModel.applyEditorResult(result, to: target.id) },
-            onDelete: { viewModel.delete(target.id) },
+            onDelete: { withAnimation(Self.removalAnimation) { viewModel.delete(target.id) } },
             onFlightStarted: { hiddenItemID = target.id }
         )
         // Lets the grid show through the cover while the card/scrim animate —
@@ -411,7 +437,7 @@ private struct ClipCardView: View {
     /// semi-transparent grey circle the other tile buttons use otherwise. For the
     /// original item, tapping it is the reversible toggle that tells "Done" to
     /// delete the source video from Photos; for a derived clip, tapping it removes
-    /// the tile from the grid immediately, with no restore.
+    /// the tile from the grid, with no restore.
     private var trashButton: some View {
         Button(action: trash) {
             ZStack {
@@ -427,8 +453,12 @@ private struct ClipCardView: View {
         .accessibilityLabel(item.isTrashed ? "Restore clip" : "Trash clip")
     }
 
+    /// A derived clip's removal reflows the grid on `ClipListView.removalAnimation`; the
+    /// original tile's reversible toggle is a plain state flip, so it gets no animation.
     private func trash() {
-        viewModel.trash(item)
+        withAnimation(item.isOriginal ? nil : ClipListView.removalAnimation) {
+            viewModel.trash(item)
+        }
     }
 
     @ViewBuilder

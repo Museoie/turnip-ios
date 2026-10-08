@@ -56,7 +56,7 @@ final class PoseDiagnosticViewModel: ObservableObject {
               let naturalSize = try? await track.load(.naturalSize),
               let preferredTransform = try? await track.load(.preferredTransform)
         else { return }
-        displaySize = Self.displaySize(naturalSize: naturalSize, preferredTransform: preferredTransform)
+        displaySize = naturalSize.displayed(through: preferredTransform)
     }
 
     /// Stops playback and drops the time observer. Called when the view disappears.
@@ -136,13 +136,5 @@ final class PoseDiagnosticViewModel: ObservableObject {
             return results[low - 1]
         }
         return results[low]
-    }
-
-    /// The frame size as the player shows it: the encoded size through `preferredTransform`,
-    /// so a 90°-rotated track reports portrait dimensions. The same computation
-    /// `VideoFrameSampler` uses for its render size, which is what makes the two spaces agree.
-    nonisolated static func displaySize(naturalSize: CGSize, preferredTransform: CGAffineTransform) -> CGSize {
-        let transformed = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
-        return CGSize(width: abs(transformed.width), height: abs(transformed.height))
     }
 }

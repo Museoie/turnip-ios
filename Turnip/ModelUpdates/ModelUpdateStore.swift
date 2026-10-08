@@ -17,6 +17,43 @@ import Foundation
 /// the full weights — the exact cost the "cheap manifest fetch per launch"
 /// requirement exists to prevent.
 struct ModelUpdateStore: Sendable {
+    /// Name of the sidecar file the store reserves for its own metadata. It
+    /// is never a valid staged-model name: `stage` rejects it so the model
+    /// bytes and the metadata record can never collide on one path. Compared
+    /// case-insensitively, because the store also runs on case-insensitive
+    /// filesystems (macOS test runners), where `ACTIVE-MODEL.JSON` would hit
+    /// the same path.
+    private static let metadataFileName = "active-model.json"
+
+    /// The scalar allowlist for staged file names: ASCII only
+    /// (`[A-Za-z0-9._-]`). `CharacterSet.alphanumerics` is Unicode-wide and
+    /// would admit lookalikes (Cyrillic `м` is an alphanumeric), while the
+    /// documented contract is ASCII, so the set is spelled out explicitly.
+    private static let fileNameAllowedScalars = CharacterSet(charactersIn:
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+
+    /// The single fileName predicate every enforcement point uses. Both the
+    /// service's pre-download gate and `stage`'s write-time gate call this,
+    /// so the two can never disagree on one name — a name rejected here is
+    /// rejected before any download, and the write-time gate catches any
+    /// caller that bypasses the service.
+    ///
+    /// Valid names are a non-empty ASCII allowlist, a single path component
+    /// (no slashes, not `.` or `..`), and never the store's own metadata
+    /// name — compared case-insensitively, because the store also runs on
+    /// case-insensitive filesystems (macOS test runners), where
+    /// `ACTIVE-MODEL.JSON` would hit the same path as `active-model.json`.
+    static func validate(fileName: String) throws {
+        let safe = !fileName.isEmpty
+            && fileName != "."
+            && fileName != ".."
+            && fileName.unicodeScalars.allSatisfy(fileNameAllowedScalars.contains)
+            && fileName.lowercased() != metadataFileName
+        guard safe else {
+            throw ModelUpdateError.invalidManifest
+        }
+    }
+
     /// Directory holding the staged model and its metadata. Not created until
     /// the first stage — a store that never stages anything leaves no trace.
     let baseURL: URL
@@ -41,15 +78,11 @@ struct ModelUpdateStore: Sendable {
     /// Atomically replaces the staged model. Bytes land first, metadata
     /// second (see the layout note above).
     func stage(modelData: Data, version: ModelVersion, fileName: String) throws {
-        // Reject hostile file names before touching the filesystem: the name
-        // must be a single path component (no slashes, not empty, not "." or
-        // "..") so a malicious manifest can't stage outside the store dir.
-        guard !fileName.isEmpty,
-              !fileName.contains("/"),
-              fileName != ".",
-              fileName != ".." else {
-            throw ModelUpdateError.invalidManifest
-        }
+        // One enforcement point (see validate(fileName:) above): rejects
+        // hostile names, the reserved metadata name, and non-ASCII names
+        // before touching the filesystem, so a malicious manifest can't
+        // stage outside the store dir or collide with the sidecar record.
+        try Self.validate(fileName: fileName)
         try FileManager.default.createDirectory(
             at: baseURL, withIntermediateDirectories: true)
         try modelData.write(
@@ -60,7 +93,7 @@ struct ModelUpdateStore: Sendable {
     }
 
     private var metadataURL: URL {
-        baseURL.appendingPathComponent("active-model.json")
+        baseURL.appendingPathComponent(Self.metadataFileName)
     }
 
     private func readRecord() throws -> StoredModel? {

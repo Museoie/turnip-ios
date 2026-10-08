@@ -3,6 +3,8 @@ import Foundation
 
 /// A rect in the decoded frames' normalized coordinate space, matching the pose keypoints it is
 /// built from: both axes run 0-1 across the frame and `y` is measured down from the top edge.
+/// A rect can extend past `[0, 1]` on an axis — `CropRectCalculator` keeps its target aspect
+/// ratio over fitting inside the frame — and every consumer renders black beyond the frame.
 ///
 /// Frames come out of `VideoFrameSampler` in display orientation, so pass `SampledFrame.renderSize`
 /// as the pixel size for `cropRect(for:renderedPixelSize:)` and `denormalized(in:)`.
@@ -40,8 +42,11 @@ struct NormalizedRect: Hashable, Sendable {
 struct CropRectCalculator: Sendable {
     /// Width over height of the exported clip, in pixels.
     let targetAspectRatio: Float
-    /// Fraction of the athlete's bounding box added to each of its four sides, covering both
-    /// breathing room and the pose model's tendency to undershoot limbs at the frame edge.
+    /// Fraction of the athlete's bounding box added to each of its four sides. The keypoints
+    /// are joints, so the box stops at the eyes, wrists and ankles; a tenth of the box per
+    /// side reaches the top of the head, the hands and the feet with a little air around
+    /// them and no more — a quarter framed the athlete loosely enough to read as the crop
+    /// missing them.
     let paddingFraction: Float
     /// Minimum extent of the athlete's bounding box, as a fraction of the rendered frame's
     /// shorter axis. Applied to the raw box before padding: a box smaller than this is not a
@@ -53,7 +58,7 @@ struct CropRectCalculator: Sendable {
     /// on both orientations.
     let minimumExtentFraction: Float
 
-    init(targetAspectRatio: Float = 9.0 / 16.0, paddingFraction: Float = 0.25,
+    init(targetAspectRatio: Float = 9.0 / 16.0, paddingFraction: Float = 0.1,
          minimumExtentFraction: Float = 0.05) {
         precondition(targetAspectRatio > 0, "targetAspectRatio is width over height and must be positive")
         precondition(paddingFraction >= 0, "paddingFraction adds to each side and cannot be negative")
@@ -67,30 +72,58 @@ struct CropRectCalculator: Sendable {
     /// rendered-frame dimensions are unknown — in either case the athlete cannot be located in pixels.
     /// A box smaller than `minimumExtentFraction` of the shorter rendered axis is grown to
     /// that floor before padding: a one-keypoint or tight-cluster window is not a located
-    /// athlete, but it still yields a clip rather than a degenerate rect.
+    /// athlete, but it still yields a clip rather than a degenerate rect. The result is
+    /// always `targetAspectRatio` in pixels; it can extend past `[0, 1]` on an axis the
+    /// athlete's box outgrows (see `fittedInFrame`).
     func cropRect(for frames: [PoseFrameResult], renderedPixelSize: CGSize) -> NormalizedRect? {
+        cropRect(around: Self.locatedPoints(in: frames), renderedPixelSize: renderedPixelSize)
+    }
+
+    /// The same rect, around points already located in the frame's normalized space — the
+    /// clip editor's Auto crop hands in the window's keypoints rotated about the crop
+    /// center, so the rect frames them as the rotated video shows them. In that rotated
+    /// space the frame's own edges are no longer axis-aligned, which is what
+    /// `slidIntoFrame` is for: the slide treats `[0, 1]` as the frame, which is only the
+    /// frame when nothing is rotated — so the editor passes `false` and slides (or shrinks)
+    /// the rect into the turned frame itself. `nil` for no points or an unknown frame size.
+    func cropRect(
+        around points: [CGPoint], renderedPixelSize: CGSize, slidIntoFrame: Bool = true
+    ) -> NormalizedRect? {
         guard renderedPixelSize.width > 0, renderedPixelSize.height > 0,
-              let athlete = boundingBox(across: frames) else { return nil }
+              let athlete = boundingBox(around: points) else { return nil }
 
         let flooredBox = flooredToMinimumExtent(athlete, renderedPixelSize: renderedPixelSize)
         let paddedBox = padded(flooredBox)
-        return fittedInFrame(snappedToTargetRatio(paddedBox, renderedPixelSize: renderedPixelSize))
+        let snapped = snappedToTargetRatio(paddedBox, renderedPixelSize: renderedPixelSize)
+        return slidIntoFrame ? fittedInFrame(snapped) : snapped
     }
 
-    private func boundingBox(across frames: [PoseFrameResult]) -> NormalizedRect? {
-        let located = frames.flatMap { frame in
-            frame.keypoints.filter { $0.confidence > PoseKeypoint.confidenceThreshold }
+    /// The keypoints above the confidence threshold across `frames`, as normalized points
+    /// clamped into the frame: the one place the "located" rule lives, for both entry
+    /// points above. A joint the model places past the frame's edge (`PoseKeypoint`'s
+    /// pad-region values) is a body part the crop can't show anyway, so it counts as
+    /// sitting on the edge rather than pulling the box out past the frame.
+    static func locatedPoints(in frames: [PoseFrameResult]) -> [CGPoint] {
+        frames.flatMap { frame in
+            frame.keypoints.lazy
+                .filter { $0.confidence > PoseKeypoint.confidenceThreshold }
+                .map { CGPoint(x: min(max(CGFloat($0.x), 0), 1), y: min(max(CGFloat($0.y), 0), 1)) }
         }
-        guard let first = located.first else { return nil }
+    }
 
-        return located.dropFirst().reduce(
-            NormalizedRect(minX: first.x, maxX: first.x, minY: first.y, maxY: first.y)
-        ) { box, keypoint in
-            NormalizedRect(
-                minX: min(box.minX, keypoint.x),
-                maxX: max(box.maxX, keypoint.x),
-                minY: min(box.minY, keypoint.y),
-                maxY: max(box.maxY, keypoint.y)
+    private func boundingBox(around points: [CGPoint]) -> NormalizedRect? {
+        guard let first = points.first else { return nil }
+        let firstX = Float(first.x), firstY = Float(first.y)
+
+        return points.dropFirst().reduce(
+            NormalizedRect(minX: firstX, maxX: firstX, minY: firstY, maxY: firstY)
+        ) { box, point in
+            let x = Float(point.x), y = Float(point.y)
+            return NormalizedRect(
+                minX: min(box.minX, x),
+                maxX: max(box.maxX, x),
+                minY: min(box.minY, y),
+                maxY: max(box.maxY, y)
             )
         }
     }
@@ -140,19 +173,24 @@ struct CropRectCalculator: Sendable {
         return box.resizedVertically(to: pixelWidth / targetAspectRatio / renderedHeight)
     }
 
-    /// Slides the rect back inside the frame, which preserves the ratio just snapped. An axis
-    /// longer than the frame has nowhere useful to slide, so it takes the frame's full extent
-    /// instead: the clip letterboxes on that axis rather than being squeezed, or re-cropped
-    /// tight enough to cut the athlete off.
+    /// Brings the rect inside the frame, keeping the ratio just snapped: a rect that fits
+    /// slides back in, and one longer than the frame on an axis first shrinks about its
+    /// center — uniformly, so the ratio holds — until it fits, then slides. The rect never
+    /// reaches past the frame: the crop shows video in every part of it, never the black
+    /// beyond the frame's edge, which outranks holding every body part (`docs/UIUX.md`
+    /// § "Clip Detail / Editor") — an athlete crossing more of a landscape frame than a
+    /// 9:16 crop of its height can hold is cut, not letterboxed.
     private func fittedInFrame(_ box: NormalizedRect) -> NormalizedRect {
-        let (minX, maxX) = fitted(lower: box.minX, upper: box.maxX)
-        let (minY, maxY) = fitted(lower: box.minY, upper: box.maxY)
+        guard box.width > 0, box.height > 0 else { return box }
+        // A uniform pixel scale is the same factor on both normalized axes.
+        let shrunk = box.scaled(by: min(1, 1 / box.width, 1 / box.height))
+        let (minX, maxX) = fitted(lower: shrunk.minX, upper: shrunk.maxX)
+        let (minY, maxY) = fitted(lower: shrunk.minY, upper: shrunk.maxY)
         return NormalizedRect(minX: minX, maxX: maxX, minY: minY, maxY: maxY)
     }
 
     private func fitted(lower: Float, upper: Float) -> (Float, Float) {
         let size = upper - lower
-        guard size < 1 else { return (0, 1) }
         if lower < 0 { return (0, size) }
         if upper > 1 { return (1 - size, 1) }
         return (lower, upper)
@@ -162,6 +200,10 @@ struct CropRectCalculator: Sendable {
 private extension NormalizedRect {
     var centerX: Float { (minX + maxX) / 2 }
     var centerY: Float { (minY + maxY) / 2 }
+
+    func scaled(by factor: Float) -> NormalizedRect {
+        resizedHorizontally(to: width * factor).resizedVertically(to: height * factor)
+    }
 
     func resizedHorizontally(to width: Float) -> NormalizedRect {
         NormalizedRect(minX: centerX - width / 2, maxX: centerX + width / 2, minY: minY, maxY: maxY)

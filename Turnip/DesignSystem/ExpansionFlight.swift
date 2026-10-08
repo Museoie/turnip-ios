@@ -43,6 +43,46 @@ struct ExpansionFlightGeometry: Equatable {
         }
     }
 
+    /// The opacity of a layer that cross-fades alongside a flight, at `progress` (`0` at the
+    /// tile, `1` fully open), for a layer whose fade crosses half at `inflection` — an
+    /// ease-in-out that spans the whole flight but whose steepest point sits at `inflection`
+    /// rather than the middle: a power-`steepness` ease-in from `0` to half over
+    /// `[0, inflection]` and the matching ease-out from half to `1` over `[inflection, 1]`.
+    ///
+    /// A function of the card's travel, not of time, so a dragged dismiss and the back
+    /// button's flight play the same cross-fade (docs/UIUX.md, "A gesture and its button
+    /// play one animation"); the containers apply it per frame through
+    /// `ExpansionCrossfade`.
+    static func crossfadeOpacity(progress: CGFloat, inflection: CGFloat, steepness: CGFloat) -> CGFloat {
+        let travel = min(max(progress, 0), 1)
+        if travel <= inflection {
+            return 0.5 * pow(travel / inflection, steepness)
+        }
+        return 1 - 0.5 * pow((1 - travel) / (1 - inflection), steepness)
+    }
+
+    /// Where the destination chrome's fade crosses half, as a fraction of the card's travel.
+    /// Stated once for both directions because the roles swap with the direction and the two
+    /// readings agree: opening, the chrome is the layer *appearing* and crosses half this far
+    /// out; closing, it is the layer *disappearing* and crosses half at the same point on the
+    /// way back. At `0.99` the chrome effectively arrives as the card lands and is the first
+    /// thing to go on a close — the picture does the transition, the controls join it at rest.
+    static let chromeCrossfadeInflection: CGFloat = 0.99
+    /// Where the scrim's fade crosses half — the presenter under it is the layer disappearing
+    /// on an open (half covered at 60% of the way out) and appearing on a close (half back at
+    /// 40% of the way back): `progress = 0.6` either way, so the grid or list stays readable
+    /// through the first half of an open and is back for the last part of a close.
+    static let scrimCrossfadeInflection: CGFloat = 0.6
+    /// The power of each half of `crossfadeOpacity`'s curve, per layer: `3` holds a layer
+    /// within a few percent of its start value for the first half of its run-up to the
+    /// inflection, where the near-quadratic system curves would already show it clearly — on
+    /// a black backdrop a layer's perceived brightness runs well ahead of its opacity; `4`
+    /// holds it longer still. Separate for the chrome and the scrim because the two read
+    /// differently: white chrome over the card is seen long before a dark scrim over bright
+    /// tiles is.
+    static let chromeCrossfadeSteepness: CGFloat = 4
+    static let scrimCrossfadeSteepness: CGFloat = 3
+
     /// Whether a destination's chrome cross-fades in over the flying card. Needs the
     /// destination's navigation container to be see-through (`containerBackground`, iOS 18),
     /// or its opaque system background would dim the card underneath for the whole flight.
@@ -307,5 +347,34 @@ final class FlightScrubber: ObservableObject {
         fraction < 0.5
             ? 2 * fraction * fraction
             : 1 - pow(-2 * fraction + 2, 2) / 2
+    }
+}
+
+/// Fades a layer alongside a flight on `ExpansionFlightGeometry.crossfadeOpacity`'s curve,
+/// from the live `progress`: `Animatable`, so SwiftUI calls `body(content:)` with every
+/// interpolated value of an animated flight and the curve is applied per frame — a plain
+/// `.opacity(f(progress))` in a container's `body` would only ever see `progress`'s two
+/// endpoints and interpolate the opacity linearly between them (docs/EXPANSION_TRANSITIONS.md,
+/// Rev 4). Under a drag, `progress` is written directly and the same curve applies.
+struct ExpansionCrossfade: ViewModifier, Animatable {
+    var progress: CGFloat
+    let inflection: CGFloat
+    let steepness: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.opacity(ExpansionFlightGeometry.crossfadeOpacity(
+            progress: progress, inflection: inflection, steepness: steepness))
+    }
+}
+
+extension View {
+    /// See `ExpansionCrossfade`.
+    func expansionCrossfade(progress: CGFloat, inflection: CGFloat, steepness: CGFloat) -> some View {
+        modifier(ExpansionCrossfade(progress: progress, inflection: inflection, steepness: steepness))
     }
 }

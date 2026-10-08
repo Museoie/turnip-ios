@@ -90,8 +90,8 @@ struct ProcessingView<Destination: View>: View {
     @State private var player: AVPlayer?
     /// The frame size as the player shows it (display orientation), loaded once in
     /// `.task` alongside the player — this view owns the player, so it owns the geometry
-    /// the pose overlay needs to land on it too. Same computation as
-    /// `ClipEditorViewModel.displayedSize`/`PoseDiagnosticViewModel.displaySize`.
+    /// the pose overlay needs to land on it too. Same computation as the shared
+    /// `CGSize.displayed(through:)` helper the editor, list, and exporter use.
     @State private var displaySize: CGSize?
     /// Seek coalescing for the progress-driven scrub: `ProgressReportClock` fires up to
     /// 10 times a second, and issuing an exact-tolerance seek per report would queue up
@@ -257,8 +257,7 @@ struct ProcessingView<Destination: View>: View {
                let track = try? await video.asset.loadTracks(withMediaType: .video).first,
                let naturalSize = try? await track.load(.naturalSize),
                let preferredTransform = try? await track.load(.preferredTransform) {
-                displaySize = ClipEditorViewModel.displayedSize(
-                    naturalSize: naturalSize, preferredTransform: preferredTransform)
+                displaySize = naturalSize.displayed(through: preferredTransform)
             }
             if autostart {
                 viewModel.start(video: video)
@@ -329,7 +328,8 @@ struct ProcessingView<Destination: View>: View {
 
     /// Back to Home, or — while a run is in flight — cancel it, which also leaves. The same
     /// scrim-circle button the Camera page floats over its preview, since with no navigation
-    /// bar this screen's chrome sits over its media the same way. A sibling of the draggable
+    /// bar this screen's chrome sits over its media the same way, placed where a bar's own
+    /// leading item would sit so every screen's header lines up. A sibling of the draggable
     /// strip in `body`, so neither a horizontal browse-swipe nor a vertical dismiss-swipe
     /// carries it along.
     @ViewBuilder
@@ -338,12 +338,12 @@ struct ProcessingView<Destination: View>: View {
             ScrimIconButton(systemImage: "xmark", accessibilityLabel: "Cancel") {
                 handleBackAction()
             }
-            .padding()
+            .screenHeaderItemPlacement()
         } else {
             ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home") {
                 handleBackAction()
             }
-            .padding()
+            .screenHeaderItemPlacement()
         }
     }
 

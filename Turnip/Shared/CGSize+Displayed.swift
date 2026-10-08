@@ -6,8 +6,9 @@ extension CGSize {
     /// portrait dimensions. `CGRect.applying` already maps the four corners and takes
     /// their bounding box; `standardized` keeps width and height non-negative.
     ///
-    /// Single home for the geometric definition the clip editor, the clip list, and
-    /// the exporter all lay out against — one implementation instead of three.
+    /// Single home for the geometric definition the clip editor, the clip list, the
+    /// exporter, the pose diagnostic view, and the frame sampler all lay out against —
+    /// one implementation instead of five.
     func displayed(through transform: CGAffineTransform) -> CGSize {
         CGRect(origin: .zero, size: self).applying(transform).standardized.size
     }

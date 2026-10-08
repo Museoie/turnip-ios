@@ -21,8 +21,8 @@ struct CropAdjustment: Hashable, Sendable {
 /// What the clip editor opens with (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
 /// `poseFrames` carries *every* sampled frame, not just the window's: dragging a handle
-/// outward pulls new frames into play, and the crop rect is re-derived from whichever
-/// frames are in play.
+/// outward pulls new frames into the window, and Auto crop fits whichever frames the
+/// trimmed window holds.
 struct ClipEditorSource {
     let window: TrickWindow
     let cropRect: NormalizedRect

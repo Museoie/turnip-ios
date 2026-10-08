@@ -1,8 +1,8 @@
 # Turnip — Tricking Video Auto-Editor + Community Labeling Platform
 
-*Rev 8 · 2026-09-23 · Draft for review.*
+*Rev 9 · 2026-10-06 · Draft for review.*
 
-*(Rev 1 targeted iOS-only, personal-use. Rev 2 expanded to open-source app + backend + community labeling + continuous ML training. Rev 3 depersonalized for public repo and added the pose-model escalation ladder + motion-signal blur mitigations. Rev 4 swapped GitHub OAuth for Sign in with Apple, added iOS Share Sheet for social-media publishing, and added v2 social features — following relationships + video feed. Rev 5 tightens the Sign in with Apple validation contract (`iss` + `exp` on top of `aud` + signature), adds the videos-side feed indexes, adds a self-follow guard, and pins MoveNet Thunder's quantization variant. Rev 6 resolves the seven open questions into recorded decisions and adds the screen-flow companion doc pointer. Rev 7 records that camera takes run steps 1-3 live during recording and skip the post-recording decode when that covered the take. Rev 8 notes the analysis sample rate is a Settings-screen preference, not a fixed constant, defaulting to the 10/sec this doc otherwise assumes.)*
+*(Rev 1 targeted iOS-only, personal-use. Rev 2 expanded to open-source app + backend + community labeling + continuous ML training. Rev 3 depersonalized for public repo and added the pose-model escalation ladder + motion-signal blur mitigations. Rev 4 swapped GitHub OAuth for Sign in with Apple, added iOS Share Sheet for social-media publishing, and added v2 social features — following relationships + video feed. Rev 5 tightens the Sign in with Apple validation contract (`iss` + `exp` on top of `aud` + signature), adds the videos-side feed indexes, adds a self-follow guard, and pins MoveNet Thunder's quantization variant. Rev 6 resolves the seven open questions into recorded decisions and adds the screen-flow companion doc pointer. Rev 7 records that camera takes run steps 1-3 live during recording and skip the post-recording decode when that covered the take. Rev 8 notes the analysis sample rate is a Settings-screen preference, not a fixed constant, defaulting to the 10/sec this doc otherwise assumes. Rev 9 applies the merged turnip-farm master plan (§8): the backend is rewritten around pose-format blobs (no video upload or storage anywhere), labels become free-text multi-labels with no server crop rects, the ML program is retargeted at trick detection, Decision #2 is reversed and #4 mooted plus a new keypoints-only privacy decision, the two-model OTA story replaces the pose+action language, the label editor moves into the clip confirmation flow (the server labeling queue is dropped), a new video-identity section is added, the social feed is deferred, and the problem statement is restated.)*
 
 *Screen-level flow for the v1 app lives in [`UIUX.md`](UIUX.md). Running the pose pass during recording, rather than after, is designed in [`LIVE_POSE.md`](LIVE_POSE.md).*
 
@@ -18,7 +18,7 @@ Someone films their tricking practice on a phone or camera on tripod. A recordin
 
 Manually clipping and re-cropping every practice video is tedious enough that most clips never get saved. Automating it makes every practice session archivable in one tap.
 
-The app is open source, and doubles as a **community labeling + continuous training platform**: users can opt in to publish + label their clips, the labeled dataset feeds a continuously-improving pose+action model, and new model versions ship to the app as over-the-air updates.
+The app is open source, and doubles as a **community labeling + continuous training platform**: users can opt in to contribute their confirmed clips with free-text trick names, the labeled pose dataset feeds a continuously-improving trick-detection model, and new model versions ship to the app as over-the-air updates. No video pixels ever leave the device — the farm receives pose keypoint sequences, opaque source IDs, and labels only. (Honest footnote: pose keypoint sequences, labels, and the Apple `sub` do leave per explicit opt-in, and gait-from-keypoints re-identification is real research; storing the minimum viable representation is the mitigation.)
 
 ## Product scope
 
@@ -26,14 +26,14 @@ The app is open source, and doubles as a **community labeling + continuous train
 - Auto-clip + auto-crop + multi-trick split (iOS-only, off-the-shelf MoveNet Thunder)
 - Preview UI, export to Photos
 
-**v2 (community + backend + social)**:
-- Video upload + labeling UI (in-app)
+**v2 (community + backend)**:
+- Pose-blob + confirmed-label contribution (in-app); label editor in the clip confirmation flow
+- Deterministic video identity + reinstall reconciliation
 - User accounts via Sign in with Apple, moderation, reputation, abuse blocking
-- Following relationships + reverse-chronological video feed (in-app social)
-- iOS Share Sheet integration for one-tap publish to Instagram / TikTok / YouTube Shorts / Photos
-- Backend + database + object storage
-- Continuous ML training pipeline (retrain when N new labels land, champion/challenger promote)
-- OTA model updates delivered to installed clients
+- iOS Share Sheet integration for one-tap publish to Instagram / TikTok / YouTube Shorts / Photos (in-app social feed deferred — see § "Social — following + feed")
+- Backend + database + object storage (pose blobs, never video)
+- Continuous trick-detection training pipeline (nightly; runs when 50+ new labels land; fixture-regression quarantine; champion/challenger promote)
+- OTA trick-model updates delivered to installed clients
 
 ## License
 
@@ -46,9 +46,9 @@ The app is open source, and doubles as a **community labeling + continuous train
 
 Three public repos, Apache 2.0:
 
-- **`turnip-ios`** — Swift/SwiftUI iOS app. Bundles MoveNet Thunder TFLite. Handles capture, on-device clip detection, preview UI, export, and (v2) upload to the backend for the community dataset.
-- **`turnip-farm`** — Bun + TypeScript + Postgres backend. Grows the labeled dataset. Serves video upload, labeling UI (or hosts labeling data for the iOS app to render), user accounts, moderation, quality scoring, and dataset export for the training pipeline.
-- **`turnip-ml`** — Python + TensorFlow training pipeline. Fetches labeled dataset from turnip-farm, fine-tunes MoveNet Thunder (or the current champion), evaluates on a held-out set, exports to Core ML, uploads to the model CDN endpoint the app polls.
+- **`turnip-ios`** — Swift/SwiftUI iOS app. Bundles MoveNet Thunder TFLite. Handles capture, on-device clip detection, preview UI, export, and (v2) contribution of pose-format keypoints + confirmed clips/labels to the backend training dataset (video never leaves the device).
+- **`turnip-farm`** — Bun + TypeScript + Postgres backend. Grows the labeled dataset. Serves pose-blob ingest, confirmed clip/label upserts, user accounts, moderation, quality scoring, dataset export for the training pipeline, and the trick-model manifest. No video anywhere in the stack.
+- **`turnip-ml`** — Python + TensorFlow training pipeline. Fetches the labeled pose dataset from turnip-farm, trains the trick-detection model (pose sequence → trick segments + names), evaluates on a held-out set, exports to Core ML, and publishes through the farm's model manifest endpoint that the app polls.
 
 Polyrepo chosen over monorepo because open-source contributors typically only want to touch one layer — an iOS contributor should not have to clone a 5 GB ML checkpoint tree, and vice versa.
 
@@ -67,7 +67,7 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
   3. Run pose detection, extract hip-midpoint per frame
   4. Motion signal = frame-to-frame hip displacement, smoothed (3-sample moving average)
   5. Peak detection with sustained-above-threshold logic → list of trick windows
-  6. Crop rect = union of 17 keypoints across window (confidence-filtered), expanded 25%, snapped to aspect ratio
+  6. Crop rect = union of 17 keypoints across window (confidence-filtered), expanded 10%, snapped to aspect ratio
   7. Export N clips per input
 
   See "Interpreting pose output" below for the concrete algorithm turning pose keypoints into `(start_time, end_time)[]` clip ranges and `(min_x, max_x, min_y, max_y)` crop rects.
@@ -81,8 +81,8 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
   one implementation for both sources. Design and acceptance gate: [`LIVE_POSE.md`](LIVE_POSE.md).
 
 - **Preview UI**: thumbnail per detected clip, tap-preview, drag-adjust start/end, keep/discard toggles.
-- **Optional upload** (v2): opt-in per clip. "Send this to the community dataset for labeling" toggle. Uploads to `turnip-farm` with the auto-detected labels (window, crop rect) as a first-pass suggestion the community can accept/refine.
-- **OTA model updates**: on launch, poll `GET /api/models/current` for a new Core ML version; download in background, atomic-replace, use next launch.
+- **Contribution** (v2): opt-in per clip. "Contribute to the training dataset" toggle. Uploads the pose-format keypoint sequence plus the confirmed clip windows and free-text trick names to `turnip-farm` — keypoints only, video never leaves the device. The farm upserts on ID match, so re-contribution is safe and idempotent. Full design: [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md).
+- **OTA model updates**: two models. Bundled MoveNet Thunder does pose detection (unchanged). The trick-detection model arrives over the air: on launch and foreground, poll `GET /api/models/current` for the manifest (version, URL, checksum, `taxonomy_version`, vocabulary); download in background, verify the checksum, atomic-replace. The trick model proposes clip windows *and* trick names; the heuristic detector stays as the offline fallback. (The old "pose+action model" language is retired.)
 
 ### Performance targets
 
@@ -132,9 +132,10 @@ Output: list of `(start_time, end_time)` in seconds.
 - Per-frame bounding box = min/max of confidence-filtered (`> 0.3`) keypoints
 - Union across all frames in the window
 - Grow a box smaller than 5% of the rendered frame's shorter axis around its own center: a one-keypoint or tight-cluster window is not a located athlete, and without the floor it collapses to a zero-area (or near-zero-area) rect the export then upscales to the full output size
-- Expand 25% each side for breathing room + pose undershoot at edges
+- Expand 10% each side: the keypoints are joints, so the box stops at the eyes, wrists and ankles, and a tenth reaches the top of the head, the hands and the feet with a little air (25% framed the athlete loosely enough to read as the crop missing them)
 - Snap to target aspect ratio (9:16 for Reels default): grow the shorter axis around the box center. The ratio is measured on the box's *pixel* size, not its normalized size — a normalized unit is a fraction of its own axis, so a normalized 9:16 rect on a 1080x1920 source is 9:16 twice over
-- Slide back inside `[0, 1]` if expansion pushes past a frame edge, which keeps the ratio; an axis longer than the frame takes the frame's full extent instead and the clip letterboxes on that axis rather than cropping tighter
+- Keypoints the model places past the frame's edge count as on the edge: the crop can't show them anyway, and they would pull the box out past the frame
+- Slide back inside `[0, 1]` if expansion pushes past a frame edge, which keeps the ratio; an axis longer than the frame first shrinks the rect uniformly about its center until it fits, then slides. The rect is always the target ratio — the editor's fixed crop marker and the export's output size both rely on that — and it never reaches past the frame: the crop shows video in every part of it (UIUX.md § "Clip Detail / Editor"), so an athlete crossing more of a landscape frame than a 9:16 crop of its height can hold is cut rather than letterboxed
 - Denormalize by multiplying by source video's pixel dimensions → final `(min_x, max_x, min_y, max_y)`
 
 Static crop (one rect per clip) is Rev 1's choice — simpler, works well when the athlete stays roughly in one area. Dynamic crop (Ken Burns-style, rect changes per frame) is a v2 nice-to-have.
@@ -154,6 +155,8 @@ MoveNet Thunder is the MVP pick because it's the leanest option with independent
 
 **Escalation trigger**: the 2-hour Swift-playground empirical test on 5-10 representative recordings, measuring per-frame pose confidence + keypoint count during the aerial phase of each trick.
 
+**Standing note (Rev 9):** the ladder now guards pose *input quality* for the trick-detection model, not the pose model as an end in itself. Fine-tuning MoveNet is off the table unless this ladder fires on the empirical trigger above — the ML program trains trick detection on whatever pose the (possibly escalated) detector emits.
+
 ### Motion signal robustness on blurry frames
 
 Fast acrobatic motion produces motion-blurred frames (a body spinning at 720°/s smears ~24° across a 33 ms exposure at 30 fps). Pose models degrade gracefully on blur — they still emit `(x, y, confidence)` for each keypoint, but confidence drops and some keypoints may be missing.
@@ -172,44 +175,59 @@ The pipeline handles this at multiple layers:
 
 ### Backend (`turnip-farm`)
 
-- **Stack**: Bun + TypeScript + Express (or Bun native) + Postgres. Standard modern TypeScript backend.
-- **Object storage**: **Cloudflare R2** (S3-compatible, **$0 egress**, $15/TB storage). Videos and models live here, not on the droplet FS — the droplet doesn't grow with content volume.
-- **Auth**: **Sign in with Apple** — iOS-native, one-tap Face ID / Touch ID, no browser bounce. iOS app hands the identity token to the backend; server verifies the token per Apple's server-side validation guidance — signature against Apple's public JWKS (`appleid.apple.com/auth/keys`) with the correct `kid`; `iss == "https://appleid.apple.com"`; `aud` matches the app bundle id; `exp > now` (reject expired / replayed tokens); and only then creates or looks up a `users` row keyed by the token's `sub` claim. Session state via signed HTTP-only cookie (`express-session` or Bun's native session helper). Matches App Store guideline 4.8; no email/password fallback keeps the auth surface minimal.
-- **Endpoints (v2 MVP)**:
-  - **Auth + upload + labels:**
-    - `POST /api/auth/apple` — exchange Apple identity token → session cookie
-    - `POST /api/videos/upload` — presigned R2 URL, returns video ID
-    - `POST /api/videos/:id/labels` — submit label (trick windows + crop rects + trick class if any)
-    - `DELETE /api/videos/:id` — owner-only hard delete (row + R2 object); the retention policy is "keep forever, user-deletable" (see § "Decisions" #4)
-    - `GET /api/labels/pending` — return N unlabeled clips (for labeling UI)
-    - `POST /api/reports` — user reports abuse/bad label
-    - `GET /api/models/current` — current Core ML manifest (version, URL, checksum)
-    - `POST /api/models` — training pipeline publishes new champion (admin-scoped)
-  - **Social — following + feed:**
-    - `GET /api/users/:id` — public profile (display name, video count, follower/following counts)
-    - `GET /api/users/:id/videos` — cursor-paginated public videos from one user
-    - `POST /api/follows/:followee_id` — start following (follower = session user; 400 if `followee_id == session user`, enforced by the table `CHECK` too)
-    - `DELETE /api/follows/:followee_id` — unfollow
-    - `GET /api/users/:id/followers` — cursor-paginated followers
-    - `GET /api/users/:id/following` — cursor-paginated followees
-    - `GET /api/feed` — reverse-chronological public videos from users the session user follows, cursor-paginated by `(uploaded_at DESC, video_id)`
-- **Database schema (v2, additive-only)**:
-  - `users` — id, apple_subject (unique), display_name, reputation, is_blocked, created_at
-  - `videos` — id, user_id, r2_key, duration_ms, uploaded_at, moderation_state, visibility (`public` | `private`, default `private`). Indexes: `(user_id, uploaded_at DESC)` for `GET /api/users/:id/videos`, and `(visibility, uploaded_at DESC, id)` — a partial index on `WHERE visibility='public'` — for the feed's index-only scan side of `follows → videos`.
-  - `labels` — id, video_id, user_id, trick_windows (JSONB), crop_rects (JSONB), quality_score, created_at
-  - `reports` — id, target_type, target_id, reporter_id, reason, created_at, resolved_by
-  - `models` — id, version, r2_key, val_metrics (JSONB), promoted_at
-  - `follows` — id, follower_id, followee_id, created_at, `UNIQUE (follower_id, followee_id)`, `CHECK (follower_id <> followee_id)` (a user can't follow themselves — the DB refuses it and the endpoint returns 400 rather than silently succeeding). Indexes: `(follower_id, created_at DESC)` for "who I follow" and `(followee_id, created_at DESC)` for "who follows me". No mutual/friend-request semantics — following is public and one-directional.
+- **Stack**: Bun + TypeScript + Postgres. Standard modern TypeScript backend.
+- **Object storage**: **Cloudflare R2** (S3-compatible, **$0 egress**, $15/TB storage). pose-format blobs (`.tkp1.gz`, ~2 KB/s at 10 Hz) and trained model artifacts live here, not on the droplet FS — the droplet doesn't grow with content volume. No video anywhere: no video bytes in any table, blob, log, or error payload.
+- **Auth**: **Sign in with Apple** — iOS-native, one-tap Face ID / Touch ID, no browser bounce. The iOS app sends the Apple identity token as `Authorization: Bearer <token>` on every request; the server verifies it per Apple's server-side validation guidance — signature against Apple's public JWKS (`appleid.apple.com/auth/keys`) with the correct `kid`; `iss == "https://appleid.apple.com"`; `aud` matches the app bundle id; `exp > now` (reject expired / replayed tokens) — and only then creates or looks up a `users` row keyed by the token's `sub` claim. Stateless verification per request (no session cookie). Matches App Store guideline 4.8; no email/password fallback keeps the auth surface minimal. The training pipeline authenticates with a pre-shared service key instead.
+- **Endpoints (v2 MVP)** — every write upserts on ID match (the IDs *are* the idempotency keys):
+  - **Contribution:**
+    - `POST /api/sources` — register a source (`video_id`, `frame_count`, `sample_rate`, `keypoint_format`, `sha256`) → presigned R2 PUT URL for the `.tkp1.gz` blob
+    - `POST /api/clips` — batch upsert clips + replace their label sets (blob SHA-256 verified server-side)
+    - `POST /api/clips/:id/labels` — label-only update (re-label without re-uploading)
+  - **Reconciliation + owner reads:**
+    - `GET /api/sources` — list my sources (id, frame_count, clip/label counts) for the reinstall reconciliation UI
+    - `GET /api/sources/:id` — source with its confirmed clips + labels
+    - `GET /api/sources/:id/pose` — owner-only presigned R2 GET of the pose-format blob (skeleton restore on a device without the video)
+    - `DELETE /api/sources/:id` — owner-only hard delete (row + R2 blob); the retention policy is "keep forever, user-deletable" (see § "Decisions" #4)
+  - **Models:**
+    - `GET /api/models/current` — trick-model manifest (version, URL, checksum, `taxonomy_version`, vocabulary)
+    - `POST /api/models` — training pipeline publishes the champion (service-key scoped)
+  - **Training + moderation:**
+    - `GET /api/labels/export?since=` — training pipeline pull (labels + pose blob refs; excludes quarantined sources)
+    - `POST /api/reports` — report a bad label/clip
+  - Dropped from earlier drafts: `GET /api/labels/pending` — there is no labeling queue; labeling happens on-device by the clip owner.
+- **Database schema (v2, additive-only)** — full design in `turnip-farm`'s `BACKEND_DESIGN.md`:
+  - `users` — id (Apple `sub`, TEXT PK — no name, no email), reputation, is_blocked, created_at
+  - `sources` — id CHAR(64) (deterministic SHA-256 hex `video_id`, PK), user_id FK, frame_count (canonical 10 Hz), sample_rate (as-sent, provenance), keypoint_format, r2_key (`poses/<id>.tkp1.gz`), sha256 (blob integrity)
+  - `clips` — id UUID (client-minted once, PK), source_id FK, start_frame, end_frame (canonical 10 Hz indices), auto_detected
+  - `labels` — id, clip_id FK, trick_name (free text), taxonomy_version — one row per (clip, trick name); re-submission replaces the clip's whole label set in one transaction
+  - `label_taxonomy` — raw → canonical mapping, taxonomy_version (monotonic int)
+  - `models` — id, version, model_type (`trick-detection`), taxonomy_version, r2_key, sha256, val_metrics (JSONB), promoted_at
+  - `data_quarantine` — id, source_id FK, user_id FK (attribution), reason, metrics (JSONB), quarantined_at, resolved_at, resolution (`released` | `purged`)
+  - `reports` — id, reporter_user_id, target_type (`source` | `clip` | `label`), target_id, reason, status
+  - No `videos` table, no `follows` table, no thumbnails, no PII columns.
 - **Migrations**: `dbmate` from day 1. Numbered SQL files, forward-only, additive-first. Never drop a column in the same PR that stops writing to it — two PRs.
 
-### Labeling UI
+### Video identity
 
-Lives inside the iOS app (v2) — a Labeling tab that:
-1. Fetches a pending clip from `GET /api/labels/pending`
-2. Plays the clip, lets user drag start/end handles, adjust the crop rect, optionally tag the trick class
-3. Submits back to `POST /api/videos/:id/labels`
+The farm never mints source identities. Every contribution references a `source_id` the device derives deterministically, so the ID survives app reinstalls and re-contributing the same video upserts instead of duplicating training data:
 
-Web labeling UI is out of scope for MVP — iOS-only keeps the surface small. A web UI can be added as a `turnip-web` repo later if desktop labelers want in.
+- **Photos-backed videos** (gallery picks and in-app camera takes, which are saved to Photos): `source_id = SHA-256 hex of ("turnip:phasset:" + PHAsset.localIdentifier)`. The `localIdentifier` belongs to the Photos library, not the app, so it is stable across reinstalls. The raw identifier never leaves the device — only its one-way digest.
+- **Imported files** (document-picker / Files-app imports with no `PHAsset`): `source_id = SHA-256 hex of the file bytes`.
+
+No local ID↔asset mapping to lose: the ID is recomputed on demand, which is the whole point.
+
+**Reinstall reconciliation:** on a fresh install, enumerate the Photos library → recompute `source_id`s → `GET /api/sources` (list my sources) → `GET /api/sources/:id` (pull confirmed clips + labels) → adopt the server's clip IDs into the rebuilt local state. (`clip_id`s are client-minted UUIDv4 once per clip — recovered from the server, never re-derived.) Videos deleted from the library stay on the farm as training data; the client cannot relink what it cannot see. Full design: [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §1 and §6.
+
+### Label editor (in the clip confirmation flow)
+
+Labeling lives inside the iOS app, in the Clip Detail / Editor screen — there is no server labeling queue and no `GET /api/labels/pending`:
+
+1. The user is prompted for the trick name — a free-text field ("What trick is this? e.g. cork"). Committing adds a chip; chips are removable. No fixed vocabulary is enforced.
+2. A clip carries multiple trick-name chips (a combo is N chips on one clip — no sub-segmentation for MVP). The editor suggests canonical names from the vocabulary in the latest trick-model manifest as the user types; picking a suggestion stores the canonical name, free-typing stores the raw string.
+3. Labels inherit the clip window (labeler-settable via the existing trim handles); the farm stores one label row per (clip, trick name).
+4. A clip with no trick names cannot be contributed. The Contribute confirmation sheet lists each clip with its name chips; only confirmed clips + labels are uploaded — proposals are never auto-confirmed.
+
+Full design: [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §4. Web labeling UI remains out of scope — iOS-only keeps the surface small.
 
 ### Publishing to social media (iOS Share Sheet)
 
@@ -221,54 +239,53 @@ Every exported clip has a "Share" button that opens the native iOS share sheet �
 
 Meta's content-publishing endpoints only accept **Business or Creator** accounts — personal Instagram accounts cannot be posted to via any official API in 2026 (the Basic Display API that once supported them is deprecated). Even for eligible accounts, the flow requires a Meta App Review approval for the `instagram_content_publish` permission (weeks-long) plus per-user OAuth plumbing. That buys a half-tap UX improvement over the Share Sheet for the subset of users on professional accounts. Not worth the surface. The Share Sheet works for every account type on every target with zero server work.
 
-### Social — following + feed
+### Social — following + feed: deferred
 
-The follows table + feed endpoints described above form a lightweight social layer on top of the labeled-clip corpus:
+The in-app social feed is **deferred**, explicitly. A server video feed cannot exist without server video: the privacy contract (§ "Decisions" #8, master plan §1) means the farm never holds footage to serve, so the `follows` table and the feed endpoints described in earlier revisions are removed, not postponed.
 
-- **Follows** is a plain join table. Following is public, one-directional, no friend-request handshake.
-- **`GET /api/feed`** joins `follows` → `videos` where `visibility='public'`, ordered by `(uploaded_at DESC, video_id)` for stable cursor pagination under concurrent uploads.
-- **Video visibility** defaults to `private`; the exporter picks whether each clip goes public before it can appear in a feed. Community labeling is orthogonal — a `public` video is feed-eligible; the "opt in to community dataset" toggle is per-clip and independent of visibility.
-- **Tenant boundary**: every video-read query is scoped to `visibility='public' OR user_id = $session_user`. Followee list is public; the followee cannot enumerate their own followers outside the `/followers` endpoint the system exposes. Blocked users don't appear in feed or profile queries.
-- **No fan-out on write.** No timeline caches. One indexed join + `LIMIT N` handles the feed read. When feed load exceeds what a single query serves, add a fan-out cache — never before.
+What stays: the iOS Share Sheet integration (§ "Publishing to social media") already covers one-tap publishing to Instagram / TikTok / YouTube Shorts / Photos with zero server involvement — that is the social story for v2. The only feed-compatible future is client-rendered skeleton previews: keypoint sequences re-animated on-device from pose-format blobs, no pixels involved. Revisit when and if a concrete product need demands it.
 
 ### ML pipeline (`turnip-ml`)
 
 - **Language**: Python + TensorFlow + `coremltools` for export.
-- **Trigger**: cron (nightly) or on-demand via GitHub Actions workflow_dispatch. Only runs if `SELECT COUNT(*) FROM labels WHERE created_at > last_train_at` exceeds a threshold (say 50).
+- **Task**: trick detection + naming. Input: pose key sequence (`T × 17 × 3`, canonical 10 Hz pose format). Output per source: trick segments in source-frame coordinates, each with `trick_names: [...]` and derived `is_combo` (`len > 1`); a combo is one segment with N names — no sub-segmentation for MVP.
+- **Trigger**: cron (nightly) or on-demand via GitHub Actions workflow_dispatch. Only runs if new labels since the last watermark exceed a threshold (start: 50).
 - **Steps**:
-  1. Fetch labeled dataset from turnip-farm (`GET /api/labels/export?since=<last>`)
-  2. Fetch corresponding videos from R2
-  3. Split 80/10/10 train/val/holdout (stratified by user_id so no user's clips leak across splits)
-  4. Fine-tune MoveNet Thunder or the current champion
-  5. Evaluate on holdout: PCK, joint-detection rate, clip-detection precision/recall
-  6. **Champion/challenger**: only promote new model if it beats current champion by ≥1% on validation. Otherwise archive and try again next cycle
-  7. Export to Core ML with `coremltools.convert(...)`, quantize to fp16
-  8. Upload to R2, call `POST /api/models` to publish
+  1. Fetch the labeled dataset from turnip-farm (`GET /api/labels/export?since=<last>`) — pose blob refs, clip windows, free-text labels. Quarantined sources are excluded by construction.
+  2. Resolve the pose-format blobs from R2.
+  3. Canonicalize raw label strings via `label_taxonomy` (combo strings like `"hook - scoot - gainer - cartfull (combo)"` split into N canonical names on one window); raw strings are never discarded.
+  4. Split 80/10/10 train/val/holdout, stratified by user_id so no user's clips leak across splits (bootstrap guard: unstratified random splits until ~20 contributors or 50 clips per split).
+  5. Train the trick-detection candidate — baseline: temporal encoder (dilated TCN or small Transformer) over the keypoint sequence with a segment-proposal head and a per-segment multi-label classification head; sliding-window classifier + NMS is an acceptable MVP.
+  6. Evaluate on holdout: segment quality (mAP at tIoU thresholds) **and** name accuracy, reported separately.
+  7. **Fixture regression gate (anti-poisoning)**: run the candidate over the fixture suite (pose-accuracy fixtures + trick-labeled fixtures) and compare against the champion. On regression: fire a Discord webhook alert (metrics delta, affected source/user IDs), quarantine that day's ingested sources (`data_quarantine`), and skip promotion.
+  8. **Champion/challenger**: promote only if the candidate beats the champion by ≥1% on validation. Otherwise archive and try again next cycle.
+  9. Export to Core ML with `coremltools`, upload to R2, call `POST /api/models` with the `taxonomy_version` it trained on. The app picks it up via the OTA poll.
 - **Runs where**: same droplet during MVP (Python installed alongside Bun). Move to a separate GPU worker (RunPod / Lambda Labs on-demand, ~$0.50-1/hr) when training time exceeds ~30 min.
+- **What stays**: the `PoseAccuracy` harness and CI gate now guard the *input* to the trick model (pose quality on real footage). Fine-tuning MoveNet itself is off the table unless the pose escalation ladder fires on empirical grounds.
 
 ### Label quality + abuse
 
 - **Reputation score per user** — starts at 0, +1 per accepted label, -5 per reported+confirmed bad label. Users with reputation ≥ threshold become "trusted" and their labels bypass moderation review.
 - **Spot checks** — every Nth label from a non-trusted user is queued for a trusted user to review.
-- **Inter-labeler agreement** — v2.5 enhancement: same clip goes to 3 labelers, compare, quality signal = how similar their labels are. Elegant but requires N > 1 labelers per clip so hard at low volume.
+- **Inter-labeler agreement** — ~~v2.5 enhancement: same clip goes to 3 labelers, compare, quality signal = how similar their labels are. Elegant but requires N > 1 labelers per clip so hard at low volume.~~ Superseded (Rev 9): with owner-only labeling there is no second labeler for the same clip; agreement signal replaced by the fixture-regression gate (§ "Data poisoning defense").
 - **Abuser blocking** — admin action (`UPDATE users SET is_blocked = true`) revokes upload rights. Automated triggers: N reports in T time, N labels rejected, upload rate spike. All actions logged to `moderation_events` table.
-- **Data poisoning defense** — never train on labels from users with reputation < 0 or blocked. Held-out validation set is admin-curated and never touched by user labels.
+- **Data poisoning defense** — the nightly fixture-regression gate is the primary defense: on regression, that day's ingested sources are quarantined (`data_quarantine`), a Discord alert fires, and promotion is skipped. Never train on quarantined sources, labels from users with reputation < 0, or blocked users. Held-out validation set is admin-curated and never touched by user labels.
 
 ## Deployment (DigitalOcean cheapest viable)
 
 **MVP stack**:
 - **1× Basic Droplet** — $6/mo (1 GB RAM, 25 GB SSD, 1 TB transfer). Runs turnip-farm (Bun), Postgres, and the ML pipeline (nightly). Nginx/Caddy fronts everything.
-- **Cloudflare R2 bucket** — videos + trained model artifacts. First 10 GB free, then $0.015/GB/mo storage, **$0 egress**. Two zeros: no bandwidth bill for video downloads, no bandwidth bill for the app fetching the model.
+- **Cloudflare R2 bucket** — pose-format blobs + trained model artifacts. First 10 GB free, then $0.015/GB/mo storage, **$0 egress**. Two zeros: no bandwidth bill for pose-blob downloads, no bandwidth bill for the app fetching the model.
 - **Domain**: ~$15/yr on Namecheap/Porkbun.
 - **Managed Postgres** ($15/mo) OR **self-hosted Postgres on the droplet** ($0). Start self-hosted; migrate to managed when you cross 1 GB of DB or 10 QPS sustained.
-- **Object storage costs** — 100 videos × 100 MB = 10 GB → free tier. 1000 videos = $1.50/mo. 10 000 videos = $15/mo.
+- **Object storage costs** — pose blobs run ~2 KB/s at the canonical 10 Hz: 100 contributed sessions × ~120 KB ≈ 12 MB → free tier. 10,000 sessions ≈ 1.2 GB → still free tier. 1M sessions ≈ 120 GB ≈ $1.65/mo.
 - **Cloudflare in front** — free tier — for the app-facing DNS + basic DDoS + edge caching of static assets.
 
-**MVP total: ~$15-30/mo** depending on Postgres choice and video volume.
+**MVP total: ~$15-30/mo** depending on Postgres choice and storage volume.
 
 **Scaling seams built in from day 1**:
 - **Stateless API** — all state in Postgres + R2. Adding a second droplet behind a load balancer is a config change, not a rewrite.
-- **Videos on R2, not the droplet FS** — droplet doesn't grow with content.
+- **Pose blobs on R2, not the droplet FS** — droplet doesn't grow with content.
 - **Managed Postgres upgrade path** — swap the DSN, no schema changes.
 - **Background jobs (training) already run out-of-process** — moving to a dedicated GPU worker is one variable change.
 - **Migration tool from day 1** — schema changes are additive, forward-only, versioned. Zero-downtime deploys become possible when we care.
@@ -317,14 +334,14 @@ Every repo ships (at repo root, standard OSS conventions):
 | item | MVP ($/mo) | scale-to-1000-users ($/mo) |
 |---|---|---|
 | DO droplet (API + self-hosted Postgres + training runner) | 6 | 12-24 |
-| Cloudflare R2 (video + models) | 0-2 | 10-30 |
+| Cloudflare R2 (pose blobs + models) | 0-2 | 10-30 |
 | Cloudflare DNS + edge (free tier) | 0 | 0 |
 | Managed Postgres (optional) | 0 (skip for MVP) | 15 |
 | Domain amortized | 1.25 | 1.25 |
 | Apple Developer Program amortized | 8.25 | 8.25 |
 | **Total** | **~15/mo** | **~50-80/mo** |
 
-R2's $0 egress is what keeps this cheap even as video volume grows. AWS S3 would triple the bill at 1000 users due to egress fees.
+R2's $0 egress is what keeps this cheap even as pose-blob and model-download volume grows. AWS S3 would triple the bill at 1000 users due to egress fees.
 
 ## Contribution ramp
 
@@ -341,12 +358,13 @@ R2's $0 egress is what keeps this cheap even as video volume grows. AWS S3 would
 Resolved 2026-09-04. Each records the decision, the reason, and the trigger that would reopen it.
 
 1. **Model bundling vs OTA-only → Bundle.** The int8 model is ~7 MB against the App Store's 200 MB cellular download limit, so "saving 7 MB" buys nothing, and OTA-only breaks first launch offline. OTA updates (§ "OTA model updates") layer on top of the bundled model as a replacement path, never a prerequisite. *Reopen if:* the escalation ladder lands on a model > ~50 MB.
-2. **Trick classification in v2 → No classifier at launch, but capture the field from day 1.** The `labels` table already carries an optional trick class; expose it in the labeling UI as an optional free-text/enum tag so training data accrues from the first label. Train a classifier (PoseC3D-FineGym starting point) only once there's volume to train on. Zero ML cost now, no data lost.
+2. **Trick classification in v2 → REVERSED 2026-10-06: the detector IS the ML program.** The v2 pipeline trains a trick-detection model (pose sequence → trick segments + names) from the contributed dataset from day one — detection and naming are the program, not a future phase. (Reversal of the Rev 6 decision, per the merged master plan.) *Reopen if:* contribution volume never reaches the training threshold and the program stalls.
 3. **Labeling incentive → Reputation score + a "your contributions" stats screen. Defer badges and notifications.** Reputation is already required for moderation (§ "Label quality + abuse"), so surfacing it is free. Badges are a design project with no evidence they're needed at v2 volumes. *Reopen if:* labeling throughput stalls with active users who aren't labeling.
-4. **Storage retention → Keep forever, user-deletable.** Uploads are already-trimmed clips (the app trims before upload), so 1,000 clips ≈ 10 GB ≈ $1.50/mo on R2. A purge policy isn't worth building until roughly 1 TB (~$15/mo). Ship a `DELETE /api/videos/:id` (owner-only) from day 1 so deletion requests are honored without an admin. *Reopen if:* R2 storage passes ~1 TB.
+4. **Storage retention → MOOT 2026-10-06: there are no videos to keep.** The farm stores pose-format blobs (~2 KB/s) and labels, never video — 10,000 contributed sessions are ~1.2 GB, still inside R2's free tier. The retention posture transfers to sources: keep forever, user-deletable via `DELETE /api/sources/:id` (owner-only) from day 1. (Mooted by the no-video privacy contract, per the merged master plan.) *Reopen if:* pose-blob storage passes ~1 TB.
 5. **Moderation model → Single admin at launch.** The `moderation_events` log and trusted-user spot checks already in § "Label quality + abuse" are the on-ramp. Add a moderator role when the open report queue exceeds what one person clears in a week — a measurable trigger, not a guess.
 6. **CLA → Skip.** Decided in issue #4; Apache 2.0 § 5 covers contributions. `CONTRIBUTING.md` already states this.
 7. **Analytics → None in v1.** Crash reports and hang/launch metrics come from Xcode Organizer + MetricKit, which are opt-in through iOS's own "Share With App Developers" setting — no SDK, no consent UI, and the "nothing leaves your device" claim in the README stays literally true. If v2 needs product analytics, prefer TelemetryDeck (Swift-native, anonymous signals, no consent prompt) over self-hosted PostHog, which is a full platform to operate on a $6 droplet. *Reopen when:* v2 backend ships and there's a product question only usage data can answer.
+8. **Privacy: keypoints + opaque IDs only, never pixels (adopted 2026-10-06).** The farm receives pose keypoint sequences, deterministic source IDs, confirmed clip windows, and labels — never video pixels, audio, location, photo-library identifiers, device identifiers, contacts, or thumbnails. Reopenable only by deliberate product decision, never convenience. (From the merged master plan §1.)
 
 ## Empirical test — the first work item
 
@@ -355,7 +373,7 @@ Once this document is agreed, the immediate next step is scaffolding `turnip-ios
 ## Alternatives considered and rejected
 
 - **Monorepo**: raises contribution barrier for OSS contributors. Rejected.
-- **AWS S3 for video storage**: $0.09/GB egress kills the economics. Rejected in favor of R2.
+- **AWS S3 for object storage**: $0.09/GB egress kills the economics. Rejected in favor of R2.
 - **MIT license**: fine but Apache 2.0's patent grant is worth having for an ML project.
 - **Serverless API** (Vercel / Cloudflare Workers): cheap for low traffic but harder to run Postgres migrations against, and the Bun + droplet stack is straightforward to operate at MVP scale. Rejected for MVP; reconsider for scale.
 - **Fine-tuning from day 1**: expensive labeling effort + zero validated need until we measure MoveNet Thunder accuracy on real footage. Rejected — start with pretrained, escalate only if empirical testing says otherwise.

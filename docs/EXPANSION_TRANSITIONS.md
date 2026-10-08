@@ -1,5 +1,33 @@
 # Photos-style expansion transitions
 
+*Rev 12 · 2026-10-07.* The editor's crop marker is now one fixed rectangle
+on screen and its video runs edge to edge under the chrome, so the card is
+laid out as the whole screen — the same `ClipEditorVideoSurface` placement
+the editor's stage uses — and the measured value is the marker's frame
+(`ClipEditorCropMarkerFramePreferenceKey`), which is where the window starts:
+it uncrops from the marker's center square to the whole screen. See "Rev 12"
+near the end.
+
+*Rev 11 · 2026-10-07.* The editor's swipe-to-dismiss now commits the edit the
+way its back chevron does (it closed without handing the draft back). Every
+bar-less screen's header — the editor's top row, Processing's chevron,
+Camera's corner controls — sits where the system inline bar lays its items
+(`ScreenHeaderBand`, measured on both iOS 26 and pre-26), and the clip list's
+chevron is the same 44 pt glass circle as the others rather than the bar's
+wider pill, so the list and editor headers land on each other through the
+cross-fade. See "Rev 11" near the end.
+
+*Rev 10 · 2026-10-07.* The cross-fade has its own curve. The flight's geometry
+is unchanged (250ms ease-in-out); the destination's chrome and the scrim each
+fade on an ease-in-out of the card's *travel* whose inflection point — where
+the fade crosses half — and steepness are set per layer. Tuned by hand to
+chrome `0.99` / power `4` and scrim `0.6` / power `3`: the controls join only
+as the card lands and are the first thing to go on a close, while the grid or
+list under the scrim is half covered at 60% of the way out. Applied per frame
+by an `Animatable` modifier keyed on `progress`, so a swipe and the back
+button play the same cross-fade. See "Rev 10" near the end, including the
+three measured shapes it replaced.
+
 *Rev 9 · 2026-10-05.* The flight is 250ms. The destination's chrome now
 cross-fades in *over* the flying card for the whole flight instead of appearing
 whole at the end: the destination sits above the card at `.opacity(progress)`,
@@ -231,8 +259,8 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
 
 | | `ClipExpansionContainer` | `HomeExpansionContainer` |
 |---|---|---|
-| Destination frame | Measured via a `PreferenceKey` the editor's own preview surface reports (`ClipEditorPreviewFramePreferenceKey`) — the editor's full-frame preview (the crop rect's position within it is what the card's window starts on), not the full screen. Since Rev 8 the report is used as-is: the container no longer transforms the editor, so there is nothing to divide back out (Revs 2–7 recovered the frame algebraically through the editor's own scale/offset — see "Measuring the destination without a race or a feedback loop" below). Live through the opening flight, frozen once a close can begin (`acceptsDestinationUpdates`). A fallback square stands in only until the very first report arrives | Defaults to a synchronous aspect-ratio estimate from the tapped `PHAsset`'s own pixel dimensions (full screen only when no estimate applies, e.g. a destination that goes straight to `ClipListView`), narrowing to `ProcessingView`'s real, letterboxed video rect once it reports one via `ProcessingVideoFramePreferenceKey` — see "Matching the destination's real content rect" and "Measuring the destination without a race or a feedback loop" below. Never locked — stays live, the same `sourceFrame` is, so browsing to a neighbor with a different aspect ratio retargets it rather than flying toward the first video's letterbox rect |
-| Card content | The editor's own `ClipEditorVideoSurface`, rendering the container-owned `ClipEditorViewModel`'s `AVPlayer` (the editor renders the same object), over the tile's poster thumbnail placed at the crop rect. The window starts on the crop rect's center square (what the tile's aspect-filled loop shows) | The tile's square thumbnail at the frame's center square, the cached full-frame poster where there is one, and `ProcessingView`'s live player once reported |
+| Destination frame | The full screen: the card is laid out as the editor's whole stage, with the video placed in it exactly as the editor places it (`ClipEditorStage.videoPlacement`, from the same marker rect), so the settled card and the editor's own surface are the same picture. What is measured instead is the *focus* — the editor's fixed crop marker, reported via a `PreferenceKey` (`ClipEditorCropMarkerFramePreferenceKey`), independent of media and so available from the editor's first layout pass; a fallback marker over a rough stage band stands in only until then. Live through the opening flight, frozen once a close can begin (`acceptsDestinationUpdates`). Revs 2–11 measured the editor's aspect-fit preview frame as the destination instead; see "Measuring the destination without a race or a feedback loop" below for how that measurement was made reliable | Defaults to a synchronous aspect-ratio estimate from the tapped `PHAsset`'s own pixel dimensions (full screen only when no estimate applies, e.g. a destination that goes straight to `ClipListView`), narrowing to `ProcessingView`'s real, letterboxed video rect once it reports one via `ProcessingVideoFramePreferenceKey` — see "Matching the destination's real content rect" and "Measuring the destination without a race or a feedback loop" below. Never locked — stays live, the same `sourceFrame` is, so browsing to a neighbor with a different aspect ratio retargets it rather than flying toward the first video's letterbox rect |
+| Card content | The editor's own `ClipEditorVideoSurface`, rendering the container-owned `ClipEditorViewModel`'s `AVPlayer` (the editor renders the same object), over the tile's poster thumbnail placed at the crop marker. The window starts on the marker's center square (what the tile's aspect-filled loop shows) | The tile's square thumbnail at the frame's center square, the cached full-frame poster where there is one, and `ProcessingView`'s live player once reported |
 | Source frame / time | Both captured once, at tap time: `sourceFrame: CGRect`, and `sourceTime` — the tile's paused loop position (the tile pauses *before* reading it), or its poster's midpoint time without a loop | A **live closure** (`sourceFrame: () -> CGRect?`), re-read continuously — a close after `ProcessingView`'s own swipe-to-browse-neighbors must land on whichever tile is *now* current, not the one first tapped |
 | Dismiss gesture | Owns one itself, planted into `ClipEditorView`'s background (see "Gesture ownership" below) | Doesn't own one — the destination (`ProcessingView`) already has its own vertical swipe, reported *into* the container via `HomeExpansionCloseHandlers` |
 | Delete | Its own close path: fades out in place rather than flying, since the tile's grid slot holds different content (or nothing) by the time delete runs | N/A — Home has no per-tile delete |
@@ -1211,6 +1239,215 @@ chevron and `ResolvingDestination`'s cancel still fly back into the tile.
   consecutive `XCUIScreen.main.screenshot()` samples of the settled
   Processing view (two runs) all read the video's pixels at center, never the
   grid's. `simctl io recordVideo` interleaving two sources; lesson 19.
+
+## Rev 10: the cross-fade has its own curve, with a movable inflection point
+
+*2026-10-06/07.* Request: keep the slide exactly as it is; during the
+cross-fade, disappearing components should ease out and appearing components
+ease in — refined over several rounds to: each fade spans the whole flight,
+and its *inflection point* (where it crosses half, its steepest moment) is
+set per layer — first specified as 60% of the travel for the disappearing
+layer and 40% for the appearing one, then tuned by hand (see "What shipped").
+
+**What shipped.** `ExpansionFlightGeometry.crossfadeOpacity(progress:
+inflection:)` is an ease-in-out of the card's *travel* (`progress`, `0` at the
+tile, `1` open) whose halves meet at `inflection` instead of the middle: a
+power-`steepness` ease-in from `0` to `0.5` over `[0, inflection]`, the
+matching ease-out from `0.5` to `1` over `[inflection, 1]`. The steepness is
+per layer (`chromeCrossfadeSteepness`, `scrimCrossfadeSteepness`), since white
+chrome over the card is seen long before a dark scrim over bright tiles is;
+at `3` the system's near-quadratic curves would already show a layer clearly
+where this still holds it within a few percent of its start, and `4` holds it
+longer. Each container applies it to its
+two layers through `ExpansionCrossfade`, an `Animatable` modifier keyed on
+`progress` — the Rev 4 lesson: a plain `.opacity(f(progress))` in `body` only
+ever sees the two endpoints and would interpolate linearly between them; an
+`Animatable` gets every interpolated value and applies the curve per frame.
+Under a drag `progress` is written directly and the same curve applies, so
+the swipe and the button share the cross-fade by construction (`UIUX.md`,
+"A gesture and its button play one animation").
+
+**Why one inflection per layer serves both directions.** The roles swap with
+the direction and the two readings land on the same point. Opening, the
+chrome is the layer *appearing* — half in at 40% of the way out, i.e.
+`progress = 0.4`; closing, it is the layer *disappearing* — half gone at 60%
+of the way back, also `progress = 0.4`. The scrim is the mirror: the
+presenter under it disappears on an open (half covered at 60% out) and
+reappears on a close (half back at 40% back), `progress = 0.6` either way. So one
+inflection per layer, no per-direction state, no separate animated values.
+The values were then tuned by hand in Xcode against the real flights: the
+chrome's inflection moved from `0.4` to `0.99` with steepness `4` — the
+picture does the transition and the controls arrive as it lands — and the
+scrim stayed at `0.6` with steepness `3`. The measurements below are from the
+`0.4` / `0.6` build; they verify the mechanism, which the constants only
+parameterise.
+
+**How it got here**, since each step was measured and the measurements are
+what ruled the earlier shapes out:
+
+1. *Full-length `.easeIn`/`.easeOut` on two extra animated states* (chrome
+   and scrim), the fade's direction picking the curve. Measured exactly as
+   specified in opacity terms — clip open chrome 0.17 → 0.30 → 0.47 → 0.62
+   against card 0.22 → 0.44 → 0.67 → 0.86 and scrim 0.49 → 0.65 → 0.79 →
+   0.90 — and seen as the old layer lingering and the new one arriving early.
+   Opacity isn't brightness: on black, white chrome at 30% already looks
+   present and a tile at 35% still looks lit.
+2. *Same, on cubic Bézier curves* (0.125 at the midpoint instead of 0.315):
+   chrome 0.04 → 0.13 → 0.25 → 0.56, scrim 0.63 → 0.85 → 0.93 → 0.99. Still
+   too much overlap, too soon.
+3. *The fades offset in time* — the disappearing layer over the first
+   `crossfadeShare` of the flight, the appearing layer `.delay`ed into the
+   last — at 0.6, then 0.3, 0.5 and 0.6 again, with the drag mapped onto the
+   same windows by travel. This was a misreading of "inflection point" as the
+   start/end of each fade: at 0.3 the chrome was 0 until the card was at
+   86% and the list 96% covered at 6%, i.e. two near-cuts with the card alone
+   in between. The request was for full-span fades whose *midpoints* move.
+4. The shipped curve above.
+
+**Verification** that doesn't depend on knowing when a frame was captured
+(the recorder keeps 3–6 frames of a 250ms flight at irregular spacing — lesson
+1): read the geometry and both fades off the *same* frame and compare each
+fade with the curve's prediction at that frame's `progress`. Clip (the
+`-screenshotClipListMedia` tap flow through the scratch driver): `p` from the
+card's left edge lerped between the tile's (592px) and the editor preview's
+(163px); scrim from the clip list's Done button showing through (`1 −
+blue/255`); chrome from the brightest pixel of the editor's Delete pill
+(nothing of the list under it) over its landed value. Home (the seeded
+library, second tile): `p` from the card's top edge (345px → 836px); scrim
+from the untapped top-left tile; chrome from the scrub bar's track over a
+tile with no blue of its own.
+
+Measured against the curve's prediction at each frame's own `p` (chrome =
+`crossfadeOpacity(p, 0.4)`, scrim = `crossfadeOpacity(p, 0.6)`), measured →
+predicted:
+
+- Clip open, `p` 0.22 / 0.43 / 0.67 / 0.86: chrome 0.11 / 0.62 / 0.91 / 0.98 →
+  0.08 / 0.57 / 0.92 / 0.99; scrim 0.03 / 0.20 / 0.73 / 0.98 → 0.02 / 0.19 /
+  0.72 / 0.98.
+- Clip back-button close, `p` 0.93 / 0.77 / 0.55 / 0.32 / 0.13: chrome 1.00 /
+  0.98 / 0.83 / 0.30 / 0.02 → 1.00 / 0.97 / 0.79 / 0.26 / 0.02; scrim 1.00 /
+  0.91 / 0.40 / 0.09 / 0.01 → 1.00 / 0.91 / 0.39 / 0.07 / 0.00.
+- Clip swipe, under the finger at `p` 0.79 / 0.78 and held at 0.55: chrome
+  0.99 / 0.98 / 0.81 → 0.98 / 0.98 / 0.79; scrim 0.93 / 0.91 / 0.40 → 0.93 /
+  0.92 / 0.39. Released, `p` 0.51 / 0.36 / 0.23: chrome 0.74 / 0.43 / 0.12 →
+  0.72 / 0.36 / 0.10; scrim 0.31 / 0.12 / 0.04 → 0.30 / 0.10 / 0.02. The same
+  curve the button plays, at every sampled point of the drag.
+- Home open, `p` 0.41 / 0.79: scrim 0.18 / 0.94 → 0.16 / 0.93; chrome (scrub
+  track) 0.55 / 0.97 → 0.53 / 0.98. Home close, `p` 0.96 / 0.76 / 0.43: scrim
+  1.00 / 0.91 / 0.21 → 1.00 / 0.91 / 0.18; chrome 0.98 at 0.76 → 0.97, and at
+  0.43 the frame shows the controls at roughly half (predicted 0.56) — the
+  track probe can't read it there, since the bar's played/unplayed split has
+  moved since the landed reference and the tab bar's highlight sits under the
+  button.
+
+Also on the record from the earlier rounds: an idle editor sampled 30 times
+over ~3s with `XCUIScreen.main.screenshot()` read Done-blue 0 on all — the
+"nearly closed" frames the recorder emitted while the app idled, alternating
+with a list frame that had no card and a hidden slot, were lesson 19's
+interleave, not the app; the recorder can also emit a flight's frames *late*
+(the clip open's frames once showed up after the close). The looping preview
+shifts the frame's overall brightness while the editor idles (the harness
+movie's grey level is its frame index), so a whole-screen brightness change
+there is not a transition.
+
+## Rev 11: the swipe commits the edit, and every header sits where the bar's items do
+
+*2026-10-07.* Two reports: an edit made in the editor was lost when the
+editor was swiped closed rather than closed with the chevron, and the
+editor's header sat at a different height than the clip list's.
+
+**The swipe commits.** `ClipExpansionContainer.dismissDragGesture`'s
+committing release called `close()` alone; the editor's back chevron calls
+`onCommit(viewModel.result)` and *then* its close. The draft lives in the
+editor's view state until it is left, and nothing else delivers it, so the
+swipe path dropped it. The committing branch now commits first, exactly as
+the chevron does; a cancelled drag still commits nothing. (Committing inside
+`close()` instead would apply the result twice on the chevron path.)
+`landingTime` already distinguished an edited landing from an unchanged one,
+so the rest of the close was ready for this.
+
+**The header band.** Rev 9's `topRow` was a plain row inside the editor's
+16 pt-padded `VStack`, so on iOS 26 it sat 16 pt lower and 6 pt further in
+than the clip list's bar items it cross-fades over (measured by element
+frames: chevron center 97 vs 81, 38 vs 44). Processing's chevron and Camera's
+corner controls had the same bare padding. All of them now go through
+`ScreenHeaderBand`/`screenHeaderItemPlacement()`
+(`Turnip/DesignSystem/ScreenHeaderBand.swift`), which encodes the system
+inline bar's measured geometry: a 54 pt band on iOS 26 (44 before), items
+centered in the band's top 44 pt, a 20 pt side inset on iOS 26 (16 before),
+and — pre-26 only — the bar hanging from the status bar's bottom edge, 5 pt
+above the top safe-area inset on Dynamic Island devices (read from
+`statusBarManager`; on iOS 26 the bar starts at the inset itself). Home's
+pre-26 overlay uses the same placement without that overhang, since it sits
+beside the wordmark header rather than a bar. The clip list's chevron, the
+one chevron the system drew, was then the odd one out — iOS 26 wraps a toolbar
+item in a 48×36 glass pill — so its `ToolbarItem` now holds the same
+`ScrimIconButton` circle with the bar's own background hidden under it
+(`sharedBackgroundVisibility(.hidden)`); `BackChevronButton` is gone.
+
+**Verification**, by element frames through the scratch driver on an
+iPhone 15 (iOS 26.2, and a throwaway iOS 18.5 simulator for the pre-26
+branch), not screenshots: list and editor chevrons both at `x 20, y 59,
+44×44` and titles at center `y 81` on 26.2; editor/Processing/Camera at
+center 76 against the bar's 75.67 on 18.5, Home's pre-26 gear at 81 level
+with the wordmark. Trim-then-swipe: the tile caption went 1.5s → 2.8s on the
+fixed build, unchanged on the old one. Both are regression tests in
+`ExpansionTransitionVerificationTests` (`testClipEditorHeaderLinesUpWithTheClipListsBar`,
+`testSwipeToDismissCommitsTheEdit`); the swipe test starts its drag from the
+title element so it doesn't depend on the device's status-bar height.
+
+## Rev 12: a fixed crop marker, the video under the whole screen
+
+*2026-10-07.* Two requests on the editor: the crop boundary should be the
+same size at the same place no matter the clip, with the video moving and
+scaling under it to show what the crop will be; and the video should cover
+the whole screen rather than a center rectangle that cut off whatever a
+pinch or rotation pushed outside it.
+
+**The stage.** `ClipEditorView` is now a `ZStack`: an edge-to-edge stage
+(the video surface, the dimmed surround with a hole at the marker, the
+marker's outline, the crop gesture over the stage band only) under the
+chrome column (header row, a measuring placeholder where the stage band is,
+reset button, trim slider). The marker is `ClipEditorStage.markerRect`: the
+largest rect of the export's aspect ratio centered in that band, which
+depends only on the device's layout. The video is `ClipEditorStage.videoPlacement`:
+one uniform scale that maps the clip's crop rect onto the marker, the crop's
+center on the marker's center, the rest of the frame laid out around it —
+routinely wider than the screen on a landscape source — and never clipped.
+For that mapping to be uniform the crop rect has to have the marker's
+aspect ratio, so `CropRectCalculator.fittedInFrame` no longer clamps an
+over-long axis to the frame: it centers the rect on the frame and lets it
+overhang equally at both ends, and the export, the tile thumbnail
+(`ClipThumbnailLoader` now fills black first) and the tile loop all render
+black there. The editor's marker is therefore exactly what export cuts to.
+
+**The card.** With the surface laid out full screen in the editor, the card
+is laid out full screen too, from the same placement function and the same
+marker, so at `progress == 1` it is pixel-identical to the editor's surface
+for any adjustment — a per-clip destination rect would have clipped a
+zoomed or rotated picture at the card's edge and let it pop in at the cut.
+The measured value is now the marker (`ClipEditorCropMarkerFramePreferenceKey`),
+which is the window's starting rect; it needs no media, so it is reported
+on the editor's first layout pass, before the flight (which waits on the
+player) can start. `ExpansionFlightGeometry` is unchanged.
+
+**One mistake worth recording.** The stage band's own `PreferenceKey` first
+reduced with `value = nextValue()`; the placeholder's siblings in the chrome
+column contribute the zero default, and the last of them won, so the marker
+stayed empty and the stage rendered black. Every frame-reporting key in this
+codebase keeps the latest non-zero value for that reason.
+
+**Verification.** `-screenshotClipEditor` screenshots on an iPhone 15
+(iOS 26.2): the marker at `(48, 124, 296×526)` with the video filling it
+and the dimmed frame running under the header and the controls. A scratch
+XCUITest driver dragged, pinched and rotated the stage: the marker's
+element frame was identical before and after each gesture, the video's
+edge moved under it, and Reset restored it. A recording of the open flight
+over `-screenshotClipListMedia` showed the tile growing into the marker
+with the chrome fading in and no size or frame pop at the landing cut.
+`testClipExpansionCardLandsOnTheEditorsCropMarker` (replacing the
+preview-frame convergence test) checks the card's settled frame against the
+marker element; the header-alignment and swipe-commit tests still pass.
 
 ## Gesture ownership: why the dismiss drag can't live behind the content
 

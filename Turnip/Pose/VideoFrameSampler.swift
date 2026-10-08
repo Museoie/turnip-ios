@@ -103,7 +103,7 @@ struct VideoFrameSampler: Sendable {
         let preferredTransform = try await track.load(.preferredTransform)
         let naturalSize = try await track.load(.naturalSize)
         let transformedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
-        let renderSize = CGSize(width: abs(transformedRect.width), height: abs(transformedRect.height))
+        let renderSize = naturalSize.displayed(through: preferredTransform)
         // A transform that rotates about the origin puts the content outside [0, renderSize], which
         // composes correctly sized frames of pure background. Camera-roll assets carry the
         // normalizing translation already; imported and edited ones need not.

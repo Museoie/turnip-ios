@@ -46,23 +46,33 @@ it's summarized from — keep both in sync when data handling changes.
 ## Privacy manifest (`Turnip/Resources/PrivacyInfo.xcprivacy`)
 
 Declares: no tracking (`NSPrivacyTracking` false, no tracking domains),
-no collected data types, and two required-reason API categories —
+no collected data types, and three required-reason API categories —
 `NSPrivacyAccessedAPICategoryFileTimestamp` with approved reason `C617.1`
 (the orphan sweep in `PhotoVideoResolver` reads `.creationDateKey` on files
-inside the app's own `tmp/` container) and
+inside the app's own `tmp/` container),
 `NSPrivacyAccessedAPICategorySystemBootTime` with approved reason `35F9.1`
-(`ProgressReportClock` measures elapsed time between in-app progress reports
-via `systemUptime`). See the audit table below.
+(elapsed time between in-app progress reports, measured via `systemUptime`),
+and `NSPrivacyAccessedAPICategoryUserDefaults` with approved reason `CA92.1`
+(`TurnipSettingsStore` persists the settings screen's four keys, readable only
+by the app itself). See the audit table below.
 
-Required-reason API audit (re-run if these change):
+Required-reason API audit. `ci_scripts/check-privacy-manifest.sh` enforces it
+on every pull request: it matches a table of API spellings — which lives in
+the script, since the categories and evidence below are not themselves
+greppable — against everything under `Turnip/`, and fails when a hit has no
+matching `NSPrivacyAccessedAPIType` in the manifest. So a `No` row whose
+category is undeclared is a claim CI re-checks: a call site landing behind it
+fails the build. The other direction is a note rather than a failure — a
+declared category nothing references is reported without failing, because
+Apple rejects undeclared usage, not an unused declaration.
 
 | API category | Used? | Evidence |
 |---|---|---|
-| UserDefaults | No | No `UserDefaults` references in `Turnip/` |
+| UserDefaults | Yes — CA92.1 | `TurnipSettingsStore` reads four keys in `init` and writes through to `UserDefaults` on every published change; `TurnipSettingsStore.shared` takes the `.standard` suite. All four keys are app-local — no app group, no shared suite outside the screenshot and preview harnesses — which is what CA92.1 approves. |
 | File timestamps | Yes — C617.1 | `PhotoVideoResolver.deleteOrphanedTemporaryExports` reads `.creationDateKey` via `resourceValues(forKeys:)` on files in the app's own `tmp/` container — in-container metadata reads, declared with approved reason C617.1. (`PHAsset.creationDate` is PhotoKit metadata on user-granted assets, not a file-timestamp API.) |
-| System boot time | Yes — 35F9.1 | `ProgressReportClock.shouldReport` (in `ProcessingPipeline.swift`) defaults its clock to `ProcessInfo.processInfo.systemUptime` to measure elapsed time between in-app progress reports — declared with approved reason 35F9.1. |
-| Disk space | No | No volume-capacity queries |
-| Active keyboards | No | No text fields anywhere in the app |
+| System boot time | Yes — 35F9.1 | `ProgressReportClock.shouldReport` (in `ProcessingPipeline.swift`) defaults its clock to `ProcessInfo.processInfo.systemUptime` to measure elapsed time between in-app progress reports; `LivePoseRecording` and `LivePoseFrameTap` read the same clock for inference timing and thermal accounting. All in-app elapsed-time measurement — declared with approved reason 35F9.1. |
+| Disk space | No | No volume-capacity resource keys and no `statfs` family call sites. |
+| Active keyboards | No | The category covers querying `UITextInputMode.activeInputModes`, which nothing does. `SettingsView` has one `TextField` for the album name; presenting a keyboard is not the declarable access. |
 
 Third-party SDKs: the only dependency is `TensorFlowLiteSwift`
 (`Podfile.lock` resolves its `Privacy` subspec, which carries the pod's

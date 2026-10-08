@@ -65,4 +65,35 @@ final class ExpansionFlightGeometryTests: XCTestCase {
         XCTAssertLessThan(FlightScrubber.easeInOut(0.25), 0.25)
         XCTAssertGreaterThan(FlightScrubber.easeInOut(0.75), 0.75)
     }
+
+    /// Each cross-fading layer's opacity is a function of the card's travel that spans the
+    /// whole flight, crosses half exactly at its inflection, and holds near its start value
+    /// until close to it. Checked for the shipped constants and for a sweep of others, since
+    /// where the inflections sit and how steep the halves are is tuning, not behaviour.
+    func testCrossfadeOpacityCrossesHalfAtTheInflectionAndSpansTheFlight() {
+        let chrome = ExpansionFlightGeometry.chromeCrossfadeInflection
+        let scrim = ExpansionFlightGeometry.scrimCrossfadeInflection
+        let layers: [(inflection: CGFloat, steepness: CGFloat)] = [
+            (chrome, ExpansionFlightGeometry.chromeCrossfadeSteepness),
+            (scrim, ExpansionFlightGeometry.scrimCrossfadeSteepness),
+            (0.2, 3), (0.5, 3), (0.8, 5)
+        ]
+        for (inflection, steepness) in layers {
+            let opacity = {
+                ExpansionFlightGeometry.crossfadeOpacity(progress: $0, inflection: inflection, steepness: steepness)
+            }
+            XCTAssertEqual(opacity(0), 0, accuracy: 0.0001)
+            XCTAssertEqual(opacity(1), 1, accuracy: 0.0001)
+            XCTAssertEqual(opacity(inflection), 0.5, accuracy: 0.0001)
+            // Still within a few percent of its start value halfway to the inflection.
+            XCTAssertLessThan(opacity(inflection / 2), 0.1)
+            // Monotonic.
+            var last: CGFloat = -1
+            for step in 0...20 {
+                let value = opacity(CGFloat(step) / 20)
+                XCTAssertGreaterThanOrEqual(value, last)
+                last = value
+            }
+        }
+    }
 }

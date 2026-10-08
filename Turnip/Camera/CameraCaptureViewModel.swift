@@ -727,10 +727,10 @@ extension CameraCaptureViewModel {
 
     /// The movie output finished. Waits for the consumer to score what is still queued — one
     /// inference in steady state — logs the recording's metrics (where the acceptance gate in
-    /// docs/LIVE_POSE.md is read from), and returns the take's clips when live inference covered
-    /// the whole take. Nil sends the take through Processing: no live recording ran, the camera
-    /// was left mid-drain, or coverage fell short.
-    private func finishLivePose() async -> [ProcessedClip]? {
+    /// docs/LIVE_POSE.md is read from), and returns the take's clips, with the scored frames,
+    /// when live inference covered the whole take. Nil sends the take through Processing: no
+    /// live recording ran, the camera was left mid-drain, or coverage fell short.
+    private func finishLivePose() async -> DetectedClips? {
         guard let recording = livePoseTap.endRecording() else { return nil }
         drainingLivePose = recording
         let outcome = await recording.outcome()
@@ -743,7 +743,9 @@ extension CameraCaptureViewModel {
         // coverage is checked against the grid the recording actually ran, not the shipped default.
         let interval = 1.0 / Double(armedSampleRate)
         guard LivePoseCoverage.isComplete(outcome, interval: interval) else { return nil }
-        return makeDetectClips(armedSampleRate)(outcome.results, liveRenderedPixelSize)
+        return DetectedClips(
+            clips: makeDetectClips(armedSampleRate)(outcome.results, liveRenderedPixelSize),
+            poseFrames: outcome.results)
     }
 
     private func cancelLivePose() {

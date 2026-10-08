@@ -1,11 +1,11 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
-*Rev 5 · 2026-10-05 · States the principle that a gesture and the control
-that does the same thing play one animation, and applies it to the
-Camera/Home pager: tapping a tab icon now slides the page the way a swipe
-does instead of cutting to it.*
+*Rev 10 · 2026-10-08 · Detection's crop rects keep inside the video the
+way Auto crop's do, so a detected clip opens the way Auto crop would frame
+it; the editor's preview keeps looping on a window that ends at the
+asset's end.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation.")*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -59,7 +59,7 @@ Where it applies today:
 |---|---|---|---|
 | Home ↔ Camera (Root navigation) | Horizontal page swipe | Floating bar's camera / gallery icons; Camera's cancel chevron | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Tile ↔ Processing (§1, §2) | Swipe down outside the video surface | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
-| Clip List tile ↔ Clip Editor (§3, §4) | Swipe down outside the video surface | Back chevron | Same, with the card showing the editor's own player |
+| Clip List tile ↔ Clip Editor (§3, §4) | Swipe down outside the crop stage | Back chevron | Same, with the card showing the editor's own player |
 
 Not every state change has a gesture counterpart that it owes an animation.
 A recording that finishes on Camera switches to Home *instantly*, because the
@@ -71,6 +71,42 @@ whose motion it would contradict.
 
 New screens follow the same rule: if a screen can be reached both ways,
 build the gesture's transition first and route the button through it.
+
+## An automatic change moves, it never cuts
+
+When the app changes something on the user's behalf that the user could
+have changed by hand — a fit, a reset, a re-framing, a reorder — the screen
+moves continuously from where it is to the result. It never cuts. The
+change travels along the same geometry the hand gesture would have driven:
+a fit that zooms, turns and shifts the video plays as a zoom, a turn and a
+shift, over an easing curve, not as a new picture replacing the old one.
+
+A cut tells the user *that* something changed and nothing else. The motion
+tells them *what* changed and *by how much*: a horizon that visibly turns
+five degrees to level teaches what Auto rotate measured, and a crop that
+visibly pulls in around the athlete teaches what Auto crop found. It also
+keeps the result reversible in the user's head — they saw where the video
+came from, so they know what pulling it back by hand would mean. A cut
+reads as the app having replaced their work; a motion reads as the app
+having adjusted it.
+
+How it's built: the automatic change writes the same state the gesture
+writes, inside an animated transaction. Nothing else differs — no
+separate animated path, no snapshot cross-fade. A result that arrives
+asynchronously (a detection that had to sample frames) animates when it
+lands, from whatever the state is at that moment.
+
+Where it applies today:
+
+| Change | By hand | Automatic | Shared motion |
+|---|---|---|---|
+| Clip Editor crop fit (§4) | Pinch / rotate / drag the video under the marker | "Auto crop" | The video's scale, rotation and offset about the crop center, eased over 0.4 s |
+| Clip Editor leveling (§4) | Two-finger rotate | "Auto rotate" | The video's rotation about the crop center, eased over 0.4 s |
+
+This is the companion of the principle above: that one says a button plays
+the gesture's *transition*; this one says an automatic change plays the
+gesture's *adjustment*. Both come from the same idea — the motion is how
+the user learns what the screen did.
 
 ## Screen inventory
 
@@ -143,8 +179,10 @@ a button that opens a picker sheet. No account, no settings required for v1
 scrollable grid (`Turnip/Home/HomeView.swift`, `VideoGalleryView`), newest
 videos first, top-to-bottom, three columns. The "Turnip" wordmark (app mark
 beside the title, the mark 1.2x the title text's height) heads the grid as
-scroll content, so it scrolls away with the tiles rather than floating over
-them, and the tiles run under the status bar. Home's nav bar is empty,
+scroll content, leading-aligned, so it scrolls away with the tiles rather
+than floating over them, and the tiles run under the status bar. The filter
+and settings controls sit at the trailing end of the same band — filter,
+then gear. Home's nav bar is visually empty,
 transparent, and takes no space: the content ignores the band the bar would
 reserve, so at rest the wordmark sits directly under the status bar with no
 empty gap above it. The bar exists only so iOS 26 draws its scroll-edge glass
@@ -181,8 +219,9 @@ out-of-process picker, so it needs real Photos access. As built:
   visible rows, over 60-asset pages, so a library with hundreds of
   videos scrolls without stalling on first load.
 
-**Filter** (shipped, `Turnip/Home/GalleryFilter.swift`): a `Menu` button beside
-the settings gear, mirroring the Photos app's own filter — All Items,
+**Filter** (shipped, `Turnip/Home/GalleryFilter.swift`): a `Menu` button just
+before the settings gear at the header band's trailing end, mirroring the
+Photos app's own filter — All Items,
 Favorites, or a specific user album (nested submenu). The filter changes the
 underlying `PHFetchOptions`/`PHAssetCollection` fetch itself, not a
 post-filter of the loaded grid, so paging and Processing's swipe-to-browse
@@ -245,8 +284,9 @@ default empty state, so it never reads as "your library is empty."
   way a tapped gallery tile does: `RootTabView` calls
   `VideoLibraryViewModel.select(_:detectedClips:)` on the newly-created
   asset and switches to the gallery tab. When live inference covered the
-  whole take, its clips travel with the selection and the take lands on
-  Clip List directly (§3) with no analysis step; otherwise it lands on
+  whole take, its clips travel with the selection — with the scored
+  frames they were cut from, which the editor's crop fits need — and the
+  take lands on Clip List directly (§3) with no analysis step; otherwise it lands on
   Processing's idle state exactly as if the user had tapped a tile.
 
 ### 2. Processing
@@ -318,7 +358,10 @@ default empty state, so it never reads as "your library is empty."
   since its window is the whole video.
 - One control overlays each tile's top-trailing corner: a trash button,
   filled red while trashed. Trashing a derived clip removes its tile from
-  the grid immediately, with no restore. Trashing the original tile is a
+  the grid, with no restore: the tile fades out to the background (ease-out)
+  while the tiles after it slide to their new slots (ease-in-out), both over
+  150ms — the editor's Delete (§4) removes the tile the same way behind its
+  own fade. Trashing the original tile is a
   reversible toggle — tap again to restore it — that marks the source video
   itself for deletion from Photos once Done runs.
 - Tapping a derived clip's tile flies it open, Photos-style, into the full
@@ -337,7 +380,11 @@ default empty state, so it never reads as "your library is empty."
   an alert naming the failure, so Done can be retried without risking the
   user's only copy of a trick that never actually saved.
 - The back chevron pops to Home, not to Processing; the title sits centered
-  inline on the same line as the chevron, Photos-app style. The pop is a
+  inline on the same line as the chevron, Photos-app style. The chevron is
+  the same glass circle every other screen's chevron is (`ScrimIconButton`),
+  drawn in place of the bar's own wider item pill, so the control reads the
+  same across the flow and lands exactly on the editor's chevron through the
+  expansion cross-fade. The pop is a
   sideways slide, like any navigation pop — not a shrink back into the
   video's tile, since this screen's tiles are the clips cut from the video,
   not the video itself (`EXPANSION_TRANSITIONS.md`, Rev 9).
@@ -347,20 +394,55 @@ default empty state, so it never reads as "your library is empty."
 - Reached by tapping a derived clip's tile in Clip List (§3) — the tile's
   single detail entry point, not a separate pencil icon. Full-screen, one
   clip at a time:
-  - Video player showing the trimmed clip looping, full frame, with the crop area's
-    marker rectangle drawn over it at a fixed position — the dimmed surround marks
-    what export cuts away. No default AVKit playback chrome; the only controls this
-    screen shows are the custom play/pause and mute buttons and the scrub bar below.
+  - Video player showing the trimmed clip looping under the crop marker: one
+    rectangle of the export's aspect ratio, the same size at the same place on screen
+    for every clip, centered in the band between the header row and the controls.
+    The video is laid out so the clip's crop rect fills the marker exactly — a
+    different clip, or an adjustment to the framing, moves and scales the video,
+    never the marker — and the rest of the frame shows dimmed around it, edge to
+    edge, running under the header and the controls rather than clipped to a box.
+    The marker is what export cuts to. No default AVKit playback chrome; the only
+    controls this screen shows are the custom play/pause and mute buttons and the
+    scrub bar below.
   - The crop area is directly editable: pinch to zoom, rotate with two fingers, and
     drag with one finger to reposition the video underneath the fixed marker
-    rectangle — the video zooms/rotates/moves, the marker never does. A "Reset crop
-    area" button discards the manual adjustment and returns to the algorithm's own
-    framing (issue #9).
+    rectangle — the video zooms/rotates/moves, the marker never does, and whatever
+    the adjustment pushes outside the frame's own rect stays visible instead of
+    being cut off. Two buttons fit the video under the marker for the user:
+    "Auto crop" frames every body part the pose model located in the clip
+    range inside the marker, at whatever rotation the video currently has —
+    so after a trim, or after a turn, one tap refits the crop to the range
+    (issue #9), and it is the only thing that does; a manual pinch or drag is
+    discarded. The fit is the pipeline's own framing for the range (the body
+    parts' box plus a tenth of it on each side — joints stop at the eyes,
+    wrists and ankles, and a tenth reaches the head, hands and feet), with
+    one more rule: the crop shows video in every part of it. The crop's
+    footprint on the video — a turned rectangle, once the video is rotated —
+    is slid inside the frame, and when the body parts' box can't fit the
+    frame at the crop's ratio (an athlete crossing most of a landscape
+    frame), the crop zooms in to the frame's edge and parts of the athlete
+    leave it: no black beyond the frame's edge ever shows in the crop, which
+    outranks holding every body part. Detection's own crop rects (DESIGN.md
+    step 6) follow the same rule, so a clip opens the way Auto crop would
+    frame it. "Auto rotate" levels the horizon: it
+    reads the horizon's tilt off frames sampled across the clip range,
+    averages the tilt over the range (the roll can drift during a clip), and
+    turns the video so the horizon lies along the screen's horizontal. The
+    recordings carry no motion data, so the horizon in the picture *is* the
+    roll; a clip with no horizon to find says so in a notice and keeps its
+    rotation. The two are independent one-shot fits: Auto rotate changes only
+    the rotation, so a limb the turn carries out of the marker is Auto crop's
+    to bring back. Both move the video to their result rather than cutting
+    to it ("An automatic change moves, it never cuts", above).
   - Scrub bar spanning the whole source video (not a zoomed range around the
     window) with drag handles on start/end — adjusts the trick window from
-    issue #8's output; live-updates the crop rect per issue #9 if the window
-    changes, since the crop rect is a function of which frames are in play. The
-    manual crop adjustment above is independent of this and survives a trim.
+    issue #8's output. A handle drag is a trim, not a re-crop: the framing
+    — the crop rect the clip opened with plus the adjustment above — never
+    moves while the handles do. Re-deriving the crop from the window on
+    every drag made the crop grow with the range (every keypoint the wider
+    window held pulled the box out, and the video visibly shrank under the
+    fixed marker); the framing is what the user last set, and "Auto crop"
+    is the one tap that refits it to the trimmed range.
     Full-video handles are naturally imprecise on a long clip, so dragging
     farther vertically from the track slows the handle down (common
     photo/video trim gesture): near the track it tracks the touch 1:1; drag
@@ -375,11 +457,16 @@ default empty state, so it never reads as "your library is empty."
   - Back to Clip List commits the edits and shrinks the screen back into its
     tile — the reverse of the tap that opened it, no separate "save" step
     needed since edits are held in view state until back-navigation. A swipe
-    down anywhere outside the video surface does the same — including the top
+    down anywhere outside the crop stage does the same — including the top
     row and the band above it (the crop pinch/rotate/drag gesture keeps sole
-    ownership of the video itself). The screen draws that top row (back
+    ownership of the band the marker sits in, even though the video itself
+    runs under the whole screen). The screen draws that top row (back
     chevron, title, Delete) as its own content rather than a navigation bar,
-    the same way Processing does, so no bar sits over the swipe band.
+    the same way Processing does, so no bar sits over the swipe band — laid
+    out in the band a bar would occupy, with the chevron and title at the same
+    positions as Clip List's, so the two headers line up through the
+    cross-fade (`ScreenHeaderBand`; every bar-less screen's corner controls
+    share the same placement).
 
 ## Out of scope for this doc
 
@@ -419,7 +506,9 @@ Resolved 2026-09-04.
    pinch/rotate/drag directly on the crop area, on top of the algorithm's own
    framing, with "Reset crop area" to undo it. The trim handles still re-derive
    the base crop rect from the window; the manual adjustment composes with that
-   rather than replacing it.
+   rather than replacing it. *Superseded in part, recorded 2026-10-07 (Rev 8):
+   the handles no longer re-derive the crop — a trim is not a re-crop, and
+   "Auto crop" (Rev 6) is the one tap that refits the framing to the range.*
 2. **Bulk keep/discard → Not in v1.** Every clip defaults to "kept"; a user
    discards by tapping individual cards. At ~10 clips per session that's a
    few taps. Add "discard all" only if feedback asks for it.
