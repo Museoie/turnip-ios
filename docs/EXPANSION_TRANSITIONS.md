@@ -1,5 +1,13 @@
 # Photos-style expansion transitions
 
+*Rev 13 · 2026-10-08.* The editor's surround is frosted glass, and the flight
+shows the crop alone: the card is laid out at the marker again, the window
+uncrops from the tile to the marker, and the editor's edge-to-edge surface
+with the frosted frame around the crop appears with the landing and leaves
+with the first frame of any close, Delete included. The card is composited
+before Delete's fade, or its video spills past the window's clip. See "Rev
+13" near the end.
+
 *Rev 12 · 2026-10-07.* The editor's crop marker is now one fixed rectangle
 on screen and its video runs edge to edge under the chrome, so the card is
 laid out as the whole screen — the same `ClipEditorVideoSurface` placement
@@ -1448,6 +1456,47 @@ with the chrome fading in and no size or frame pop at the landing cut.
 `testClipExpansionCardLandsOnTheEditorsCropMarker` (replacing the
 preview-frame convergence test) checks the card's settled frame against the
 marker element; the header-alignment and swipe-commit tests still pass.
+
+## Rev 13: the frosted surround, and the card is the crop again
+
+*2026-10-08.* The editor's surround outside the marker is now `.thinMaterial`
+with a hole at the marker (UIUX.md Rev 12), instead of a flat 55% black. A
+material only blurs what it sits over when it is drawn at full opacity: under
+the chrome cross-fade of either flight, and under Delete's fade-out of the
+whole container, SwiftUI renders it as a flat tint. Recorded on the "Turnip
+Shots 17PM" simulator with real footage, that flattened tint let the frame
+outside the marker show *sharp* for the whole of Delete's 220ms fade — a cut
+from frosted to sharp on the fade's first frame — and, during the open
+flight, the surround read as near-black until the blur popped in at landing.
+A flat stand-in for the material while not landed (tried first) kept the
+tone but still showed the frame outside the marker sharp under it, since the
+full-screen card was there to show.
+
+The design that holds: **the flight shows the crop and nothing else.** The
+card is laid out at the marker again (`destination` is the measured marker,
+`focus` its own bounds), so the window uncrops from the tile's center square
+to the marker, not to the whole screen; the card's `ClipEditorVideoSurface`
+still lays the whole frame out around the marker, past the card's bounds,
+and the window never reaches past them. `ClipEditorView` draws the frosted
+surround only while `expansionHasLanded`, so on landing the editor's
+edge-to-edge surface and the frosted frame around the crop appear together —
+the "uncrop" — and on any close (including Delete, whose `closeForDelete()`
+now calls `setLanded(false)` like `close()`) they go in the first frame and
+the crop alone flies or fades. Rev 12's "the card must end as the full frame"
+was about a dim surround that showed the frame sharp; a frosted surround
+appearing with the landing is the reveal, not a pop.
+
+One more thing Delete's fade needed: `cardLayer` is now a
+`.compositingGroup()` under its opacity. With the fade applied to the live
+player view directly, the video spilled past `ExpansionFlightClip` and showed
+the frame outside the marker sharp for the whole fade — reproduced with the
+fade on the whole stack and with it on each layer separately; rendering the
+card as one group first is what keeps the clip. The UI test
+`testClipExpansionCardLandsOnTheEditorsCropMarker` already asserted the
+card's settled frame is the marker's; it still passes. Verified by re-recording the open flight, the back
+flight and the Delete fade on real footage: the crop alone moves, the
+frosted frame appears with the landing and leaves with the first frame of a
+close, and no frame shows the surround sharp.
 
 ## Gesture ownership: why the dismiss drag can't live behind the content
 

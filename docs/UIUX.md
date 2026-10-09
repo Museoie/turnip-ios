@@ -1,11 +1,13 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
-*Rev 10 · 2026-10-08 · Detection's crop rects keep inside the video the
-way Auto crop's do, so a detected clip opens the way Auto crop would frame
-it; the editor's preview keeps looping on a window that ends at the
-asset's end.*
+*Rev 12 · 2026-10-08 · The editor's surround outside the crop marker is
+frosted glass — the same material as Processing's and Clip List's bottom
+bars — rather than a flat dim: the video blurs everywhere export cuts away
+and stays sharp only inside the marker, with the controls on top of the
+glass. The expansion flight shows the crop alone; the frosted frame around it
+appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -413,8 +415,10 @@ default empty state, so it never reads as "your library is empty."
     for every clip, centered in the band between the header row and the controls.
     The video is laid out so the clip's crop rect fills the marker exactly — a
     different clip, or an adjustment to the framing, moves and scales the video,
-    never the marker — and the rest of the frame shows dimmed around it, edge to
-    edge, running under the header and the controls rather than clipped to a box.
+    never the marker — and the rest of the frame shows around it through frosted
+    glass (the same material as Processing's and Clip List's bottom bars), edge to
+    edge, running under the header and the controls rather than clipped to a box:
+    only the picture inside the marker is sharp, and the controls sit on the glass.
     The marker is what export cuts to. No default AVKit playback chrome; the only
     controls this screen shows are the custom play/pause and mute buttons and the
     scrub bar below.

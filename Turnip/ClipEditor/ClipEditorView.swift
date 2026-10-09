@@ -5,7 +5,7 @@ import SwiftUI
 /// The per-clip editor (`docs/UIUX.md` § "Clip Detail / Editor"): full-screen,
 /// one clip at a time — the trimmed clip looping under a crop marker that is one fixed
 /// rectangle on screen, with the video laid out so the clip's crop rect fills it and the
-/// rest of the frame showing dimmed around it, edge to edge (pinch to zoom, rotate with
+/// rest of the frame showing frosted around it, edge to edge (pinch to zoom, rotate with
 /// two fingers, drag to reposition the video under the marker), the Auto crop and Auto
 /// rotate buttons that fit the video under the marker for the user, plus a scrub bar
 /// with start/end drag handles.
@@ -42,6 +42,7 @@ struct ClipEditorView: View {
     var dismissGesture: AnyGesture<DragGesture.Value>?
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.expansionHasLanded) private var expansionHasLanded
     @GestureState private var gestureScale: CGFloat = 1
     @GestureState private var gestureRotation: Angle = .zero
     @GestureState private var gestureOffset: CGSize = .zero
@@ -219,7 +220,7 @@ struct ClipEditorView: View {
     }
 
     /// The crop stage, edge to edge under the chrome: the video laid out so its crop rect
-    /// fills the fixed marker (`ClipEditorStage`), the dimmed surround marking what export
+    /// fills the fixed marker (`ClipEditorStage`), the frosted surround marking what export
     /// cuts away, the marker's outline, and — over the stage's own band only — the pinch/
     /// rotate/drag gesture. The video and the overlays take no touches themselves: the
     /// header band and the bottom controls' margins stay with the dismiss gesture behind
@@ -245,9 +246,17 @@ struct ClipEditorView: View {
                 // placement — has landed here; the marker and controls fade in over it.
                 .expansionVideoSurface()
                 .allowsHitTesting(false)
-                CropOverlayShape(hole: marker)
-                    .fill(.black.opacity(0.55), style: FillStyle(eoFill: true))
-                    .allowsHitTesting(false)
+                if expansionHasLanded {
+                    // The same `.thinMaterial` as `PrimaryActionBar`'s bottom bar, with a
+                    // hole at the marker: everything export cuts away shows frosted, only
+                    // the crop stays sharp. Not drawn while an expansion flight or Delete's
+                    // fade has this view under partial opacity, where a material can't blur
+                    // and would render the frame behind it sharp: the flying card shows the
+                    // crop alone, and the frosted frame around it appears with the landing.
+                    CropOverlayShape(hole: marker)
+                        .fill(.thinMaterial, style: FillStyle(eoFill: true))
+                        .allowsHitTesting(false)
+                }
                 Rectangle()
                     .stroke(.white, lineWidth: 2)
                     .frame(width: marker.width, height: marker.height)
@@ -474,7 +483,7 @@ struct ClipEditorCropMarkerFramePreferenceKey: PreferenceKey {
     }
 }
 
-/// The dimmed surround with a hole at the crop marker, for the editor's stage.
+/// The surround with a hole at the crop marker, for the editor's stage.
 private struct CropOverlayShape: Shape {
     let hole: CGRect
 

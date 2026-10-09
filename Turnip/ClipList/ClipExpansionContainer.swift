@@ -5,14 +5,15 @@ import SwiftUI
 /// Two layers share one `progress` clock (`0` = exactly at the tile, `1` = fully open).
 /// A "card" carries the geometry the whole way: the editor's own video surface
 /// (`ClipEditorVideoSurface`, rendering the very same `AVPlayer` the editor renders),
-/// laid out edge to edge exactly as the editor's stage lays it out — the video placed so
-/// its crop rect fills the editor's fixed crop marker — and shown through a window that
-/// uncrops from the part the tile showed — the marker's center square — to the whole
-/// screen, scaled uniformly so the picture is cropped as it grows, never stretched
-/// (`ExpansionFlightGeometry`). The real `ClipEditorView` is hidden for the entire
-/// flight and cut in instantly once the card has arrived (`crossfadeThreshold`); since
-/// both layers draw the same player at the same frame in the same place, the cut is
-/// invisible.
+/// laid out at the editor's fixed crop marker exactly as the editor's stage lays it out
+/// — the video placed so its crop rect fills the marker — and shown through a window that
+/// uncrops from the part the tile showed — the marker's center square — to the marker,
+/// scaled uniformly so the picture is cropped as it grows, never stretched
+/// (`ExpansionFlightGeometry`). The real `ClipEditorView`'s video surface and frosted
+/// surround are hidden for the entire flight and cut in once the card has arrived
+/// (`expansionHasLanded`); inside the marker both layers draw the same player at the
+/// same frame in the same place, so the cut there is invisible, and the rest of the
+/// frame appears around it under the frosted glass with the landing.
 ///
 /// The player is scrubbed alongside the geometry. Opening, it starts on the frame the
 /// tile was showing when tapped (`sourceTime`) and plays back to the clip's first frame
@@ -54,7 +55,7 @@ struct ClipExpansionContainer: View {
     @StateObject private var scrubber: FlightScrubber
     @State private var progress: CGFloat = 0
     /// The editor's crop marker frame, as `ClipEditorCropMarkerFramePreferenceKey` reports
-    /// it — the flight's focus. Live through the opening flight — a newly mounted view's
+    /// it — the flight's destination. Live through the opening flight — a newly mounted view's
     /// first reports settle over a few passes — and frozen from the moment a close can
     /// begin, see `acceptsDestinationUpdates`.
     @State private var measuredMarker: CGRect?
@@ -138,13 +139,17 @@ struct ClipExpansionContainer: View {
 
     var body: some View {
         GeometryReader { screen in
-            // The card is the editor's whole stage: the full screen, with the video placed
-            // in it exactly as the editor places it, so the settled card and the editor's
-            // own surface are the same picture.
-            let destination = CGRect(origin: .zero, size: screen.size)
-            // The editor's crop marker, in the card's own coordinates: what the tile shows,
-            // and so the part of the screen the card's window starts on.
-            let focus = measuredMarker ?? fallbackMarker(in: destination)
+            let screenRect = CGRect(origin: .zero, size: screen.size)
+            // The card is the editor's crop marker: the video placed in it exactly as the
+            // editor places it under the marker, so inside the marker the settled card and
+            // the editor's own surface are the same picture. The flight shows the crop and
+            // nothing outside it; the rest of the frame, under the editor's frosted
+            // surround, only appears once the card has landed and the editor's own
+            // edge-to-edge surface takes over.
+            let destination = measuredMarker ?? fallbackMarker(in: screenRect)
+            // The card's whole content, in its own coordinates: what the tile shows, and so
+            // the part of the card the window starts on.
+            let focus = CGRect(origin: .zero, size: destination.size)
             let chromeCrossfades = ExpansionFlightGeometry.destinationChromeCrossfades
 
             ZStack {
@@ -164,6 +169,11 @@ struct ClipExpansionContainer: View {
                 }
 
                 cardLayer(destination: destination, focus: focus)
+                    // Rendered as one group before any opacity touches it: with Delete's
+                    // fade applied straight to the live player view, the video spilled past
+                    // the window's clip below and showed the frame outside the marker sharp
+                    // for the whole fade.
+                    .compositingGroup()
                     // The hard cut to the editor's video surface — unanimated, since
                     // `hasLanded` is only ever written with animations disabled.
                     .opacity(hasLanded ? 0 : 1)
@@ -178,7 +188,7 @@ struct ClipExpansionContainer: View {
 
                 if chromeCrossfades {
                     // Over the card, fading in with the flight: the editor's chrome (its
-                    // top row, the crop marker and dimmed surround, the playback pill, the
+                    // top row, the crop marker and its surround, the playback pill, the
                     // trim slider) cross-fades in place over the growing picture, while its
                     // own video surface stays hidden under `expansionVideoSurface()` until
                     // the card has landed. A plain `.opacity`, not a cut: it's meant to
@@ -230,8 +240,10 @@ struct ClipExpansionContainer: View {
         }
     }
 
-    /// Laid out at `destination`'s size/position — fixed, not animated — with
-    /// `ExpansionFlightClip`/`ExpansionFlightEffect` doing the actual flight on top.
+    /// Laid out at `destination` (the marker) — fixed, not animated — with
+    /// `ExpansionFlightClip`/`ExpansionFlightEffect` doing the actual flight on top. The
+    /// video surface inside lays the whole frame out around `focus`, past the card's own
+    /// bounds; the flight's window never reaches past them, so only the crop ever shows.
     /// The video surface is invisible until the seek to `sourceTime` has completed, so
     /// a frame the player happened to have before that never shows over the tile; the
     /// poster underneath only joins once the flight has started, so that while the card
@@ -242,8 +254,8 @@ struct ClipExpansionContainer: View {
             if hasStartedOpenFlight {
                 poster(in: focus)
             }
-            // The same placement the editor's stage uses, from the same marker: the
-            // surface itself hides the player until the displayed size is known, so no
+            // The same placement the editor's stage uses, from a marker of the same size:
+            // the surface itself hides the player until the displayed size is known, so no
             // guessed geometry ever shows over the tile before `prepare()` finishes.
             ClipEditorVideoSurface(
                 player: viewModel.player,
@@ -441,6 +453,10 @@ struct ClipExpansionContainer: View {
         acceptsDestinationUpdates = false
         isClosing = true
         scrubber.cancel()
+        // Back onto the card for the fade, as `close()` does: under the fade's opacity the
+        // editor's frosted surround can't blur, and would show the frame outside the
+        // marker sharp; the card is the marker alone.
+        setLanded(false)
         withAnimation(.easeOut(duration: 0.22)) { deleteFadeOpacity = 0 }
         dismissAfterLanding(delay: 0.22)
     }
