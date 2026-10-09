@@ -32,8 +32,9 @@ screen's PR rather than retrofitting later.
   sees, not information a VoiceOver user needs to act on: it is hidden from the accessibility
   tree (`isAccessibilityElement = false` on the preview view) rather than announced ten times
   a second. Confident joints only, green on the live picture; there is no text over it.
-- Manual controls (lens pills, flip, format menu, flash, exposure) are labeled buttons and are
-  disabled while recording rather than hidden, so their state is announced.
+- Manual controls (lens pills, flip, format menu, flash, exposure) are labeled buttons. Lens
+  pills, flip and the format menu are disabled while recording rather than hidden, so their
+  state is announced; flash ("Turn on flash" / "Turn off flash") and exposure stay live.
 
 ### Home / Video Gallery (#16) — done
 
@@ -61,14 +62,20 @@ screen's PR rather than retrofitting later.
   empty and error states must both be announced on arrival. Availability: the SwiftUI
   `AccessibilityNotification.Announcement` API is iOS 17+ and needs `if #available(iOS 17, *)`
   gating — on the iOS 16 floor (`IPHONEOS_DEPLOYMENT_TARGET: "16.0"` in `project.yml`), use
-  `UIAccessibility.post(notification: .announcement, argument:)` instead.
+  `UIAccessibility.post(notification: .announcement, argument:)` instead. **Not yet met:**
+  nothing posts an announcement today; the progress indicator is labeled "Analysis progress"
+  (determinate) or "Analyzing video" (indeterminate).
 - Cancel action reachable and labeled.
 
 ### Clip List (#11)
 
-- Each clip card is one accessible element: label with clip index, duration, kept/discarded
-  state. The keep/discard toggle is reachable as an action, not just a tap target.
-- "Export N clips" action labeled with the live count; disabled state announced.
+- Each tile's picture is one accessible element: "Open clip" with the `.isButton` trait for a
+  derived clip, "Original video" for the original. Its trash button is a separate labeled
+  element ("Trash clip" / "Restore clip"), its duration caption is read separately, a derived
+  clip's range timeline is one element ("Clip from 2.0s to 5.0s of 30.0s"), and a trashed
+  original carries a "Will be deleted" label. **Not yet met:** no label carries the clip's
+  index.
+- "Save Clips" action labeled; disabled while a save runs.
 - No auto-playing loops when `accessibilityReduceMotion` is on; respect
   `UIAccessibility.isVideoAutoplayEnabled` (iOS 13.0+, no availability gate needed on the
   iOS 16 floor). The only iOS 17+ symbol named by this checklist is SwiftUI's
@@ -80,15 +87,19 @@ screen's PR rather than retrofitting later.
   `accessibilityDecrement` (step ≈ 0.1 s) so start/end can be set without dragging — a
   pure-gesture trim UI with no VoiceOver alternative is unusable non-visually. This is the
   screen to verify with a real VoiceOver pass on device, plus Accessibility Inspector's audit.
-- Player controls labeled. Keep/discard toggle reachable as an action.
-- Touch targets: trim handles ≥ 44×44 pt.
-- No auto-playing preview loop when reduce motion is on.
+- Player controls labeled ("Play" / "Pause", "Mute" / "Unmute"); the Delete button is
+  labeled "Delete clip".
+- Touch targets: trim handles ≥ 44×44 pt. **Not yet met:** each handle's hit frame is 32 pt
+  wide (56 pt tall); a drag anywhere on the timeline grabs the nearer handle, which offsets it.
+- No auto-playing preview loop when reduce motion is on. **Not yet met:** the editor's
+  preview loops regardless; only Clip List's tiles honor Reduce Motion.
 
 ### Export Confirmation (#19) — retired
 
 - The screen is gone (UIUX decision 6): Clip List's "Save Clips" saves inline. Its one item moves
   there — the save's completion, and any per-clip failure, must be announced, not only shown
-  as the spinner leaving.
+  as the spinner leaving. **Not yet met:** a failure raises the "Couldn't save clips" alert,
+  but a successful save is not announced.
 
 ## Cross-cutting rules (every v1 screen)
 

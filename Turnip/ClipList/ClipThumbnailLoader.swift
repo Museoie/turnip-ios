@@ -9,7 +9,7 @@ import Foundation
 ///
 /// An actor so frame decoding stays off the main thread — `copyCGImage` blocks while it
 /// seeks and decodes, and the review bar for this repo treats main-thread decoding as a
-/// regression (it was a real past fix). `AVAsset` crosses into this actor from the
+/// regression. `AVAsset` crosses into this actor from the
 /// main-actor view; the crossing is narrow and read-only — the generator seeks and copies
 /// one frame, and the asset is never mutated or stored.
 actor ClipThumbnailLoader {
@@ -45,7 +45,7 @@ actor ClipThumbnailLoader {
             // rect was derived from the athlete's pose *inside* the window.
             generator.requestedTimeToleranceBefore = .zero
             generator.requestedTimeToleranceAfter = .zero
-            // The bound applies to the raw (un-uprighted) frame this generator now
+            // The bound applies to the raw (un-uprighted) frame this generator
             // returns, so a 90°/270°-rotated track needs it transposed — otherwise a
             // portrait-shaped bound clips a landscape-encoded frame's long edge.
             generator.maximumSize = Self.encodedMaxPixelSize(preferredTransform: preferredTransform)
@@ -75,7 +75,7 @@ actor ClipThumbnailLoader {
 
     /// `defaultMaxPixelSize`, transposed for a track whose `preferredTransform` swaps
     /// axes (a 90°/270° rotation: `a` and `d` are both zero). The generator this bounds
-    /// now returns the raw, un-uprighted frame, so the bound has to be sized in *that*
+    /// returns the raw, un-uprighted frame, so the bound has to be sized in *that*
     /// frame's orientation — not the displayed one `defaultMaxPixelSize` was chosen for.
     static func encodedMaxPixelSize(preferredTransform: CGAffineTransform) -> CGSize {
         guard preferredTransform.a == 0, preferredTransform.d == 0 else {
@@ -168,77 +168,5 @@ actor ClipThumbnailLoader {
         context.draw(image, in: CGRect(origin: .zero, size: naturalSize))
 
         return context.makeImage()
-    }
-
-    /// Maps the crop rect from `NormalizedRect`'s space contract — the decoded frames'
-    /// normalized space (display orientation, y down from the top), matching the pose
-    /// keypoints it is built from — into displayed pixel space, matching what
-    /// `AVAssetImageGenerator` returns with `appliesPreferredTrackTransform`.
-    /// `nil` for degenerate inputs.
-    ///
-    /// Pure so the geometry is unit-testable without an asset; the 90°-rotation test is the
-    /// discriminating case, since it fails if the rect is denormalized in the wrong space
-    /// (encoded vs. displayed).
-    static func displayedCropRect(
-        cropRect: NormalizedRect,
-        naturalSize: CGSize,
-        preferredTransform: CGAffineTransform
-    ) -> CGRect? {
-        guard naturalSize.width > 0, naturalSize.height > 0 else { return nil }
-        // cropRect is already normalized in display orientation, so denormalize in the
-        // displayed size directly — no trip through preferredTransform needed.
-        let displayedSize = Self.displayedFrameSize(
-            naturalSize: naturalSize, preferredTransform: preferredTransform)
-        let displayed = cropRect.denormalized(in: displayedSize)
-        guard displayed.width > 0, displayed.height > 0 else { return nil }
-        return displayed
-    }
-
-    /// The aspect ratio (width / height) of `cropRect` alone, in the displayed frame's
-    /// space, before any editor adjustment — `cropAdjustment` transforms the content
-    /// inside the crop, never the crop rect's own marker size, so this ratio still
-    /// matches what the decoded thumbnail renders at. Falls back to 9:16 for degenerate
-    /// inputs.
-    static func displayedAspectRatio(
-        cropRect: NormalizedRect,
-        naturalSize: CGSize,
-        preferredTransform: CGAffineTransform
-    ) -> CGFloat {
-        guard let displayed = displayedCropRect(
-            cropRect: cropRect,
-            naturalSize: naturalSize,
-            preferredTransform: preferredTransform
-        ), displayed.height > 0 else {
-            return 9.0 / 16.0
-        }
-        return displayed.width / displayed.height
-    }
-
-    /// The displayed frame's size: the encoded frame's corners through
-    /// `preferredTransform`, so a 90°-rotated track reports portrait dimensions.
-    private static func displayedFrameSize(
-        naturalSize: CGSize,
-        preferredTransform: CGAffineTransform
-    ) -> CGSize {
-        boundingBox(of: CGRect(origin: .zero, size: naturalSize).corners.map {
-            $0.applying(preferredTransform)
-        }).size
-    }
-
-    private static func boundingBox(of points: [CGPoint]) -> CGRect {
-        let xValues = points.map(\.x), yValues = points.map(\.y)
-        guard let minX = xValues.min(), let maxX = xValues.max(),
-              let minY = yValues.min(), let maxY = yValues.max()
-        else { return .zero }
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-    }
-}
-
-private extension CGRect {
-    var corners: [CGPoint] {
-        [origin,
-         CGPoint(x: maxX, y: minY),
-         CGPoint(x: minX, y: maxY),
-         CGPoint(x: maxX, y: maxY)]
     }
 }

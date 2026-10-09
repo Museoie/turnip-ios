@@ -167,8 +167,8 @@ final class ClipListViewModel: ObservableObject {
     private let settingsProvider: @MainActor () -> TurnipSettings
 
     /// The asset's duration in seconds, loaded once per asset and shared by every
-    /// card's inline trim timeline. `nil` when the asset can't be read — the timeline
-    /// then hides itself rather than guessing a scale.
+    /// card's range timeline, its loop's window clamp, and `addClip()`. `nil` when the
+    /// asset can't be read — the timeline then hides itself rather than guessing a scale.
     private var durationTask: Task<TimeInterval?, Never>?
 
     /// The video track and its geometry, loaded once per asset and shared by every
@@ -221,7 +221,7 @@ final class ClipListViewModel: ObservableObject {
 
     /// Builds the editor's input for one list item: its window, crop rect, and crop
     /// adjustment plus the analyzed asset and the video's scored frames. Trash stays the
-    /// list's own decision — the editor no longer surfaces or edits it. Never called for
+    /// list's own decision — the editor neither surfaces nor edits it. Never called for
     /// the original item — its tile doesn't open the editor.
     func editorSource(for item: ClipListItem) -> ClipEditorSource {
         ClipEditorSource(
@@ -236,8 +236,7 @@ final class ClipListViewModel: ObservableObject {
     /// and crop adjustment the user left the editor with replace the list entry's, so
     /// trim/crop edits commit on back-navigation (docs/UIUX.md § "Clip Detail / Editor").
     /// The item's `isTrashed` carries over unchanged — the editor doesn't own that decision.
-    /// A no-op for unknown ids — the item may have been removed by a re-run of detection,
-    /// or deleted from the editor, while it was open.
+    /// A no-op for unknown ids.
     func applyEditorResult(_ result: ClipEditorResult, to id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index] = ClipListItem(
@@ -249,7 +248,7 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// Removes the item with the given id entirely: the editor's Delete action, and
-    /// — for a derived clip — also what the list's own trash button now routes to
+    /// — for a derived clip — also what the list's own trash button routes to
     /// via `trash(_:)`, since a derived clip has no restore once trashed. The
     /// original item can never be removed this way — it can only be soft-trashed —
     /// since deleting a `PHAsset` needs `save()`'s confirmation-and-cleanup flow, not
@@ -264,8 +263,7 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// Flips one item's reversible trash flag — the primitive `trash(_:)` composes
-    /// for the original tile. A no-op for unknown ids — the card that fired it may
-    /// have been removed by a re-run of detection.
+    /// for the original tile. A no-op for unknown ids.
     func toggleTrash(_ item: ClipListItem) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index].isTrashed.toggle()
@@ -284,23 +282,9 @@ final class ClipListViewModel: ObservableObject {
         }
     }
 
-    /// A write-through binding to one item, for a destination that edits a clip in place.
-    /// Keyed by id on both ends rather than closing over an index: get and set resolve
-    /// the item from the current list. `nil` when the id is no longer in the list.
-    func binding(for id: UUID) -> Binding<ClipListItem>? {
-        guard let current = items.first(where: { $0.id == id }) else { return nil }
-        return Binding(
-            get: { self.items.first(where: { $0.id == id }) ?? current },
-            set: { updated in
-                guard let index = self.items.firstIndex(where: { $0.id == id }) else { return }
-                self.items[index] = updated
-            }
-        )
-    }
-
     /// The "+" tile's action: appends a new clip covering the first few seconds of the
-    /// asset (or its full duration if shorter), full-frame crop. The user trims it with
-    /// the same inline timeline every other card uses; there's no separate creation UI.
+    /// asset (or its full duration if shorter), full-frame crop. The user trims it in the
+    /// editor like any other clip; there's no separate creation UI.
     func addClip() async {
         let duration = await assetDuration() ?? Self.defaultNewClipDuration
         let end = max(min(Self.defaultNewClipDuration, duration), ClipEditorViewModel.minimumClipDuration)
@@ -423,8 +407,7 @@ final class ClipListViewModel: ObservableObject {
     ///
     /// The original is never deleted if any clip failed: deleting the source before
     /// every derived clip has confirmed safely landed in Photos would risk losing
-    /// the user's only copy of a trick that never actually saved (the same lesson
-    /// commit 4613460 drew from the camera's save flow). A failed original deletion
+    /// the user's only copy of a trick that never actually saved. A failed original deletion
     /// (the user declined PhotoKit's own confirmation, or permission was revoked) is
     /// swallowed rather than surfaced — the original staying in the library is the
     /// safe outcome, not a reportable failure.

@@ -1,6 +1,22 @@
 import AVFoundation
 import SwiftUI
 
+/// What a destination wires into its own close affordances — split out from
+/// `HomeExpansionContainer` itself (rather than nested) so a destination-building function can
+/// name this parameter's type without first naming the container's own `Content` generic.
+/// `onRequestClose` covers a plain back button; `dismissTranslationChanged`/`dismissEnded`/
+/// `dismissCancelled` cover a destination with its own live vertical-drag gesture
+/// (`ProcessingView`) — a destination without one (`ClipListView`) simply never calls them.
+/// `onRequestSlideClose` is the clip list's back action: a sideways pop rather than a flight
+/// back into the tile, see `HomeExpansionContainer.slideClose()`.
+struct HomeExpansionCloseHandlers {
+    let onRequestClose: () -> Void
+    let onRequestSlideClose: () -> Void
+    let dismissTranslationChanged: (CGFloat) -> Void
+    let dismissEnded: (_ translation: CGFloat, _ predictedTranslation: CGFloat) -> Void
+    let dismissCancelled: () -> Void
+}
+
 /// Home's Photos-style open/close flight: a tapped grid tile flies open into its full-screen
 /// destination (`ProcessingView`, or `ClipListView` directly for a video the camera already
 /// analyzed), and back-button/swipe-down close flies the reverse, landing on the tile for
@@ -29,28 +45,12 @@ import SwiftUI
 /// must land on whichever tile is current after a browse, not the one first tapped), and a
 /// dismiss gesture driven *into* it from the destination's own existing swipe
 /// (`ProcessingView.DismissGestureHooks`) rather than one it owns itself.
-/// What a destination wires into its own close affordances — split out from
-/// `HomeExpansionContainer` itself (rather than nested) so a destination-building function can
-/// name this parameter's type without first naming the container's own `Content` generic.
-/// `onRequestClose` covers a plain back button; `dismissTranslationChanged`/`dismissEnded`/
-/// `dismissCancelled` cover a destination with its own live vertical-drag gesture
-/// (`ProcessingView`) — a destination without one (`ClipListView`) simply never calls them.
-/// `onRequestSlideClose` is the clip list's back action: a sideways pop rather than a flight
-/// back into the tile, see `HomeExpansionContainer.slideClose()`.
-struct HomeExpansionCloseHandlers {
-    let onRequestClose: () -> Void
-    let onRequestSlideClose: () -> Void
-    let dismissTranslationChanged: (CGFloat) -> Void
-    let dismissEnded: (_ translation: CGFloat, _ predictedTranslation: CGFloat) -> Void
-    let dismissCancelled: () -> Void
-}
-
 struct HomeExpansionContainer<Content: View>: View {
     /// A live lookup of the current video's tile frame (global space) — re-evaluated at open,
     /// at close, and continuously while a live dismiss drag is in progress, so a close after
     /// browsing to a neighbor lands on *that* tile. `nil` while the tile isn't on screen (the
-    /// grid is scrolling it into place, or it's off the loaded prefix); the fallback destination
-    /// below stands in until it resolves.
+    /// grid is scrolling it into place, or it's off the loaded prefix); `fallbackSourceFrame(in:)`,
+    /// a small centered square, stands in until it resolves.
     let sourceFrame: () -> CGRect?
     /// The tapped tile's already-decoded thumbnail: the video's poster frame, center-cropped to
     /// the tile's square. Drawn at the center of the card's frame, so the card starts as exactly
@@ -68,19 +68,17 @@ struct HomeExpansionContainer<Content: View>: View {
     /// full screen. `nil` for a destination that never letterboxes (`ClipListView` directly, the
     /// camera-originated case) so that destination's correct full-screen default isn't
     /// second-guessed with an aspect ratio that doesn't apply to it. `ProcessingView`'s own
-    /// measurement needs the asset's *track* to have loaded, which can't even start until a
-    /// PhotoKit resolve that the Home doc comment notes "can be anywhere from instant to several
-    /// seconds" has already finished — long enough to lose the race against the open flight
-    /// every time, which is exactly what made the open flight grow toward the full screen
-    /// instead of the destination's real letterboxed rect. `PHAsset.pixelWidth`/`pixelHeight`
+    /// measurement needs the asset's *track* to have loaded, which can't even start until the
+    /// PhotoKit resolve (anywhere from instant to several seconds) has finished — too late for
+    /// the open flight. `PHAsset.pixelWidth`/`pixelHeight`
     /// need no resolve at all (ordinary `PHAsset` metadata, already in hand from the grid), and
-    /// already reflect display orientation — the same thing `ClipEditorViewModel.displayedSize`
+    /// already reflect display orientation — the same thing `VideoTrackGeometry.displayedSize`
     /// computes from `naturalSize` + `preferredTransform`, just without the async load.
     let initialAspectRatio: CGSize?
     /// Builds the destination content, given the handlers it should wire into its own
     /// back-button/dismiss-gesture. `ProcessingView` (via its `onRequestClose`/
-    /// `dismissGestureHooks`) or a plain `NavigationStack { ClipListView(...) }` (via
-    /// `onRequestClose` alone — it has no built-in swipe-to-dismiss of its own) both fit this
+    /// `dismissGestureHooks`) or a `NavigationStack { ClipListView(...) }` (via
+    /// `onRequestSlideClose` alone — it has no swipe-to-dismiss of its own) both fit this
     /// shape.
     @ViewBuilder let content: (HomeExpansionCloseHandlers) -> Content
     /// Called the instant the opening flight starts moving — which is when the presenter
@@ -114,10 +112,10 @@ struct HomeExpansionContainer<Content: View>: View {
     /// needed: this container is a fresh instance each time it's presented.
     @State private var lockedSourceFrame: CGRect?
     /// `ProcessingView`'s real, letterboxed video rect (global space), once it's reported one
-    /// via `ProcessingVideoFramePreferenceKey` — `nil` until then, and the full-screen default
-    /// in `body` stands in. Simply keeps the latest non-zero report rather than locking after
-    /// the first one: this container applies no transform to `content` that the measurement
-    /// could feed back into (only an opacity cut), and — because `sourceFrame` above is
+    /// via `ProcessingVideoFramePreferenceKey` — `nil` until then, and `fallbackDestination(in:)`
+    /// stands in. Simply keeps the latest non-zero report rather than locking after the first
+    /// one: nothing this container applies to `content` changes its layout, so the measurement
+    /// can't feed back into itself, and — because `sourceFrame` above is
     /// deliberately live for the same reason — this needs to stay live too: browsing to a
     /// neighbor with a different aspect ratio must retarget this, not keep flying toward the
     /// first video's letterbox rect.
@@ -139,8 +137,9 @@ struct HomeExpansionContainer<Content: View>: View {
     /// How long `slideClose()` takes to carry the page off screen — a navigation pop's pace,
     /// not the flight's.
     private let slideDuration: TimeInterval = 0.3
-    private let dismissTravel: CGFloat = 420
-    private let sourceCornerRadius: CGFloat = 8
+    /// The tile's own corner radius: Home's grid tiles are square-cornered (`VideoTileView`
+    /// clips without rounding), so the flying card starts square and stays square.
+    private let sourceCornerRadius: CGFloat = 0
 
     var body: some View {
         GeometryReader { screen in
@@ -184,8 +183,8 @@ struct HomeExpansionContainer<Content: View>: View {
                     // scrub bar, its own chevron) cross-fades in place over the growing
                     // picture, while its backdrop and video surface stay hidden under
                     // `expansionVideoSurface()` until the card has landed — the card draws
-                    // those in their place. A plain `.opacity`, not a cut: it's meant to
-                    // interpolate across the whole flight, which `.opacity` does on its own.
+                    // those in their place. A per-frame `expansionCrossfade`, not a cut: it
+                    // follows the chrome's own fade curve across the whole flight.
                     destinationContent()
                         .expansionCrossfade(
                             progress: progress,
@@ -227,15 +226,14 @@ struct HomeExpansionContainer<Content: View>: View {
             onRequestSlideClose: slideClose,
             dismissTranslationChanged: { translation in
                 setLanded(false)
-                let travel = max(0, translation)
-                progress = 1 - min(travel / dismissTravel, 1)
+                progress = ExpansionFlightGeometry.progress(forDismissTranslation: translation)
                 let origin = dragScrubOrigin ?? beginPresenterScrub()
                 dragScrubOrigin = origin
                 scrubber.request(origin.time * progress)
             },
             dismissEnded: { translation, predictedTranslation in
-                let committing = translation > 12 || predictedTranslation > translation
-                if committing {
+                if ExpansionFlightGeometry.dismissCommits(
+                    translation: translation, predictedTranslation: predictedTranslation) {
                     close()
                 } else {
                     cancelDrag()
@@ -291,9 +289,7 @@ struct HomeExpansionContainer<Content: View>: View {
     /// change (a close's first frame).
     private func setLanded(_ landed: Bool) {
         guard hasLanded != landed else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { hasLanded = landed }
+        withAnimationsDisabled { hasLanded = landed }
     }
 
     /// The part of the video's frame a square grid tile shows: `ThumbnailLoader` requests
@@ -364,20 +360,8 @@ struct HomeExpansionContainer<Content: View>: View {
 
     /// Reverse flight back to the tile — scrubbing the destination's player from the frame it's
     /// showing back to the poster frame the tile shows — then, once it's visually landed, the
-    /// actual dismiss. `Transaction.disablesAnimations` alone leaves a residual slide visible:
-    /// it suppresses SwiftUI's own animation system but not the UIKit `dismiss(animated:)` call
-    /// that backs `fullScreenCover` underneath, so the already-landed card visibly slides
-    /// off-screen with the system's own cover-dismiss transition — the same issue
-    /// `HomeView.presentSlot` hit on the opening side, fixed there with
-    /// `UIView.setAnimationsEnabled(false)`.
-    ///
-    /// Applying that same fix here needed a longer hold than `presentSlot`'s: re-enabling on
-    /// the very next run loop turn (as `presentSlot` does) was NOT enough — frame-by-frame
-    /// inspection of screen recordings showed the slide still playing out over several hundred
-    /// more milliseconds, meaning UIKit schedules `dismiss(animated:)`'s transition later than
-    /// `present(animated:)`'s. Re-enabling after this delay instead reliably suppressed it
-    /// across multiple recorded runs; shorter delays (one run loop turn, matching `presentSlot`)
-    /// did not.
+    /// actual dismiss, with no system transition (`SystemTransition.dismiss`) — otherwise the
+    /// already-landed card would visibly slide off-screen with the cover's own dismiss.
     private func close() {
         lockedSourceFrame = sourceFrame()
         isClosing = true
@@ -392,7 +376,7 @@ struct HomeExpansionContainer<Content: View>: View {
             try? await Task.sleep(nanoseconds: UInt64((flightDuration + 0.05) * 1_000_000_000))
             // Never before the scrub's final seek has put the landing frame on screen.
             await scrubber.waitUntilDone()
-            dismissSuppressingSystemTransition()
+            SystemTransition.dismiss { dismiss() }
         }
     }
 
@@ -410,19 +394,7 @@ struct HomeExpansionContainer<Content: View>: View {
         withAnimation(.easeInOut(duration: slideDuration)) { slideProgress = 1 }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64((slideDuration + 0.05) * 1_000_000_000))
-            dismissSuppressingSystemTransition()
-        }
-    }
-
-    /// The actual dismiss, once a close has visually landed — see `close()`'s doc comment for
-    /// why both suppressions, and the 0.5s hold, are needed.
-    private func dismissSuppressingSystemTransition() {
-        UIView.setAnimationsEnabled(false)
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { dismiss() }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            UIView.setAnimationsEnabled(true)
+            SystemTransition.dismiss { dismiss() }
         }
     }
 }

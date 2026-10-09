@@ -6,9 +6,8 @@ import Foundation
 /// up, finer. Downward movement is neutral. Kept out of the view so the model is exercised
 /// without a running gesture (`docs/SCRUB_DESIGN.md`, `docs/SCRUB_DEMO.html`).
 enum ScrubCalculator {
-    /// One screen-width of horizontal drag, with no vertical component, scrubs half the
-    /// timeline (`timelineDelta == 1`) — so a `-maximumTimelineDelta...maximumTimelineDelta`
-    /// drag range covers the whole timeline twice over, once each direction.
+    /// The clamp on `timelineDelta`: ±2 is one full duration either way, which a full-width
+    /// horizontal drag reaches.
     private static let maximumTimelineDelta = 2.0
 
     /// Signed normalized timeline displacement.
@@ -41,8 +40,8 @@ enum ScrubCalculator {
     /// The normalized solver, kept separate from coordinate normalization so the
     /// mathematical model is directly testable (`docs/SCRUB_DESIGN.md` "Mathematical Model").
     ///
-    /// The upward branch solves `y³ = ((2 - t) / t) * x - (2 - t)` for `t`, i.e. the same
-    /// quadratic as before but with `y` cubed. Cubing `y` eases the transition off the
+    /// The upward branch solves `y³ = ((2 - t) / t) * x - (2 - t)` for `t`, i.e. the plain-`y`
+    /// model's quadratic with `y` cubed. Cubing `y` eases the transition off the
     /// horizontal: for `y < 1` the precision drop-off is gentler than the plain-`y` model
     /// (small upward drags barely reduce sensitivity), while for `y > 1` it's steeper
     /// (`t` falls off faster the further up the drag goes).

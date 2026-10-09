@@ -100,7 +100,7 @@ struct ScreenshotClipListHarness: View {
 
 /// Clip list over real media (`-screenshotClipListMedia`): two clips within the
 /// generated sample movie's six seconds, so — unlike `-screenshotClipList`'s `/dev/null`
-/// asset — the asset duration actually loads and each tile's inline trim timeline
+/// asset — the asset duration actually loads and each tile's range timeline
 /// renders instead of staying hidden behind its `if let duration` guard. Shares
 /// `ScreenshotClipEditorHarness`'s sample-movie writer and warm-up.
 struct ScreenshotClipListMediaHarness: View {
@@ -139,8 +139,8 @@ struct ScreenshotClipEditorHarness: View {
     /// view appears, and re-encoding on every body evaluation would be wasteful.
     /// `static let` is lazily initialized and thread-safe, but it initializes on
     /// the accessing thread — so `warmUpSampleMovie()` starts it on a background
-    /// queue from `TurnipApp.init()` (when the `-screenshotClipEditor` launch arg
-    /// is present) before any view appears, keeping the encode off the UI thread.
+    /// queue from `TurnipApp.init()` (when a harness that uses the sample movie is
+    /// launched) before any view appears, keeping the encode off the UI thread.
     fileprivate static let sampleMovieURL: URL = makeScreenshotSampleMovie()
     /// The roll written into the sample movie's track: a small, clearly non-zero tilt,
     /// so Auto rotate has something to level and the result is visibly a turn.
@@ -157,8 +157,8 @@ struct ScreenshotClipEditorHarness: View {
     }
 
     /// Starts the sample-movie encode on a background queue ahead of first use.
-    /// Called from `TurnipApp.init()` when the `-screenshotClipEditor` launch arg
-    /// is present, so the first render usually doesn't stall on the encode. (If
+    /// Called from `TurnipApp.init()` when a harness that uses the sample movie is
+    /// launched, so the first render usually doesn't stall on the encode. (If
     /// the encode hasn't finished when `body` first touches `sampleMovieURL`,
     /// the main thread still blocks on the lazy initializer until it completes —
     /// the warm-up makes that rare, not impossible.)
@@ -245,8 +245,7 @@ private func makeScreenshotSampleMovie() -> URL {
 /// Starts the writer session and encodes the solid-color frames, each followed by that
 /// frame's roll sample. The two inputs advance together, frame by frame: a writer
 /// interleaves its inputs, and one left seconds ahead of the other stops reporting ready
-/// for data until the other catches up — which, with the roll track appended only after
-/// all six seconds of video, stalled the video input and failed the encode. The caller
+/// for data until the other catches up, which would stall the encode. The caller
 /// marks both inputs finished. Extracted from `makeScreenshotSampleMovie()` so each
 /// function stays under the repo's SwiftLint `function_body_length` limit.
 private func appendSampleFrames(
@@ -309,14 +308,11 @@ private func appendSolidFrame(
     // Bounded on writer status: if the writer fails mid-write,
     // `isReadyForMoreMediaData` never becomes true, and without the status
     // check the loop would spin with no cause. Bounded by wall clock, not a
-    // spin count: an earlier `spins < 500` × 2ms cap (one second) was enough on
-    // a developer machine but not on a loaded shared CI runner, where the
-    // encoder can stay busy longer — the loop then fell through to `append`,
-    // which returned `false`, and the whole harness silently degraded to the
-    // `/dev/null` load-failure fallback. `ScreenshotTests.testClipEditor` then
-    // waited its full 45s for a trim label that could never appear, with no
-    // diagnostic. The budget is per frame and deliberately generous; a healthy
-    // encoder is ready in single-digit milliseconds.
+    // spin count: on a loaded shared CI runner the encoder can stay busy far
+    // longer than on a developer machine, and a budget that runs out fails the
+    // encode, degrading the harness to the `/dev/null` load-failure fallback.
+    // The budget is per frame and deliberately generous; a healthy encoder is
+    // ready in single-digit milliseconds.
     let deadline = Date().addingTimeInterval(15)
     while !input.isReadyForMoreMediaData, writer.status == .writing, Date() < deadline {
         Thread.sleep(forTimeInterval: 0.002)
@@ -400,8 +396,7 @@ private struct ScreenshotProcessingPoseRunner: ProcessingRunning {
     }
 
     /// A rough standing pose in frame-normalized (display-orientation) coordinates —
-    /// enough to show the overlay is landing on the video rather than proving pose
-    /// accuracy, which is `PoseDiagnosticView`'s job.
+    /// enough to show the overlay is landing on the video, not to prove pose accuracy.
     static let sampleKeypoints: [PoseKeypoint] = [
         ("nose", 0.5, 0.15), ("left_eye", 0.47, 0.14), ("right_eye", 0.53, 0.14),
         ("left_ear", 0.44, 0.15), ("right_ear", 0.56, 0.15),
@@ -524,7 +519,7 @@ struct ScreenshotProcessingBrowseHarness: View {
 /// deliberately wide `initialAspectRatio` (16:9 in a portrait window), the flying card
 /// should settle into a letterboxed band, never the full screen. A UI test reads the
 /// card's own laid-out frame (`"expansion-card"` — accessibility reports geometry
-/// regardless of the card's current opacity) once the open spring has settled.
+/// regardless of the card's current opacity) once the opening flight has landed.
 struct ScreenshotHomeExpansionHarness: View {
     var body: some View {
         HomeExpansionContainer(
@@ -560,23 +555,6 @@ struct ScreenshotSettingsHarness: View {
 
     var body: some View {
         SettingsView(settings: Self.store)
-    }
-}
-
-// MARK: - Pose diagnostic
-
-/// Pose diagnostic before a run (`-screenshotPoseDiagnostic`): the video length and
-/// the "Run diagnostic" button. No inference runs until the button is tapped, so the
-/// initial state needs neither the model nor a real video file.
-struct ScreenshotPoseDiagnosticHarness: View {
-    var body: some View {
-        NavigationStack {
-            PoseDiagnosticView(
-                video: SelectedVideo(
-                    assetIdentifier: "screenshot",
-                    asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
-                    duration: 12))
-        }
     }
 }
 #endif

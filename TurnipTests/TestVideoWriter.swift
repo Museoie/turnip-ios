@@ -64,6 +64,21 @@ enum TestVideoWriter {
         return url
     }
 
+    /// Writes a short silent CAF: an asset with an audio track and no video track.
+    static func writeAudioOnlyFile() throws -> URL {
+        let url = URL.temporaryDirectory.appending(path: "TestVideoWriter-audio-\(UUID().uuidString).caf")
+
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4410) else {
+            throw PoseError.videoLoadFailed(underlying: nil)
+        }
+        buffer.frameLength = buffer.frameCapacity
+
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+        return url
+    }
+
     private static func appendFrames(
         frameCount: Int,
         fps: Int32,

@@ -65,7 +65,7 @@ Where it applies today:
 | Transition | Gesture | Control | Shared motion |
 |---|---|---|---|
 | Home ↔ Camera (Root navigation) | Horizontal page swipe | Floating bar's camera / gallery icons; Camera's cancel chevron | The pager's horizontal slide (`RootTabView.slide(to:)`) |
-| Tile ↔ Processing (§1, §2) | Swipe down outside the video surface | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
+| Tile ↔ Processing (§1, §2) | Swipe down anywhere on the page | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
 | Clip List tile ↔ Clip Editor (§3, §4) | Swipe down above the crop marker | Back chevron | Same, with the card showing the editor's own player |
 
 Not every state change has a gesture counterpart that it owes an animation.
@@ -119,7 +119,6 @@ the user learns what the screen did.
 
 ```mermaid
 flowchart TD
-    S[Splash] -->|fades out| A
     A[Home / Video Gallery] -->|tap a video tile| B[Processing]
     A -->|tap camera icon / swipe right| G[Camera]
     G -->|tap gallery icon / swipe left| A
@@ -140,12 +139,11 @@ The whole app forces dark appearance (`.preferredColorScheme(.dark)` in
 `ContentView`) — black backgrounds throughout, no light-mode variant. This is
 a v1 product decision (see "Decisions" below), not a per-screen choice.
 
-### 0. Splash
+### 0. Launch screen
 
-`Turnip/App/SplashScreenView.swift`: the app mark centered on black.
-`ContentView` shows it as an overlay for a fixed beat on launch, then
-cross-fades it out to reveal the root tab view underneath — a timer, not a
-readiness signal, so it never depends on how long the Photos fetch takes.
+The system launch screen (`UILaunchScreen` in `Turnip/Resources/Info.plist`:
+the `LaunchLogo` image on the `LaunchBackground` color) covers app start.
+There is no SwiftUI splash: `ContentView` mounts the root tab view directly.
 
 ### Root navigation
 
@@ -184,17 +182,20 @@ Entry point *is* the picker — every video in the device's Photos library, not
 a button that opens a picker sheet. No account, no settings required for v1
 — nothing in `DESIGN.md`'s v1 scope needs either. An ordinary full-screen
 scrollable grid (`Turnip/Home/HomeView.swift`, `VideoGalleryView`), newest
-videos first, top-to-bottom, three columns. The "Turnip" wordmark (app mark
-beside the title, the mark 1.2x the title text's height) heads the grid as
+videos first, top-to-bottom, three columns. The "Turnip" wordmark (one image of
+the app mark and the title, 36 pt tall) heads the grid as
 scroll content, leading-aligned, so it scrolls away with the tiles rather
 than floating over them, and the tiles run under the status bar. The filter
 and settings controls sit at the trailing end of the same band — filter,
-then gear. Home's nav bar is visually empty,
+then gear. On iOS 26 they are the nav bar's own trailing items, two
+separate glass circles (`HomeNavigationBar`); before iOS 26 the bar is hidden
+outright and they float in a corner overlay row level with the wordmark.
+Beyond those two items Home's nav bar is visually empty,
 transparent, and takes no space: the content ignores the band the bar would
 reserve, so at rest the wordmark sits directly under the status bar with no
-empty gap above it. The bar exists only so iOS 26 draws its scroll-edge glass
+empty gap above it. The bar is there so iOS 26 draws its scroll-edge glass
 over the status bar and that band as tiles pass beneath, the same blur Clip
-List gets from its titled bar: its only content is an invisible title text,
+List gets from its titled bar: its principal item is an invisible title text,
 because nothing else draws a real blur (a hidden bar or a `safeAreaBar`
 standing in for one gets no glass at all, and a non-text bar item only a dim
 gradient). The glass stays hidden until the content actually scrolls, since
@@ -206,9 +207,9 @@ screen rather than the screen pushing in from the side, landing on the
 tile's own thumbnail immediately rather than waiting on the tap's resolve
 (which can take a moment for an iCloud video) before showing any motion. The
 resolve's own progress, if it takes a moment, shows on that growing card
-instead of a separate loading screen. The reverse — the destination's own
-back control, or a swipe down outside its video surface — shrinks the same
-way back into the tile, landing on whichever tile is actually current if
+instead of a separate loading screen. The reverse — Processing's back
+control, or a swipe down anywhere on it — shrinks the same way back into the
+tile (Clip List's back slides sideways instead, §3), landing on whichever tile is actually current if
 Processing's own swipe-to-browse-neighbors (§2) moved on from the one first
 tapped. See [`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md) for the
 mechanics.
@@ -245,18 +246,16 @@ default empty state, so it never reads as "your library is empty."
 
 ### 1a. Settings
 
-- Reached by tapping the gear icon floating at Home's top-trailing corner (the same
-  `ScrimIconButton` corner-overlay shape Camera's own controls use), attached outside the band
-  `HomeNavigationBar` reserves for its own system `UINavigationBar`. That bar is visually
-  transparent (`.toolbarBackground(.hidden, ...)`, for the iOS 26 scroll-edge glass described
-  under "1. Home / Video Gallery" above) but still hit-tests its own frame ahead of SwiftUI
-  content drawn under it — a scroll-content placement inside that band was tried first and
-  shipped unreachable on a real device despite passing every static check (touch-target size,
-  accessibility identifier, screenshot coverage), none of which exercises real hit-testing
-  against a system nav bar. The floating placement's own tradeoff: at the grid's resting scroll
-  position the gear's fixed rect sits over the top-right tile, not just "sometimes" over
-  whatever scrolls up — same acceptance Camera's own corner controls already have over its
-  viewfinder. Presented as a sheet, not pushed onto the flow's `NavigationStack`: it has nothing
+- Reached by tapping the gear at the trailing end of Home's header band, after the filter
+  (§1). On iOS 26 it is a real `ToolbarItem` in `HomeNavigationBar`'s bar, inside the bar's own
+  hit-testing hierarchy. That bar is visually transparent (`.toolbarBackground(.hidden, ...)`,
+  for the iOS 26 scroll-edge glass described under "1. Home / Video Gallery" above) but still
+  hit-tests its own frame ahead of SwiftUI content drawn under it, so a control drawn as content
+  inside that band is unreachable on a real device even though every static check
+  (touch-target size, accessibility identifier, screenshot coverage) passes, since none of them
+  exercises real hit-testing against a system nav bar. Before iOS 26 the bar is hidden outright
+  and the gear is a `ScrimIconButton` (`HomeSettingsButton`) in a corner overlay row, level with
+  the wordmark. Presented as a sheet, not pushed onto the flow's `NavigationStack`: it has nothing
   to hand back to Home and isn't part of "pick a video, get clips."
 - Four preferences, `UserDefaults`-backed (`Turnip/Settings/TurnipSettingsStore.swift`), each
   taking effect at its own integration point rather than needing a restart:
@@ -314,14 +313,14 @@ default empty state, so it never reads as "your library is empty."
   video, pausing/scrubbing it via the scrub bar if they want, and starts
   analysis when ready — or skips it: "Clip manually" goes straight to Clip
   List (§3) with no detected clips and no notice, for cutting clips by hand
-  from the "+" tile. The back chevron, and a swipe down anywhere outside
-  the video surface itself (see the swipe bullet below), both shrink the
+  from the "+" tile. The back chevron, and a swipe down anywhere on the
+  page, video included (see the swipe bullet below), both shrink the
   screen back into Home's tile rather than popping or dismissing outright —
   [`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md) covers the mechanics
-  this screen's own swipe-to-dismiss gesture now drives.
+  this screen's own swipe-to-dismiss gesture drives.
 - Once started, the video stays on screen (paused) rather than being replaced
   by a separate page: a progress panel — spinner or determinate bar, plus
-  "analyzing frame 400/1200" — overlays the bottom of the still-visible video,
+  "Analyzing frame 400 of 1,200" — overlays the bottom of the still-visible video,
   dimmed behind it. This is not instant for a multi-minute input video, so
   needs real progress feedback, not just a spinner.
 - On success the pipeline navigates to Clip List — even a run that finds zero trick
@@ -334,18 +333,20 @@ default empty state, so it never reads as "your library is empty."
   to the previous video in Home's grid order, left to the next, replacing the
   screen in place (not stacking a new one, so the back chevron still returns
   to Home in one step) — disabled while an analysis is running. The whole
-  page — video, back chevron and bottom controls — follows the finger, and
-  the neighbor's page slides in alongside it showing that video's poster
+  page — video and bottom controls — follows the finger while the back
+  chevron stays put over it, and the neighbor's page slides in alongside it showing that video's poster
   frame, the way the Camera page arrives over Home; once it has landed, its
   player takes over from the poster in place. A drag that falls short springs
   back, a quick flick commits even when short, and at either end of the grid
   the page gives only a little, since there is no video that way. Where the
   drag starts makes no difference — the leading edge, the top band, the
-  bottom strip, the chevron itself — with one carve-out: the scrub bar's own
-  track (see its section below), which claims a horizontal drag for
-  scrubbing. A down drag outside the video surface is the other carve-out —
-  it drives the expansion transition's own interactive dismiss (shrinking
-  live with the finger, landing back on Home's tile) rather than browsing.
+  bottom strip, the video itself — with one carve-out: the scrub bar's own
+  track (`VideoScrubBar`), which claims a horizontal drag for
+  scrubbing. A drag's direction is fixed by its first movement: one that
+  starts mostly downward drives the expansion transition's own interactive
+  dismiss instead (shrinking live with the finger, landing back on Home's
+  tile), from anywhere on the page, video included, and is likewise disabled
+  while an analysis is running.
   This screen draws no navigation bar and its own back chevron, because the
   stack's bar would sit over the page without moving with it or passing a
   drag to it. And the Camera/Home pager (§1) is switched off while this
@@ -393,7 +394,7 @@ default empty state, so it never reads as "your library is empty."
   tile's own cropped thumbnail immediately rather than the screen sliding in.
   The original tile isn't tappable — there's nothing to edit on the source
   video.
-- A "Save Clips" action, always enabled: exports and saves every non-trashed
+- A "Save Clips" action, enabled except while a save is running: exports and saves every non-trashed
   derived clip to Photos, deletes the original video from Photos if its tile
   was trashed, and pops back to Home. A full-screen spinner covers the grid
   while this runs. The original is deleted only once every derived clip has
@@ -472,8 +473,10 @@ default empty state, so it never reads as "your library is empty."
     no longer what's on screen; a trim does not, since a trim is not a
     re-crop. The state is per editor session: a clip reopened starts at
     "Auto".
-    A clip added by hand ("Clip manually", §2) carries no pose analysis, so
-    there is nothing for Auto crop to fit; an Auto crop whose tap could never
+    A clip of a video that skipped analysis ("Clip manually", §2) carries no
+    pose analysis, so there is nothing for Auto crop to fit (a "+" clip on an
+    analyzed video keeps the Auto crop toggle, since the video's pose frames
+    cover it); an Auto crop whose tap could never
     change anything would read as broken. Its crop button is "Reset crop"
     alone: disabled while the framing is the whole source video, enabled once
     a pinch or drag has moved it (a turn alone doesn't count — that is Reset
@@ -583,7 +586,10 @@ Resolved 2026-09-04.
    camera (§1b), and a recording is saved to Photos and handed to the
    existing `PHAsset` pipeline unchanged. Home also gained the
    collapsed/expanded two-state layout (§1) and the app forces dark
-   appearance everywhere, dropping light-mode support.
+   appearance everywhere, dropping light-mode support. *Superseded in part:
+   the swipe-up affordance and the two-state layout are gone. Camera is the
+   root pager's other page (§1b, "Root navigation") and Home is a plain
+   grid (§1). The dark-only theme stands.*
 6. **Export Confirmation retired; Clip List saves inline → Changed.** Recorded
    2026-09-22: the separate Export Confirmation screen (formerly §5) is gone.
    Clip List's "Save Clips" action now exports and saves every non-trashed derived

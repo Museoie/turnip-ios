@@ -45,18 +45,6 @@ enum ResolutionProgress: Equatable, Sendable {
     /// exactly once, immediately before the export begins — never for assets that resolve to a
     /// URL directly.
     case exporting
-
-    /// The determinate fraction this event carries, or nil when the UI should fall back to its
-    /// indeterminate state. A composition export has no meaningful fraction; reporting one
-    /// would park a full download bar on screen for a phase that isn't a download.
-    var downloadFraction: Double? {
-        switch self {
-        case .downloading(let fraction):
-            return fraction
-        case .exporting:
-            return nil
-        }
-    }
 }
 
 /// Resolves a `PHAsset` to an `AVURLAsset` the pipeline can read.
@@ -124,7 +112,7 @@ struct PhotoVideoResolver {
 
     /// Filename prefix for the composition exports `export()` writes into the temp directory.
     /// A bare UUID would be indistinguishable from every other temp file; the prefix lets
-    /// `deleteTemporaryExport(for:)` and `deleteOrphanedTemporaryExports()` recognize files
+    /// `deleteTemporaryExport(for:)` and `deleteOrphanedTemporaryExports(olderThan:)` recognize files
     /// this resolver created — and only those.
     static let temporaryExportFilenamePrefix = "turnip-composition-export-"
 

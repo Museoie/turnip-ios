@@ -40,7 +40,8 @@ it's summarized from — keep both in sync when data handling changes.
   and count figures in the device's own log. The in-app camera also reads
   the phone's gravity vector from Core Motion while it records and writes
   the resulting roll angle into the recording as a metadata track
-  (`Turnip/Media/RollTrack.swift`), so the editor can level the clip
+  (`Turnip/Camera/RollTrackRecorder.swift`, format in
+  `Turnip/Media/RollTrack.swift`), so the editor can level the clip
   without guessing from the picture; this is the device-motion API, which
   needs no `NSMotionUsageDescription` and raises no prompt (unlike the
   pedometer and activity APIs), and the angles live only inside the user's
@@ -109,6 +110,21 @@ require a manifest/signature. If a dependency is added, check both.
   limited access the app shows its own "select more" affordance instead
   of iOS re-prompting on its own schedule.
 
+## Camera and microphone
+
+- The in-app camera requests both when its screen first starts
+  (`CameraCaptureViewModel.start()`); a recording needs both, so
+  `CameraAccessState` treats them as one grant. `NSCameraUsageDescription`
+  and `NSMicrophoneUsageDescription` explain each in plain language.
+- Video and audio go only into the take's movie file,
+  `tmp/turnip-recording-<uuid>.mov`, which is saved to Photos through
+  `ClipPhotosSaver` and then deleted (`RootTabView.handleRecorded`). If
+  the save fails, the file stays in `tmp/` rather than destroying the
+  user's only copy of the footage.
+- Live pose inference reads frames from the same capture session, and
+  the roll track reads Core Motion's device motion (both described
+  above); neither adds a permission prompt of its own.
+
 ## Temp-file and cache hygiene
 
 - **Composition exports.** Slow-motion/edited videos come back from
@@ -129,8 +145,9 @@ require a manifest/signature. If a dependency is added, check both.
   `save()` call killed mid-run is swept by the next one
   (`sweepStaleExportDirectories`); the `turnip-export-` prefix is what makes
   the sweep recognize only our directories.
-- **Thumbnails** are in-memory only (`PHCachingImageManager`), in both
-  the Home grid and the clip-list work — there is no on-disk thumbnail
+- **Thumbnails** are in-memory only — `PHCachingImageManager` for the
+  Home grid (`ThumbnailLoader`) and `AVAssetImageGenerator` frames for
+  the clip list (`ClipThumbnailLoader`). There is no on-disk thumbnail
   cache. If one ever lands, it belongs in `Caches/`, never `Documents/`,
   so iOS can evict it and it isn't backed up.
 - **Logs** go to `os.Logger` only; nothing is written to log files.

@@ -116,8 +116,8 @@ final class ScreenshotTests: XCTestCase {
 
     /// Trashing the original tile flips its icon button's accessibility label rather
     /// than removing it, and the screen carries no leftover select-all affordance —
-    /// the triage screen's toolbar now has only the back chevron, and "Save Clips"
-    /// replaced "Export N clips". The original tile is always the first of the
+    /// the triage screen's toolbar has only the back chevron, and "Save Clips" is
+    /// the screen's action. The original tile is always the first of the
     /// grid's "Trash clip" buttons, since `ClipListViewModel` prepends it to `items`.
     func testTrashButtonTogglesToRestoreOnTheOriginalTile() throws {
         let app = XCUIApplication()
@@ -245,7 +245,7 @@ final class ScreenshotTests: XCTestCase {
     }
 
     /// Clip editor over a generated sample movie: the preview with the live crop
-    /// rect, the trim slider, and the keep toggle. The trim range's accessibility
+    /// rect and the trim slider. The trim range's accessibility
     /// label ("Trim range 2.0s to 5.0s") only appears once the movie's duration
     /// loads, so it also proves the editor reached its loaded state.
     ///
@@ -356,17 +356,6 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(waitForCenterColor(.red), "right swipe at the end of the grid left the video")
         XCTAssertTrue(waitUntilHittable(app.buttons["Analyze clips"]), "the screen's controls did not settle")
         addScreenshot(named: "processing-browse")
-    }
-
-    /// Pose diagnostic before a run: the video length and the "Run diagnostic"
-    /// button. No inference runs until the button is tapped, so the initial state
-    /// needs neither the model nor a real video file.
-    func testPoseDiagnosticInitial() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["-screenshotPoseDiagnostic"]
-        app.launch()
-        XCTAssertTrue(app.buttons["Run diagnostic"].waitForExistence(timeout: 15))
-        addScreenshot(named: "pose-diagnostic")
     }
 
     /// Settings sheet at its defaults: the analysis-mode segmented control, the

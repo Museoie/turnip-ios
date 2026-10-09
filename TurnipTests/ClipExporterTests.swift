@@ -131,7 +131,7 @@ final class ClipExporterTests: XCTestCase {
     func testRotatedTrackCropUsesTheDisplayedSize() throws {
         // Athlete in the upper middle of the upright frame: display-normalized rect
         // x in [0.25, 0.75], y in [0.10, 0.60]. Denormalizing against the *encoded*
-        // size (the old bug) maps this to the displayed middle band instead of the
+        // size maps this to the displayed middle band instead of the
         // upper middle; the layer transform then points at the wrong region.
         let transform = try XCTUnwrap(ClipExportTransform.make(
             cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.10, maxY: 0.60),

@@ -73,8 +73,8 @@ official Swift Package Manager distribution. Setup, in order:
    instead (known CocoaPods/Ruby issue, unrelated to this project)
 6. Download the MoveNet Thunder model per
    [`Turnip/Models/README.md`](Turnip/Models/README.md) — the app builds and runs
-   without it, but nothing pose-related does: live pose on the camera, Processing's
-   analysis, and the pose diagnostic screen all need it.
+   without it, but nothing pose-related does: live pose on the camera and
+   Processing's analysis both need it.
 7. **Open `Turnip.xcworkspace`, not `Turnip.xcodeproj`.** CocoaPods requires the
    workspace; opening the bare project will fail to resolve `TensorFlowLiteSwift`.
 
@@ -236,8 +236,8 @@ prints the device it chose and then the UDID on its own line, hence the
 
 ## Lint
 
-SwiftLint runs in CI on every PR (`lint + build + test` — see
-`.github/workflows/ci.yml`) and as a step of Xcode Cloud's
+SwiftLint runs in CI on every PR (the `build-and-test` job's `Lint` step —
+see `.github/workflows/ci.yml`) and as a step of Xcode Cloud's
 `ci_scripts/ci_post_clone.sh`. It is a hard gate: both pipelines run
 `swiftlint lint --strict`, so warnings fail the run too.
 
@@ -268,7 +268,7 @@ SwiftLint runs in CI on every PR (`lint + build + test` — see
 `Turnip/` is a single Xcode target; its subdirectories are flat, one per
 domain, named for the domain they own (`App`, `Camera`, `ClipEditor`,
 `ClipList`, `DesignSystem`, `Home`, `LivePose`, `Media`, `ModelUpdates`,
-`Models`, `Photos`, `Pose`, `PoseDiagnostic`, `Processing`, `Resources`,
+`Models`, `Photos`, `Pose`, `Processing`, `Resources`,
 `Settings`, `TrickDetection`).
 `ci_scripts/check-directory-list.sh` compares that list against the tree on
 every PR, so adding a directory without naming it here fails CI.
@@ -277,14 +277,14 @@ every PR, so adding a directory without naming it here fails CI.
   for a screen keeps only that screen's view, view model, and screen-private
   helpers.
 - Shared pipeline infrastructure lives in its own domain directory — never
-  under a feature screen's directory. The v1 pose pipeline's model types
-  live in `Turnip/Pose/` (not `Turnip/PoseDiagnostic/`, which is the throwaway
-  measurement screen) precisely so deleting the screen never strands
-  load-bearing code. Likewise the live capture-side pose path lives in
-  `Turnip/LivePose/`, not `Turnip/Camera/`: the camera screen drives it, but
-  the frame gate, queue, thermal policy and coverage rule are pipeline code
-  with their own tests, and only the preview overlay's drawing sits with the
-  camera.
+  under a feature screen's directory. The v1 pose pipeline's model types,
+  the keypoint overlay and the per-frame pose logger live in `Turnip/Pose/`
+  rather than under the screen that draws the overlay (`Turnip/Processing/`),
+  so deleting or reworking a screen never strands load-bearing code.
+  Likewise the live capture-side pose path lives in `Turnip/LivePose/`,
+  not `Turnip/Camera/`: the camera screen drives it, but the frame gate,
+  queue, thermal policy and coverage rule are pipeline code with their own
+  tests, and only the preview overlay's drawing sits with the camera.
 - `project.yml` takes `Turnip/` (and `TurnipTests/`) wholesale, so a
   subdirectory rename is picked up by `xcodegen generate` with no
   `project.yml` change.

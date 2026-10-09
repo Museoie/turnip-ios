@@ -16,7 +16,7 @@ struct LivePoseOverlayGeometry: Equatable {
     let limbs: [Limb]
 
     /// Joints at or below `PoseKeypoint.confidenceThreshold` are left out entirely rather than
-    /// drawn hollow as the diagnostic does: on a live preview a guess drawn over the athlete
+    /// drawn hollow as `PoseOverlayView` does: on a live preview a guess drawn over the athlete
     /// reads as a wrong detection, not as a guess.
     init(keypoints: [PoseKeypoint], convert: (PoseKeypoint) -> CGPoint) {
         let usable = keypoints.filter { $0.confidence > PoseKeypoint.confidenceThreshold }
@@ -27,6 +27,4 @@ struct LivePoseOverlayGeometry: Equatable {
             return Limb(start: convert(first), end: convert(second))
         }
     }
-
-    static let empty = LivePoseOverlayGeometry(keypoints: [], convert: { _ in .zero })
 }

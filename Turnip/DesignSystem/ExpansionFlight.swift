@@ -83,6 +83,23 @@ struct ExpansionFlightGeometry: Equatable {
     static let chromeCrossfadeSteepness: CGFloat = 4
     static let scrimCrossfadeSteepness: CGFloat = 3
 
+    /// Downward drag distance, in points, that carries a swipe-to-dismiss all the way back
+    /// to the tile. The drag maps linearly onto the flight's progress — the same card path the
+    /// back button flies — so a finger and a button play one animation.
+    static let dismissTravel: CGFloat = 420
+
+    /// The flight's progress for a downward dismiss drag of `translation` points: `1` at rest,
+    /// `0` once the drag has covered `dismissTravel`. An upward drag stays at `1`.
+    static func progress(forDismissTranslation translation: CGFloat) -> CGFloat {
+        1 - min(max(0, translation) / dismissTravel, 1)
+    }
+
+    /// Whether a released dismiss drag closes rather than springs back: past a small dead
+    /// zone, or still moving down at release (the predicted end lies beyond the finger).
+    static func dismissCommits(translation: CGFloat, predictedTranslation: CGFloat) -> Bool {
+        translation > 12 || predictedTranslation > translation
+    }
+
     /// Whether a destination's chrome cross-fades in over the flying card. Needs the
     /// destination's navigation container to be see-through (`containerBackground`, iOS 18),
     /// or its opaque system background would dim the card underneath for the whole flight.
@@ -141,9 +158,7 @@ struct ExpansionFlightGeometry: Equatable {
 /// screen after `ExpansionFlightEffect`'s scale.
 ///
 /// `Shape` is rendered, not laid out, so animating it never feeds back into layout
-/// the way an animated `.frame`/`.position` does. It must sit outside
-/// `ExpansionCrossfadeCut`, whose animation-suppressing transaction would otherwise
-/// snap it to its target.
+/// the way an animated `.frame`/`.position` does.
 struct ExpansionFlightClip: Shape {
     var progress: CGFloat
     let sourceFrame: CGRect
@@ -173,8 +188,7 @@ struct ExpansionFlightClip: Shape {
 ///
 /// A `GeometryEffect` rather than animated layout modifiers: `effectValue(size:)` runs
 /// after layout against an already-settled size and returns a transform for rendering,
-/// so a per-frame change can't trigger another layout pass. Must sit outside
-/// `ExpansionCrossfadeCut` for the same reason `ExpansionFlightClip` must.
+/// so a per-frame change can't trigger another layout pass.
 struct ExpansionFlightEffect: GeometryEffect {
     var progress: CGFloat
     let sourceFrame: CGRect
@@ -354,8 +368,8 @@ final class FlightScrubber: ObservableObject {
 /// from the live `progress`: `Animatable`, so SwiftUI calls `body(content:)` with every
 /// interpolated value of an animated flight and the curve is applied per frame — a plain
 /// `.opacity(f(progress))` in a container's `body` would only ever see `progress`'s two
-/// endpoints and interpolate the opacity linearly between them (docs/EXPANSION_TRANSITIONS.md,
-/// Rev 4). Under a drag, `progress` is written directly and the same curve applies.
+/// endpoints and interpolate the opacity linearly between them (docs/EXPANSION_TRANSITIONS.md).
+/// Under a drag, `progress` is written directly and the same curve applies.
 struct ExpansionCrossfade: ViewModifier, Animatable {
     var progress: CGFloat
     let inflection: CGFloat

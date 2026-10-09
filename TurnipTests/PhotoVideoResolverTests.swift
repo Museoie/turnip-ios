@@ -362,18 +362,11 @@ final class PhotoVideoResolverTests: XCTestCase {
         XCTAssertEqual(log.events, [.downloading(0.5)])
     }
 
-    /// The view model renders a nil fraction as its indeterminate "Preparing video…" state, so the
-    /// `.exporting` → nil mapping is the whole fix: pin it directly.
-    func testExportingPhaseMapsToNoDownloadFraction() {
-        XCTAssertEqual(ResolutionProgress.downloading(0.5).downloadFraction, 0.5)
-        XCTAssertNil(ResolutionProgress.exporting.downloadFraction)
-    }
-
     /// The phase is monotonic at the view-model layer: once `.exporting` lands, a late
     /// `.downloading` tick — the reused request options reporting for the export request, or a
     /// `Task` hop landing out of order — must not flip the rendered fraction back to a
-    /// determinate bar. Against the old per-event overwrite this sequence renders
-    /// `[0.5, nil, 0.9]`; with the fix it stays `[0.5, nil, nil]` and the banner stays on
+    /// determinate bar. A per-event overwrite would render this sequence as
+    /// `[0.5, nil, 0.9]`; it must stay `[0.5, nil, nil]`, with the banner on
     /// "Preparing video…" for the rest of the export.
     func testResolutionDropsDownloadingEventsAfterExporting() {
         var resolution = VideoLibraryViewModel.Resolution(

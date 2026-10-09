@@ -74,12 +74,9 @@ struct TrickWindowDetector: Sendable {
     ///
     /// Only scales *down*, never up: below the baseline rate, a naive scale-up (0.5 at
     /// `sampleRate == 1`) demands more real per-sample motion than trick footage actually
-    /// produces, which reintroduces the same "nothing detected" failure at the opposite end
-    /// of the granularity range this fix exists to close. `max(sampleRate, ...)` floors the
-    /// denominator at the baseline, so a rate below it keeps the un-scaled base threshold —
-    /// the rates below the shipped default were never reported as broken, so this leaves
-    /// their existing (more permissive) behavior alone rather than "fixing" an unreported
-    /// direction into a real regression.
+    /// produces, so nothing would be detected at that end of the granularity range.
+    /// `max(sampleRate, ...)` floors the denominator at the baseline, so a rate below it keeps
+    /// the un-scaled (more permissive) base threshold.
     private static func scaledDisplacementThreshold(sampleRate: Int) -> Float {
         guard sampleRate > 0 else { return displacementThresholdAtBaseRate }
         let flooredRate = max(sampleRate, VideoFrameSampler.targetSamplesPerSecond)

@@ -19,13 +19,14 @@ the pose format spec), and `turnip-ml`'s `MODEL_CONTRACT.md` (the trick-model
 input/output authority). Where this doc makes a call the master plan
 doesn't cover, it says so inline as *(judgment call)*.
 
-**What changed from DESIGN.md.** Per master plan §8, this doc supersedes
-the v2 "Labeling UI" section of `DESIGN.md` (there is no server labeling
+**Relationship to DESIGN.md.** Per master plan §8, this doc replaces
+DESIGN.md Rev 8's v2 "Labeling UI" section (there is no server labeling
 queue — labeling happens on-device by the clip owner, inside the clip
-confirmation flow) and the backend/label/ML sections on the points listed
-in §9 below. The "community labeling platform" is now: users label their
-own confirmed clips with free-text trick names; the farm trains trick
-detection from pose sequences, never from video.
+confirmation flow) and its backend/label/ML sections on the points listed
+in §9 below; DESIGN.md Rev 9 carries those changes. The "community
+labeling platform" means: users label their own confirmed clips with
+free-text trick names; the farm trains trick detection from pose
+sequences, never from video.
 
 ---
 
@@ -138,8 +139,10 @@ authority. iOS-side rules:
 - **One blob per source video**: the full pose sequence, encoded once
   per `source_id` into `tmp/turnip-pose-<source_id>.tkp1.gz`, reused
   across re-contributions. Deleted on successful upload and by the
-  existing orphan sweep at launch (same `tmp/` hygiene as
-  `PRIVACY.md`).
+  launch-time orphan sweep (same `tmp/` hygiene as `PRIVACY.md`), which
+  has to be extended to the `turnip-pose-` prefix:
+  `PhotoVideoResolver.deleteOrphanedTemporaryExports` matches only
+  `turnip-composition-export-`.
 
 ### 2.3 Skeleton-fallback UX (pose failure)
 
@@ -193,9 +196,9 @@ can never be confirmed.
   confirmation sheet listing the clips with their trick-name chips, the
   payload summary ("pose keypoints, clip windows, labels — video never
   leaves your device"), and a Confirm button. *(Judgment call on
-  placement: a sheet keeps the v1 Done/export flow untouched — Done
-  saves to Photos, Contribute sends to the farm. The exact affordance
-  is UI polish; the boundary semantics are not.)*
+  placement: a sheet keeps the v1 Save Clips flow untouched — Save
+  Clips saves to Photos, Contribute sends to the farm. The exact
+  affordance is UI polish; the boundary semantics are not.)*
 - The label editor (§4) requires at least one trick name per contributed
   clip; a clip with no names cannot be confirmed (inline hint in the
   sheet).
@@ -348,8 +351,9 @@ accepted for v1).
 
 ### 7.1 Delivery (extends the existing OTA path)
 
-`Turnip/ModelUpdates/` already ships a manifest client, a version store
-with atomic replace, and launch/foreground polling (PR #117). The trick
+`Turnip/ModelUpdates/` already ships a manifest client and a version
+store with atomic replace. No app code constructs either; wiring them
+into launch/foreground polling is the subject of open PR #117. The trick
 model rides the same mechanism: `GET /api/models/current` returns the
 trick-detection manifest — version, URL, checksum,
 `taxonomy_version`, and the `vocabulary` list. Download via background
@@ -417,8 +421,8 @@ needs a call at submission time. `ITSAppUsesNonExemptEncryption` stays
 
 ## 9. Relationship to DESIGN.md
 
-Per master plan §8, this doc records the following deltas against
-`docs/DESIGN.md` (Rev 8) without rewriting that file:
+Per master plan §8, these are the deltas against `docs/DESIGN.md` Rev 8;
+DESIGN.md Rev 9 applies them:
 
 1. **Backend section** → superseded by master plan §2–§4: pose blobs
    and upserts replace video upload / R2 video storage; every "upload
@@ -438,16 +442,17 @@ Per master plan §8, this doc records the following deltas against
    product decision, never convenience.
 5. **OTA models** → extended to the two-model story: bundled MoveNet
    (pose, unchanged) + OTA trick-detection model. The
-   `Turnip/ModelUpdates/` machinery and PR #117's launch/foreground
-   polling are the delivery path; the old "pose+action model" language
-   is retired.
+   `Turnip/ModelUpdates/` machinery, with the launch/foreground polling
+   proposed in open PR #117, is the delivery path; the old "pose+action
+   model" language is retired.
 6. **Clip editor / labeling** → the label editor lives in the clip
    confirmation flow (§3–§4 of this doc). The v2 "Labeling UI" section
    (server pending-queue tab) is superseded — labeling happens
    on-device by the clip owner.
 7. **New: video identity** → §1 of this doc; no local ID↔asset mapping
    to lose.
-8. **Social feed** → deferred. The Share Sheet already covers sharing;
+8. **Social feed** → deferred. The planned Share Sheet (`DESIGN.md`
+   "Publishing to social media") covers sharing;
    the only feed-compatible future is client-rendered skeleton
    previews.
 9. **Problem statement** → the community trains *trick detection*, and

@@ -70,8 +70,8 @@ struct ClipPhotosSaver: Sendable {
     /// the sandbox copy afterwards.
     ///
     /// `albumTitle` is the Settings screen's "Save to an album" option
-    /// (`TurnipSettings.albumDestination`): `nil` is the original default behavior — the asset
-    /// is created with no album, landing wherever an ordinary Photos creation request lands it.
+    /// (`TurnipSettings.albumDestination`): `nil` (the default) creates the asset
+    /// with no album, landing wherever an ordinary Photos creation request lands it.
     /// A non-nil title adds the new asset to that album, creating it first if it doesn't already
     /// exist, both inside the one change block below, so the asset and its album membership
     /// either both land or neither does — `addToAlbum`'s fallback (see its doc comment) means
@@ -135,8 +135,7 @@ struct ClipPhotosSaver: Sendable {
     /// add-only-modifiable): both cases fall through to the same creation branch, so an
     /// unmodifiable existing album degrades into the same-titled-duplicate outcome
     /// `fetchAlbum`'s doc comment already discloses for the sees-nothing case, rather than a
-    /// distinct failure mode. Must run inside a `PHPhotoLibrary.performChanges` block. Extracted
-    /// from `saveVideo` to keep its cyclomatic complexity under the repo's SwiftLint limit.
+    /// distinct failure mode. Must run inside a `PHPhotoLibrary.performChanges` block.
     private static func addToAlbum(_ placeholder: PHObjectPlaceholder, titled title: String) {
         if let existingAlbum = fetchAlbum(titled: title),
             let editRequest = PHAssetCollectionChangeRequest(for: existingAlbum) {

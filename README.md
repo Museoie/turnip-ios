@@ -13,8 +13,9 @@ You film a tricking session. Turnip:
 
 1. **Detects each trick** — finds the contiguous spans of athletic
    motion inside your recording.
-2. **Trims each window** — a configurable 1-second buffer on either
-   side, no walk-to-the-spot / wait-for-your-turn dead time.
+2. **Trims each window** — 1 second of lead-in before the motion and 3
+   seconds after it, so the landing stays in, with no walk-to-the-spot /
+   wait-for-your-turn dead time.
 3. **Auto-crops** — bounding box of the athlete across the trick,
    expanded to a target aspect ratio (9:16 for Reels/Shorts by default).
 4. **Exports** — one clip per trick, straight to your Photos library.
@@ -26,9 +27,11 @@ All on-device. No server, no data upload for the core auto-edit path.
 ## Privacy
 
 Turnip v1 never sends your videos anywhere: no accounts, no uploads, no
-analytics. The app asks for Photos access only to show your videos and
-save the clips you export. The App Store privacy answers, the privacy
-manifest, and temp-file hygiene are documented in
+analytics. The app asks for Photos access to show your videos, save the
+clips you export, and delete an original you trash in the clip list, and
+for camera and microphone access to record takes in the app. The App
+Store privacy answers, the privacy manifest, and temp-file hygiene are
+documented in
 [`docs/PRIVACY.md`](docs/PRIVACY.md). Upload and accounts arrive with v2
 as an explicit opt-in, and the privacy story will be updated then.
 
@@ -53,17 +56,12 @@ so the take lands on `ClipList` straight from Stop, with no second decode
 (`Turnip/LivePose/`, per [`docs/LIVE_POSE.md`](docs/LIVE_POSE.md)). A take
 it could not cover end to end goes through `Processing` like a tapped tile.
 
-Two directories sit outside that flow. `PoseDiagnostic` — the design doc's
-"empirical test" first work item, which runs MoveNet Thunder over a video
-and overlays per-frame keypoints — is no longer pushed from Home, which
-goes to `Processing` instead. It is constructed by its own Xcode preview
-and by the `#if DEBUG` screenshot harness that `TurnipUITests` launches
-with `-screenshotPoseDiagnostic`. `ModelUpdates` holds an OTA client no
-app code constructs. Read those two as tested components, not as features
-you can run.
+One directory sits outside that flow: `ModelUpdates` holds an OTA model
+client that no app code constructs. Read it as a tested component, not as
+a feature you can run.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full architecture plan
-including the community labeling + continuous ML training that will
+including the on-device labeling + continuous ML training that will
 follow the standalone MVP, and [`CONTRIBUTING.md`](CONTRIBUTING.md) for
 dev setup.
 
@@ -100,11 +98,11 @@ PR conventions.
 
 ## Sibling repos (planned)
 
-- `turnip-farm` — backend service (video upload, labeling,
-  moderation, dataset export)
-- `turnip-ml` — Python training pipeline (fine-tunes the pose
-  model on the community labeled dataset and publishes new Core ML
-  versions)
+- `turnip-farm` — backend service (pose-sequence and label ingest,
+  moderation, dataset export; never video)
+- `turnip-ml` — Python training pipeline (trains the trick-detection
+  model on contributed pose sequences and labels, and publishes it as
+  an OTA model)
 
 Both are deferred until the standalone MVP proves out on-device
 accuracy; see [`docs/DESIGN.md`](docs/DESIGN.md) § "System architecture".

@@ -6,7 +6,7 @@ import SwiftUI
 /// Editor").
 ///
 /// The timeline spans the whole asset (`ClipEditorViewModel.visibleRange`), not a
-/// zoomed-in range around the window — so a tile's position always reads as "roughly
+/// zoomed-in range around the window — so the trim window's position always reads as "roughly
 /// this part of the video." That makes the handles sub-pixel-precise on a multi-minute
 /// video, so dragging maps vertical drag distance to precision via `ScrubCalculator`
 /// (`docs/SCRUB_DESIGN.md`): dragging straight horizontal moves the handle 1:1; dragging

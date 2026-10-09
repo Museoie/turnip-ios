@@ -1,8 +1,7 @@
 import AVFoundation
 import Foundation
 
-/// The hand-off from Home to whatever consumes the picked video — the pose diagnostic today, the
-/// Processing screen once it exists.
+/// The hand-off from Home to the Processing screen, which consumes the picked video.
 ///
 /// Carries the resolved `AVURLAsset` rather than a bare file URL. For ordinary Photos videos the
 /// asset points into the Photos container, and it is the object PhotoKit handed back that carries

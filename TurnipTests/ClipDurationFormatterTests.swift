@@ -38,7 +38,7 @@ final class ClipDurationFormatterTests: XCTestCase {
     }
 
     func testTriageCardReadsTheSameAsTheFormatter() {
-        // Issue #90's verification: one window, read through the card's label.
+        // One window, read through the card's label.
         let window = TrickWindow(startTime: 2, endTime: 5)
         let item = ClipListItem(
             window: window, cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1))

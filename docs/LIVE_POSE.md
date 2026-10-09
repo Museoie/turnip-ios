@@ -24,10 +24,10 @@ These facts, as of Rev 1, shaped the design more than any external reference. Wh
 - **Inference** is TensorFlow Lite on the CPU: `Interpreter(modelPath:)` with no options, no delegate, default thread count. The video encoder is hardware. So the two workloads share the CPU with the capture session's own CPU work; they do not fight over the GPU or Neural Engine.
 - **Preprocessing** is a Core Image letterbox rendered into a 32BGRA target, then an RGB repack into the 256×256×3 uint8 tensor. The 32BGRA guard is on the rendered target, not the source, so a 420v source buffer is fine. It lived on the model actor; Rev 2 moved it to `PoseInputPreparer`.
 - **Sampling** is ~10 frames/sec of footage regardless of source fps (stride 3 at 30 fps, 24 at 240 fps on the file path). Inference is "tens of ms per frame" against a 100 ms per-sample budget.
-- **Results** are appended to a per-frame array in timestamp order. `nearestResult` binary-searches by timestamp and depends on that order. `PoseDiagnosticSummary` does not care about order.
+- **Results** are appended to a per-frame array in timestamp order. `MotionSignalBuilder` differences consecutive frames and depends on that order.
 - **Minimum iOS is 16.0.** This matters: before iOS 16, a movie file output and a video data output could not both be active on one session. Apple's `AVCaptureVideoDataOutput` documentation states that for apps linking against iOS 16 or later the restriction no longer exists.
 - **No thermal handling** existed anywhere; `ProcessInfo.thermalState` was unused. Rev 2 observes it for the duration of a live-pose recording only.
-- The model was rebuilt via `load()` on every diagnostic run, and still is there; the camera screen loads it once.
+- The file path loads the model via `load()` on every Processing run (`ProcessingPipeline.defaultInference`); the camera screen loads it once.
 
 ## Prior art
 
@@ -57,7 +57,7 @@ The tensor is 256 × 256 × 3 bytes ≈ 196 KB. At 10 samples/sec that is ≈ 11
 
 ### Inference side
 
-1. `MoveNetThunderModel` is loaded once, when the camera first starts, and reused across recordings. A take that starts before it has loaded records normally without live pose; a load failure is a build problem (the `.tflite` is not bundled) and is logged, never shown as a recording error. The diagnostic screen's own "Run diagnostic" still loads per run.
+1. `MoveNetThunderModel` is loaded once, when the camera first starts, and reused across recordings. A take that starts before it has loaded records normally without live pose; a load failure is a build problem (the `.tflite` is not bundled) and is logged, never shown as a recording error. Processing's file path loads its own model per run.
 2. The letterbox and RGB repack live in `PoseInputPreparer`, a synchronous function callable from the capture queue and exposed off the actor as `MoveNetThunderModel.inputPreparer`. The actor takes a `PoseModelInput` (tensor plus letterbox mapping). The pixel-buffer overload the file path calls delegates to the same preparer, so there is one preprocess implementation.
 3. A per-recording queue (`LivePoseSampleChannel` over `BoundedSampleQueue`), bounded to 30 entries ≈ 3 s ≈ 6 MB. Drop-oldest on overflow; drops and the high-water mark are counted. `LivePoseRecording` drains it through the model actor and appends results in dequeue order, which is timestamp order because the queue is FIFO and the capture callback is serial.
 4. The queue is created on the Record tap and owned by the recording, not the screen. Stop finishes the producer, waits for the consumer to drain — one inference in steady state, at most the queue bound — then logs the recording's metrics and hands the file on together with the take's clips. The record button is disabled for that wait so a new take cannot cancel it. Leaving the camera tab and session teardown cancel a drain still in progress, and the file is still handed on, without clips. A consumer that outlives the recording is always the one for that recording, never a shared one.
@@ -76,9 +76,9 @@ The clips are attached to the `SelectedVideo` Home pushes, so the windows are ap
 
 ### Timestamps
 
-Live presentation timestamps are on the session clock. The written file's timeline starts at approximately zero, at the first video sample the movie output wrote. `nearestResult` searches by timestamp, so results need a file-relative time.
+Live presentation timestamps are on the session clock. The written file's timeline starts at approximately zero, at the first video sample the movie output wrote. The trick windows detected from the results are applied to the saved file's timeline, so results need a file-relative time.
 
-Anchor on the presentation timestamp of the first data-output frame delivered after `fileOutput(_:didStartRecordingTo:from:)` fires, and subtract it. This is off by at most one or two frames, which at 240 fps is under 10 ms. That is fine for the diagnostic and for clip-boundary detection at the 10 samples/sec resolution the pipeline already works at. If a later consumer needs sub-frame alignment, the tightening is to compare the first live timestamp against the file's first sample after recording ends, and re-offset the results once.
+Anchor on the presentation timestamp of the first data-output frame delivered after `fileOutput(_:didStartRecordingTo:from:)` fires, and subtract it. This is off by at most one or two frames, which at 240 fps is under 10 ms. That is fine for clip-boundary detection at the 10 samples/sec resolution the pipeline already works at. If a later consumer needs sub-frame alignment, the tightening is to compare the first live timestamp against the file's first sample after recording ends, and re-offset the results once.
 
 ### Thermal policy
 

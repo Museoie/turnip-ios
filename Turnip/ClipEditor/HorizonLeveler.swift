@@ -5,10 +5,11 @@ import Vision
 
 /// The camera's roll over a clip window, read off the picture itself: the tilt of the
 /// horizon Vision finds in frames sampled across the window, and the one rotation that
-/// levels it (`docs/UIUX.md` § "Clip Detail / Editor", Auto rotate). The recordings carry
-/// no motion data to take a roll from — nothing in the track's metadata, nothing from the
-/// in-app camera — so the horizon in the image is the roll. The roll can drift during a
-/// clip; the leveling rotation cancels the mean tilt over the window.
+/// levels it (`docs/UIUX.md` § "Clip Detail / Editor", Auto rotate). The fallback for a
+/// video with no `RollTrack` (every imported one): the horizon in the image stands in for
+/// the roll — right on sky-over-ground, a guess in a gym (`ClipLeveler` prefers the roll
+/// track). The roll can drift during a clip; the leveling rotation cancels the mean tilt
+/// over the window.
 ///
 /// Angles here are in the editor's screen convention — `CropAdjustment.rotationRadians`'s
 /// space, y down, a positive angle turning clockwise — so a tilt converts to a rotation

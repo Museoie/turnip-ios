@@ -199,9 +199,9 @@ final class TrickWindowDetectorTests: XCTestCase {
     /// Below the default rate, `displacementThreshold` stays at the base 0.05 rather than
     /// also scaling up: real trick footage doesn't reliably produce the larger per-sample
     /// displacement a naive symmetric scale-up demands (0.5 at `sampleRate == 1` — half the
-    /// normalized frame between two consecutive samples), so scaling up would reintroduce
-    /// "nothing detected" at the low end of the granularity range this fix exists to close
-    /// at the high end.
+    /// normalized frame between two consecutive samples), so scaling up would cause
+    /// "nothing detected" at the low end of the granularity range, as an unscaled threshold
+    /// would at the high end.
     func testDisplacementThresholdStaysAtTheBaseValueBelowTheDefaultSampleRate() {
         XCTAssertEqual(TrickWindowDetector(sampleRate: 1).displacementThreshold, 0.05, accuracy: 0.0001)
         XCTAssertEqual(TrickWindowDetector(sampleRate: 5).displacementThreshold, 0.05, accuracy: 0.0001)

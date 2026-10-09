@@ -11,8 +11,8 @@ ML artifact. Release builds (Xcode Cloud → TestFlight) download and checksum-v
 `ci_scripts/ci_post_clone.sh`, so it is always inside the archived app bundle. For local
 development, fetch it yourself with the steps below. The app builds and runs without it,
 but nothing pose-related works: the camera records without live pose (it logs the load
-failure under the `LivePose` category and every take goes through Processing), Processing's
-analysis fails with a "model not found" error, and so does the pose diagnostic screen.
+failure under the `LivePose` category and every take goes through Processing), and
+Processing's analysis fails with a "model not found" error.
 
 ## Getting the file
 
@@ -76,8 +76,8 @@ shapes are read out of the files themselves.)
 
 `MoveNetThunderModel` reads the bundled file's input and output tensors at load and rejects
 anything that isn't the Thunder singlepose int8 shape — `[1, 256, 256, 3]` input, `[1, 1, 17,
-3]` output — with a visible error instead of silently producing worse keypoints. If the
-diagnostic fails with an input-shape or output-shape error, the file is a different variant
+3]` output — with a visible error instead of silently producing worse keypoints. If
+Processing's analysis fails with an input-shape or output-shape error, the file is a different variant
 (Lightning is 192x192) — go back to the download step. If it fails with a data-type error like
 "Model input wants Float32, the frame packing writes uInt8", it's the fp32 Thunder build
 rather than the int8 one — also go back.

@@ -74,7 +74,7 @@ final class VideoLibraryViewModel: ObservableObject {
     /// Navigation path of picked videos. A `SelectedVideo`'s lifetime here *is* its temp
     /// export's lifetime: `select()` resolves the tapped tile (possibly writing a composition
     /// export into tmp/), and when the element leaves the path the file must not linger —
-    /// browsing back out without running the diagnostic is the dominant path, not an edge case.
+    /// browsing back out without running an analysis is the dominant path, not an edge case.
     @Published var path: [SelectedVideo] = [] {
         didSet {
             for video in oldValue where !path.contains(video) {
@@ -334,7 +334,8 @@ final class VideoLibraryViewModel: ObservableObject {
     }
 
     /// Resolves the tapped asset to a readable `AVURLAsset` and pushes it onto `path`. One at a
-    /// time: tiles are disabled while a resolution is in flight, and `cancelSelection()` aborts it.
+    /// time: a call while another resolution is in flight is a no-op, and `cancelSelection()`
+    /// aborts it.
     /// A composition export written during resolution lives as long as its `SelectedVideo` stays
     /// on `path` — see the property's `didSet`.
     ///

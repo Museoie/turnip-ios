@@ -2,7 +2,7 @@
 
 ## Overview
 
-The video editor uses a 2D drag gesture to control timeline scrubbing.
+Turnip's scrub controls — Processing's playback bar and the clip editor's trim timeline — use a 2D drag gesture to control timeline scrubbing.
 
 The core behavior is:
 
@@ -383,7 +383,7 @@ Therefore the current model has a discontinuity when crossing from `y <= 0` to `
 
 This is a known property of the chosen mathematical model, not a numerical implementation bug.
 
-Do not attempt to fix this by switching to the larger root. Doing so would make upward movement increase `t` for `x > 1`.
+Do not attempt to fix this by switching to the larger root. Doing so would make upward movement increase `t`: the larger root grows with `y` for every `x > 0`.
 
 If this boundary behavior proves undesirable during interaction testing, it should be addressed by changing the mathematical model rather than by hiding the discontinuity in the implementation.
 
@@ -392,20 +392,15 @@ If this boundary behavior proves undesirable during interaction testing, it shou
 The calculation API should hide all normalization and mathematical details from the caller.
 
 ```swift
-struct ScrubResult {
+enum ScrubCalculator {
     /// Signed normalized timeline displacement.
     ///
-    /// -2 = one full video duration backward
-    ///  0 = no timeline movement
-    /// +2 = one full video duration forward
-    let timelineDelta: Double
-}
+    /// -2 = one full duration backward, 0 = no movement, +2 = one full duration forward.
+    struct Result {
+        let timelineDelta: Double
+    }
 
-enum ScrubCalculator {
-    static func calculate(
-        translation: CGSize,
-        viewportSize: CGSize
-    ) -> ScrubResult
+    static func calculate(translation: CGSize, viewportSize: CGSize) -> Result
 }
 ```
 
@@ -429,151 +424,113 @@ The caller should not need to know:
 - where `t = 1` comes from
 - how the result is clamped
 
-## Recommended Implementation
+## Implementation
+
+`Turnip/Media/ScrubCalculator.swift`, with its doc comments abridged:
 
 ```swift
 import CoreGraphics
-
-struct ScrubResult {
-    /// Signed normalized timeline displacement.
-    ///
-    /// -2 = one full duration backward
-    ///  0 = no movement
-    /// +2 = one full duration forward
-    let timelineDelta: Double
-}
+import Foundation
 
 enum ScrubCalculator {
-
     private static let maximumTimelineDelta = 2.0
-    private static let discriminantEpsilon = 1e-12
 
-    static func calculate(
-        translation: CGSize,
-        viewportSize: CGSize
-    ) -> ScrubResult {
+    /// Signed normalized timeline displacement.
+    ///
+    /// -2 = one full duration backward, 0 = no movement, +2 = one full duration forward.
+    struct Result {
+        let timelineDelta: Double
+    }
 
-        guard viewportSize.width > 0 else {
-            return ScrubResult(timelineDelta: 0)
-        }
+    static func calculate(translation: CGSize, viewportSize: CGSize) -> Result {
+        guard viewportSize.width > 0 else { return Result(timelineDelta: 0) }
 
-        // Normalize both axes using half the screen width, so an edge-to-edge drag
-        // reaches the full ±maximumTimelineDelta rather than half of it.
-        let unit = viewportSize.width / 2
-        let rawX = translation.width / unit
-        let rawY = -translation.height / unit
+        // Half the viewport width is the unit, so an edge-to-edge drag reaches x = 2.
+        let unit = Double(viewportSize.width) / 2
+        let x = Double(translation.width) / unit
+        let y = Double(-translation.height) / unit
 
-        let direction: Double = rawX < 0 ? -1 : 1
-        let x = abs(rawX)
-
+        let direction: Double = x < 0 ? -1 : 1
         // Downward movement does not affect sensitivity.
-        let y = max(rawY, 0)
-
-        let magnitude: Double
-
-        if y <= 0 {
-            // Direct horizontal scrubbing.
-            magnitude = x
-        } else {
-            // Upward scrubbing uses the smaller quadratic root.
-            magnitude = upwardScrubParameter(
-                horizontal: x,
-                vertical: y
-            )
-        }
+        let magnitude = calculateNormalized(horizontal: abs(x), vertical: max(y, 0))
 
         let signed = direction * magnitude
-
-        return ScrubResult(
-            timelineDelta: signed.clamped(
-                to: -maximumTimelineDelta...maximumTimelineDelta
-            )
-        )
+        return Result(timelineDelta: min(max(signed, -maximumTimelineDelta), maximumTimelineDelta))
     }
 
-    private static func upwardScrubParameter(
-        horizontal x: Double,
-        vertical y: Double
-    ) -> Double {
+    static func calculateNormalized(horizontal x: Double, vertical y: Double) -> Double {
+        // Direct horizontal scrubbing.
+        guard y > 0 else { return x }
 
-        let b = x + y * y * y + 2
-        let discriminant = b * b - 8 * x
-
-        // Floating-point protection.
-        guard discriminant >= -discriminantEpsilon else {
-            return 0
-        }
-
-        let sqrtDiscriminant = sqrt(max(0, discriminant))
-
-        // Deliberately choose the smaller root.
-        let t = (b - sqrtDiscriminant) / 2
-
-        return max(0, t)
-    }
-}
-
-private extension Double {
-    func clamped(to range: ClosedRange<Double>) -> Double {
-        min(max(self, range.lowerBound), range.upperBound)
+        // Upward scrubbing: the smaller root of t² - (x + y³ + 2)t + 2x = 0.
+        let bCoefficient = x + y * y * y + 2
+        let discriminant = max(0, bCoefficient * bCoefficient - 8 * x)
+        return max(0, (bCoefficient - discriminant.squareRoot()) / 2)
     }
 }
 ```
 
+A slightly negative discriminant from floating-point error is clamped to zero rather than
+rejected, and the clamp to `-2...2` is written inline.
+
 ## Converting the Result to Video Time
 
-`ScrubCalculator` should remain independent of video duration.
+`ScrubCalculator` stays independent of video duration.
 
-The result is converted to actual time elsewhere:
+Each caller converts the result to time inline, as a fraction of the span its track
+represents:
 
 ```swift
-let timelineFraction = result.timelineDelta / 2
-let timeDelta = timelineFraction * videoDuration
-let newTime = currentTime + timeDelta
+let newTime = dragStartTime + result.timelineDelta / 2 * span
 ```
 
 For example:
 
 ```text
-timelineDelta =  2.0 → +100% duration
-timelineDelta =  1.0 → +50% duration
-timelineDelta =  0.5 → +25% duration
-timelineDelta = -1.0 → -50% duration
+timelineDelta =  2.0 → +100% of the span
+timelineDelta =  1.0 → +50% of the span
+timelineDelta =  0.5 → +25% of the span
+timelineDelta = -1.0 → -50% of the span
 ```
 
-The video layer should then clamp the resulting time to:
+The two callers:
 
-```text
-0 ... videoDuration
-```
+- **`VideoScrubBar`** (`Turnip/Media/VideoScrubBar.swift`, Processing's playback bar):
+  the span is the whole video's `duration`, and the result is clamped to
+  `0...duration` before the seek.
+- **`TrimSliderView`** (`Turnip/ClipEditor/TrimSliderView.swift`, the editor's trim
+  timeline): the span is the timeline's range, frozen for the drag, and the viewport
+  handed to the calculator is the track minus the two handle caps, so the 1:1 branch
+  moves a handle one timeline span per span of drag. `ClipEditorViewModel.trimStart(to:)`
+  and `trimEnd(to:)` clamp the result into the video and keep the minimum clip length.
 
 ## SwiftUI Integration
 
-The SwiftUI integration should contain no scrub mathematics.
-
-Conceptually:
+The SwiftUI integration contains no scrub mathematics. `VideoScrubBar`'s track:
 
 ```swift
-GeometryReader { geometry in
-    VideoView(...)
-        .gesture(
-            DragGesture()
-                .onChanged { value in
-                    let result = ScrubCalculator.calculate(
-                        translation: value.translation,
-                        viewportSize: geometry.size
-                    )
-
-                    let timelineFraction =
-                        result.timelineDelta / 2
-
-                    let timeDelta =
-                        timelineFraction * videoDuration
-
-                    currentTime =
-                        initialTime + timeDelta
+GeometryReader { proxy in
+    // ... track drawing ...
+    .highPriorityGesture(
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if !isScrubbing {
+                    // ... pause playback, report the scrub start ...
+                    dragStartTime = currentTime
                 }
-        )
+                guard let dragStartTime else { return }
+                let result = ScrubCalculator.calculate(
+                    translation: value.translation, viewportSize: proxy.size)
+                let newTime = dragStartTime + result.timelineDelta / 2 * duration
+                currentTime = min(max(newTime, 0), duration)
+                seek(to: currentTime)
+            }
+            .onEnded { _ in
+                isScrubbing = false
+                dragStartTime = nil
+                // ... resume playback if it was playing ...
+            }
+    )
 }
 ```
 
@@ -611,153 +568,77 @@ dragStartTime = nil
 
 This prevents accumulated floating-point error and avoids feedback caused by repeatedly applying the calculated delta.
 
+`TrimSliderView` adds one step in front of this. A drag's first sample jumps the handle nearer the touch straight to it (grab anywhere on the timeline); `dragStartTime` is that handle's resulting, possibly clamped, time, and every later sample passes the calculator the translation since that first sample.
+
 ## Unit Tests
 
-The mathematical behavior should be heavily unit-tested independently of SwiftUI.
+The mathematical behavior is unit-tested independently of SwiftUI, in
+`TurnipTests/ScrubCalculatorTests.swift` (viewport `1000 × 800`, so half the width is 500 pt):
 
-### Basic normalization
+| Test | What it pins |
+|---|---|
+| `testHalfScreenRightIsHalfTheTimeline` | 500 pt right → `timelineDelta == 1` |
+| `testOneScreenRightIsTheWholeTimeline` | 1000 pt right → `timelineDelta == 2` |
+| `testTwoScreensRightClampsToTheWholeTimeline` | 2000 pt right clamps to `2` |
+| `testAZeroWidthViewportProducesNoMovement` | a zero-width viewport returns `0` |
+| `testHorizontalDirectionIsSymmetric` | right and left drags are equal and opposite |
+| `testDownwardDragDoesNotAffectSensitivity` | a downward component changes nothing |
+| `testUpwardMovementReducesSensitivity` | farther up gives a smaller `timelineDelta` |
+| `testMagnitudeNeverExceedsTheClampedRange` | 10 000 pt right still clamps to `2` |
+| `testCalculateNormalizedIsDirectlyProportionalBelowTheTrack` | `y == 0` → `t == x`, up to `x == 2` |
+| `testPointsOnTheConstantTLinesReturnThatT` | the diagram's constant-`t` lines (below) |
+| `testTEqualsTwoIsTheLimitOfTheUpwardBranchAsYApproachesZero` | `x == 2`, `y → 0+` → `t → 2` |
+| `testXGreaterThanTwoAtYZeroUsesXDirectly` | `x == 2.5`, `y == 0` → `t == 2.5` |
+| `testXGreaterThanTwoJustAboveYZeroDropsTowardTwo` | `x == 2.5`, `y → 0+` → `t → 2` (the discontinuity above) |
+
+For example:
 
 ```swift
-func testHalfScreenRight() {
+func testHalfScreenRightIsHalfTheTimeline() {
     let result = ScrubCalculator.calculate(
         translation: CGSize(width: 500, height: 0),
-        viewportSize: CGSize(width: 1000, height: 800)
-    )
-
-    XCTAssertEqual(
-        result.timelineDelta,
-        1,
-        accuracy: epsilon
-    )
+        viewportSize: CGSize(width: 1000, height: 800))
+    XCTAssertEqual(result.timelineDelta, 1, accuracy: epsilon)
 }
-```
 
-### One full screen right
-
-```swift
-func testOneScreenRight() {
-    let result = ScrubCalculator.calculate(
-        translation: CGSize(width: 1000, height: 0),
-        viewportSize: CGSize(width: 1000, height: 800)
-    )
-
-    XCTAssertEqual(
-        result.timelineDelta,
-        2,
-        accuracy: epsilon
-    )
-}
-```
-
-### Left/right symmetry
-
-```swift
-func testHorizontalDirectionIsSymmetric() {
-    let right = ScrubCalculator.calculate(
-        translation: CGSize(width: 500, height: 0),
-        viewportSize: CGSize(width: 1000, height: 800)
-    )
-
-    let left = ScrubCalculator.calculate(
-        translation: CGSize(width: -500, height: 0),
-        viewportSize: CGSize(width: 1000, height: 800)
-    )
-
-    XCTAssertEqual(
-        right.timelineDelta,
-        -left.timelineDelta,
-        accuracy: epsilon
-    )
-}
-```
-
-### Downward movement behaves like no vertical movement
-
-```swift
-func testDownwardDragDoesNotAffectSensitivity() {
-    let horizontalOnly = ScrubCalculator.calculate(
-        translation: CGSize(width: 500, height: 0),
-        viewportSize: CGSize(width: 1000, height: 800)
-    )
-
-    let downward = ScrubCalculator.calculate(
-        translation: CGSize(width: 500, height: 300),
-        viewportSize: CGSize(width: 1000, height: 800)
-    )
-
-    XCTAssertEqual(
-        horizontalOnly.timelineDelta,
-        downward.timelineDelta,
-        accuracy: epsilon
-    )
-}
-```
-
-### Upward movement reduces sensitivity
-
-```swift
 func testUpwardMovementReducesSensitivity() {
     let low = ScrubCalculator.calculate(
         translation: CGSize(width: 500, height: -100),
-        viewportSize: CGSize(width: 1000, height: 800)
-    )
-
+        viewportSize: CGSize(width: 1000, height: 800))
     let high = ScrubCalculator.calculate(
         translation: CGSize(width: 500, height: -1000),
-        viewportSize: CGSize(width: 1000, height: 800)
-    )
-
-    XCTAssertGreaterThan(
-        low.timelineDelta,
-        high.timelineDelta
-    )
+        viewportSize: CGSize(width: 1000, height: 800))
+    XCTAssertGreaterThan(low.timelineDelta, high.timelineDelta)
 }
 ```
 
 ### Mathematical line tests
 
-The original diagram defines, for `Y = y³`:
+The original diagram defines, for `Y = y³`, one line per value of `t`. For `t = 1/8`:
 
 ```text
-t = 1/8
 Y = 15x - 15/8
 ```
 
-Pick several points on that line, take `y = cbrt(Y)`, and verify that the calculator
-returns approximately `1/8`.
-
-Likewise test the lines for:
-
-```text
-t = 2/8
-t = 3/8
-t = 4/8
-t = 5/8
-t = 6/8
-t = 7/8
-t = 8/8
-```
+`testPointsOnTheConstantTLinesReturnThatT` walks the lines for `t = 1/8` through `t = 7/8`,
+picks points on each where `Y > 0` (the upward branch, `x > t`), takes `y = cbrt(Y)`, and
+checks that `calculateNormalized` returns that line's `t`. `t = 2`, the `y = 0` line's other
+root, belongs to the `y <= 0` rule rather than the upward branch, so it is covered as a limit
+by `testTEqualsTwoIsTheLimitOfTheUpwardBranchAsYApproachesZero` instead.
 
 These tests make the original mathematical diagram an executable specification.
 
-## Recommended Internal Test Helper
+## Internal Test Helper
 
-For mathematical tests, keep the core normalized solver separate from coordinate normalization:
+The core normalized solver is separate from coordinate normalization:
 
 ```swift
 enum ScrubCalculator {
-
     // Public API
-    static func calculate(
-        translation: CGSize,
-        viewportSize: CGSize
-    ) -> ScrubResult
+    static func calculate(translation: CGSize, viewportSize: CGSize) -> Result
 
-    // Internal testable mathematical API
-    static func calculateNormalized(
-        horizontal x: Double,
-        vertical y: Double
-    ) -> Double
+    // Internal, directly testable mathematical API
+    static func calculateNormalized(horizontal x: Double, vertical y: Double) -> Double
 }
 ```
 
@@ -776,7 +657,7 @@ direction
   ↓
 clamping
   ↓
-ScrubResult
+ScrubCalculator.Result
 ```
 
 The internal API handles only:
@@ -831,39 +712,32 @@ and:
 
 The calculator must not depend on video duration.
 
-A 10-second video and a 2-hour video produce the same `ScrubResult` for the same gesture.
+A 10-second video and a 2-hour video produce the same `ScrubCalculator.Result` for the same gesture.
 
 ## File Structure
 
-Suggested implementation:
-
 ```text
-Scrubbing/
-├── ScrubCalculator.swift
-├── ScrubResult.swift
-├── ScrubCalculatorTests.swift
-└── VideoTimelineScrub.swift
+Turnip/Media/ScrubCalculator.swift          — the calculator and its nested Result type
+TurnipTests/ScrubCalculatorTests.swift      — mathematical and normalization tests
+Turnip/Media/VideoScrubBar.swift            — caller: Processing's playback bar
+Turnip/ClipEditor/TrimSliderView.swift      — caller: the editor's trim timeline
 ```
 
 Responsibilities:
 
 ### `ScrubCalculator.swift`
 
-Pure gesture mathematics and normalization.
-
-### `ScrubResult.swift`
-
-Public result type.
+Pure gesture mathematics and normalization, plus the `ScrubCalculator.Result` type.
 
 ### `ScrubCalculatorTests.swift`
 
 Mathematical and normalization tests.
 
-### `VideoTimelineScrub.swift`
+### `VideoScrubBar.swift` and `TrimSliderView.swift`
 
-Conversion between normalized timeline displacement and actual video time.
-
-This file may depend on video/time concepts, while `ScrubCalculator` should not.
+Each converts the normalized timeline displacement into time inline, against the span its
+track represents (see "Converting the Result to Video Time"). These views may depend on
+video/time concepts; `ScrubCalculator` does not.
 
 ## Design Principle
 
@@ -881,7 +755,7 @@ viewportSize
 and receive:
 
 ```swift
-ScrubResult
+ScrubCalculator.Result
 ```
 
 That keeps the scrub behavior independently testable and makes it possible to change the mathematical model later without touching the video UI.

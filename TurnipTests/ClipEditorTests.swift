@@ -1010,60 +1010,6 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(viewModel.durationLabel, "2.4s")
     }
 
-    func testDisplayedCropRectWithIdentityTransformIsUnchanged() {
-        // Fractions chosen exactly representable in Float so the assertion is exact — the
-        // point here is the space mapping, not float dust.
-        let crop = NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.5, maxY: 0.75)
-
-        let rect = ClipEditorViewModel.displayedCropRect(
-            cropRect: crop,
-            naturalSize: CGSize(width: 200, height: 100),
-            preferredTransform: .identity)
-
-        XCTAssertEqual(rect, CGRect(x: 50, y: 50, width: 100, height: 25))
-    }
-
-    func testDisplayedCropRectMapsARotatedTrackIntoDisplayedSpace() {
-        // 90°-rotated track: landscape-encoded portrait video, encoded (0,0) at the
-        // displayed top-right. The full encoded frame must become the portrait displayed
-        // frame — a transform applied in the wrong space lands the overlay sideways.
-        let rotate90 = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1080, ty: 0)
-
-        let rect = ClipEditorViewModel.displayedCropRect(
-            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
-            naturalSize: CGSize(width: 1920, height: 1080),
-            preferredTransform: rotate90)
-
-        XCTAssertEqual(rect, CGRect(x: 0, y: 0, width: 1080, height: 1920))
-    }
-
-    func testDisplayedCropRectUsesTheDisplayedSizeForPartialRects() {
-        // A partial rect discriminates the encoded-vs-displayed denormalization: with the
-        // old (buggy) denormalize-in-encoded-size + map-through-transform, this
-        // display-normalized rect lands at (0, 480, 1080, 960) instead of (270, 0, 540, 1920).
-        let rotate90 = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1080, ty: 0)
-
-        let rect = ClipEditorViewModel.displayedCropRect(
-            cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0, maxY: 1),
-            naturalSize: CGSize(width: 1920, height: 1080),
-            preferredTransform: rotate90)
-
-        XCTAssertEqual(rect, CGRect(x: 270, y: 0, width: 540, height: 1920))
-    }
-
-    func testDisplayedCropRectReturnsNilForDegenerateInputs() {
-        XCTAssertNil(ClipEditorViewModel.displayedCropRect(
-            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
-            naturalSize: .zero,
-            preferredTransform: .identity))
-
-        let empty = NormalizedRect(minX: 0.5, maxX: 0.5, minY: 0, maxY: 1)
-        XCTAssertNil(ClipEditorViewModel.displayedCropRect(
-            cropRect: empty,
-            naturalSize: CGSize(width: 100, height: 100),
-            preferredTransform: .identity))
-    }
-
     // MARK: - Stage geometry
 
     func testMarkerRectIsTheLargestTargetRatioRectCenteredInTheInsetStage() {

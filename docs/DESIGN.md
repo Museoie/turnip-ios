@@ -56,7 +56,7 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
 
 ### iOS app (`turnip-ios`)
 
-- **Language**: Swift + SwiftUI, min deployment target **iOS 16** (~98% device coverage as of 2026, drops the iOS 14/15 back-compat testing surface). iOS 17+ features (like `VNDetectHumanBodyPose3DRequest` for depth-aware 3D pose) feature-gated via `if #available(iOS 17)`.
+- **Language**: Swift + SwiftUI, min deployment target **iOS 16** (~98% device coverage as of 2026, drops the iOS 14/15 back-compat testing surface). iOS 17+ features (like `VNDetectHumanBodyPose3DRequest` for depth-aware 3D pose) would be feature-gated via `if #available(iOS 17)`; none of them is used yet.
 - **Pose engine**: MoveNet Thunder (Apache 2.0, ~7 MB TFLite int8 · ~12 MB fp16 · ~24 MB fp32) — pretrained on Google's "Active" dataset (yoga/fitness/dance with high motion + self-occlusion), 84% joint accuracy on the ISBS 2024 gymnastics benchmark. int8 is the default bundle; fp16 is the escalation if accuracy on real footage demands it before the model swap. See "Model escalation ladder" below for the fallback path if empirical testing shows Thunder underperforms.
 - **Runtime**: TensorFlow Lite iOS OR Core ML (via coremltools conversion of the TFLite → Core ML). Core ML is preferable for Neural Engine acceleration on A11+ devices.
 - **Pipeline** (per input video):
@@ -80,9 +80,9 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
   backoff, shed samples) goes through the file path above like a picked video. Steps 4-6 are
   one implementation for both sources. Design and acceptance gate: [`LIVE_POSE.md`](LIVE_POSE.md).
 
-- **Preview UI**: thumbnail per detected clip, tap-preview, drag-adjust start/end, keep/discard toggles.
+- **Preview UI**: a looping preview tile per detected clip; tapping one opens the clip editor (crop, trim with start/end handles, Auto crop / Auto rotate); a per-tile trash button; "Save Clips" saves the rest to Photos. Screens: [`UIUX.md`](UIUX.md).
 - **Contribution** (v2): opt-in per clip. "Contribute to the training dataset" toggle. Uploads the pose-format keypoint sequence plus the confirmed clip windows and free-text trick names to `turnip-farm` — keypoints only, video never leaves the device. The farm upserts on ID match, so re-contribution is safe and idempotent. Full design: [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md).
-- **OTA model updates**: two models. Bundled MoveNet Thunder does pose detection (unchanged). The trick-detection model arrives over the air: on launch and foreground, poll `GET /api/models/current` for the manifest (version, URL, checksum, `taxonomy_version`, vocabulary); download in background, verify the checksum, atomic-replace. The trick model proposes clip windows *and* trick names; the heuristic detector stays as the offline fallback. (The old "pose+action model" language is retired.)
+- **OTA model updates**: two models. Bundled MoveNet Thunder does pose detection (unchanged). The trick-detection model arrives over the air: on launch and foreground, poll `GET /api/models/current` for the manifest (version, URL, checksum, `taxonomy_version`, vocabulary); download in background, verify the checksum, atomic-replace. The trick model proposes clip windows *and* trick names; the heuristic detector stays as the offline fallback. (The old "pose+action model" language is retired.) Built so far (`Turnip/ModelUpdates/`): the manifest client, the sha256 check and the atomic-replace store. Nothing in the app constructs it yet, so there is no launch/foreground poll, and the manifest carries only version, download URL, sha256 and file name; `taxonomy_version` and the vocabulary are still to come.
 
 ### Performance targets
 
@@ -140,9 +140,9 @@ Output: list of `(start_time, end_time)` in seconds.
 
 Static crop (one rect per clip) is Rev 1's choice — simpler, works well when the athlete stays roughly in one area. Dynamic crop (Ken Burns-style, rect changes per frame) is a v2 nice-to-have.
 
-Everything above is ~150 lines of Swift on top of the pose output. The pose model does the heavy lifting; this code just interprets it.
+Everything above is ~400 lines of Swift on top of the pose output. The pose model does the heavy lifting; this code just interprets it.
 
-Steps 4, 5 and 6 are implemented in `Turnip/TrickDetection/` as `MotionSignalBuilder`, `TrickWindowDetector` and `CropRectCalculator`, each with a test file under `TurnipTests/`. The types are library code and not yet driven by a screen, so start from them rather than from the prose above.
+Steps 4, 5 and 6 are implemented in `Turnip/TrickDetection/` as `MotionSignalBuilder`, `TrickWindowDetector` and `CropRectCalculator`, each with a test file under `TurnipTests/`. `ProcessingPipeline` drives all three (the camera's live path runs the same steps on its own results), and the clip editor's Auto crop reuses `CropRectCalculator`. Start from these types rather than from the prose above.
 
 ### Model escalation ladder
 
@@ -166,7 +166,7 @@ The pipeline handles this at multiple layers:
 1. **Confidence filtering** — drop keypoints with `confidence < 0.3` before averaging. If both hips fail on frame t, mark that frame as a gap in the motion series.
 2. **Interpolation across single-frame gaps** — if frame t has no hip but frames t-1 and t+1 do, estimate `hip[t] = (hip[t-1] + hip[t+1]) / 2`.
 3. **Fallback anchor keypoint** — if hips fail but shoulders / nose / torso survive (bigger targets, more resistant to blur), use their midpoint instead.
-4. **Optical-flow fallback** — `VNGenerateOpticalFlowRequest` returns per-pixel motion magnitude between two frames with no pose needed. On frames where pose fails entirely, substitute optical-flow magnitude for the motion signal.
+4. **Optical-flow fallback** *(planned, not implemented)* — `VNGenerateOpticalFlowRequest` returns per-pixel motion magnitude between two frames with no pose needed. On frames where pose fails entirely, substitute optical-flow magnitude for the motion signal.
 5. **3-sample moving average** — a single-frame dropout is 33 ms at 30 fps; surrounding frames still carry the signal.
 6. **Peak-detection sustained-above-threshold logic** — requires ≥ 300 ms of high motion, so a single-frame anomaly can't create a false peak.
 7. **Partial-group anchor reconstruction** — a frame where only part of a keypoint group clears confidence (e.g. one hip lost to blur) reconstructs the full-group midpoint from the most recent full-group frame, at most 3 frames back: the offset between the full midpoint and the usable subset's mean is measured there and applied now, so the anchor stays on the body centerline instead of jumping to the lone point. Past that bound the frame keeps its partial identity and its displacement stays unknown, rather than measuring a fixed body offset as motion.
@@ -231,7 +231,7 @@ Full design: [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §4. Web labelin
 
 ### Publishing to social media (iOS Share Sheet)
 
-Every exported clip has a "Share" button that opens the native iOS share sheet — `UIActivityViewController` (or SwiftUI's `ShareLink` on iOS 16+). Turnip hands the file URL to the system; iOS enumerates every installed app that accepts a video and the user picks the destination — Instagram, TikTok, YouTube (via Photos → Shorts), Messages, Photos, AirDrop, etc. When Instagram is selected, Instagram's own picker offers Reel / Post / Story.
+*Planned, not built: the app has no Share action today; "Save Clips" saves to Photos.* Every exported clip gets a "Share" button that opens the native iOS share sheet — `UIActivityViewController` (or SwiftUI's `ShareLink` on iOS 16+). Turnip hands the file URL to the system; iOS enumerates every installed app that accepts a video and the user picks the destination — Instagram, TikTok, YouTube (via Photos → Shorts), Messages, Photos, AirDrop, etc. When Instagram is selected, Instagram's own picker offers Reel / Post / Story.
 
 **Zero server involvement in the share flow.** No OAuth, no per-platform integration, no CDN staging — the video is on the device, the OS moves it to the target app.
 

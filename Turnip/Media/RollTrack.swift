@@ -61,8 +61,9 @@ enum RollTrack {
 
     /// The horizon's tilt in the recorded picture, from the gravity vector in the device
     /// frame (`CMDeviceMotion.gravity`: x to the right of the portrait screen, y toward the
-    /// top of the phone, z out of the screen), the movie connection's clockwise rotation in
-    /// `videoRotationAngle` terms, and which camera is recording.
+    /// top of the phone; z, out of the screen, is normal to the picture and plays no part),
+    /// the movie connection's clockwise rotation in `videoRotationAngle` terms, and which
+    /// camera is recording.
     ///
     /// The picture's own up and right directions are expressed in the device frame, then the
     /// roll is the angle gravity makes with the picture's down: a phone the holder rolls
@@ -79,7 +80,7 @@ enum RollTrack {
     /// `nil` when gravity has almost no component in the picture plane (the camera pointing
     /// nearly straight down or up), where a roll is not defined.
     static func tilt(
-        gravityX: Double, gravityY: Double, gravityZ: Double,
+        gravityX: Double, gravityY: Double,
         videoRotationDegrees: Int, isFrontCamera: Bool
     ) -> Double? {
         let radians = Double(videoRotationDegrees) * .pi / 180

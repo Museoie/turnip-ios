@@ -18,7 +18,7 @@ enum FloatingTabBarMetrics {
     static let clearance: CGFloat = 100
 }
 
-/// The app's root screen once past the splash: a swipeable, two-page `TabView` (Camera,
+/// The app's root screen: a swipeable, two-page `TabView` (Camera,
 /// then the gallery) with a custom floating pill replacing the system tab bar — this app
 /// has exactly two destinations, not the several a real `UITabBar` assumes.
 ///
@@ -36,9 +36,10 @@ struct RootTabView: View {
             CameraCaptureView(onFinished: handleRecorded, onCancel: { slide(to: .home) })
                 .tag(MainTab.camera)
             HomeView(viewModel: viewModel)
-                // The Camera/Home swipe belongs to Home's root alone. A screen pushed
-                // inside Home (`viewModel.path` non-empty) owns its own horizontal
-                // gestures — Processing browses videos with one — and the pager's
+                // The Camera/Home swipe belongs to Home's root alone. While Home presents
+                // a destination (`viewModel.isPresentingDestination`, true from the tap on),
+                // that screen owns its own horizontal gestures — Processing browses videos
+                // with one — and the pager's
                 // recognizer would otherwise take every one of them first.
                 .background(PageSwipeLock(swipeEnabled: !viewModel.isPresentingDestination))
                 .tag(MainTab.home)
@@ -52,7 +53,7 @@ struct RootTabView: View {
         .ignoresSafeArea()
         // An overlay, not a safe-area inset: the grid scrolls underneath it rather than
         // stopping short, so it reads as floating over the content instead of a docked
-        // bar. Visible on both pages (root-only, `viewModel.path.isEmpty`) so its
+        // bar. Visible on both pages (root-only, `!viewModel.isPresentingDestination`) so its
         // selection marker actually has something to slide between — it's the reason a
         // tab bar's marker animates in Slack/Instagram-style apps at all. Hidden only
         // once Home drills into Processing/ClipList/ClipEditor, each of which has its own
@@ -68,11 +69,7 @@ struct RootTabView: View {
         // A distinct alert from Home's "Couldn't open video" — that one is about
         // resolving an existing library asset, not about this just-recorded file
         // failing to save. Sharing it would misname the failure to the user.
-        .alert("Couldn't Save Recording", isPresented: recordingSaveErrorPresented) {
-            Button("OK") {}
-        } message: {
-            Text(recordingSaveError ?? "")
-        }
+        .errorAlert("Couldn't Save Recording", message: $recordingSaveError)
     }
 
     /// A recording finished: save it to Photos (reusing the same `ClipPhotosSaver` the
@@ -118,12 +115,6 @@ struct RootTabView: View {
         }
     }
 
-    private var recordingSaveErrorPresented: Binding<Bool> {
-        Binding(
-            get: { recordingSaveError != nil },
-            set: { if !$0 { recordingSaveError = nil } }
-        )
-    }
 }
 
 /// The floating bottom nav: camera on the left, the gallery grid on the right. A custom

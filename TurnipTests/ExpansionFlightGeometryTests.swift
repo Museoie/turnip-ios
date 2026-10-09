@@ -96,4 +96,19 @@ final class ExpansionFlightGeometryTests: XCTestCase {
             }
         }
     }
+
+    func testDismissDragMapsLinearlyOntoProgress() {
+        let travel = ExpansionFlightGeometry.dismissTravel
+        XCTAssertEqual(ExpansionFlightGeometry.progress(forDismissTranslation: 0), 1)
+        XCTAssertEqual(ExpansionFlightGeometry.progress(forDismissTranslation: travel / 4), 0.75, accuracy: 0.0001)
+        XCTAssertEqual(ExpansionFlightGeometry.progress(forDismissTranslation: travel * 2), 0)
+        XCTAssertEqual(ExpansionFlightGeometry.progress(forDismissTranslation: -50), 1, "an upward drag stays put")
+    }
+
+    func testDismissCommitsPastTheDeadZoneOrWhileStillMovingDown() {
+        XCTAssertTrue(ExpansionFlightGeometry.dismissCommits(translation: 13, predictedTranslation: 0))
+        XCTAssertTrue(ExpansionFlightGeometry.dismissCommits(translation: 5, predictedTranslation: 6))
+        XCTAssertFalse(ExpansionFlightGeometry.dismissCommits(translation: 12, predictedTranslation: 12))
+        XCTAssertFalse(ExpansionFlightGeometry.dismissCommits(translation: 5, predictedTranslation: -20))
+    }
 }

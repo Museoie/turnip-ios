@@ -152,7 +152,8 @@ The approach taken instead: a custom `ZStack` overlay presented via
 `fullScreenCover` (so it still benefits from a real modal presentation —
 input blocking, a window-level z-order, environment dismissal), but with the
 system's own presentation *animation* suppressed and the actual motion driven
-by a hand-built `progress: CGFloat` spring.
+by a hand-built `progress: CGFloat` clock, animated on an explicit-duration
+ease-in-out curve.
 
 ## Research
 
@@ -180,10 +181,13 @@ findings that shaped the design:
   screen height of travel) while trailing the finger with increasing lag, not
   tracking it 1:1.
 
-Both containers' numeric constants (`dismissTravel`, the "almost any
-downward release commits" rule in each `dismissEnded`/`onEnded`, the spring
-response/damping pairs) are this research's measurements translated into
-SwiftUI's spring parameterization, not arbitrary tuning.
+Both containers' dismiss constants (`ExpansionFlightGeometry.dismissTravel`
+and the "almost any downward release commits" rule,
+`ExpansionFlightGeometry.dismissCommits`) are this research's measurements,
+not arbitrary tuning. The drag maps linearly
+(`progress = 1 - travel / dismissTravel`, with `dismissTravel = 420`); the
+animated flights are an explicit-duration ease-in-out, not a spring (see
+below).
 
 ## Shared design: a two-layer hard cut over one `progress` clock
 
@@ -199,11 +203,12 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
   on-screen `rect` between the tile's frame and the destination (center and
   size separately, so it grows from its own middle), and a `region` of the
   card's content from the part the tile showed (`focus`, aspect-filled by the
-  tile — the crop rect's center square for a clip, the frame's center square
-  for a Home tile) to the whole content, mapped onto `rect` by one uniform
+  tile, so the window starts on its largest centered sub-rect at the tile's
+  aspect: for a clip the focus is the whole crop marker and the window starts
+  on the marker's center square; for a Home tile, the frame's center square)
+  to the whole content, mapped onto `rect` by one uniform
   `scale`. Applied as an animatable `.clipShape(ExpansionFlightClip)` plus a
-  `GeometryEffect` (`ExpansionFlightEffect`), both render-time, both outside
-  `ExpansionCrossfadeCut`. Width and height never scale apart, so the picture is
+  `GeometryEffect` (`ExpansionFlightEffect`), both render-time. Width and height never scale apart, so the picture is
   cropped as it grows and never stretched (through Rev 7 the card was scaled
   non-uniformly to the destination's aspect ratio, which stretched it). What
   the card *draws* differs per container: for Clip it is the editor's own
@@ -212,41 +217,50 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
   tile's square thumbnail at the frame's center square, the full-frame poster
   where cached, and `ProcessingView`'s live player once it reports one
   (`ProcessingPlayerPreferenceKey`).
-- The **real destination content**, hidden for the entire flight and cut in
-  only once the card has actually arrived (`crossfadeThreshold = 0.999`, i.e.
-  `progress ≈ 1`) — an instant cut, not a fade, and at the one point where the
-  card's rect equals the content's settled frame, so nothing pops. (Through
-  Rev 6 this was `0.85`: the card was swapped out while still 15% of the
-  distance short, which was the "sizing gap" bug — see Rev 7.) On close, the
-  same threshold hands back to the card on the first frame of travel, so
-  toolbar/control text is never seen mid-shrink. Neither container transforms
-  its real content — only the hard-cut visibility swap. (Through Rev 7
+- The **real destination content**. On iOS 18+
+  (`ExpansionFlightGeometry.destinationChromeCrossfades`) it sits *above* the
+  card, its navigation container made see-through, and its chrome fades in
+  over the flight with `.expansionCrossfade` (chrome inflection `0.99`,
+  steepness `4`; see Rev 10), so the controls effectively arrive as the card
+  lands and are the first thing to go on a close. Only its backdrop and video
+  surface (`expansionVideoSurface()`) wait for `expansionHasLanded`: a flag
+  written with animations disabled when the opening flight's animation
+  completes and cleared on the first frame of any close, which flips the card
+  off and those surfaces on in one atomic, unanimated frame, at the one point
+  where the card's rect equals the content's settled frame, so nothing pops.
+  Before iOS 18 the whole destination sits *under* the card, hidden behind the
+  same flag. (Through Rev 6 the cut fired at `progress = 0.85`, with the card
+  still 15% short, which was the "sizing gap" bug — see Rev 7.) Neither
+  container transforms its real content — only the visibility swap and the
+  chrome's fade. (Through Rev 7
   `ClipExpansionContainer` also scaled/offset the real `ClipEditorView` toward
   the card's rect; under a hard cut that transform was never visible at a
   non-identity value and only ever produced the Rev 8 flash.) Home's
   *destination rect* still isn't reliably the full screen: see "Matching the
   destination's real content rect, not just its view bounds" below.
-- Only the card layer, and the two destinations' own real content, are ever
-  faded/cut at all — the *source* tile sitting in the grid/list underneath is
-  hidden outright at the same instant (`VideoGalleryView`'s
-  `hiddenAssetIdentifier` / `ClipCardView.isHidden`, both wrapped in the same
-  `disablesAnimations`/`setAnimationsEnabled` transaction as the slot's own
-  state change — see "Suppressing the system's own presentation animation"
-  below), not faded — there's nothing animating that hide, so it was never the
-  source of a visible fade; the one that was visible was the crossfade this
-  rev replaced.
-- `progress` is driven by `.easeInOut(duration: flightDuration)` with
-  `flightDuration = 0.35` for tap-to-open, the reverse close flight, and the
-  cancel-snap-back, and 1:1 by live drag translation for an interactive
+- Only the card layer, the scrim, and the two destinations' own real content
+  are ever faded/cut at all — the *source* tile sitting in the grid/list
+  underneath is hidden outright, not faded, the instant the opening flight
+  starts moving: each container calls its `onFlightStarted`, which sets
+  `HomeView`'s `hidesSourceTile` (read by `VideoGalleryView` as
+  `hiddenAssetIdentifier`) or `ClipListView`'s `hiddenItemID` (read by
+  `ClipCardView.isHidden`). Not at presentation: the cover takes a few frames
+  to present, and `ClipExpansionContainer` also waits for its card's video
+  surface to show the tile's frame (or a 0.3s timeout) before it starts the
+  flight, and until then the tile itself is what's on screen.
+- `progress` is driven by `.easeInOut(duration: flightDuration)`
+  (`ExpansionFlightGeometry.animateFlight`) with `flightDuration = 0.25` for
+  tap-to-open, the reverse close flight, and the cancel flight back to open,
+  and linearly by live drag translation for an interactive
   dismiss — the same geometry/opacity math serves all of them, so there's no
   separate "interactive" rendering branch, only a different thing writing to
   `progress`. An explicit-duration curve rather than a spring: the
   `.spring(response: 1, …)` Revs 5–6 used does ~85% of its travel in the first
   ~0.65s and then crawls, so the *visible* growth never read as the intended
   length even though `progress` technically took ~1.5s to settle — see Rev 7.
-  (The Photos-measured spring constants in "Research" above still describe the
+  (The Photos measurements in "Research" above still describe the
   *interactive* feel; the open/close duration is a product decision, not a
-  spring parameter — 1s in Rev 7, 350ms since Rev 8.)
+  spring parameter — 1s in Rev 7, 350ms in Rev 8, 250ms since Rev 9.)
 - The **player is scrubbed in step** (`FlightScrubber`, shared): an animated
   flight drives exact seeks on the same ease-in-out curve as the geometry, one
   seek in flight at a time, stopping intermediate seeks once another couldn't
@@ -267,9 +281,9 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
 
 | | `ClipExpansionContainer` | `HomeExpansionContainer` |
 |---|---|---|
-| Destination frame | The full screen: the card is laid out as the editor's whole stage, with the video placed in it exactly as the editor places it (`ClipEditorStage.videoPlacement`, from the same marker rect), so the settled card and the editor's own surface are the same picture. What is measured instead is the *focus* — the editor's fixed crop marker, reported via a `PreferenceKey` (`ClipEditorCropMarkerFramePreferenceKey`), independent of media and so available from the editor's first layout pass; a fallback marker over a rough stage band stands in only until then. Live through the opening flight, frozen once a close can begin (`acceptsDestinationUpdates`). Revs 2–11 measured the editor's aspect-fit preview frame as the destination instead; see "Measuring the destination without a race or a feedback loop" below for how that measurement was made reliable | Defaults to a synchronous aspect-ratio estimate from the tapped `PHAsset`'s own pixel dimensions (full screen only when no estimate applies, e.g. a destination that goes straight to `ClipListView`), narrowing to `ProcessingView`'s real, letterboxed video rect once it reports one via `ProcessingVideoFramePreferenceKey` — see "Matching the destination's real content rect" and "Measuring the destination without a race or a feedback loop" below. Never locked — stays live, the same `sourceFrame` is, so browsing to a neighbor with a different aspect ratio retargets it rather than flying toward the first video's letterbox rect |
+| Destination frame | The editor's fixed crop marker (`destination = measuredMarker ?? fallbackMarker`): the card is laid out at the marker, with the video placed in it exactly as the editor places it under the marker (`ClipEditorStage.videoPlacement`), so inside the marker the settled card and the editor's own surface are the same picture, and the flight shows the crop alone. The marker is reported via a `PreferenceKey` (`ClipEditorCropMarkerFramePreferenceKey`), independent of media and so available from the editor's first layout pass; a fallback marker over a rough stage band stands in only until then. Live through the opening flight, frozen once a close can begin (`acceptsDestinationUpdates`). Revs 2–11 measured the editor's aspect-fit preview frame as the destination instead; see "Measuring the destination without a race or a feedback loop" below for how that measurement was made reliable | Defaults to a synchronous aspect-ratio estimate from the tapped `PHAsset`'s own pixel dimensions (full screen only when no estimate applies, e.g. a destination that goes straight to `ClipListView`), narrowing to `ProcessingView`'s real, letterboxed video rect once it reports one via `ProcessingVideoFramePreferenceKey` — see "Matching the destination's real content rect" and "Measuring the destination without a race or a feedback loop" below. Never locked — stays live, so browsing to a neighbor with a different aspect ratio retargets it rather than flying toward the first video's letterbox rect |
 | Card content | The editor's own `ClipEditorVideoSurface`, rendering the container-owned `ClipEditorViewModel`'s `AVPlayer` (the editor renders the same object), over the tile's poster thumbnail placed at the crop marker. The window starts on the marker's center square (what the tile's aspect-filled loop shows) | The tile's square thumbnail at the frame's center square, the cached full-frame poster where there is one, and `ProcessingView`'s live player once reported |
-| Source frame / time | Both captured once, at tap time: `sourceFrame: CGRect`, and `sourceTime` — the tile's paused loop position (the tile pauses *before* reading it), or its poster's midpoint time without a loop | A **live closure** (`sourceFrame: () -> CGRect?`), re-read continuously — a close after `ProcessingView`'s own swipe-to-browse-neighbors must land on whichever tile is *now* current, not the one first tapped |
+| Source frame / time | Both captured once, at tap time: `sourceFrame: CGRect`, and `sourceTime` — the tile's paused loop position (the tile pauses *before* reading it), or its poster's midpoint time without a loop | A **live closure** (`sourceFrame: () -> CGRect?`), re-read on every render until a close begins — a close after `ProcessingView`'s own swipe-to-browse-neighbors must land on whichever tile is *now* current, not the one first tapped. It stays live through an interactive drag; a non-interactive close (the back button, or a committed swipe) latches it into `lockedSourceFrame` for the rest of that flight |
 | Dismiss gesture | Owns one itself, planted into `ClipEditorView`'s background (see "Gesture ownership" below) | Doesn't own one — the destination (`ProcessingView`) already has its own vertical swipe, reported *into* the container via `HomeExpansionCloseHandlers` |
 | Delete | Its own close path: fades out in place rather than flying, since the tile's grid slot holds different content (or nothing) by the time delete runs | N/A — Home has no per-tile delete |
 
@@ -284,7 +298,7 @@ screen's (a landscape recording in this portrait-only app, for example)
 only occupies a smaller, letterboxed sub-rect within those bounds — the rest
 is black bars drawn by the layer itself, invisible to SwiftUI's own layout
 system entirely. Flying the card to the full screen while the real content
-only ever filled a narrower band meant the crossfade (`crossfadeThreshold`)
+only ever filled a narrower band meant the card-to-content cut
 landed on a visible size mismatch: the card had grown past where the video
 actually was.
 
@@ -295,8 +309,8 @@ letterboxed video: a `ProcessingVideoFramePreferenceKey`, reported from a
 `GeometryReader`-backed `.background` inside `ProcessingView.videoStage`
 once `displaySize` (the asset's natural size, loaded asynchronously from its
 track info) is available, consumed by `HomeExpansionContainer` the same way
-it already consumed `ClipEditorPreviewFramePreferenceKey`'s sibling. Unlike
-that sibling, though, it's never locked — see the table above for why: this
+`ClipExpansionContainer` consumes `ClipEditorCropMarkerFramePreferenceKey`.
+Unlike that key's reports, though, it's never locked — see the table above for why: this
 container applies no transform for a lock to protect against, and the live
 update is what lets a browse-to-neighbor with a different aspect ratio
 retarget correctly instead of flying toward a stale video's letterbox rect.
@@ -336,7 +350,7 @@ The fix doesn't wait any longer for the real measurement — it replaces the
 *blind* full-screen guess with an *informed* one. `PHAsset.pixelWidth`/
 `pixelHeight` are ordinary asset metadata, already in hand from the grid
 tile that was tapped, needing no resolve or track load at all, and already
-reflect display orientation (the same thing `ClipEditorViewModel.displayedSize`
+reflect display orientation (the same thing `VideoTrackGeometry.displayedSize`
 computes from `naturalSize` + `preferredTransform`, just synchronously).
 `HomeExpansionContainer.initialAspectRatio` runs the same `AVMakeRect` math
 the real measurement does, against this synchronous estimate, so the open
@@ -347,6 +361,13 @@ letterbox, so `HomeView` only supplies one when the tapped video is actually
 headed for `ProcessingView` — for the camera-originated case that goes
 straight to `ClipListView` (never measured, correctly full screen), it's
 `nil`, and the full-screen default stands exactly as before.
+
+*Revs 2–7, superseded: the rest of this subsection describes a measurement
+that no longer exists. `ClipEditorPreviewFramePreferenceKey`,
+`ClipEditorView.previewSection` and the `editorScale`/`editorOffsetX`/
+`editorOffsetY` transform are gone; the Clip container now measures the crop
+marker (`ClipEditorCropMarkerFramePreferenceKey`) into `measuredMarker` — see
+Rev 12 and Rev 13.*
 
 **`ClipExpansionContainer`: the destination measurement needed the
 transform it fed into to have already settled, which only happened near the
@@ -401,7 +422,8 @@ That part was wrong; see Rev 3 below.
 *Rev 8 note:* the divide-out above is gone. `ClipExpansionContainer` no
 longer applies any transform to `ClipEditorView` (see Rev 8 for why that
 transform was both invisible under the hard cut and the cause of the
-back-button flash), so `measuredDestination` is now the raw reported frame.
+back-button flash), so the measured value is the raw reported frame — since
+Rev 12, the crop marker's frame, held in `measuredMarker`.
 The `acceptsDestinationUpdates` gate from Rev 3 stays: once the user could be
 leaving, the flight's endpoint shouldn't track a value that could still move.
 
@@ -1258,7 +1280,7 @@ set per layer — first specified as 60% of the travel for the disappearing
 layer and 40% for the appearing one, then tuned by hand (see "What shipped").
 
 **What shipped.** `ExpansionFlightGeometry.crossfadeOpacity(progress:
-inflection:)` is an ease-in-out of the card's *travel* (`progress`, `0` at the
+inflection:steepness:)` is an ease-in-out of the card's *travel* (`progress`, `0` at the
 tile, `1` open) whose halves meet at `inflection` instead of the middle: a
 power-`steepness` ease-in from `0` to `0.5` over `[0, inflection]`, the
 matching ease-out from `0.5` to `1` over `[inflection, 1]`. The steepness is
@@ -1513,15 +1535,19 @@ it. (Confirmed empirically, not assumed: an initial version of
 real touch dispatch.)
 
 The fix in both features: the dismiss gesture is planted *inside* the same
-content the `NavigationStack` hosts, as a `.background()` on the
-destination's own root view —
+content the `NavigationStack` hosts, on the destination's own views —
 
 - `ClipEditorView` takes a `dismissGesture: AnyGesture<DragGesture.Value>?`
-  and attaches it behind its own `VStack`, so it only fires where the
-  editor's own crop-drag/trim-slider/button gestures don't claim the touch
-  first. Since Rev 9 the editor has no navigation bar — the bar would sit over
-  that layer and swallow a drag starting in its band — and draws its own top
-  row as content instead, with the gesture layer extended into the safe area.
+  and attaches it as a `.background` behind its own root `ZStack`, on a layer
+  that covers only the band above the crop marker — the top row and the
+  status-bar band over it, extended into the safe area (its height is the
+  marker's `minY` less the layer's own top). The top row's buttons keep their
+  own taps over it; the marker's band belongs to the crop gesture, and the
+  controls below the marker (the Auto buttons, the trim slider, their
+  margins) never dismiss, so a drag that slips off one goes nowhere. The
+  editor has no navigation bar — the bar would sit over that layer and
+  swallow a drag starting in its band — and draws its own top row as content
+  instead.
 - `ProcessingView` already *had* its own vertical swipe-to-dismiss (it just
   used to commit unilaterally on release and call `dismiss()` directly). It
   now reports that gesture's live state to the presenter instead of deciding
@@ -1529,14 +1555,17 @@ destination's own root view —
   `onEnded`, `onCancelled`) — and the container owns the commit/cancel
   decision and the resulting flight. This also means the Photos-exact
   "almost any downward release commits" rule lives in exactly one place
-  (`HomeExpansionContainer.closeHandlers`), not duplicated into
-  `ProcessingView`.
+  (`ExpansionFlightGeometry.dismissCommits`, applied by
+  `HomeExpansionContainer.closeHandlers` and `ClipExpansionContainer`'s drag),
+  not duplicated into `ProcessingView`.
 
-Per the gesture-ownership question this raised during design, the chosen
-split for `ProcessingView` specifically is: the dismiss zone is the area
-**outside the video surface** (margins, the area below the trim/scrub
-controls) — the video itself keeps its existing one-finger crop-drag/browse
-gesture untouched, rather than overloading it or requiring a second finger.
+For `ProcessingView` specifically, the dismiss and the browse share one
+gesture: a single `.simultaneousGesture(videoSwipeGesture)` covers the whole
+page, video included. The axis is fixed per drag by its first movement
+(`dragAxis`): a drag that starts mostly downward dismisses, any other
+browses. The scrub bar's track wins its own drags — this gesture defers to
+it through `isScrubbingVideo` — and both the dismiss and the browse are off
+while an analysis runs.
 
 ## Stable presentation identity (`fullScreenCover(item:)`)
 
@@ -1598,6 +1627,10 @@ view-controller-hierarchy-depth theory above (why Home seemed to need more
 suppression than Clip List) was never a real asymmetry — both needed it,
 one bug just went unnoticed for longer.
 
+Both steps live in one place, `SystemTransition.present`
+(`Turnip/DesignSystem/SystemTransition.swift`), which `presentSlot(_:)` and
+`presentExpandTarget(_:)` both call.
+
 ## Suppressing the system's own dismissal animation
 
 Both containers' `close()` (and `ClipExpansionContainer.closeForDelete()`)
@@ -1623,7 +1656,8 @@ re-enables them before the dismiss transition has actually been scheduled.
 Holding `setAnimationsEnabled(false)` for 0.5s after calling `dismiss()`
 instead reliably suppressed it, confirmed across multiple independent
 recordings; the shorter, `presentSlot`-equivalent delay did not, in every
-recording it was tested against.
+recording it was tested against. `SystemTransition.dismiss` holds it for
+`SystemTransition.dismissHold` (0.5s); both containers dismiss through it.
 
 ## Mounting the destination's `NavigationStack` eagerly
 
@@ -1645,8 +1679,8 @@ The fix: the `NavigationStack` is now created once, immediately, wrapping
 inside it swaps once the video resolves, which is an ordinary SwiftUI
 content change inside an already-settled controller rather than the
 controller's own first mount. Mounting it at `progress ≈ 0` — while the
-content layer is still near-invisible behind the card, per the crossfade
-threshold — also means any residual first-layout cost is itself covered.
+content layer is still near-invisible over the card (the chrome
+cross-fade's 0.99 inflection) — also means any residual first-layout cost is itself covered.
 
 ## The grid's scroll-to-current-tile effect must skip the initial resolve
 
@@ -1677,8 +1711,9 @@ Both containers' dismiss-drag state must reset reliably even when a drag is
 cancelled by the system (an incoming call, Control Center, or any gesture
 that simply never reaches `onEnded`). A plain `@State` "is dragging" flag set
 in `onChanged` and cleared in `onEnded` stays stuck `true` forever in that
-case — and since `.allowsHitTesting` is gated on `progress` being back near
-1, a stuck flag leaves the whole screen's controls, including the back
+case — and since the destination's `.allowsHitTesting` is gated on
+`hasLanded`, which a drag clears and only a completed flight back to open
+sets again, a stuck flag leaves the whole screen's controls, including the back
 button, permanently disabled with no way out.
 
 Both containers use `@GestureState` instead (`dragTranslation` in
@@ -1686,7 +1721,7 @@ Both containers use `@GestureState` instead (`dragTranslation` in
 gesture, reported out via `DismissGestureHooks.onCancelled`), which SwiftUI
 resets to its initial value whenever a gesture ends for *any* reason,
 cancellation included — paired with an `onChange` that fires the same
-cancel-spring `onEnded` would have, but only if `onEnded` didn't already run
+cancel flight `onEnded` would have, but only if `onEnded` didn't already run
 (tracked via a one-shot `didHandleDragEnd`/equivalent flag, to avoid
 double-firing on an ordinary release).
 
@@ -1785,13 +1820,13 @@ app`-style memory note captures the reusable parts of the recipe (recording
    a close, to verify it lands on the right `sourceFrame`, reliably timed
    out or hung for ~30s trying to take a snapshot during exactly the
    window `close()` holds animations disabled (the delay before `dismiss()`
-   plus the 0.5s hold after it — scales with the open/close spring's own
-   `response`, currently ~1.4s–1.9s) — reproduced
+   plus the 0.5s hold after it — about 0.8s: `flightDuration` plus 0.05s
+   before `dismiss()`, then the 0.5s hold) — reproduced
    across a simulator reboot, so not host flakiness. There's no known
    workaround short of not sampling in that window; the close direction's
    destination correctness has to be inferred from the open direction's
-   (same `measuredDestination`, same `currentRect`, no separate computation
-   close performs) rather than independently screenshotted.
+   (same measured destination, same `ExpansionFlightGeometry.resolve`, no
+   separate computation close performs) rather than independently screenshotted.
 7. **A frame-accessible geometry regression test cannot catch a pure-opacity
    bug.** `ExpansionTransitionVerificationTests` samples the card's *settled*
    frame, well after any animation finished, so it kept passing throughout Rev
@@ -1927,12 +1962,15 @@ app`-style memory note captures the reusable parts of the recipe (recording
     compositor with a burst of `XCUIScreen.main.screenshot()` samples before
     chasing it in the app; a sub-second glitch that's real shows up there too.
 
-`TurnipUITests/ExpansionTransitionVerificationTests.swift` is where Rev 2's
-own fix was actually verified against the running app rather than just
-re-read as a diff, and it stays in the tree as a regression test against
-these two specific bugs recurring — run it directly
+`TurnipUITests/ExpansionTransitionVerificationTests.swift` verifies the
+containers against the running app. It holds four tests:
+`testHomeExpansionFallbackDestinationLetterboxesInsteadOfFullScreen`,
+`testClipExpansionCardLandsOnTheEditorsCropMarker`,
+`testClipEditorHeaderLinesUpWithTheClipListsBar` and
+`testSwipeToDismissCommitsTheEdit`. Run it directly
 (`-only-testing:TurnipUITests/ExpansionTransitionVerificationTests`) the
-next time either container's destination math changes. It leans on the
+next time either container's destination math, the editor's header or the
+dismiss gesture changes. It leans on the
 same accessibility-frame-reads-geometry-regardless-of-opacity property the
 `"expansion-card"` identifier on each container's card layer exists for,
 and, for `HomeExpansionContainer` specifically — which needs a real

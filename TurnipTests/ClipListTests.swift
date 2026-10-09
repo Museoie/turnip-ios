@@ -52,11 +52,6 @@ final class ClipListTests: XCTestCase {
             settingsProvider: settingsProvider)
     }
 
-    /// A 90°-rotated track's preferredTransform: landscape-encoded portrait video.
-    /// Encoded (0,0) is the displayed top-right, so it discriminates transforms that mix up
-    /// encoded and displayed space.
-    private let rotate90 = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1080, ty: 0)
-
     // MARK: - ClipListItem
 
     func testNewItemsStartUntrashed() {
@@ -180,30 +175,6 @@ final class ClipListTests: XCTestCase {
         XCTAssertEqual(viewModel.items.count, 2)
     }
 
-    @MainActor
-    func testBindingWritesThroughToTheListEntry() {
-        let target = makeItem()
-        let viewModel = makeViewModel(items: [makeItem(), target])
-
-        guard let binding = viewModel.binding(for: target.id) else {
-            XCTFail("expected a binding for an item that is in the list")
-            return
-        }
-        binding.wrappedValue.isTrashed = true
-
-        // The binding writes through to the list entry with the same id — the editor
-        // destination edits the clip the card tapped.
-        XCTAssertTrue(viewModel.items[2].isTrashed)
-        XCTAssertFalse(viewModel.items[1].isTrashed)
-    }
-
-    @MainActor
-    func testBindingIsNilForAnItemThatIsNotInTheList() {
-        let viewModel = makeViewModel(items: [makeItem()])
-
-        XCTAssertNil(viewModel.binding(for: makeItem().id))
-    }
-
     // MARK: - Editor destination
 
     @MainActor
@@ -245,12 +216,12 @@ final class ClipListTests: XCTestCase {
         XCTAssertEqual(viewModel.items[1], item)
     }
 
-    /// Regression for the stale-thumbnail bug: `thumbnail(for:)` decodes through the real
+    /// No stale thumbnail after an edit: `thumbnail(for:)` decodes through the real
     /// `ClipThumbnailLoader` against a real one-frame video. The edit changes only
     /// `cropRect` (same window, same midpoint, so the seek target is identical both
     /// times) to a half-width crop — the decoded image's width is the discriminator: a
-    /// stale cache hit would keep returning the full-width image, so this fails before
-    /// the fix and passes only once the second call genuinely re-decodes.
+    /// stale cache hit would keep returning the full-width image, so this passes only
+    /// when the second call genuinely re-decodes.
     @MainActor
     func testApplyEditorResultInvalidatesTheCachedThumbnail() async throws {
         let url = try await TestVideoWriter.writeTestVideo(frameCount: 1, width: 64, height: 64, fps: 30)
@@ -367,10 +338,9 @@ final class ClipListTests: XCTestCase {
         XCTAssertTrue(clipCardPlaybackNeedsRebuild(builtFor: builtFor, target: target))
     }
 
-    /// The regression this fix addresses: a crop-area or rotation edit alone (same
-    /// window) needs a new `videoComposition`, not just a resumed player — before this
-    /// fix, the rebuild gate only compared the window, so an edit with no trim change
-    /// left the live tile playing the pre-edit framing indefinitely.
+    /// A crop-area or rotation edit alone (same window) needs a new `videoComposition`,
+    /// not just a resumed player: a gate that compared only the window would leave the
+    /// live tile playing the pre-edit framing indefinitely.
     func testPlaybackNeedsRebuildWhenOnlyTheCropAdjustmentDiffersFromTarget() {
         let builtFor = makePlaybackGeometry()
         let target = makePlaybackGeometry(
@@ -699,113 +669,6 @@ final class ClipListTests: XCTestCase {
         XCTAssertEqual(viewModel.items[1], existing)
     }
 
-    // MARK: - ClipThumbnailLoader.displayedCropRect
-
-    func testDisplayedCropRectWithIdentityTransformIsUnchanged() {
-        // Fractions chosen exactly representable in Float so the assertion is exact —
-        // the point here is the space mapping, not float dust.
-        let crop = NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.5, maxY: 0.75)
-
-        let rect = ClipThumbnailLoader.displayedCropRect(
-            cropRect: crop,
-            naturalSize: CGSize(width: 200, height: 100),
-            preferredTransform: .identity)
-
-        XCTAssertEqual(rect, CGRect(x: 50, y: 50, width: 100, height: 25))
-    }
-
-    func testDisplayedCropRectMapsARotatedTrackIntoDisplayedSpace() {
-        // Full frame must become the portrait displayed frame.
-        let full = ClipThumbnailLoader.displayedCropRect(
-            cropRect: fullFrame,
-            naturalSize: CGSize(width: 1920, height: 1080),
-            preferredTransform: rotate90)
-        XCTAssertEqual(full, CGRect(x: 0, y: 0, width: 1080, height: 1920))
-
-        // The crop rect is normalized in display orientation, so the displayed left half
-        // maps straight onto the displayed left half. The old buggy mapping —
-        // denormalize in the encoded size, then map through preferredTransform —
-        // landed it on the displayed top half instead: (0, 0, 1080, 960).
-        let leftHalf = NormalizedRect(minX: 0, maxX: 0.5, minY: 0, maxY: 1)
-        let rect = ClipThumbnailLoader.displayedCropRect(
-            cropRect: leftHalf,
-            naturalSize: CGSize(width: 1920, height: 1080),
-            preferredTransform: rotate90)
-        XCTAssertEqual(rect, CGRect(x: 0, y: 0, width: 540, height: 1920))
-    }
-
-    func testDisplayedCropRectUsesTheDisplayedSizeForPartialRects() {
-        // A partial rect discriminates the encoded-vs-displayed denormalization: with the
-        // old (buggy) denormalize-in-encoded-size + map-through-transform, this
-        // display-normalized rect lands at (0, 480, 1080, 960) instead of (270, 0, 540, 1920).
-        let rect = ClipThumbnailLoader.displayedCropRect(
-            cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0, maxY: 1),
-            naturalSize: CGSize(width: 1920, height: 1080),
-            preferredTransform: rotate90)
-
-        XCTAssertEqual(rect, CGRect(x: 270, y: 0, width: 540, height: 1920))
-    }
-
-    func testDisplayedCropRectReturnsNilForDegenerateInputs() {
-        XCTAssertNil(ClipThumbnailLoader.displayedCropRect(
-            cropRect: fullFrame,
-            naturalSize: .zero,
-            preferredTransform: .identity))
-
-        let empty = NormalizedRect(minX: 0.5, maxX: 0.5, minY: 0, maxY: 1)
-        XCTAssertNil(ClipThumbnailLoader.displayedCropRect(
-            cropRect: empty,
-            naturalSize: CGSize(width: 100, height: 100),
-            preferredTransform: .identity))
-    }
-
-    // MARK: - ClipThumbnailLoader.displayedAspectRatio
-
-    func testDisplayedAspectRatioWithIdentityTransformMatchesTheCropRect() {
-        // Fractions chosen exactly representable in Float so the assertion is exact.
-        let crop = NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.5, maxY: 0.75)
-
-        XCTAssertEqual(
-            ClipThumbnailLoader.displayedAspectRatio(
-                cropRect: crop,
-                naturalSize: CGSize(width: 200, height: 100),
-                preferredTransform: .identity),
-            4.0) // 100 wide x 25 tall
-    }
-
-    func testDisplayedAspectRatioUsesTheDisplayedSizeOnARotatedTrack() {
-        // Portrait phone video: the crop rect is normalized in display orientation, so a
-        // (0.25..<0.75, 0..<1) rect is a 9:32 portrait crop of the 1080x1920 displayed
-        // frame. The old buggy mapping read it as an 8:9 encoded-space crop and reported
-        // 9:8 (1.125) — the placeholder reserved the wrong shape, off by 4x.
-        let crop = NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0, maxY: 1)
-
-        XCTAssertEqual(
-            ClipThumbnailLoader.displayedAspectRatio(
-                cropRect: crop,
-                naturalSize: CGSize(width: 1920, height: 1080),
-                preferredTransform: rotate90),
-            9.0 / 32.0, // 540 wide x 1920 tall displayed
-            accuracy: 1e-6)
-    }
-
-    func testDisplayedAspectRatioFallsBackForDegenerateInputs() {
-        let empty = NormalizedRect(minX: 0.5, maxX: 0.5, minY: 0, maxY: 1)
-
-        XCTAssertEqual(
-            ClipThumbnailLoader.displayedAspectRatio(
-                cropRect: empty,
-                naturalSize: CGSize(width: 100, height: 100),
-                preferredTransform: .identity),
-            9.0 / 16.0)
-        XCTAssertEqual(
-            ClipThumbnailLoader.displayedAspectRatio(
-                cropRect: fullFrame,
-                naturalSize: .zero,
-                preferredTransform: .identity),
-            9.0 / 16.0)
-    }
-
     // MARK: - ClipThumbnailLoader.adjustedThumbnail
 
     /// Pins the `CGContext` flip `adjustedThumbnail` needs to draw `layerTransform`'s
@@ -833,14 +696,13 @@ final class ClipListTests: XCTestCase {
 
     /// A 90°-rotated track plus a partial (displayed right-half) crop — the same
     /// discriminating shape as `ClipExporterTests.testRotatedTrackCropUsesTheDisplayedSize`,
-    /// now carried through the actual `CGContext` render instead of only the abstract
+    /// carried through the actual `CGContext` render instead of only the abstract
     /// transform. Denormalizing the crop against the encoded (unrotated) size instead of
-    /// the displayed size — the bug class this codebase already hit once — would select
+    /// the displayed size would select
     /// the wrong source region and this would read blue/white instead of red/green.
     func testAdjustedThumbnailAppliesRotationAndPartialCropTogether() throws {
         let source = try XCTUnwrap(Self.quadrantImage())
-        // A 90°-rotated track's preferredTransform, calibrated for this test's 4x4
-        // naturalSize (the class-level `rotate90` above is calibrated for 1920x1080).
+        // A 90°-rotated track's preferredTransform, calibrated for this test's 4x4 naturalSize.
         let rotate90For4x4 = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 4, ty: 0)
         let displayedRightHalf = NormalizedRect(minX: 0.5, maxX: 1, minY: 0, maxY: 1)
 
@@ -896,7 +758,7 @@ final class ClipListTests: XCTestCase {
             of: rotatedResult, topLeft: .blue, topRight: .red, bottomLeft: .white, bottomRight: .green)
         // Direct discriminator: the same source, window, and crop rect must decode to a
         // visibly different thumbnail once the adjustment is non-identity — a fixture
-        // that read the same either way would pass whether or not the fix shipped.
+        // that read the same either way would pass whether or not the adjustment is applied.
         let identityTopLeft = try XCTUnwrap(Self.pixel(atX: 1, y: 1, in: identityResult))
         let rotatedTopLeft = try XCTUnwrap(Self.pixel(atX: 1, y: 1, in: rotatedResult))
         XCTAssertNotEqual(identityTopLeft.red > 0.5, rotatedTopLeft.red > 0.5)

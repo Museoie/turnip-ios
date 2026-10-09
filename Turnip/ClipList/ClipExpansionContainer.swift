@@ -109,8 +109,6 @@ struct ClipExpansionContainer: View {
     /// How long the opening flight waits for the card's video surface before starting
     /// anyway, with the poster thumbnail standing in for a frame that never came.
     private let surfaceReadinessTimeout: TimeInterval = 0.3
-    /// Downward drag distance, in points, that fully closes the view.
-    private let dismissTravel: CGFloat = 420
     /// The tile's own corner radius (`ClipCardView.tile`'s `clipShape`) — the flying
     /// card's radius eases to 0 as it grows, matching the editor's sharp-cornered
     /// preview.
@@ -296,9 +294,7 @@ struct ClipExpansionContainer: View {
     /// change (a close's first frame).
     private func setLanded(_ landed: Bool) {
         guard hasLanded != landed else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { hasLanded = landed }
+        withAnimationsDisabled { hasLanded = landed }
     }
 
     /// A placeholder marker for the brief window before `ClipEditorView`'s own preference
@@ -382,15 +378,14 @@ struct ClipExpansionContainer: View {
                     setLanded(false)
                     let origin = dragScrubOrigin ?? viewModel.beginPresenterScrub()
                     dragScrubOrigin = origin
-                    let travel = max(0, value.translation.height)
-                    progress = 1 - min(travel / dismissTravel, 1)
+                    progress = ExpansionFlightGeometry.progress(forDismissTranslation: value.translation.height)
                     scrubber.request(origin + (landingTime - origin) * (1 - progress))
                 }
                 .onEnded { value in
                     didHandleDragEnd = true
-                    let committing = value.translation.height > 12
-                        || value.predictedEndTranslation.height > value.translation.height
-                    if committing {
+                    if ExpansionFlightGeometry.dismissCommits(
+                        translation: value.translation.height,
+                        predictedTranslation: value.predictedEndTranslation.height) {
                         onCommit(viewModel.result)
                         close()
                     } else {
@@ -425,17 +420,9 @@ struct ClipExpansionContainer: View {
     }
 
     /// Reverse flight back to the tile, scrubbing the player from the frame it's showing
-    /// to `landingTime`, then — once it's visually landed — the actual dismiss.
-    /// `Transaction.disablesAnimations` alone leaves a residual slide visible: it
-    /// suppresses SwiftUI's own animation system but not the UIKit `dismiss(animated:)`
-    /// call that backs `fullScreenCover` underneath, so the already-landed card would
-    /// visibly slide off with the system's own cover-dismiss transition —
-    /// `UIView.setAnimationsEnabled(false)` reaches that layer directly, the same fix
-    /// `HomeView.presentSlot` uses on the opening side. Re-enabling it needs a longer hold
-    /// than that opening-side fix does, though: per `HomeExpansionContainer.close()`'s own
-    /// doc comment, frame-by-frame inspection of screen recordings showed UIKit scheduling
-    /// `dismiss(animated:)`'s transition later than `present(animated:)`'s, so re-enabling
-    /// on just the next run loop turn still let the slide play out.
+    /// to `landingTime`, then — once it's visually landed — the actual dismiss, with no
+    /// system transition (`SystemTransition.dismiss`), so the already-landed card doesn't
+    /// slide off with the cover's own dismiss.
     private func close() {
         acceptsDestinationUpdates = false
         isClosing = true
@@ -467,13 +454,7 @@ struct ClipExpansionContainer: View {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             await scrubber.waitUntilDone()
-            UIView.setAnimationsEnabled(false)
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { dismiss() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                UIView.setAnimationsEnabled(true)
-            }
+            SystemTransition.dismiss { dismiss() }
         }
     }
 }

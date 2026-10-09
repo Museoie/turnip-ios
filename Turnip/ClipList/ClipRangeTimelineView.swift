@@ -6,10 +6,9 @@ import SwiftUI
 /// a highlighted segment — so a glance at the grid shows roughly which part of the
 /// video each clip is from.
 ///
-/// Not draggable: the clip list used to let a handle drag here adjust the window
-/// directly, but that moved into the full editor (reached via the tile's expand
-/// button) so the timeline in the grid could show the whole video instead of a
-/// zoomed-in range that stays finger-sized.
+/// Not draggable: trimming lives in the editor (a tile tap opens it), so the
+/// timeline in the grid can show the whole video instead of a zoomed-in range
+/// that stays finger-sized.
 struct ClipRangeTimelineView: View {
     let window: TrickWindow
     let duration: TimeInterval

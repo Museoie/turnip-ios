@@ -12,7 +12,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
     }
 
     /// Polls `element.frame` until two consecutive reads agree, rather than a fixed sleep —
-    /// the spring settles in well under a second, but a fixed sleep risks sampling mid-flight
+    /// the flight settles in well under a second, but a fixed sleep risks sampling mid-flight
     /// on a loaded CI runner.
     private func settledFrame(of element: XCUIElement, timeout: TimeInterval = 5) -> CGRect {
         var previous = element.frame
@@ -28,8 +28,8 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
 
     /// `HomeExpansionContainer.fallbackDestination` with a known non-square
     /// `initialAspectRatio` and a `content` that never reports a measurement — isolates
-    /// exactly the code path Rev 2 changed from a blind full-screen rect to an
-    /// `AVMakeRect`-letterboxed one. If this regresses to the full screen, the card's
+    /// the `AVMakeRect`-letterboxed fallback from a blind full-screen rect. If this
+    /// regresses to the full screen, the card's
     /// settled height will be close to the whole window instead of a letterboxed band.
     func testHomeExpansionFallbackDestinationLetterboxesInsteadOfFullScreen() throws {
         let app = XCUIApplication()
@@ -48,9 +48,8 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
 
     /// `ClipExpansionContainer`'s focus measurement, over the real `-screenshotClipListMedia`
     /// flow `testClipListTapOpensEditor` already exercises for reachability. The card is laid
-    /// out as the editor's whole stage, with the tile's poster placed at the editor's crop
-    /// marker (`focus`) — and the card's reported accessibility frame is that poster's, the
-    /// one child with a SwiftUI frame of its own. Comparing it against the editor's own
+    /// out at the editor's crop marker, so its reported accessibility frame is that marker
+    /// rect. Comparing it against the editor's own
     /// marker element proves `measuredMarker` converged to the real marker rather than
     /// staying on the container's fallback; a mismatch is a picture that pops at the cut.
     /// The editor's crop gesture surface, by contrast, covers the whole band between the
@@ -136,7 +135,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
     /// Swipe-to-dismiss is the editor's back-navigation by another route, so it has to hand
     /// the edits back the way the back chevron does: trim the clip, swipe down from the
     /// header band, and the tile's caption must show the new duration. The harness's two
-    /// clips both start at 1.5s; dragging the end handle right lengthens the first one.
+    /// clips both last 1.5s; dragging the end handle right lengthens the first one.
     func testSwipeToDismissCommitsTheEdit() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
@@ -186,14 +185,15 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         XCTAssertTrue(captions.contains { $0 != "1.5s" }, "the swipe-dismissed edit never reached the tile")
     }
 
-    // A close-direction counterpart (sampling the card mid-flight after tapping "Back to
-    // clips") was attempted here and dropped: `ClipExpansionContainer.close()` calls
-    // `UIView.setAnimationsEnabled(false)` globally for the ~0.42s–0.92s window after a close
-    // begins (see its own doc comment — this is deliberate, suppressing the system's dismiss
-    // animation), and XCUITest's accessibility snapshot query cannot be completed while that's
-    // in effect — reproducible even across a simulator reboot, not a flake. `close()` reads
-    // the same `measuredDestination` this file's open test already proved converges to the
-    // real frame, through the same unchanged `currentRect`/`sourceFrame`, so the close
-    // direction has no separate computation left to doubt; it just isn't independently
-    // observable through this harness's accessibility tree.
+    // No close-direction counterpart (sampling the card mid-flight after tapping "Back to
+    // clips"): `ClipExpansionContainer.dismissAfterLanding` turns UIKit animations off
+    // globally for the ~0.3s–0.8s window after a close begins (see `close()`'s doc comment —
+    // this is deliberate, suppressing the system's dismiss animation), and XCUITest's
+    // accessibility snapshot query cannot be completed while that's in effect — reproducible
+    // even across a simulator reboot, not a flake. `close()` flies back through the same
+    // `measuredMarker` `testClipExpansionCardLandsOnTheEditorsCropMarker` already proved
+    // converges to the real frame, and the same
+    // `ExpansionFlightGeometry`/`sourceFrame`, so the close direction has no separate
+    // computation left to doubt; it just isn't independently observable through this
+    // harness's accessibility tree.
 }

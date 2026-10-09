@@ -433,14 +433,6 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
         }
     }
 
-    /// One-time session setup: adds the back camera + microphone inputs, the live-pose data
-    /// output and the movie output, then starts the session — all on `sessionQueue`, since
-    /// `AVCaptureSession` configuration and `startRunning()` are the same kind of blocking
-    /// call the rest of this class avoids running on the caller's thread. Uses
-    /// `.inputPriority`, not `.high`: a session preset actively manages the device's format
-    /// on its own and silently overrides a manually chosen `activeFormat`/frame-duration
-    /// (the resolution/fps menu) if left in a preset mode. The data output goes in ahead of
-    /// the movie output so the recorder's connection is formed after it.
     /// Puts the roll track's metadata input on the session and connects it to the movie
     /// output, which then records it alongside the video and audio. Inside the session's
     /// configuration, after the movie output is on the session — a connection needs both
@@ -461,6 +453,14 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
         session.addConnection(connection)
     }
 
+    /// One-time session setup: adds the back camera + microphone inputs, the live-pose data
+    /// output, the movie output and the roll track's metadata input (`addRollTrack`), then
+    /// starts the session — all on `sessionQueue`, since `AVCaptureSession` configuration and
+    /// `startRunning()` are the same kind of blocking call the rest of this class avoids running
+    /// on the caller's thread. Uses `.inputPriority`, not `.high`: a session preset actively
+    /// manages the device's format on its own and silently overrides a manually chosen
+    /// `activeFormat`/frame-duration (the resolution/fps menu) if left in a preset mode. The data
+    /// output goes in ahead of the movie output so the recorder's connection is formed after it.
     private func configureSessionAndStart() async -> (AVCaptureDevice?, AVCaptureDeviceInput?) {
         let session = self.session
         let movieOutput = self.movieOutput
@@ -780,7 +780,7 @@ extension CameraCaptureViewModel {
         if drainingLivePose === recording {
             drainingLivePose = nil
         }
-        // `armedSampleRate` is what the gate (`LivePoseFrameGate(baseInterval:)` in `armLivePose`)
+        // `armedSampleRate` is what the gate (the `LivePoseFrameGate` `LivePoseFrameTap.arm` builds)
         // was actually configured with — the same granularity the file path's detector uses — so
         // coverage is checked against the grid the recording actually ran, not the shipped default.
         let interval = 1.0 / Double(armedSampleRate)

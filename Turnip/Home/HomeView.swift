@@ -16,9 +16,9 @@ struct HomeView: View {
     private let settings = TurnipSettingsStore.shared
     @State private var showSettings = false
     /// Stable for the life of one tap-to-close cycle — its own `id` never changes even though
-    /// the video showing inside it can (`VideoLibraryViewModel.browse()` replacing `path`'s top
-    /// element while this cover is up). `HomeExpansionContainer`'s doc comment on why a cover
-    /// bound directly to a changing video would re-slide on every browse.
+    /// the video showing inside it can (`VideoLibraryViewModel.browse(to:)` replacing `path`'s top
+    /// element while this cover is up). See docs/EXPANSION_TRANSITIONS.md, "Stable presentation
+    /// identity", for why a cover bound directly to a changing video would re-slide on every browse.
     @State private var presentationSlot: HomePresentationSlot?
     /// Whether the expanded video's tile is hidden under the cover's flying card. Not simply
     /// "is a slot presented": the cover takes a few frames to actually appear after
@@ -44,11 +44,7 @@ struct HomeView: View {
         }
         .onPreferenceChange(VideoTileFramePreferenceKey.self) { tileFrames = $0 }
         .task { await viewModel.start() }
-        .alert("Couldn't open video", isPresented: errorPresented) {
-            Button("OK") {}
-        } message: {
-            Text(viewModel.errorMessage ?? "")
-        }
+        .errorAlert("Couldn't open video", message: $viewModel.errorMessage)
         .sheet(isPresented: $showSettings) {
             SettingsView(settings: settings)
         }
@@ -87,26 +83,11 @@ struct HomeView: View {
     /// cover's appearance: `HomeExpansionContainer` plays its own flight from `progress = 0`,
     /// which renders identically to the tile still sitting there (now hidden, replaced by the
     /// container's own card at the same frame) — any extra system animation on top shows as
-    /// the whole screen additionally sliding up from the bottom during the transition.
-    /// `Transaction.disablesAnimations` alone left a residual slide visible (confirmed by
-    /// frame-by-frame inspection of a screen recording — the cover's content only occupied the
-    /// bottom portion of the screen for the first couple of frames, growing to fill it, with no
-    /// trace of this container's own scrim over the gap at the top): that flag suppresses
-    /// SwiftUI's own animation system, but apparently not the UIKit `present(animated:)` call
-    /// that backs `fullScreenCover` underneath. `UIView.setAnimationsEnabled(false)` reaches
-    /// that layer directly; it's re-enabled on the next run loop turn, after the presentation
-    /// has already been issued.
+    /// the whole screen additionally sliding up from the bottom during the transition. See
+    /// `SystemTransition` for why suppressing it takes both SwiftUI and UIKit.
     private func presentSlot(_ slot: HomePresentationSlot) {
         hidesSourceTile = false
-        UIView.setAnimationsEnabled(false)
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            presentationSlot = slot
-        }
-        DispatchQueue.main.async {
-            UIView.setAnimationsEnabled(true)
-        }
+        SystemTransition.present { presentationSlot = slot }
     }
 
     /// The video Processing's swipe reaches at `offset` (`-1` previous, `+1` next) — nil when
@@ -306,15 +287,8 @@ struct HomeView: View {
         }
     }
 
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { if !$0 { viewModel.errorMessage = nil } }
-        )
-    }
-
     /// `PHAsset.pixelWidth`/`pixelHeight` already reflect display orientation — the same thing
-    /// `ClipEditorViewModel.displayedSize` computes from a track's `naturalSize` +
+    /// `VideoTrackGeometry.displayedSize` computes from a track's `naturalSize` +
     /// `preferredTransform`, just available synchronously, with no asset resolve needed. `nil`
     /// for the degenerate dimensions PhotoKit can report while an asset's metadata is still
     /// settling.
@@ -341,9 +315,9 @@ private final class HomePresentationSlot: Identifiable {
 /// The destination while a tapped tile's video is still resolving (PhotoKit fetch, possibly an
 /// iCloud download) — Photos-faithful: the flight happens instantly on tap, onto this full-
 /// screen poster-plus-progress state, rather than waiting for the resolve to finish before
-/// showing any motion. Mirrors `ProcessingView.browsingOverlay`'s look, since this is the same
-/// situation (a swipe or tap landed on a video that needs a moment) for the first video instead
-/// of a neighbor.
+/// showing any motion. Shares `ResolutionProgressContent` with `ProcessingView.browsingOverlay`,
+/// since this is the same situation (a swipe or tap landed on a video that needs a moment) for
+/// the first video instead of a neighbor.
 private struct ResolvingDestination: View {
     let thumbnail: UIImage?
     let resolution: VideoLibraryViewModel.Resolution?
@@ -384,25 +358,8 @@ private struct ResolvingDestination: View {
     }
 
     private var progressBox: some View {
-        VStack(spacing: 12) {
-            if let progress = resolution?.downloadProgress {
-                Text("Downloading from iCloud…")
-                    .font(.subheadline)
-                    .foregroundStyle(.white)
-                ProgressView(value: progress)
-                    .tint(.white)
-            } else {
-                Text("Preparing video…")
-                    .font(.subheadline)
-                    .foregroundStyle(.white)
-                ProgressView()
-                    .tint(.white)
-            }
-            Button("Cancel", role: .cancel, action: cancel)
-                .tint(.white)
-        }
-        .padding(32)
-        .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16))
+        ResolutionProgressContent(resolution: resolution, cancel: cancel)
+            .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -412,10 +369,6 @@ private struct ResolvingDestination: View {
 /// padding. On iOS 26 the settings button is a real `ToolbarItem` in `HomeNavigationBar`'s
 /// toolbar instead — living inside the bar's own hit-testing hierarchy rather than layered
 /// over it, and picking up the system's native Liquid Glass bar-button styling for free.
-///
-/// Extracted to its own type, not a private computed property, so the DEBUG screenshot
-/// harness composes the exact same view `HomeNavigationBar` does instead of a hand-built
-/// duplicate that can drift from it.
 struct HomeSettingsButton: View {
     let action: () -> Void
 
@@ -490,8 +443,7 @@ struct GalleryFilterButton: View {
         switch placement {
         case .toolbar:
             // No manual background: the system paints the native Liquid Glass bar-button
-            // circle behind a plain toolbar glyph, the same way `ClipEditorView`'s toolbar
-            // buttons stay unstyled and let the bar do it.
+            // circle behind a plain toolbar glyph.
             image
         case .overlay:
             image
@@ -764,13 +716,10 @@ private struct ResolutionBanner: View {
         HStack(spacing: 12) {
             ProgressView()
             VStack(alignment: .leading, spacing: 2) {
+                Text(resolution.statusTitle)
+                    .font(.subheadline)
                 if let progress = resolution.downloadProgress {
-                    Text("Downloading from iCloud…")
-                        .font(.subheadline)
                     ProgressView(value: progress)
-                } else {
-                    Text("Preparing video…")
-                        .font(.subheadline)
                 }
             }
             Spacer()
@@ -789,21 +738,15 @@ struct PhotosAccessDeniedView: View {
     let restricted: Bool
 
     var body: some View {
-        StatusStateView(
+        AccessDeniedStateView(
             systemImage: "photo.on.rectangle.angled",
             title: "Turnip needs access to your videos",
             message: restricted
                 ? "Photos access is restricted on this device, so Turnip can't show your videos."
                 : "Turnip finds and trims tricks in recordings from your Photos library. "
-                    + "Allow access in Settings to get started."
-        ) {
-            if !restricted, let settingsURL = URL(string: UIApplication.openSettingsURLString) {
-                Link("Open Settings", destination: settingsURL)
-                    .buttonStyle(.borderedProminent)
-                    .padding(.top, 8)
-                    .accessibilityIdentifier("open-settings")
-            }
-        }
+                    + "Allow access in Settings to get started.",
+            restricted: restricted,
+            openSettingsIdentifier: "open-settings")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("photos-access-denied")
     }

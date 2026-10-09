@@ -1,5 +1,4 @@
 import AVFoundation
-import CoreVideo
 import SwiftUI
 
 /// The per-clip editor (`docs/UIUX.md` § "Clip Detail / Editor"): full-screen,
@@ -13,15 +12,15 @@ import SwiftUI
 /// Back-navigation and Delete both close the editor via the toolbar's own actions —
 /// `onCommit`/`onDelete` fire synchronously from those taps, before the enclosing
 /// presentation dismisses, rather than from `onDisappear`: mutating the presenting
-/// screen's state while the dismiss transition is still animating is what made the
-/// back chevron need repeated taps to register.
+/// screen's state while the dismiss transition is still animating would race the
+/// dismiss and swallow the back chevron's tap.
 struct ClipEditorView: View {
     @StateObject private var viewModel: ClipEditorViewModel
     /// The final editor state, committed on back-navigation — no separate save step,
     /// per the design doc.
     let onCommit: (ClipEditorResult) -> Void
-    /// The Delete action: removes the clip from the list entirely, distinct from
-    /// keep/discard (which the list's own toggle still owns).
+    /// The Delete action: removes the clip from the list entirely, the same as its
+    /// tile's trash button.
     let onDelete: () -> Void
     /// Intercepts the back button's close instead of calling `dismiss()` directly, so
     /// a presenter can animate its own reverse transition before the cover actually
@@ -483,25 +482,13 @@ struct ClipEditorVideoSurface: View {
 /// `ClipEditorView.chrome` to the view that derives the marker from it. Reduces to the
 /// latest non-zero report: the placeholder's siblings in the chrome column contribute the
 /// zero default, and the last of them would otherwise win the reduction.
-private struct ClipEditorStageFramePreferenceKey: PreferenceKey {
-    static var defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        let next = nextValue()
-        if next != .zero { value = next }
-    }
-}
+private struct ClipEditorStageFramePreferenceKey: NonZeroFramePreferenceKey {}
 
 /// The crop marker's on-screen frame (global space), read by a Photos-style expansion
 /// transition presenting this view: the part of the screen the tile's picture lands on,
 /// so the flying card's window starts there. Reduces to the latest non-zero report: during
 /// the frame this view first mounts, a stale zero default can still be in flight.
-struct ClipEditorCropMarkerFramePreferenceKey: PreferenceKey {
-    static var defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
-        let next = nextValue()
-        if next != .zero { value = next }
-    }
-}
+struct ClipEditorCropMarkerFramePreferenceKey: NonZeroFramePreferenceKey {}
 
 /// The surround with a hole at the crop marker, for the editor's stage.
 private struct CropOverlayShape: Shape {
@@ -515,107 +502,11 @@ private struct CropOverlayShape: Shape {
     }
 }
 
+#if DEBUG
+/// The screenshot harness's editor: the same generated sample movie and pose frames, so the
+/// canvas renders a playing clip instead of the load-failure state.
 #Preview {
-    NavigationStack {
-        ClipEditorView(
-            source: ClipEditorSource(
-                window: TrickWindow(startTime: 2, endTime: 5),
-                cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.25, maxY: 0.75),
-                asset: AVURLAsset(url: makeClipEditorPreviewAsset()),
-                poseFrames: []),
-            onCommit: { _ in },
-            onDelete: {})
-    }
-    .preferredColorScheme(.dark)
+    ScreenshotClipEditorHarness()
+        .preferredColorScheme(.dark)
 }
-
-/// Writes a tiny generated sample movie for the `#Preview` above — six seconds of
-/// solid-color H.264 frames — so the canvas renders the editor instead of the
-/// load-failure state. (`/dev/null` isn't media, so `prepare()` took the failing path
-/// and the preview showed "Couldn't load this clip", which reads as a broken screen.)
-///
-/// A bundled fixture .mov would be larger and opaque; generating follows the same
-/// `AVAssetWriter` pattern as the `VideoFrameSamplerTests` video fixture. Synchronous
-/// because `#Preview` bodies can't await: the write is a few hundred local frames, so
-/// the bounded spin below finishes in well under a second. If generation fails on the
-/// preview host, the partial file is deleted and the preview degrades to the
-/// load-failure state instead of crashing.
-private func makeClipEditorPreviewAsset() -> URL {
-    let url = URL.temporaryDirectory.appending(path: "ClipEditorPreview-\(UUID().uuidString).mov")
-    do {
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let width = 320
-        let height = 568
-        let fps: Int32 = 30
-        let input = AVAssetWriterInput(
-            mediaType: .video,
-            outputSettings: [
-                AVVideoCodecKey: AVVideoCodecType.h264,
-                AVVideoWidthKey: width,
-                AVVideoHeightKey: height
-            ])
-        input.expectsMediaDataInRealTime = false
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: input,
-            sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: width,
-                kCVPixelBufferHeightKey as String: height
-            ])
-        guard writer.canAdd(input), writer.startWriting() else { throw PreviewAssetError.setupFailed }
-        writer.add(input)
-        writer.startSession(atSourceTime: .zero)
-        try writePreviewFrames(writer: writer, input: input, adaptor: adaptor, fps: fps)
-        input.markAsFinished()
-        let finished = DispatchSemaphore(value: 0)
-        // The completion handler runs off the main thread, so waiting here can't deadlock.
-        writer.finishWriting { finished.signal() }
-        finished.wait()
-        guard writer.status == .completed else { throw PreviewAssetError.finishFailed }
-        return url
-    } catch {
-        try? FileManager.default.removeItem(at: url)
-        return URL(fileURLWithPath: "/dev/null")
-    }
-}
-
-/// Appends six seconds of solid-color frames to the preview asset writer, extracted
-/// from `makeClipEditorPreviewAsset()` so it stays within the function-body length limit.
-private func writePreviewFrames(
-    writer: AVAssetWriter,
-    input: AVAssetWriterInput,
-    adaptor: AVAssetWriterInputPixelBufferAdaptor,
-    fps: Int32
-) throws {
-    for frame in 0..<(6 * Int(fps)) {
-        // Bounded on writer status: if the writer fails mid-write,
-        // `isReadyForMoreMediaData` never becomes true, and without the status check
-        // the loop would spin with no cause.
-        var spins = 0
-        while !input.isReadyForMoreMediaData, writer.status == .writing, spins < 500 {
-            Thread.sleep(forTimeInterval: 0.002)
-            spins += 1
-        }
-        guard let pool = adaptor.pixelBufferPool else { throw PreviewAssetError.setupFailed }
-        var pixelBuffer: CVPixelBuffer?
-        let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
-        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-            throw PreviewAssetError.setupFailed
-        }
-        CVPixelBufferLockBaseAddress(buffer, [])
-        if let base = CVPixelBufferGetBaseAddress(buffer) {
-            let bytes = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
-            // Vary the fill per frame so the encoder emits real (non-skipped) frames.
-            memset(base, Int32(frame % 255), bytes)
-        }
-        CVPixelBufferUnlockBaseAddress(buffer, [])
-        let time = CMTime(value: CMTimeValue(frame), timescale: fps)
-        guard adaptor.append(buffer, withPresentationTime: time) else {
-            throw PreviewAssetError.appendFailed
-        }
-    }
-}
-
-private enum PreviewAssetError: Error {
-    case setupFailed, appendFailed, finishFailed
-}
+#endif

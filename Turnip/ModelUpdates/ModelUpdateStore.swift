@@ -1,9 +1,10 @@
 import Foundation
 
-/// On-disk home for staged OTA models.
+/// On-disk home for staged OTA models. Not yet read by model loading (see
+/// `ModelUpdateService`); this is the contract that loading is meant to use.
 ///
-/// Layout inside `baseURL` (Application Support in production, a temp dir in
-/// tests):
+/// Layout inside `baseURL` (meant to be Application Support in the app, a temp
+/// dir in tests):
 /// - `<fileName>` — the staged model bytes, written atomically.
 /// - `active-model.json` — `{ "version": "...", "fileName": "..." }`, written
 ///   atomically *after* the bytes, so a crash between the two leaves the
@@ -78,7 +79,7 @@ struct ModelUpdateStore: Sendable {
     /// Atomically replaces the staged model. Bytes land first, metadata
     /// second (see the layout note above).
     func stage(modelData: Data, version: ModelVersion, fileName: String) throws {
-        // One enforcement point (see validate(fileName:) above): rejects
+        // The write-time gate (one shared predicate, see validate(fileName:) above): rejects
         // hostile names, the reserved metadata name, and non-ASCII names
         // before touching the filesystem, so a malicious manifest can't
         // stage outside the store dir or collide with the sidecar record.

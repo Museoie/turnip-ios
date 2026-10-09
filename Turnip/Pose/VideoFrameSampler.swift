@@ -22,8 +22,8 @@ struct SampledFrame: @unchecked Sendable {
 }
 
 /// Decodes video frames via AVAssetReader (not AVAssetImageGenerator, which reseeks per-frame and
-/// is both slower and less frame-accurate during fast motion), keeping every 3rd frame per
-/// docs/DESIGN.md's pipeline step 2.
+/// is both slower and less frame-accurate during fast motion), keeping ~`sampleRate` frames per
+/// second of footage per docs/DESIGN.md's pipeline step 2.
 ///
 /// Frames are rendered through an `AVMutableVideoComposition` that applies the track's
 /// `preferredTransform`. The composition output's `frameDuration` defines a uniform output grid:
@@ -36,20 +36,17 @@ struct SampledFrame: @unchecked Sendable {
 /// timestamp, and any future consumer that divides displacement by Δt must tolerate up to one
 /// frame duration of lateness.
 ///
-/// A `Sendable` struct rather than a class: it is owned by a `@MainActor` view model but
-/// `sampleFrames` is nonisolated, so every call sends the sampler out of the main actor. With no
-/// mutable state there is nothing to protect, and being `Sendable` keeps that crossing legal under
-/// strict concurrency (Swift 6 would otherwise report "sending 'self.sampler' risks causing data
-/// races").
+/// A `Sendable` struct rather than a class: `FrameSampling` requires `Sendable` so
+/// `ProcessingPipeline`, itself `Sendable`, can carry the sampler from the `@MainActor` processing
+/// view model into its nonisolated `run`. With no mutable state there is nothing to protect.
 struct VideoFrameSampler: Sendable {
     /// The shipped default samples per second of footage, independent of the source frame rate
-    /// (docs/DESIGN.md "Performance targets"). At 30 fps this reproduces the old hardcoded
-    /// stride of 3; at the 240 fps slo-mo the design doc recommends as the recording mode, a
-    /// fixed stride of 3 would have run 80 inferences per second of footage — 8x the intended
-    /// sample rate, for no accuracy benefit. The Settings screen's granularity control
-    /// (`TurnipSettings.analysisGranularity`, 1...30) overrides this per instance via
-    /// `sampleRate` below; this constant stays the default and the fallback for every call site
-    /// that doesn't read settings (tests, the pose diagnostic screen).
+    /// (docs/DESIGN.md "Performance targets"). At 30 fps this is a stride of 3; at the 240 fps
+    /// slo-mo the design doc recommends as the recording mode, a fixed stride of 3 would run 80
+    /// inferences per second of footage — 8x the intended sample rate, for no accuracy benefit.
+    /// The Settings screen's granularity control (`TurnipSettings.analysisGranularity`, 1...30)
+    /// overrides this per instance via `sampleRate` below; this constant stays the default and
+    /// the fallback for every call site that doesn't read settings (tests, for one).
     static let targetSamplesPerSecond = 10
 
     /// Samples per second of footage this instance targets, independent of the source frame
@@ -66,7 +63,7 @@ struct VideoFrameSampler: Sendable {
     /// instance.
     static func stride(forNominalFrameRate nominalFrameRate: Float, sampleRate: Int = targetSamplesPerSecond) -> Int {
         guard nominalFrameRate > 0 else {
-            // The track doesn't declare a rate (nominalFrameRate == 0): assume the old 30 fps
+            // The track doesn't declare a rate (nominalFrameRate == 0): assume a 30 fps
             // baseline instead of sampling every frame or dividing by zero, but still honor
             // `sampleRate` — a hardcoded `3` here would silently ignore the configured
             // granularity for exactly the tracks (VFR, re-encoded) most likely to hit this path,
@@ -83,7 +80,7 @@ struct VideoFrameSampler: Sendable {
     /// bare path is not guaranteed to work. `SelectedVideo` hands that object straight through.
     ///
     /// `handler` is `@Sendable` on purpose: a non-`Sendable` closure formed inside a `@MainActor`
-    /// context (e.g. `PoseDiagnosticViewModel`) inherits that isolation, and every call to it would
+    /// context (a view model's, say) inherits that isolation, and every call to it would
     /// hop back onto the main thread — putting per-frame inference on the UI thread. `@Sendable`
     /// breaks that inheritance so the handler runs on the generic executor alongside decoding, and
     /// callers must hop to `MainActor` explicitly for any UI-bound writes.
@@ -102,13 +99,8 @@ struct VideoFrameSampler: Sendable {
         // so frames have to be rendered through a video composition that applies it.
         let preferredTransform = try await track.load(.preferredTransform)
         let naturalSize = try await track.load(.naturalSize)
-        let transformedRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
-        let renderSize = CGSize(width: abs(transformedRect.width), height: abs(transformedRect.height))
-        // A transform that rotates about the origin puts the content outside [0, renderSize], which
-        // composes correctly sized frames of pure background. Camera-roll assets carry the
-        // normalizing translation already; imported and edited ones need not.
-        let renderTransform = preferredTransform.concatenating(
-            CGAffineTransform(translationX: -transformedRect.minX, y: -transformedRect.minY))
+        let geometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
+        let renderSize = geometry.displayedSize
 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
@@ -116,7 +108,7 @@ struct VideoFrameSampler: Sendable {
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-        layerInstruction.setTransform(renderTransform, at: .zero)
+        layerInstruction.setTransform(geometry.uprightTransform, at: .zero)
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]
 

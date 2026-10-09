@@ -45,10 +45,6 @@ struct TurnipSettings: Equatable, Sendable {
         self.analysisGranularity = Self.clampedGranularity(analysisGranularity)
     }
 
-    mutating func setAnalysisGranularity(_ value: Int) {
-        analysisGranularity = Self.clampedGranularity(value)
-    }
-
     /// Clamps to `granularityRange` so a corrupt or out-of-range stored value, or a future
     /// range change, can never hand the sampler or the live frame gate a zero or unbounded rate.
     static func clampedGranularity(_ value: Int) -> Int {

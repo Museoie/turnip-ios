@@ -18,9 +18,9 @@ private actor FrameObservations {
     }
 }
 
-/// `@MainActor` on purpose: this mirrors `PoseDiagnosticViewModel`, where the handler closure is
-/// formed inside a MainActor context. That is exactly the shape in which a non-`@Sendable` handler
-/// would inherit MainActor isolation and run per-frame work on the UI thread.
+/// `@MainActor` on purpose: the handler closure is formed inside a MainActor context, as it would be
+/// in a `@MainActor` view model calling the sampler. That is exactly the shape in which a
+/// non-`@Sendable` handler would inherit MainActor isolation and run per-frame work on the UI thread.
 @MainActor
 final class VideoFrameSamplerTests: XCTestCase {
     private var videoURL: URL!
@@ -176,7 +176,7 @@ final class VideoFrameSamplerTests: XCTestCase {
     }
 
     func testThrowsWhenTheAssetHasNoVideoTrack() async throws {
-        let audioURL = try Self.writeAudioOnlyFile()
+        let audioURL = try TestVideoWriter.writeAudioOnlyFile()
         defer { try? FileManager.default.removeItem(at: audioURL) }
 
         let sampler = VideoFrameSampler()
@@ -235,23 +235,6 @@ final class VideoFrameSamplerTests: XCTestCase {
         }
     }
 
-    // MARK: - Fixture
-
-    /// Writes a short silent CAF so the asset has an audio track and no video track.
-    private static func writeAudioOnlyFile() throws -> URL {
-        let url = URL.temporaryDirectory.appending(path: "VideoFrameSamplerTests-audio-\(UUID().uuidString).caf")
-
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4410) else {
-            throw PoseError.videoLoadFailed(underlying: nil)
-        }
-        buffer.frameLength = buffer.frameCapacity
-
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
-        return url
-    }
-
     // MARK: - Sample stride
 
     func testStrideSamplesRoughlyTenPerSecondRegardlessOfFrameRate() {
@@ -274,8 +257,8 @@ final class VideoFrameSamplerTests: XCTestCase {
     }
 
     func testStrideFallsBackWhenTheTrackDeclaresNoFrameRate() {
-        // nominalFrameRate is 0 when the container doesn't declare one — keep the old 30 fps
-        // behavior rather than sampling every frame or dividing by zero.
+        // nominalFrameRate is 0 when the container doesn't declare one — assume 30 fps (stride 3)
+        // rather than sampling every frame or dividing by zero.
         XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 0), 3)
     }
 

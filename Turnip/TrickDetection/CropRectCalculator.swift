@@ -3,8 +3,8 @@ import Foundation
 
 /// A rect in the decoded frames' normalized coordinate space, matching the pose keypoints it is
 /// built from: both axes run 0-1 across the frame and `y` is measured down from the top edge.
-/// A rect can extend past `[0, 1]` on an axis — `CropRectCalculator` keeps its target aspect
-/// ratio over fitting inside the frame — and every consumer renders black beyond the frame.
+/// `CropRectCalculator.cropRect(for:renderedPixelSize:)` keeps its rects inside `[0, 1]` (see
+/// `fittedInFrame`); a rect that does reach past the frame renders black beyond it in every consumer.
 ///
 /// Frames come out of `VideoFrameSampler` in display orientation, so pass `SampledFrame.renderSize`
 /// as the pixel size for `cropRect(for:renderedPixelSize:)` and `denormalized(in:)`.
@@ -45,8 +45,7 @@ struct CropRectCalculator: Sendable {
     /// Fraction of the athlete's bounding box added to each of its four sides. The keypoints
     /// are joints, so the box stops at the eyes, wrists and ankles; a tenth of the box per
     /// side reaches the top of the head, the hands and the feet with a little air around
-    /// them and no more — a quarter framed the athlete loosely enough to read as the crop
-    /// missing them.
+    /// them and no more.
     let paddingFraction: Float
     /// Minimum extent of the athlete's bounding box, as a fraction of the rendered frame's
     /// shorter axis. Applied to the raw box before padding: a box smaller than this is not a
@@ -73,8 +72,8 @@ struct CropRectCalculator: Sendable {
     /// A box smaller than `minimumExtentFraction` of the shorter rendered axis is grown to
     /// that floor before padding: a one-keypoint or tight-cluster window is not a located
     /// athlete, but it still yields a clip rather than a degenerate rect. The result is
-    /// always `targetAspectRatio` in pixels; it can extend past `[0, 1]` on an axis the
-    /// athlete's box outgrows (see `fittedInFrame`).
+    /// always `targetAspectRatio` in pixels and stays inside `[0, 1]`: a box larger than the
+    /// frame shrinks uniformly to fit (see `fittedInFrame`).
     func cropRect(for frames: [PoseFrameResult], renderedPixelSize: CGSize) -> NormalizedRect? {
         cropRect(around: Self.locatedPoints(in: frames), renderedPixelSize: renderedPixelSize)
     }

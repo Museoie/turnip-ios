@@ -220,9 +220,8 @@ final class ModelUpdateTests: XCTestCase {
 
     /// A cancelled check is a deliberate stop, not a failed update: a
     /// `CancellationError` thrown mid-check must not be recorded on
-    /// `lastError` where it would be misreported as an update failure. This
-    /// test fails against the old single-catch implementation, which boxed
-    /// the cancellation into `.network(underlying:)`.
+    /// `lastError` where it would be misreported as an update failure — boxing
+    /// it into `.network(underlying:)` would fail this.
     func testCheckForUpdatesIgnoresCancellationError() async throws {
         let store = makeStore()
         let client = MockModelUpdateClient()
@@ -340,9 +339,7 @@ final class ModelUpdateTests: XCTestCase {
 
     /// The store enforces the fileName allowlist itself: staging directly with
     /// a traversal name must throw `invalidManifest` and stage nothing, even
-    /// without the service's manifest validation in the loop. This test fails
-    /// against the old implementation, which wrote whatever name it was
-    /// handed.
+    /// without the service's manifest validation in the loop.
     func testStoreStageRejectsUnsafeFileName() throws {
         let store = makeStore()
         let version = ModelVersion("2026.09.10-1")

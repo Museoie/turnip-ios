@@ -16,7 +16,7 @@ final class RollTrackTests: XCTestCase {
 
     private func tilt(_ gravity: SIMD3<Double>, rotation: Int, front: Bool = false) -> Double? {
         RollTrack.tilt(
-            gravityX: gravity.x, gravityY: gravity.y, gravityZ: gravity.z,
+            gravityX: gravity.x, gravityY: gravity.y,
             videoRotationDegrees: rotation, isFrontCamera: front)
     }
 

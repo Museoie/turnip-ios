@@ -92,12 +92,10 @@ struct ClipListView: View {
                                 sourceFrame: frame,
                                 sourceTime: loopTime ?? (item.window.startTime + item.window.endTime) / 2,
                                 thumbnail: thumbnail,
-                                // Snapshot now, rather than re-deriving from
-                                // `viewModel.binding(for:)` inside `editor(for:)`:
-                                // Delete removes the item from `viewModel.items`
-                                // synchronously, before the container's own close
-                                // animation finishes, and a binding lookup at that
-                                // point would come back nil.
+                                // Snapshot now, rather than looking the item up
+                                // inside `editor(for:)`: Delete removes it from
+                                // `viewModel.items` synchronously, before the
+                                // container's own close animation finishes.
                                 source: viewModel.editorSource(for: item)))
                         })
                     .transition(Self.removalTransition)
@@ -141,11 +139,7 @@ struct ClipListView: View {
                 savingOverlay
             }
         }
-        .alert("Couldn't save clips", isPresented: saveFailurePresented) {
-            Button("OK") {}
-        } message: {
-            Text(viewModel.saveFailureMessage ?? "")
-        }
+        .errorAlert("Couldn't save clips", message: $viewModel.saveFailureMessage)
         .fullScreenCover(item: $expandTarget, onDismiss: { hiddenItemID = nil }, content: { target in
             editor(for: target)
         })
@@ -174,32 +168,11 @@ struct ClipListView: View {
         }
     }
 
-    private var saveFailurePresented: Binding<Bool> {
-        Binding(
-            get: { viewModel.saveFailureMessage != nil },
-            set: { if !$0 { viewModel.saveFailureMessage = nil } }
-        )
-    }
-
-    /// Sets `expandTarget`, suppressing the system's own slide-up transition for the cover's
-    /// appearance the same two-layer way `HomeView.presentSlot(_:)` does — see that method's
-    /// own doc comment for the full story. `Transaction.disablesAnimations` alone was believed
-    /// sufficient here (unlike Home's equivalent, which needed `UIView.setAnimationsEnabled`
-    /// too), a conclusion `docs/EXPANSION_TRANSITIONS.md` already flagged as never properly
-    /// isolated; a reported brief shrink-then-expand glitch right at tap time traces to
-    /// exactly this same residual `present(animated:)` gap, so both suppressions apply here now
-    /// too, with the same re-enable-on-the-next-run-loop-turn timing that was already proven
-    /// sufficient for the open side (only the *close* side needed a longer hold).
+    /// Sets `expandTarget` with no system transition (`SystemTransition.present`):
+    /// `ClipExpansionContainer` plays its own flight, and the cover's own slide on top of it
+    /// shows as a brief shrink-then-expand at tap time.
     private func presentExpandTarget(_ target: ExpandTarget) {
-        UIView.setAnimationsEnabled(false)
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            expandTarget = target
-        }
-        DispatchQueue.main.async {
-            UIView.setAnimationsEnabled(true)
-        }
+        SystemTransition.present { expandTarget = target }
     }
 
     /// The tile tap's destination: the full `ClipEditorView` (crop + trim) — tapping
@@ -245,10 +218,9 @@ private struct ExpandTarget: Identifiable {
     /// `ClipExpansionContainer.sourceTime`.
     let sourceTime: TimeInterval
     let thumbnail: CGImage?
-    /// Snapshotted at tap time rather than re-derived from `viewModel.binding(for:)`
-    /// later: Delete removes the item from `viewModel.items` synchronously, before
-    /// `ClipExpansionContainer`'s own close animation finishes, and a live lookup at
-    /// that point would already be nil.
+    /// Snapshotted at tap time rather than looked up from `viewModel.items` later: Delete
+    /// removes the item synchronously, before `ClipExpansionContainer`'s own close
+    /// animation finishes, and a live lookup at that point would already be nil.
     let source: ClipEditorSource
 }
 
@@ -469,11 +441,11 @@ private struct ClipCardView: View {
         .onChange(of: playback.loop.map { ObjectIdentifier($0.player) }) { _ in isLoopReady = false }
     }
 
-    /// The diameter every top-corner icon circle renders at.
+    /// The trash button's circle diameter.
     private static let iconButtonDiameter: CGFloat = 28
 
-    /// The per-tile trash button: a solid red circle while trashed, the same
-    /// semi-transparent grey circle the other tile buttons use otherwise. For the
+    /// The per-tile trash button: a solid red circle while trashed, a
+    /// semi-transparent grey circle otherwise. For the
     /// original item, tapping it is the reversible toggle that tells "Save Clips" to
     /// delete the source video from Photos; for a derived clip, tapping it removes
     /// the tile from the grid, with no restore.

@@ -184,12 +184,12 @@ private struct ScriptedSampler: FrameSampling, Sendable {
     }
 }
 
-/// Regression tests for issue #89: `run()` must compute crop rects against the sampled frames'
+/// `run()` must compute crop rects against the sampled frames'
 /// display-orientation `renderSize`, not the track's encoded `naturalSize`.
 final class ProcessingPipelineRunTests: XCTestCase {
     /// The track is landscape-encoded (64x48) while the scripted sampler reports the portrait
     /// renderSize (48x64) the frames were actually decoded at — the iPhone portrait-recording
-    /// shape where the old code transposed the aspect-ratio snap.
+    /// shape where measuring against `naturalSize` would transpose the aspect-ratio snap.
     func testRunComputesCropRectsAgainstTheFramesRenderSize() async throws {
         let videoURL = try await TestVideoWriter.writeTestVideo(
             frameCount: 35, width: 64, height: 48, fps: 30)
@@ -225,9 +225,9 @@ final class ProcessingPipelineRunTests: XCTestCase {
         }
         let calculator = CropRectCalculator()
         let expected = calculator.cropRect(for: inWindow, renderedPixelSize: CGSize(width: 48, height: 64))
-        // The buggy answer: the same frames snapped against the track's encoded size. Asserting
-        // the two differ proves the fixture discriminates — without it the test would pass on
-        // the buggy code too.
+        // The wrong answer: the same frames snapped against the track's encoded size. Asserting
+        // the two differ proves the fixture discriminates — without it the test would pass
+        // against an encoded-size implementation too.
         let buggy = calculator.cropRect(for: inWindow, renderedPixelSize: CGSize(width: 64, height: 48))
         XCTAssertNotNil(expected)
         XCTAssertNotEqual(expected, buggy, "fixture does not discriminate the size mixup")

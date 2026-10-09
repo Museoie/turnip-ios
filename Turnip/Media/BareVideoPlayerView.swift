@@ -4,8 +4,8 @@ import SwiftUI
 /// A video surface with no playback chrome — just the decoded frames.
 ///
 /// SwiftUI's `VideoPlayer` always draws AVKit's transport controls and there is no
-/// public way to hide them, so screens that draw their own scrub bar (Processing and
-/// the clip list's tiles) wrap `AVPlayerLayer` directly instead.
+/// public way to hide them, so surfaces that draw their own chrome or none (Processing,
+/// the clip list's tiles, the editor, the expansion card) wrap `AVPlayerLayer` directly instead.
 struct BareVideoPlayerView: UIViewRepresentable {
     let player: AVPlayer
     var videoGravity: AVLayerVideoGravity = .resizeAspect

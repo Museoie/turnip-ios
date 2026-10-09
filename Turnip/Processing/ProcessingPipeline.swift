@@ -192,7 +192,7 @@ struct ProcessingPipeline: Sendable {
         // SampledFrame.renderSize), so the crop rect is computed against the frames' renderSize,
         // not the track's encoded naturalSize: on a rotated (portrait phone) clip naturalSize
         // transposes the dimensions and the aspect-ratio snap lands on a wrongly-proportioned
-        // rect (issue #89). No sampled frames means no keypoints, so the size is unused there —
+        // rect. No sampled frames means no keypoints, so the size is unused there —
         // `.zero` marks it unknown, which the calculator treats as unlocatable and buildClips
         // turns into the full-frame fallback.
         let renderedPixelSize = await accumulator.renderSize ?? .zero
@@ -267,7 +267,7 @@ private actor FrameAccumulator {
     /// The composition grid the run's frames were rendered onto, in display orientation. The
     /// sampler builds one composition per run, so the first frame's size stands for all of
     /// them; pose keypoints are measured in this space, so the crop math denormalizes against
-    /// it rather than the track's encoded `naturalSize` (issue #89). Nil when the sampler
+    /// it rather than the track's encoded `naturalSize`. Nil when the sampler
     /// produced no frame.
     private(set) var renderSize: CGSize?
 

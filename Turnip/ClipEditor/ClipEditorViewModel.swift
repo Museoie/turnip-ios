@@ -7,7 +7,7 @@ import SwiftUI
 ///
 /// Holds the draft trim window, the crop rect the clip opened with, and the crop adjustment
 /// on top of it (pinch/rotate/drag, or the Auto crop and Auto rotate fits); the view
-/// commits `result` on back-navigation or Delete — no separate save step, per the design
+/// commits `result` on back-navigation (the chevron or swipe-to-dismiss) — no separate save step, per the design
 /// doc. The crop rect never moves on its own: it is the anchor the marker is laid out
 /// from, and only the user's gestures and the Auto fits change the framing, as an
 /// adjustment on it. Trimming in particular leaves the framing alone — the framing is
@@ -67,8 +67,9 @@ final class ClipEditorViewModel: ObservableObject {
     /// changed and from where (`docs/UIUX.md` § "An automatic change moves, it never cuts").
     nonisolated static let fitAnimation: Animation = .easeInOut(duration: 0.4)
 
-    /// The player the view renders. Created up front so `VideoPlayer` never sees a nil
-    /// player; the item is attached in `prepare()`.
+    /// The player the view renders. Created up front so `ClipEditorVideoSurface` (the
+    /// editor's stage and a presenter's flying card) always has a player to render; the
+    /// item is attached in `prepare()` or `holdPlayback(at:)`.
     let player = AVPlayer()
 
     /// What Auto rotate levels by: `ClipLeveler` in the app (the take's roll track, else the
@@ -84,8 +85,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// `actionAtItemEnd`), and the periodic tick's loop-back seek alone would land on a
     /// paused player — the preview would stop at the end of the clip instead of looping.
     private var didPlayToEndObserver: NSObjectProtocol?
-    private var naturalSize: CGSize?
-    private var preferredTransform = CGAffineTransform.identity
+    private var trackGeometry: VideoTrackGeometry?
     /// The in-flight Auto rotate detection, kept so `teardown()` can cancel it: the
     /// decode outlives a closed editor otherwise.
     private var horizonTask: Task<Void, Never>?
@@ -101,8 +101,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// would pause playback forever and let the preview run past the end handle.
     ///
     /// `private(set)` rather than `private` so tests can assert the latch transitions
-    /// (`trimEnd` sets it, `finishTrim` clears it) — a mutation probe showed no test
-    /// discriminated this guard while it was unreadable.
+    /// (`trimEnd` sets it, `finishTrim` clears it).
     private(set) var isTrimming = false
 
     /// `false` while a presenter is holding playback for its opening flight — see
@@ -134,8 +133,8 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     /// "2.4s"-style duration of the draft window, via the one shared clip-duration
-    /// formatter — the same window must read the same on the triage card and the
-    /// export confirmation row.
+    /// formatter — the same window must read the same in the editor and on the clip
+    /// list's tile.
     var durationLabel: String {
         ClipDurationFormatter.string(from: window.endTime - window.startTime)
     }
@@ -161,15 +160,8 @@ final class ClipEditorViewModel: ObservableObject {
     /// rect mapped into that space. Nil until media info loads; the view lays the video out
     /// under the fixed marker from it.
     var previewOverlay: (videoSize: CGSize, cropRect: CGRect)? {
-        guard let naturalSize,
-              let crop = Self.displayedCropRect(
-                  cropRect: cropRect,
-                  naturalSize: naturalSize,
-                  preferredTransform: preferredTransform)
-        else { return nil }
-        let videoSize = Self.displayedSize(
-            naturalSize: naturalSize, preferredTransform: preferredTransform)
-        return (videoSize: videoSize, cropRect: crop)
+        guard let trackGeometry, let crop = trackGeometry.displayedCropRect(cropRect) else { return nil }
+        return (videoSize: trackGeometry.displayedSize, cropRect: crop)
     }
 
     /// Loads the asset's duration and frame geometry, then starts the preview loop. Called
@@ -622,8 +614,7 @@ final class ClipEditorViewModel: ObservableObject {
         duration: TimeInterval, naturalSize: CGSize, preferredTransform: CGAffineTransform
     ) {
         self.duration = duration
-        self.naturalSize = naturalSize
-        self.preferredTransform = preferredTransform
+        trackGeometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
         window = Self.clamped(window: window, to: duration)
     }
 
@@ -655,38 +646,6 @@ final class ClipEditorViewModel: ObservableObject {
         let earliestEnd = min(window.startTime + minimumClipDuration, duration)
         let newEnd = max(min(time, duration), earliestEnd)
         return TrickWindow(startTime: window.startTime, endTime: newEnd)
-    }
-
-    /// Maps the crop rect from `NormalizedRect`'s space contract — the decoded frames'
-    /// normalized space (display orientation, y down from the top), matching the pose
-    /// keypoints it is built from — into displayed pixel space, matching what the player
-    /// shows. `nil` for degenerate inputs.
-    ///
-    /// Pure so the geometry is unit-testable; the 90°-rotation case is the discriminating
-    /// one.
-    nonisolated static func displayedCropRect(
-        cropRect: NormalizedRect,
-        naturalSize: CGSize,
-        preferredTransform: CGAffineTransform
-    ) -> CGRect? {
-        guard naturalSize.width > 0, naturalSize.height > 0 else { return nil }
-        // cropRect is already normalized in display orientation, so denormalize in the
-        // displayed size directly — no trip through preferredTransform needed.
-        let displayedSize = Self.displayedSize(
-            naturalSize: naturalSize, preferredTransform: preferredTransform)
-        let displayed = cropRect.denormalized(in: displayedSize)
-        guard displayed.width > 0, displayed.height > 0 else { return nil }
-        return displayed
-    }
-
-    /// The frame size as the player shows it: the encoded frame's corners through
-    /// `preferredTransform`, so a 90°-rotated track reports portrait dimensions.
-    nonisolated static func displayedSize(
-        naturalSize: CGSize, preferredTransform: CGAffineTransform
-    ) -> CGSize {
-        boundingBox(of: CGRect(origin: .zero, size: naturalSize).corners.map {
-            $0.applying(preferredTransform)
-        }).size
     }
 
     /// The sampled pose frames inside the draft window: what Auto crop fits.
@@ -769,22 +728,5 @@ final class ClipEditorViewModel: ObservableObject {
             to: CMTime(seconds: time, preferredTimescale: 600),
             toleranceBefore: .zero, toleranceAfter: .zero)
         playbackTime = time
-    }
-
-    private nonisolated static func boundingBox(of points: [CGPoint]) -> CGRect {
-        let xValues = points.map(\.x), yValues = points.map(\.y)
-        guard let minX = xValues.min(), let maxX = xValues.max(),
-              let minY = yValues.min(), let maxY = yValues.max()
-        else { return .zero }
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-    }
-}
-
-private extension CGRect {
-    var corners: [CGPoint] {
-        [origin,
-         CGPoint(x: maxX, y: minY),
-         CGPoint(x: minX, y: maxY),
-         CGPoint(x: maxX, y: maxY)]
     }
 }

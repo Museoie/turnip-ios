@@ -64,11 +64,7 @@ struct CameraCaptureView: View {
             isPreviewLive = false
             viewModel.stop()
         }
-        .alert("Couldn't record video", isPresented: errorPresented) {
-            Button("OK") {}
-        } message: {
-            Text(viewModel.errorMessage ?? "")
-        }
+        .errorAlert("Couldn't record video", message: $viewModel.errorMessage)
     }
 
     /// Placed where a navigation bar's leading item would sit (`screenHeaderItemPlacement`),
@@ -89,7 +85,7 @@ struct CameraCaptureView: View {
             }
             recordButton
         }
-        // The floating tab bar (`RootTabView`) now stays visible over this page too, so
+        // The floating tab bar (`RootTabView`) stays visible over this page too, so
         // without this the record button and lens row would sit directly underneath it.
         .padding(.bottom, FloatingTabBarMetrics.clearance)
     }
@@ -238,30 +234,18 @@ struct CameraCaptureView: View {
         .accessibilityLabel("Exposure bias")
     }
 
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { if !$0 { viewModel.errorMessage = nil } }
-        )
-    }
 }
 
 private struct CameraAccessDeniedView: View {
     let restricted: Bool
 
     var body: some View {
-        StatusStateView(
+        AccessDeniedStateView(
             systemImage: "camera.fill",
             title: "Turnip needs camera access",
             message: restricted
                 ? "Camera access is restricted on this device."
-                : "Allow camera and microphone access in Settings to record a trick."
-        ) {
-            if !restricted, let settingsURL = URL(string: UIApplication.openSettingsURLString) {
-                Link("Open Settings", destination: settingsURL)
-                    .buttonStyle(.borderedProminent)
-                    .padding(.top, 8)
-            }
-        }
+                : "Allow camera and microphone access in Settings to record a trick.",
+            restricted: restricted)
     }
 }

@@ -3,18 +3,23 @@ import Foundation
 
 /// Polls for model updates and stages them for the *next* launch.
 ///
+/// Not yet wired into app launch or model loading: nothing in the app builds this
+/// service, and `MoveNetThunderModel` loads only the bundled file. What follows is
+/// the contract the wiring is meant to honor.
+///
 /// The flow per check: fetch the manifest from
 /// `<baseURL>/api/models/current`; if it names a newer version than the staged
 /// one, download the bytes, verify their SHA-256 against the manifest, and
-/// atomically stage them. The running session never hot-swaps models
-/// mid-inference — staging only affects what the next launch loads.
+/// atomically stage them. Staging never touches the model in use — a running
+/// session must not hot-swap models mid-inference — and a later launch is meant
+/// to load `ModelUpdateStore.activeModelURL()`.
 ///
 /// An actor for two reasons: the check is `async` throughout (network, disk),
 /// and `lastError` is written from the check's continuation, so actor
 /// isolation keeps the read in tests data-race-free without manual locking.
 ///
 /// The service never throws: every failure is recorded on `lastError` and the
-/// previously staged model keeps serving. A failed update must be silent to
+/// staged model is left as it was. A failed update must be silent to
 /// the user, never a crash or a half-staged model. Cancellation is not a
 /// failure: a cancelled check leaves `lastError` nil instead of recording
 /// the cancellation as a failed check.

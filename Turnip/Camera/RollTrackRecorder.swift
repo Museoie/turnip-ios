@@ -82,7 +82,7 @@ final class RollTrackRecorder: @unchecked Sendable {
         lock.unlock()
         guard let input, let geometry,
               let tilt = RollTrack.tilt(
-                  gravityX: gravity.x, gravityY: gravity.y, gravityZ: gravity.z,
+                  gravityX: gravity.x, gravityY: gravity.y,
                   videoRotationDegrees: geometry.videoRotationDegrees,
                   isFrontCamera: geometry.isFrontCamera)
         else { return }
