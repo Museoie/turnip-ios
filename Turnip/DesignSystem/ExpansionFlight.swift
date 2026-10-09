@@ -94,10 +94,20 @@ struct ExpansionFlightGeometry: Equatable {
         1 - min(max(0, translation) / dismissTravel, 1)
     }
 
-    /// Whether a released dismiss drag closes rather than springs back: past a small dead
-    /// zone, or still moving down at release (the predicted end lies beyond the finger).
+    /// How far a dismiss drag must carry the card — a quarter of the way back to the tile —
+    /// before letting go closes rather than springing back to fully open.
+    static let dismissCommitDistance: CGFloat = dismissTravel / 4
+
+    /// How far a dismiss drag's projected end must reach for a quick flick that lifts short
+    /// of `dismissCommitDistance` to close anyway: half the way back, so a fast swipe still
+    /// leaves while a short, slow one is a change of mind.
+    static let dismissFlickDistance: CGFloat = dismissTravel / 2
+
+    /// Whether a released dismiss drag closes rather than springs back: once it has covered
+    /// `dismissCommitDistance`, or when a flick's predicted end (where the drag would have
+    /// stopped had it kept its speed) reaches `dismissFlickDistance`.
     static func dismissCommits(translation: CGFloat, predictedTranslation: CGFloat) -> Bool {
-        translation > 12 || predictedTranslation > translation
+        translation >= dismissCommitDistance || predictedTranslation >= dismissFlickDistance
     }
 
     /// Whether a destination's chrome cross-fades in over the flying card. Needs the

@@ -358,9 +358,9 @@ struct ClipExpansionContainer: View {
 
     /// Drives `progress` directly from drag translation — the same geometry math the
     /// open/close flights use, just sampled live instead of animated — and scrubs the
-    /// player in step with it. Per the real Photos app, there's no real distance
-    /// threshold on release: any downward-released drag (or one still moving down)
-    /// commits; only a drag released while still moving upward snaps back.
+    /// player in step with it. On release, `ExpansionFlightGeometry.dismissCommits`
+    /// decides: a drag that carried the card far enough, or a downward flick, closes;
+    /// a short or slow one springs back to fully open.
     ///
     /// A committing release is the editor's back-navigation by another route
     /// (`docs/UIUX.md` § "Clip Detail / Editor"), so it hands the edits back through

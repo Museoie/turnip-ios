@@ -71,9 +71,9 @@ struct ProcessingView<Destination: View>: View {
     /// Hands a presenter this screen's own vertical drag, live, instead of this screen deciding
     /// commit/cancel itself: `HomeExpansionContainer` drives its flying card's geometry straight
     /// off `onChanged`'s translation, the same way `ClipExpansionContainer`'s own dismiss drag
-    /// does, and owns the "almost any downward release commits" rule — this screen's own
-    /// `BrowseSwipe.commitDistance`/`flickDistance` threshold stays as the fallback for any
-    /// caller that doesn't supply hooks (`ScreenshotHarness`, previews).
+    /// does, and owns the commit-or-spring-back rule (`ExpansionFlightGeometry.dismissCommits`)
+    /// — this screen's own `BrowseSwipe.commitDistance`/`flickDistance` threshold stays as the
+    /// fallback for any caller that doesn't supply hooks (`ScreenshotHarness`, previews).
     struct DismissGestureHooks {
         /// Called on every update while the vertical axis is locked in, with the drag's raw
         /// `translation.height`.

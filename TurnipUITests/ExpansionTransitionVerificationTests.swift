@@ -185,6 +185,30 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         XCTAssertTrue(captions.contains { $0 != "1.5s" }, "the swipe-dismissed edit never reached the tile")
     }
 
+    /// A swipe that stops short of `ExpansionFlightGeometry.dismissCommitDistance` and is held
+    /// still before lifting (no flick) springs back: the editor stays open.
+    func testShortSwipeSpringsBackToTheEditor() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipListMedia"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        let tile = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Open clip'"))
+            .firstMatch
+        XCTAssertTrue(tile.waitForExistence(timeout: 15))
+        tile.tap()
+        let title = app.staticTexts["clip-editor-title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 15))
+        Thread.sleep(forTimeInterval: 1)
+
+        let start = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(
+            forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 60)),
+            withVelocity: XCUIGestureVelocity(300), thenHoldForDuration: 0.4)
+        Thread.sleep(forTimeInterval: 2)
+        XCTAssertTrue(title.exists && title.isHittable, "a short swipe closed the editor")
+    }
+
     // No close-direction counterpart (sampling the card mid-flight after tapping "Back to
     // clips"): `ClipExpansionContainer.dismissAfterLanding` turns UIKit animations off
     // globally for the ~0.3s–0.8s window after a close begins (see `close()`'s doc comment —

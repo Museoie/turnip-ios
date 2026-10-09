@@ -1,5 +1,9 @@
 # Photos-style expansion transitions
 
+*Rev 14 · 2026-10-09.* A released swipe-to-dismiss closes only past a commit
+distance (a quarter of the drag's full travel) or on a flick; a shorter or
+slower one springs back to fully open. See "Rev 14" near the end.
+
 *Rev 13 · 2026-10-08.* The editor's surround is frosted glass, and the flight
 shows the crop alone: the card is laid out at the marker again, the window
 uncrops from the tile to the marker, and the editor's edge-to-edge surface
@@ -181,10 +185,11 @@ findings that shaped the design:
   screen height of travel) while trailing the finger with increasing lag, not
   tracking it 1:1.
 
-Both containers' dismiss constants (`ExpansionFlightGeometry.dismissTravel`
-and the "almost any downward release commits" rule,
-`ExpansionFlightGeometry.dismissCommits`) are this research's measurements,
-not arbitrary tuning. The drag maps linearly
+`ExpansionFlightGeometry.dismissTravel` is this research's measurement, not
+arbitrary tuning. The release rule (`ExpansionFlightGeometry.dismissCommits`)
+deliberately departs from Photos: a drag has to carry the card a quarter of
+the way back, or be a flick projected to reach half of it, to close; anything
+shorter springs back (Rev 14). The drag maps linearly
 (`progress = 1 - travel / dismissTravel`, with `dismissTravel = 420`); the
 animated flights are an explicit-duration ease-in-out, not a spring (see
 below).
@@ -1522,6 +1527,19 @@ flight and the Delete fade on real footage: the crop alone moves, the
 frosted frame appears with the landing and leaves with the first frame of a
 close, and no frame shows the surround sharp.
 
+## Rev 14: a short swipe springs back
+
+*2026-10-09.* Photos closes on almost any downward release, and so did both
+containers: a 12 pt dead zone, or any downward speed at all at the lift. In
+practice that dismissed on swipes that were never meant to leave.
+`ExpansionFlightGeometry.dismissCommits` now closes only once the drag has
+carried the card `dismissCommitDistance` (a quarter of `dismissTravel`,
+105 pt), or when a flick's `predictedEndTranslation` reaches
+`dismissFlickDistance` (half of it, 210 pt); anything shorter or slower flies
+back to fully open through each container's existing `cancelDrag`, which
+also scrubs the player back to the frame the drag started on. Both
+containers apply the one rule, so the editor and Processing agree.
+
 ## Gesture ownership: why the dismiss drag can't live behind the content
 
 A `NavigationStack` is backed by a real `UIViewController`. A SwiftUI
@@ -1553,8 +1571,8 @@ content the `NavigationStack` hosts, on the destination's own views —
   now reports that gesture's live state to the presenter instead of deciding
   for itself — see `ProcessingView.DismissGestureHooks` (`onChanged`,
   `onEnded`, `onCancelled`) — and the container owns the commit/cancel
-  decision and the resulting flight. This also means the Photos-exact
-  "almost any downward release commits" rule lives in exactly one place
+  decision and the resulting flight. This also means the commit-or-spring-back
+  rule lives in exactly one place
   (`ExpansionFlightGeometry.dismissCommits`, applied by
   `HomeExpansionContainer.closeHandlers` and `ClipExpansionContainer`'s drag),
   not duplicated into `ProcessingView`.

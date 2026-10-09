@@ -105,10 +105,29 @@ final class ExpansionFlightGeometryTests: XCTestCase {
         XCTAssertEqual(ExpansionFlightGeometry.progress(forDismissTranslation: -50), 1, "an upward drag stays put")
     }
 
-    func testDismissCommitsPastTheDeadZoneOrWhileStillMovingDown() {
-        XCTAssertTrue(ExpansionFlightGeometry.dismissCommits(translation: 13, predictedTranslation: 0))
-        XCTAssertTrue(ExpansionFlightGeometry.dismissCommits(translation: 5, predictedTranslation: 6))
-        XCTAssertFalse(ExpansionFlightGeometry.dismissCommits(translation: 12, predictedTranslation: 12))
-        XCTAssertFalse(ExpansionFlightGeometry.dismissCommits(translation: 5, predictedTranslation: -20))
+    func testDismissCommitsPastTheCommitDistanceOrOnAFlick() {
+        let distance = ExpansionFlightGeometry.dismissCommitDistance
+        let flick = ExpansionFlightGeometry.dismissFlickDistance
+        XCTAssertTrue(ExpansionFlightGeometry.dismissCommits(translation: distance, predictedTranslation: distance))
+        XCTAssertTrue(
+            ExpansionFlightGeometry.dismissCommits(translation: distance, predictedTranslation: 0),
+            "a drag that went far enough closes even if it stopped before lifting")
+        XCTAssertTrue(
+            ExpansionFlightGeometry.dismissCommits(translation: 30, predictedTranslation: flick),
+            "a quick short flick closes")
+    }
+
+    func testShortDismissDragSpringsBack() {
+        let distance = ExpansionFlightGeometry.dismissCommitDistance
+        let flick = ExpansionFlightGeometry.dismissFlickDistance
+        XCTAssertFalse(ExpansionFlightGeometry.dismissCommits(translation: 13, predictedTranslation: 13))
+        XCTAssertFalse(
+            ExpansionFlightGeometry.dismissCommits(translation: distance - 1, predictedTranslation: distance - 1))
+        XCTAssertFalse(
+            ExpansionFlightGeometry.dismissCommits(translation: 30, predictedTranslation: flick - 1),
+            "still moving down at release, but too slowly to count as a flick")
+        XCTAssertFalse(
+            ExpansionFlightGeometry.dismissCommits(translation: 30, predictedTranslation: -20),
+            "released moving back up")
     }
 }
