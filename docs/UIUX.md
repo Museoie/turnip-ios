@@ -472,6 +472,13 @@ default empty state, so it never reads as "your library is empty."
     window held pulled the box out, and the video visibly shrank under the
     fixed marker); the framing is what the user last set, and "Auto crop"
     is the one tap that refits it to the trimmed range.
+    The window is drawn as a frame around its span: a band in the accent
+    color, open in the middle so the track shows through, with a capped
+    handle at each end whose glyph points the way it widens. The caps sit
+    just outside the range, so a window at the video's full length keeps
+    both on the track, and a white playhead pill taller than the frame rides
+    over it. All of it is drawn, not an image, so it tints, stretches and
+    stays sharp at any scale.
     Full-video handles are naturally imprecise on a long clip, so dragging
     farther vertically from the track slows the handle down (common
     photo/video trim gesture): near the track it tracks the touch 1:1; drag
