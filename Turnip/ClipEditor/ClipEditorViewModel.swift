@@ -342,14 +342,38 @@ final class ClipEditorViewModel: ObservableObject {
         isAutoCropApplied = true
     }
 
+    /// Whether Auto crop has anything to fit: the clip came with pose analysis. A clip added
+    /// by hand ("Clip manually") never does, so for it the editor offers Reset crop alone,
+    /// enabled while `isCropAdjusted` — an Auto crop whose tap could never change anything
+    /// reads as broken.
+    var supportsAutoCrop: Bool {
+        !source.poseFrames.isEmpty
+    }
+
+    /// Whether the framing differs from the whole source video — the full frame centered in
+    /// the marker at the current rotation (`fullFrameAdjustment`), which is what Reset crop
+    /// returns to. The rotation alone doesn't count: Reset rotate owns it. `false` until
+    /// media info has loaded, since there is no framing to compare yet.
+    var isCropAdjusted: Bool {
+        guard let overlay = previewOverlay else { return false }
+        let fullFrame = Self.fullFrameAdjustment(
+            cropRect: overlay.cropRect, videoSize: overlay.videoSize,
+            rotationRadians: cropAdjustment.rotationRadians, calculator: calculator)
+        let tolerance: CGFloat = 1e-6
+        return abs(cropAdjustment.scale - fullFrame.scale) > tolerance
+            || abs(cropAdjustment.offset.width - fullFrame.offset.width) > tolerance
+            || abs(cropAdjustment.offset.height - fullFrame.offset.height) > tolerance
+    }
+
     /// "Reset crop": returns the framing to the whole source video — the full frame centered
     /// in the marker at the marker's ratio, the way a clip added by hand opens — moving
     /// there the same way the fit moved. Not the detected crop and not the framing from
     /// just before the Auto tap: the reset is the way back to the original video whatever
-    /// was done in between. The rotation stays, as Auto crop left it alone too. The button
-    /// then offers Auto crop again.
+    /// was done in between. The rotation stays, as Auto crop left it alone too. On a clip
+    /// with pose analysis the button then offers Auto crop again; on one without, it is
+    /// the only crop button and simply disables until the framing moves again.
     func resetCrop() {
-        guard isAutoCropApplied, let overlay = previewOverlay else { return }
+        guard let overlay = previewOverlay, isAutoCropApplied || isCropAdjusted else { return }
         isAutoCropApplied = false
         let adjustment = Self.fullFrameAdjustment(
             cropRect: overlay.cropRect, videoSize: overlay.videoSize,

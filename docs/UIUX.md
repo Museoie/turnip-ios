@@ -1,5 +1,10 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 13 · 2026-10-09 · A clip added by hand has no pose analysis, so its
+crop button is "Reset crop" alone — disabled on the whole frame, enabled
+once a pinch or drag has moved the framing — instead of an Auto crop that
+could never change anything.*
+
 *Rev 12 · 2026-10-08 · The editor's surround outside the crop marker is
 frosted glass — the same material as Processing's and Clip List's bottom
 bars — rather than a flat dim: the video blurs everywhere export cuts away
@@ -7,7 +12,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -467,6 +472,13 @@ default empty state, so it never reads as "your library is empty."
     no longer what's on screen; a trim does not, since a trim is not a
     re-crop. The state is per editor session: a clip reopened starts at
     "Auto".
+    A clip added by hand ("Clip manually", §2) carries no pose analysis, so
+    there is nothing for Auto crop to fit; an Auto crop whose tap could never
+    change anything would read as broken. Its crop button is "Reset crop"
+    alone: disabled while the framing is the whole source video, enabled once
+    a pinch or drag has moved it (a turn alone doesn't count — that is Reset
+    rotate's), and returning to the whole frame the same way. Auto rotate is
+    unchanged there, since leveling reads the video, not the pose.
   - Scrub bar spanning the whole source video (not a zoomed range around the
     window) with drag handles on start/end — adjusts the trick window from
     issue #8's output. A handle drag is a trim, not a re-crop: the framing

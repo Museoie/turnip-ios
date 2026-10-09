@@ -360,23 +360,35 @@ struct ClipEditorView: View {
     /// returns both to offering their fit (`ClipEditorViewModel.isAutoCropApplied` /
     /// `isAutoRotateApplied`). Both wait for media info — before it there is no stage geometry
     /// to fit and no window to sample — and Auto rotate shows its detection in place of
-    /// its icon while it runs.
+    /// its icon while it runs. A clip without pose analysis (added by hand) has nothing for
+    /// Auto crop to fit, so its crop button is Reset crop alone: disabled while the framing
+    /// is the whole source video, enabled once a pinch or drag has moved it.
     private var autoFramingButtons: some View {
         HStack(spacing: 12) {
-            Button {
-                if viewModel.isAutoCropApplied {
+            if viewModel.supportsAutoCrop {
+                Button {
+                    if viewModel.isAutoCropApplied {
+                        viewModel.resetCrop()
+                    } else {
+                        viewModel.autoCrop()
+                    }
+                } label: {
+                    if viewModel.isAutoCropApplied {
+                        Label("Reset crop", systemImage: "arrow.uturn.backward")
+                    } else {
+                        Label("Auto crop", systemImage: "crop")
+                    }
+                }
+                .accessibilityIdentifier("auto-crop-button")
+            } else {
+                Button {
                     viewModel.resetCrop()
-                } else {
-                    viewModel.autoCrop()
-                }
-            } label: {
-                if viewModel.isAutoCropApplied {
+                } label: {
                     Label("Reset crop", systemImage: "arrow.uturn.backward")
-                } else {
-                    Label("Auto crop", systemImage: "crop")
                 }
+                .disabled(!viewModel.isCropAdjusted)
+                .accessibilityIdentifier("reset-crop-button")
             }
-            .accessibilityIdentifier("auto-crop-button")
             Button {
                 if viewModel.isAutoRotateApplied {
                     viewModel.resetRotate()

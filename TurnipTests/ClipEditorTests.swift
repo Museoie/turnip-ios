@@ -795,6 +795,50 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(viewModel.cropAdjustment.offset, .zero)
     }
 
+    /// A clip without pose analysis (added by hand) has nothing for Auto crop to fit: it
+    /// offers Reset crop alone, which has something to do only once a pinch or drag has
+    /// moved the framing off the whole source video, and the rotation alone never counts.
+    @MainActor
+    func testAClipWithoutPoseFramesOffersResetCropAlone() {
+        let viewModel = makeViewModel(frames: [])
+        XCTAssertFalse(viewModel.supportsAutoCrop)
+        XCTAssertFalse(viewModel.isCropAdjusted)
+
+        viewModel.autoCrop()
+        XCTAssertFalse(viewModel.isAutoCropApplied)
+        XCTAssertEqual(viewModel.cropAdjustment, .identity)
+
+        viewModel.applyCropRotation(0.3)
+        XCTAssertFalse(viewModel.isCropAdjusted, "the rotation is Reset rotate's, not Reset crop's")
+
+        viewModel.applyCropScale(2)
+        viewModel.applyCropOffset(CGSize(width: 10, height: 5), previewScale: 1)
+        XCTAssertTrue(viewModel.isCropAdjusted)
+
+        viewModel.resetCrop()
+
+        XCTAssertFalse(viewModel.isCropAdjusted)
+        XCTAssertEqual(viewModel.cropAdjustment.scale, 1, accuracy: 1e-9)
+        XCTAssertEqual(viewModel.cropAdjustment.offset, .zero)
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0.3, accuracy: 1e-9)
+    }
+
+    /// A clip with pose analysis keeps its Auto crop, and its framing counts as adjusted
+    /// both after a gesture and after Auto crop's own fit moves it off the whole frame.
+    @MainActor
+    func testAClipWithPoseFramesSupportsAutoCrop() {
+        let viewModel = makeDetectedCropViewModel()
+        XCTAssertTrue(viewModel.supportsAutoCrop)
+        XCTAssertTrue(viewModel.isCropAdjusted, "a detected crop is not the whole frame")
+
+        viewModel.resetCrop()
+        XCTAssertFalse(viewModel.isCropAdjusted)
+
+        viewModel.autoCrop()
+        XCTAssertTrue(viewModel.isAutoCropApplied)
+        XCTAssertTrue(viewModel.isCropAdjusted)
+    }
+
     /// Reset rotate returns the video to its original, unrotated orientation, not to the
     /// rotation the fingers had set before the Auto tap.
     @MainActor
