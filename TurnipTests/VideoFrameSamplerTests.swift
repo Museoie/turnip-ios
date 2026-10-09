@@ -18,16 +18,16 @@ private actor FrameObservations {
     }
 }
 
-/// `@MainActor` on purpose: this mirrors `PoseDiagnosticViewModel`, where the handler closure is
-/// formed inside a MainActor context. That is exactly the shape in which a non-`@Sendable` handler
-/// would inherit MainActor isolation and run per-frame work on the UI thread.
+/// `@MainActor` on purpose: the handler closure is formed inside a MainActor context, as it would be
+/// in a `@MainActor` view model calling the sampler. That is exactly the shape in which a
+/// non-`@Sendable` handler would inherit MainActor isolation and run per-frame work on the UI thread.
 @MainActor
 final class VideoFrameSamplerTests: XCTestCase {
     private var videoURL: URL!
 
     override func setUp() async throws {
         try await super.setUp()
-        videoURL = try await Self.writeTestVideo(frameCount: 10, width: 64, height: 64, fps: 30)
+        videoURL = try await TestVideoWriter.writeTestVideo(frameCount: 10, width: 64, height: 64, fps: 30)
     }
 
     override func tearDown() async throws {
@@ -96,7 +96,7 @@ final class VideoFrameSamplerTests: XCTestCase {
     /// Writes a 64x48 video carrying `transform` as the track's preferredTransform and asserts the
     /// sampler decodes 48x64 frames whose render rect is filled with content, not background.
     private func assertPreferredTransformApplies(transform: CGAffineTransform) async throws {
-        let rotatedURL = try await Self.writeTestVideo(
+        let rotatedURL = try await TestVideoWriter.writeTestVideo(
             frameCount: 6, width: 64, height: 48, fps: 30, transform: transform)
         defer { try? FileManager.default.removeItem(at: rotatedURL) }
 
@@ -176,7 +176,7 @@ final class VideoFrameSamplerTests: XCTestCase {
     }
 
     func testThrowsWhenTheAssetHasNoVideoTrack() async throws {
-        let audioURL = try Self.writeAudioOnlyFile()
+        let audioURL = try TestVideoWriter.writeAudioOnlyFile()
         defer { try? FileManager.default.removeItem(at: audioURL) }
 
         let sampler = VideoFrameSampler()
@@ -235,113 +235,6 @@ final class VideoFrameSamplerTests: XCTestCase {
         }
     }
 
-    // MARK: - Fixture
-
-    /// Writes a tiny H.264 movie with `frameCount` solid-color frames so the sampler has something
-    /// real to decode through AVAssetReader (bundling a fixture .mov would be larger and opaque).
-    /// `transform` is written as the track's preferredTransform — e.g. a 90° rotation to mimic an
-    /// iPhone portrait recording stored as landscape-encoded frames.
-    private static func writeTestVideo(
-        frameCount: Int, width: Int, height: Int, fps: Int32,
-        transform: CGAffineTransform = .identity
-    ) async throws -> URL {
-        let url = URL.temporaryDirectory.appending(path: "VideoFrameSamplerTests-\(UUID().uuidString).mov")
-
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: width,
-            AVVideoHeightKey: height
-        ])
-        input.expectsMediaDataInRealTime = false
-        input.transform = transform
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: input,
-            sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferWidthKey as String: width,
-                kCVPixelBufferHeightKey as String: height
-            ]
-        )
-        guard writer.canAdd(input) else {
-            throw XCTSkip("AVAssetWriter cannot add a video input on this platform")
-        }
-        writer.add(input)
-
-        guard writer.startWriting() else {
-            throw writer.error ?? PoseError.videoLoadFailed(underlying: nil)
-        }
-        writer.startSession(atSourceTime: .zero)
-
-        try await appendFrames(
-            frameCount: frameCount,
-            fps: fps,
-            input: input,
-            adaptor: adaptor,
-            writer: writer
-        )
-
-        input.markAsFinished()
-        await writer.finishWriting()
-        guard writer.status == .completed else {
-            throw writer.error ?? PoseError.videoLoadFailed(underlying: nil)
-        }
-        return url
-    }
-
-    private static func appendFrames(
-        frameCount: Int,
-        fps: Int32,
-        input: AVAssetWriterInput,
-        adaptor: AVAssetWriterInputPixelBufferAdaptor,
-        writer: AVAssetWriter
-    ) async throws {
-        for frameIndex in 0..<frameCount {
-            // Bounded on writer status: if the writer fails mid-write, `isReadyForMoreMediaData`
-            // never becomes true, and without this check the loop would spin until XCTest's
-            // timeout with no cause. Exiting instead lets `append` below surface `writer.error`.
-            while !input.isReadyForMoreMediaData && writer.status == .writing {
-                try await Task.sleep(nanoseconds: 1_000_000)
-            }
-            guard let pool = adaptor.pixelBufferPool else {
-                throw PoseError.videoLoadFailed(underlying: nil)
-            }
-            var pixelBuffer: CVPixelBuffer?
-            let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
-            guard status == kCVReturnSuccess, let pixelBuffer else {
-                throw PoseError.videoLoadFailed(underlying: nil)
-            }
-
-            CVPixelBufferLockBaseAddress(pixelBuffer, [])
-            if let base = CVPixelBufferGetBaseAddress(pixelBuffer) {
-                let byteCount = CVPixelBufferGetBytesPerRow(pixelBuffer) * CVPixelBufferGetHeight(pixelBuffer)
-                // Vary the fill per frame so the encoder emits real (non-skipped) frames.
-                memset(base, Int32(frameIndex * 20 % 255), byteCount)
-            }
-            CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
-
-            let presentationTime = CMTime(value: CMTimeValue(frameIndex), timescale: fps)
-            guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
-                throw writer.error ?? PoseError.videoLoadFailed(underlying: nil)
-            }
-        }
-    }
-
-    /// Writes a short silent CAF so the asset has an audio track and no video track.
-    private static func writeAudioOnlyFile() throws -> URL {
-        let url = URL.temporaryDirectory.appending(path: "VideoFrameSamplerTests-audio-\(UUID().uuidString).caf")
-
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4410) else {
-            throw PoseError.videoLoadFailed(underlying: nil)
-        }
-        buffer.frameLength = buffer.frameCapacity
-
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
-        return url
-    }
-
     // MARK: - Sample stride
 
     func testStrideSamplesRoughlyTenPerSecondRegardlessOfFrameRate() {
@@ -364,9 +257,33 @@ final class VideoFrameSamplerTests: XCTestCase {
     }
 
     func testStrideFallsBackWhenTheTrackDeclaresNoFrameRate() {
-        // nominalFrameRate is 0 when the container doesn't declare one — keep the old 30 fps
-        // behavior rather than sampling every frame or dividing by zero.
+        // nominalFrameRate is 0 when the container doesn't declare one — assume 30 fps (stride 3)
+        // rather than sampling every frame or dividing by zero.
         XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 0), 3)
+    }
+
+    /// The no-declared-rate fallback assumes a 30 fps source, but must still honor an explicit
+    /// `sampleRate` rather than hardcoding the default-rate answer — otherwise a VFR/re-encoded
+    /// track (the case that hits this path) would sample at one rate while
+    /// `TrickWindowDetector` is calibrated for another.
+    func testStrideFallbackHonorsAnExplicitSampleRate() {
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 0, sampleRate: 30), 1)
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 0, sampleRate: 15), 2)
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 0, sampleRate: 1), 30)
+    }
+
+    /// The Settings screen's granularity control overrides `targetSamplesPerSecond` per
+    /// instance; `stride` takes the same override directly so both agree without a sampler
+    /// instance in hand.
+    func testStrideHonorsAnExplicitSampleRateInsteadOfTheDefault() {
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 30, sampleRate: 30), 1)
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 30, sampleRate: 1), 30)
+        XCTAssertEqual(VideoFrameSampler.stride(forNominalFrameRate: 240, sampleRate: 30), 8)
+    }
+
+    func testInstanceSampleRateDefaultsToTargetSamplesPerSecond() {
+        XCTAssertEqual(VideoFrameSampler().sampleRate, VideoFrameSampler.targetSamplesPerSecond)
+        XCTAssertEqual(VideoFrameSampler(sampleRate: 24).sampleRate, 24)
     }
 }
 

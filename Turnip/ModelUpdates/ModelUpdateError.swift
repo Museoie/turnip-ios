@@ -21,8 +21,8 @@ enum ModelUpdateError: Error, Sendable {
     /// staged — a corrupt model must never replace a working one.
     case checksumMismatch
     /// Any transport or decoding failure underneath the client. Recorded, not
-    /// thrown, so a failed check is silent to the user and the previously
-    /// staged model keeps serving. The underlying error is boxed as its
+    /// thrown, so a failed check is silent to the user and the staged model
+    /// is left as it was. The underlying error is boxed as its
     /// `String` description — an `Error` is not `Sendable`, and this enum must
     /// stay `Sendable` to cross the service actor's boundary.
     case network(underlying: String)

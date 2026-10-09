@@ -1,38 +1,51 @@
 import Foundation
 
 /// One triage card's data: a detected trick window plus its computed crop rect
-/// (docs/DESIGN.md pipeline steps 5-6), with the user's keep/discard decision.
+/// (docs/DESIGN.md pipeline steps 5-6), with the user's trash decision.
 ///
-/// `isKept` defaults to `true`: the resolved bulk keep/discard decision in
-/// `docs/UIUX.md` says every clip starts kept and discarding is per-card, so the list
-/// shows everything until the user opts a clip out. `Identifiable` by a stable `id`
-/// (not the window times) so view state survives a re-run of detection producing
-/// slightly different windows.
+/// `isTrashed` defaults to `false`: every clip starts untrashed. It's the original
+/// tile's own reversible flag — `ClipListViewModel.save()` reads it to decide
+/// whether to delete the source video from Photos — while a derived clip's trash
+/// button removes the item outright (`ClipListViewModel.delete(_:)`) instead of
+/// setting this, so it never goes `true` on one in practice. `Identifiable` by a
+/// stable `id` (not the window times) so view state survives an edit that changes
+/// the window.
+///
+/// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
+/// stands for the source video already in Photos rather than a derived clip: it
+/// carries the full-video window and full-frame crop, is never opened in the
+/// editor, and its trash button is the reversible `isTrashed` toggle above rather
+/// than an outright removal.
 struct ClipListItem: Hashable, Identifiable, Sendable {
     let id: UUID
     let window: TrickWindow
     let cropRect: NormalizedRect
-    var isKept: Bool
+    /// The editor's manual pinch/rotate/drag adjustment on top of `cropRect`, carried so
+    /// it survives a re-open of the editor and reaches export.
+    var cropAdjustment: CropAdjustment
+    var isTrashed: Bool
+    let isOriginal: Bool
 
     init(
         id: UUID = UUID(),
         window: TrickWindow,
         cropRect: NormalizedRect,
-        isKept: Bool = true
+        cropAdjustment: CropAdjustment = .identity,
+        isTrashed: Bool = false,
+        isOriginal: Bool = false
     ) {
         self.id = id
         self.window = window
         self.cropRect = cropRect
-        self.isKept = isKept
+        self.cropAdjustment = cropAdjustment
+        self.isTrashed = isTrashed
+        self.isOriginal = isOriginal
     }
 
-    /// "2.4s"-style duration label for the card. Integer math pins exactly one decimal
-    /// place: string-interpolating the `Double` would lean on `Double.description`'s
-    /// shortest-round-trip rendering for the trailing `.0`, and the decimal separator
-    /// must never follow the device locale (a German-locale "2,4s" would read as a list
-    /// separator next to the clip count).
+    /// "2.4s"-style duration label for the card, via the one shared clip-duration
+    /// formatter — the triage card and the editor must render the same window
+    /// identically.
     var durationLabel: String {
-        let tenths = Int(((window.endTime - window.startTime) * 10).rounded())
-        return "\(tenths / 10).\(tenths % 10)s"
+        ClipDurationFormatter.string(from: window.endTime - window.startTime)
     }
 }

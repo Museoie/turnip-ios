@@ -16,6 +16,10 @@ struct VideoTileView: View {
     let revision: Int
     let isResolving: Bool
     let downloadProgress: Double?
+    /// Reports this tile's own decoded thumbnail as it changes, so `HomeExpansionContainer`'s
+    /// flying card can show the exact same image the tile is already displaying instead of
+    /// requesting a second decode of its own. `nil` for callers that don't need it.
+    var onImageLoaded: ((UIImage?) -> Void)?
 
     @Environment(\.displayScale) private var displayScale
     @State private var image: UIImage?
@@ -43,6 +47,15 @@ struct VideoTileView: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .clipped()
+            // This view is a `Button` label (`VideoGalleryView.tile(for:index:)`), and
+            // a Button's tap region follows its label's bounds — which, for a
+            // `scaledToFill` thumbnail, extend past what `.clipped()` draws whenever
+            // the source isn't square. That overflow still hit-tests even though it
+            // isn't drawn, so a later tile in the grid can end up with an earlier
+            // tile's overflow sitting on top of it. Pinning the shape here to the
+            // drawn square is the same fix `ClipListView.tile` already uses for its
+            // tiles' media layer.
+            .contentShape(Rectangle())
             .onAppear { load(targetSize: proxy.size) }
             .onChange(of: revision) { _ in load(targetSize: proxy.size, replacingCurrentImage: true) }
             .onDisappear(perform: cancel)
@@ -184,6 +197,7 @@ struct VideoTileView: View {
             if let result {
                 image = result
                 imageIsDegraded = isDegraded
+                onImageLoaded?(result)
             }
             if Self.deliveryLoadsRevision(hasResult: result != nil, isDegraded: isDegraded) {
                 loadedRevision = requestedRevision
@@ -206,6 +220,18 @@ struct VideoTileView: View {
         }
         requestID = nil
         requestToken += 1
+    }
+}
+
+/// Every visible tile's own on-screen frame (global space), keyed by `PHAsset.localIdentifier`
+/// — `HomeExpansionContainer` reads this live so a close lands on whichever tile is current,
+/// including after `ProcessingView`'s own swipe-to-browse moves to a neighbor. Merges on
+/// collision by taking the latest report: a tile's own `GeometryReader` re-reports on every
+/// layout pass, so the newest value is always the right one.
+struct VideoTileFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 

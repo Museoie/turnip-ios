@@ -43,6 +43,66 @@ jobs:
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # scan-secrets.sh reads the commits this pull request adds on top of
+          # its base, and a shallow clone does not contain the base commit.
+          fetch-depth: 0
+
+      # A credential pushed to a public repository is compromised whether or
+      # not the commit survives, so this runs before the steps that take
+      # minutes. It is also the only gate a fork contributor is subject to:
+      # repository settings they cannot see are not a control on their diff.
+      - name: Install gitleaks
+        run: |
+          ci_scripts/install-gitleaks.sh "$HOME/.local"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # A pull request checkout is refs/pull/N/merge, whose first parent is the
+      # base tip that merge was computed against; the event payload's base.sha
+      # is the tip at open time, so re-running after main moves would scan
+      # main's own commits as if this branch had added them. Empty on a push to
+      # main, which makes the scan read the working tree instead.
+      - name: Scan for committed credentials
+        run: ci_scripts/scan-secrets.sh "${{ github.event_name == 'pull_request' && 'HEAD^1' || '' }}"
+
+      # Prose in CONTRIBUTING.md names every directory under Turnip/, and
+      # nothing ties that sentence to the tree — adding a directory renames
+      # nothing and breaks no build, so a stale list stays green. Runs before
+      # the Xcode steps so drift costs seconds rather than a full build.
+      - name: Check the documented directory list against the tree
+        run: ci_scripts/check-directory-list.sh
+
+      # A build that calls a required-reason API without declaring its category
+      # in PrivacyInfo.xcprivacy is rejected at upload with ITMS-91053. Nothing
+      # else here would catch it: CI never produces a distribution archive, so
+      # the manifest is never submitted for validation and the first observation
+      # would be the first TestFlight upload. Runs before the Xcode steps so the
+      # answer costs seconds rather than a full build.
+      - name: Check the privacy manifest against the required-reason APIs in use
+        run: ci_scripts/check-privacy-manifest.sh
+
+      # The gate above fails open on a typo: a misspelled pattern leaves the
+      # API unmatched and still prints that every referenced category is
+      # declared, so the build stays green on the violation it exists to stop.
+      - name: Test the privacy-manifest check
+        run: ci_scripts/test-check-privacy-manifest.sh
+
+      # screenshots-comment.yml runs on workflow_run against main, so a pull
+      # request can never exercise post_screenshots_comment.py end to end —
+      # this stdlib-only suite is the script's only pre-merge verification.
+      - name: Test the screenshots-comment script
+        run: python3 .github/scripts/test_post_screenshots_comment.py
+
+      # A gate that never fails is indistinguishable from no gate, so the scan
+      # above is itself exercised against a planted credential.
+      - name: Test the credential scan
+        run: ci_scripts/test-scan-secrets.sh
+
+      # check-repo-settings.sh runs on a weekly schedule against live
+      # endpoints, so no pull request exercises it; this stubs the responses
+      # a live repository cannot be made to produce on demand.
+      - name: Test the repository-settings check
+        run: ci_scripts/test-check-repo-settings.sh
 
       - name: Cache CocoaPods
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -156,9 +216,10 @@ jobs:
   # which runs with full permissions, unlike fork pull_request runs) posts
   # them as a PR comment: inline markdown images when the
   # SCREENSHOTS_PUSH_TOKEN secret is set (fine-grained PAT with
-  # contents:write on Museoie/turnip-screenshots), artifact links otherwise.
-  # PNGs live in the dedicated screenshots repo so the dev repo's fetch
-  # history stays clean.
+  # contents:write on hoiekim/ci-artifacts), artifact links otherwise.
+  # PNGs live in that shared artifacts repo, namespaced by project
+  # (see PROJECT_PREFIX in post_screenshots_comment.py), so the dev
+  # repo's fetch history stays clean.
   screenshots:
     needs: [changes, build-and-test]
     if: needs.changes.outputs.ui == 'true'

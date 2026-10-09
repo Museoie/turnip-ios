@@ -48,7 +48,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SCREENSHOTS_PUSH_TOKEN: ${{ secrets.SCREENSHOTS_PUSH_TOKEN }}
           BASE_REPO: ${{ github.repository }}
-          SCREENSHOTS_REPO: Museoie/turnip-screenshots
+          SCREENSHOTS_REPO: hoiekim/ci-artifacts
           # The CI run's id (not this run's): the comment links back to the
           # run that holds the artifacts, and PNG paths are namespaced by it.
           RUN_ID: ${{ github.event.workflow_run.id }}

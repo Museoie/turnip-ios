@@ -13,8 +13,9 @@ You film a tricking session. Turnip:
 
 1. **Detects each trick** — finds the contiguous spans of athletic
    motion inside your recording.
-2. **Trims each window** — a configurable 1-second buffer on either
-   side, no walk-to-the-spot / wait-for-your-turn dead time.
+2. **Trims each window** — 1 second of lead-in before the motion and 3
+   seconds after it, so the landing stays in, with no walk-to-the-spot /
+   wait-for-your-turn dead time.
 3. **Auto-crops** — bounding box of the athlete across the trick,
    expanded to a target aspect ratio (9:16 for Reels/Shorts by default).
 4. **Exports** — one clip per trick, straight to your Photos library.
@@ -26,28 +27,41 @@ All on-device. No server, no data upload for the core auto-edit path.
 ## Privacy
 
 Turnip v1 never sends your videos anywhere: no accounts, no uploads, no
-analytics. The app asks for Photos access only to show your videos and
-save the clips you export. The App Store privacy answers, the privacy
-manifest, and temp-file hygiene are documented in
+analytics. The app asks for Photos access to show your videos, save the
+clips you export, and delete an original you trash in the clip list, and
+for camera and microphone access to record takes in the app. The App
+Store privacy answers, the privacy manifest, and temp-file hygiene are
+documented in
 [`docs/PRIVACY.md`](docs/PRIVACY.md). Upload and accounts arrive with v2
 as an explicit opt-in, and the privacy story will be updated then.
 
 ## Status
 
-Very early. As of 2026-09-13 the repo has initial app scaffolding: the
-Home screen (a grid of every video in your Photos library — the first of
-the v1 screens in [`docs/UIUX.md`](docs/UIUX.md)) and a pose-detection
-diagnostic screen (tap a video, run MoveNet Thunder on it, log per-frame
-confidence + keypoint count) — the latter is the design doc's "empirical
-test" first work item, not the auto-edit pipeline itself.
+Very early, but the v1 flow now runs end to end. Home (a grid of every
+video in your Photos library — the first of the v1 screens in
+[`docs/UIUX.md`](docs/UIUX.md)) pushes `Processing` when you tap a video;
+`Processing` runs the detection pipeline and pushes `ClipList`, whose
+triage grid opens `ClipEditor` for a derived clip and saves everything
+kept straight to Photos when you tap "Save Clips" — no separate export or
+confirmation screen.
 
 Steps 4-6 of the pipeline — turning pose keypoints into trick windows and
 a crop rect — are library code under `Turnip/TrickDetection/`, unit-tested
-but not yet driven by a screen. Tapping a video on Home still opens the
-diagnostic, so the later v1 screens are not reachable from Home yet.
+and driven by `Processing`'s pipeline rather than by a screen of their own.
+
+The camera runs pose inference on its live frames while a take is being
+recorded, draws the skeleton on the preview, and — when live inference
+covered the whole take — runs the same trick detection on those results
+so the take lands on `ClipList` straight from Stop, with no second decode
+(`Turnip/LivePose/`, per [`docs/LIVE_POSE.md`](docs/LIVE_POSE.md)). A take
+it could not cover end to end goes through `Processing` like a tapped tile.
+
+One directory sits outside that flow: `ModelUpdates` holds an OTA model
+client that no app code constructs. Read it as a tested component, not as
+a feature you can run.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full architecture plan
-including the community labeling + continuous ML training that will
+including the on-device labeling + continuous ML training that will
 follow the standalone MVP, and [`CONTRIBUTING.md`](CONTRIBUTING.md) for
 dev setup.
 
@@ -84,11 +98,11 @@ PR conventions.
 
 ## Sibling repos (planned)
 
-- `turnip-farm` — backend service (video upload, labeling,
-  moderation, dataset export)
-- `turnip-ml` — Python training pipeline (fine-tunes the pose
-  model on the community labeled dataset and publishes new Core ML
-  versions)
+- `turnip-farm` — backend service (pose-sequence and label ingest,
+  moderation, dataset export; never video)
+- `turnip-ml` — Python training pipeline (trains the trick-detection
+  model on contributed pose sequences and labels, and publishes it as
+  an OTA model)
 
 Both are deferred until the standalone MVP proves out on-device
 accuracy; see [`docs/DESIGN.md`](docs/DESIGN.md) § "System architecture".

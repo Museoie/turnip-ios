@@ -12,7 +12,7 @@ final class TrickWindowDetectorTests: XCTestCase {
         let windows = detector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
 
         XCTAssertEqual(windows.count, 1)
-        assertWindow(windows.first, startsAt: 0.4, endsAt: 3.0)
+        assertWindow(windows.first, startsAt: 0.4, endsAt: 5.0)
     }
 
     func testMergesTwoPeaksSeparatedByLessThanTheQuietMinimum() {
@@ -21,7 +21,7 @@ final class TrickWindowDetectorTests: XCTestCase {
         let windows = detector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
 
         XCTAssertEqual(windows.count, 1, "two halves of one trick were reported as two tricks")
-        assertWindow(windows.first, startsAt: 0.9, endsAt: 4.2)
+        assertWindow(windows.first, startsAt: 0.9, endsAt: 6.2)
     }
 
     func testSeparatesTwoPeaksWithEnoughQuietBetweenThem() {
@@ -30,8 +30,8 @@ final class TrickWindowDetectorTests: XCTestCase {
         let windows = detector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
 
         XCTAssertEqual(windows.count, 2)
-        assertWindow(windows.first, startsAt: 0.9, endsAt: 3.3)
-        assertWindow(windows.last, startsAt: 2.8, endsAt: 5.2)
+        assertWindow(windows.first, startsAt: 0.9, endsAt: 5.3)
+        assertWindow(windows.last, startsAt: 2.8, endsAt: 7.2)
     }
 
     /// The frame in the middle of the peak loses every keypoint to blur. Interpolating its anchor
@@ -43,7 +43,7 @@ final class TrickWindowDetectorTests: XCTestCase {
         let windows = detector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
 
         XCTAssertEqual(windows.count, 1)
-        assertWindow(windows.first, startsAt: 0.4, endsAt: 3.0)
+        assertWindow(windows.first, startsAt: 0.4, endsAt: 5.0)
     }
 
     /// A one-hip dropout in the middle of the quiet stretch must not merge two tricks: the
@@ -105,7 +105,7 @@ final class TrickWindowDetectorTests: XCTestCase {
         let windows = detector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
 
         XCTAssertEqual(windows.count, 1, "the identity seam split the burst below the sustained minimum")
-        assertWindow(windows.first, startsAt: 0, endsAt: 2.0)
+        assertWindow(windows.first, startsAt: 0, endsAt: 4.0)
     }
 
     // MARK: - Peak rules
@@ -146,22 +146,115 @@ final class TrickWindowDetectorTests: XCTestCase {
         XCTAssertEqual(windows.count, 1)
     }
 
+    // MARK: - Sample-rate derivation (Settings screen's analysis granularity)
+
+    func testDefaultThresholdsMatchTheShippedTenSamplesPerSecondRate() {
+        let atDefaultRate = TrickWindowDetector(sampleRate: 10)
+
+        XCTAssertEqual(atDefaultRate.minimumSustainedSamples, 3)
+        XCTAssertEqual(atDefaultRate.minimumQuietSamples, 10)
+    }
+
+    /// At 30 samples/sec the same 300 ms / 1 s durations are 9 and 30 samples, not the fixed 3
+    /// and 10 a rate-naive default would keep — a burst that would have counted as sustained at
+    /// the default rate must not also count as sustained at 3x the rate.
+    func testThresholdsScaleWithTheConfiguredSampleRate() {
+        let atTripleRate = TrickWindowDetector(sampleRate: 30)
+
+        XCTAssertEqual(atTripleRate.minimumSustainedSamples, 9)
+        XCTAssertEqual(atTripleRate.minimumQuietSamples, 30)
+    }
+
+    /// An explicit sample count still overrides the derivation, regardless of rate — the seam
+    /// tests above (`detector`, built with no sample rate argument) lean on this staying 3 and
+    /// 10 at the default rate; this pins that an explicit override wins even off that default.
+    func testExplicitSampleCountsOverrideTheRateDerivation() {
+        let overridden = TrickWindowDetector(minimumSustainedSamples: 1, minimumQuietSamples: 2, sampleRate: 30)
+
+        XCTAssertEqual(overridden.minimumSustainedSamples, 1)
+        XCTAssertEqual(overridden.minimumQuietSamples, 2)
+    }
+
+    func testRateDerivedThresholdsAreNeverLessThanOneSample() {
+        let atMinimumGranularity = TrickWindowDetector(sampleRate: 1)
+
+        XCTAssertEqual(atMinimumGranularity.minimumSustainedSamples, 1)
+        XCTAssertEqual(atMinimumGranularity.minimumQuietSamples, 1)
+    }
+
+    /// `displacementThreshold` is a per-sample-pair *positional* delta, not a velocity, so
+    /// above the shipped default rate it has to scale down the same way the sample-count
+    /// thresholds above do: unscaled, doubling the sample rate halves the real ground an
+    /// athlete covers between consecutive samples for identical motion, silently raising
+    /// the effective speed a trick needs to clear the bar.
+    func testDisplacementThresholdMatchesTheShippedRateAtTheDefaultSampleRate() {
+        XCTAssertEqual(TrickWindowDetector(sampleRate: 10).displacementThreshold, 0.05, accuracy: 0.0001)
+    }
+
+    func testDisplacementThresholdScalesDownAsTheSampleRateRises() {
+        XCTAssertEqual(TrickWindowDetector(sampleRate: 20).displacementThreshold, 0.025, accuracy: 0.0001)
+        XCTAssertEqual(TrickWindowDetector(sampleRate: 30).displacementThreshold, Float(1) / 60, accuracy: 0.0001)
+    }
+
+    /// Below the default rate, `displacementThreshold` stays at the base 0.05 rather than
+    /// also scaling up: real trick footage doesn't reliably produce the larger per-sample
+    /// displacement a naive symmetric scale-up demands (0.5 at `sampleRate == 1` — half the
+    /// normalized frame between two consecutive samples), so scaling up would cause
+    /// "nothing detected" at the low end of the granularity range, as an unscaled threshold
+    /// would at the high end.
+    func testDisplacementThresholdStaysAtTheBaseValueBelowTheDefaultSampleRate() {
+        XCTAssertEqual(TrickWindowDetector(sampleRate: 1).displacementThreshold, 0.05, accuracy: 0.0001)
+        XCTAssertEqual(TrickWindowDetector(sampleRate: 5).displacementThreshold, 0.05, accuracy: 0.0001)
+    }
+
+    func testExplicitDisplacementThresholdOverridesTheRateDerivation() {
+        let overridden = TrickWindowDetector(displacementThreshold: 0.05, sampleRate: 30)
+
+        XCTAssertEqual(overridden.displacementThreshold, 0.05, accuracy: 0.0001)
+    }
+
+    /// At 20 samples/sec, per-sample displacement of 0.03 is real motion (roughly the
+    /// same athlete speed `moving(_:)`'s 0.2 represents at the shipped 10 samples/sec
+    /// default) but sits below the *unscaled* 0.05 threshold — an unscaled detector would
+    /// find zero windows in this exact signal. `.count` alone wouldn't discriminate a
+    /// detector that returns no windows at all from one that merges wrongly, so this also
+    /// pins the window's bounds.
+    func testHighSampleRateStillDetectsMotionBelowTheUnscaledThreshold() {
+        let highRate = TrickWindowDetector(sampleRate: 20)
+        let displacements: [Float?] = Array(repeating: 0.03, count: 8)
+        let samples = displacements.enumerated().map { index, displacement in
+            MotionSample(
+                startTime: Double(index) / 20, endTime: Double(index + 1) / 20,
+                displacement: displacement)
+        }
+
+        let windows = highRate.detectWindows(in: samples)
+
+        XCTAssertEqual(windows.count, 1)
+        assertWindow(windows.first, startsAt: 0, endsAt: 0.4 + highRate.trailingBufferSeconds)
+    }
+
     // MARK: - Window bounds
 
-    func testExpandsEachWindowByTheBuffer() {
+    func testExpandsEachWindowByItsOwnLeadingAndTrailingBuffer() {
         let samples = signal(quiet(20) + moving(3) + quiet(10))
 
-        let unbuffered = TrickWindowDetector(bufferSeconds: 0).detectWindows(in: samples)
+        let unbuffered = TrickWindowDetector(
+            leadingBufferSeconds: 0, trailingBufferSeconds: 0
+        ).detectWindows(in: samples)
         let buffered = detector.detectWindows(in: samples)
 
         assertWindow(unbuffered.first, startsAt: 2.0, endsAt: 2.3)
-        assertWindow(buffered.first, startsAt: 1.0, endsAt: 3.3)
+        // Discriminating: the leading and trailing edges move by different amounts —
+        // the trailing buffer is larger, so a detected trick keeps playing well past
+        // the moment its motion signal goes quiet instead of cutting at the landing.
+        assertWindow(buffered.first, startsAt: 1.0, endsAt: 5.3)
     }
 
     func testClampsTheLeadingBufferAtTheStartOfTheVideo() {
         let windows = detector.detectWindows(in: signal(moving(3) + quiet(10)))
 
-        assertWindow(windows.first, startsAt: 0, endsAt: 1.3)
+        assertWindow(windows.first, startsAt: 0, endsAt: 3.3)
     }
 
     func testAnEmptySignalProducesNoWindows() {

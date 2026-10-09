@@ -117,6 +117,43 @@ struct FramePreprocessor {
         return (transform, mapping)
     }
 
+    /// Rotates `extent` clockwise by `degrees` — in `AVCaptureConnection.videoRotationAngle` terms,
+    /// the same convention `LivePoseKeypointRotation` uses — and reports the transform plus the
+    /// extent it produces, both anchored back at the origin so the result composes directly with
+    /// `letterboxGeometry(forSourceExtent:)`.
+    ///
+    /// The matrix is written out with exact 0/±1 entries rather than built from
+    /// `CGAffineTransform(rotationAngle:)`: `cos(90°)` on the FPU is `6.12e-17`, not exactly 0, and
+    /// that residual would blur every sampled pixel along the rotated edge once the letterbox scales
+    /// it down. Only multiples of 90 are meaningful — no capture connection reports anything else —
+    /// so any other value returns the identity and the source extent unchanged, the same defensive
+    /// default `LivePoseKeypointRotation.rotated` uses rather than guessing a mapping.
+    static func uprightTransform(
+        forExtent extent: CGRect, clockwiseDegrees degrees: Int
+    ) -> (transform: CGAffineTransform, extent: CGRect) {
+        let width = extent.width
+        let height = extent.height
+        switch (degrees % 360 + 360) % 360 {
+        case 90:
+            return (
+                CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: width),
+                CGRect(x: 0, y: 0, width: height, height: width)
+            )
+        case 180:
+            return (
+                CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: width, ty: height),
+                CGRect(x: 0, y: 0, width: width, height: height)
+            )
+        case 270:
+            return (
+                CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: height, ty: 0),
+                CGRect(x: 0, y: 0, width: height, height: width)
+            )
+        default:
+            return (.identity, extent)
+        }
+    }
+
     /// Allocates the destination the scaled frame is rendered into, at the model's input size.
     /// The buffer is zero-filled before it is handed back: `CVPixelBufferCreate` does not zero
     /// the allocation, and the letterbox pad region is never written by the render — without the

@@ -1,6 +1,6 @@
 import Foundation
 
-struct PoseKeypoint: Identifiable, Sendable {
+struct PoseKeypoint: Identifiable, Hashable, Sendable {
     let id = UUID()
     let name: String
     /// Nominally normalized 0-1 relative to the source frame — but honest about pad-region
@@ -36,7 +36,9 @@ struct PoseKeypoint: Identifiable, Sendable {
     }
 }
 
-struct PoseFrameResult: Identifiable, Sendable {
+/// `Hashable` (by every field, the fresh `id` included) so a video's frames can ride in
+/// `DetectedClips` on a `SelectedVideo`, which the navigation path hashes.
+struct PoseFrameResult: Identifiable, Hashable, Sendable {
     let id = UUID()
     let frameIndex: Int
     let timestamp: TimeInterval

@@ -15,11 +15,19 @@ enum ProcessingError: LocalizedError {
 }
 
 /// One progress report from a pipeline run.
-struct ProcessingProgress: Equatable, Sendable {
+struct ProcessingProgress: Sendable {
     /// 1-based count of frames run through inference so far.
     let frame: Int
     /// Estimated from the track's duration × frame rate; nil when the track reports no frame rate.
     let totalFrames: Int?
+    /// The just-processed frame's position in the source video and the pose it scored
+    /// there — the processing screen scrubs its preview to this timestamp and draws the
+    /// skeleton over it, so the video visibly tracks the progress bar rather than sitting
+    /// static and paused. Defaulted so the pipeline's own reports are the only required
+    /// call site; a caller with no frame in hand (tests, the screenshot harness) gets an
+    /// inert progress report instead of a compile error.
+    var timestamp: TimeInterval = 0
+    var keypoints: [PoseKeypoint] = []
 
     /// 0...1 for `ProgressView`; nil when the total is unknown, in which case the view shows
     /// an indeterminate spinner next to the frame counter.
@@ -44,19 +52,40 @@ struct ProcessingProgress: Equatable, Sendable {
 /// computed from the window's pose keypoints (docs/DESIGN.md steps 5-6).
 ///
 /// This is the processing screen's output contract. It deliberately mirrors — rather than
-/// reuses — `ClipListItem`, whose type does not exist on `main` yet; the home flow maps each
-/// clip with `ClipListItem(window: clip.window, cropRect: clip.cropRect)` when it wires the two.
-struct ProcessedClip: Equatable, Sendable {
+/// reuses — `ClipListItem` (Turnip/ClipList/ClipListItem.swift): a screen's output contract
+/// should not be its neighbour's view model, so the home flow maps each clip with
+/// `ClipListItem(window: clip.window, cropRect: clip.cropRect)` when it wires the two.
+struct ProcessedClip: Hashable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
 }
 
-/// The pipeline's terminal output: what the success destination needs.
-struct ProcessingResult: Sendable {
+/// What detection yields for one video: the clips, with every sampled frame they were cut
+/// from. The frames travel with the clips because the editor needs frames beyond a clip's
+/// own window — Auto crop frames whatever keypoints the trimmed window holds, and a trim
+/// handle dragged outward pulls in frames the clip didn't start with — and both the file
+/// pipeline and the camera's live scoring are sources of them.
+struct DetectedClips: Hashable, Sendable {
     /// One clip per detected trick window, in video order.
     let clips: [ProcessedClip]
+    /// Every scored frame of the video, in video order, in the display-orientation
+    /// normalized space the clips' crop rects were computed in.
+    let poseFrames: [PoseFrameResult]
+}
+
+/// The pipeline's terminal output: what the success destination needs.
+struct ProcessingResult: Sendable {
+    let detection: DetectedClips
     /// The analyzed asset, for thumbnail loading downstream.
     let asset: AVURLAsset
+    /// `true` when the user went straight to the clip list from Processing's idle state
+    /// without running the pipeline (`ProcessingViewModel.skipAnalysis`). The detection is
+    /// then empty by construction, not by finding nothing, so the clip list must not put up
+    /// its "No tricks found" notice over it — that is the one thing a consumer can't tell
+    /// from an empty `detection` alone.
+    var analysisSkipped = false
+
+    var clips: [ProcessedClip] { detection.clips }
 }
 
 /// The seam between the pipeline and frame decoding, so tests can feed canned frames without
@@ -98,20 +127,31 @@ struct ProcessingPipeline: Sendable {
     typealias InferenceFactory = @Sendable () async throws -> @Sendable (SampledFrame) async throws -> [PoseKeypoint]
 
     let sampler: any FrameSampling
+    /// Samples per second of footage this run targets — `TurnipSettings.analysisGranularity`
+    /// when a caller reads settings, `VideoFrameSampler.targetSamplesPerSecond` otherwise. Drives
+    /// both the default `sampler` and `windowDetector` below (when the caller doesn't supply its
+    /// own) and the progress denominator in `estimatedSampledFrames`, so all three agree on one
+    /// rate instead of each defaulting to 10 independently.
+    let sampleRate: Int
     let makeInference: InferenceFactory
     let cropRectCalculator: CropRectCalculator
     let windowDetector: TrickWindowDetector
 
     init(
-        sampler: any FrameSampling = VideoFrameSampler(),
+        sampler: (any FrameSampling)? = nil,
+        sampleRate: Int = VideoFrameSampler.targetSamplesPerSecond,
         makeInference: @escaping InferenceFactory = ProcessingPipeline.defaultInference,
         cropRectCalculator: CropRectCalculator = CropRectCalculator(),
-        windowDetector: TrickWindowDetector = TrickWindowDetector()
+        windowDetector: TrickWindowDetector? = nil
     ) {
-        self.sampler = sampler
+        self.sampler = sampler ?? VideoFrameSampler(sampleRate: sampleRate)
+        self.sampleRate = sampleRate
         self.makeInference = makeInference
         self.cropRectCalculator = cropRectCalculator
-        self.windowDetector = windowDetector
+        // TrickWindowDetector's sustained/quiet thresholds are stated in docs/DESIGN.md as
+        // durations (300 ms / 1 s), expressed as sample counts against the sampler's rate — so
+        // they're derived here from the same `sampleRate` the sampler above uses.
+        self.windowDetector = windowDetector ?? TrickWindowDetector(sampleRate: sampleRate)
     }
 
     /// Loads the bundled MoveNet Thunder model once, then answers each frame from it.
@@ -128,10 +168,7 @@ struct ProcessingPipeline: Sendable {
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw ProcessingError.assetHasNoVideoTrack
         }
-        // Pose keypoints are reported in the encoded frame's space (see FramePreprocessor),
-        // so the crop rect is computed against the encoded pixel size, not the displayed one.
-        let naturalSize = try await videoTrack.load(.naturalSize)
-        let totalFrames = await Self.estimatedSampledFrames(of: videoTrack)
+        let totalFrames = await Self.estimatedSampledFrames(of: videoTrack, sampleRate: sampleRate)
 
         let infer = try await makeInference()
         let accumulator = FrameAccumulator()
@@ -142,16 +179,36 @@ struct ProcessingPipeline: Sendable {
                 frameIndex: frame.frameIndex,
                 timestamp: frame.timestamp,
                 keypoints: keypoints
-            ))
+            ), renderSize: frame.renderSize)
             if await reportClock.shouldReport() {
-                await onProgress(ProcessingProgress(frame: processed, totalFrames: totalFrames))
+                await onProgress(ProcessingProgress(
+                    frame: processed, totalFrames: totalFrames,
+                    timestamp: frame.timestamp, keypoints: keypoints))
             }
         }
 
         let frames = await accumulator.frames
+        // Pose keypoints are measured in the composition's display-orientation space (see
+        // SampledFrame.renderSize), so the crop rect is computed against the frames' renderSize,
+        // not the track's encoded naturalSize: on a rotated (portrait phone) clip naturalSize
+        // transposes the dimensions and the aspect-ratio snap lands on a wrongly-proportioned
+        // rect. No sampled frames means no keypoints, so the size is unused there —
+        // `.zero` marks it unknown, which the calculator treats as unlocatable and buildClips
+        // turns into the full-frame fallback.
+        let renderedPixelSize = await accumulator.renderSize ?? .zero
+        return ProcessingResult(
+            detection: DetectedClips(
+                clips: detectClips(in: frames, renderedPixelSize: renderedPixelSize), poseFrames: frames),
+            asset: asset)
+    }
+
+    /// Steps 4-6 over frames that have already been scored: motion signal, trick windows, crop
+    /// rects. The one detection implementation for both frame sources — the file sampler above
+    /// and the camera's live inference, whose results arrive in the same frame-normalized,
+    /// display-orientation space with file-relative timestamps at the same sample rate.
+    func detectClips(in frames: [PoseFrameResult], renderedPixelSize: CGSize) -> [ProcessedClip] {
         let windows = windowDetector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
-        let clips = buildClips(windows: windows, frames: frames, naturalSize: naturalSize)
-        return ProcessingResult(clips: clips, asset: asset)
+        return buildClips(windows: windows, frames: frames, renderedPixelSize: renderedPixelSize)
     }
 
     /// Pairs each detected window with the sampled frames inside it and computes its crop
@@ -161,13 +218,14 @@ struct ProcessingPipeline: Sendable {
     func buildClips(
         windows: [TrickWindow],
         frames: [PoseFrameResult],
-        naturalSize: CGSize
+        renderedPixelSize: CGSize
     ) -> [ProcessedClip] {
         windows.map { window in
             let inWindow = frames.filter {
                 $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
             }
-            let cropRect = cropRectCalculator.cropRect(for: inWindow, renderedPixelSize: naturalSize)
+            let cropRect = cropRectCalculator.cropRect(
+                for: inWindow, renderedPixelSize: renderedPixelSize)
                 ?? NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
             return ProcessedClip(window: window, cropRect: cropRect)
         }
@@ -178,7 +236,9 @@ struct ProcessingPipeline: Sendable {
     /// it keeps frame 0, so a 10-frame track at stride 3 yields 4 frames, not 3. Nil when the
     /// track reports no usable frame rate; the view then shows an indeterminate spinner with a
     /// counter.
-    static func estimatedSampledFrames(of track: AVAssetTrack) async -> Int? {
+    static func estimatedSampledFrames(
+        of track: AVAssetTrack, sampleRate: Int = VideoFrameSampler.targetSamplesPerSecond
+    ) async -> Int? {
         guard
             let timeRange = try? await track.load(.timeRange),
             timeRange.duration.isValid,
@@ -187,7 +247,7 @@ struct ProcessingPipeline: Sendable {
             frameRate > 0
         else { return nil }
         let total = Int((Float(timeRange.duration.seconds) * frameRate).rounded())
-        let stride = VideoFrameSampler.stride(forNominalFrameRate: frameRate)
+        let stride = VideoFrameSampler.stride(forNominalFrameRate: frameRate, sampleRate: sampleRate)
         return sampledFrameCount(trackFrameCount: total, stride: stride)
     }
 
@@ -204,10 +264,20 @@ extension ProcessingPipeline: ProcessingRunning {}
 /// off the main actor, so the accumulation point is an actor rather than a captured `var`.
 private actor FrameAccumulator {
     private(set) var frames: [PoseFrameResult] = []
+    /// The composition grid the run's frames were rendered onto, in display orientation. The
+    /// sampler builds one composition per run, so the first frame's size stands for all of
+    /// them; pose keypoints are measured in this space, so the crop math denormalizes against
+    /// it rather than the track's encoded `naturalSize`. Nil when the sampler
+    /// produced no frame.
+    private(set) var renderSize: CGSize?
 
-    /// Appends the frame and returns the 1-based processed count for progress reporting.
-    func append(_ frame: PoseFrameResult) -> Int {
-        frames.append(frame)
+    /// Appends the frame's inference result and returns the 1-based processed count for
+    /// progress reporting. Records the run's render size from the first frame.
+    func append(_ result: PoseFrameResult, renderSize: CGSize) -> Int {
+        if self.renderSize == nil {
+            self.renderSize = renderSize
+        }
+        frames.append(result)
         return frames.count
     }
 }

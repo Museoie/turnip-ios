@@ -14,20 +14,21 @@ final class ProcessingViewModel: ObservableObject {
         case idle
         case processing(ProcessingProgress)
         case succeeded
-        case empty
         case failed(message: String)
     }
 
     @Published private(set) var state: State = .idle
     @Published private(set) var result: ProcessingResult?
-    /// Drives the navigation to the success destination once a run finds clips.
+    /// Drives the navigation to the success destination once a run finishes — including a
+    /// run that detected zero tricks: its empty `ProcessingResult` still navigates, and the
+    /// clip list itself puts up the "no tricks found" notice (`ClipListView`).
     @Published var isShowingClips = false
 
     var isRunning: Bool {
         switch state {
         case .idle, .processing:
             true
-        case .succeeded, .empty, .failed:
+        case .succeeded, .failed:
             false
         }
     }
@@ -58,8 +59,9 @@ final class ProcessingViewModel: ObservableObject {
         // Weak capture: the task must not keep the view model (and its screen) alive.
         runTask = Task { [weak self] in
             do {
-                let result = try await runner.run(video: video) { progress in
-                    await MainActor.run { [weak self] in self?.apply(progress, from: generation) }
+                let result = try await runner.run(video: video) { [weak self] progress in
+                    guard let self else { return }
+                    await MainActor.run { self.apply(progress, from: generation) }
                 }
                 await MainActor.run { [weak self] in self?.finish(with: result, from: generation) }
             } catch is CancellationError {
@@ -70,6 +72,23 @@ final class ProcessingViewModel: ObservableObject {
                 await MainActor.run { [weak self] in self?.fail(with: message, from: generation) }
             }
         }
+    }
+
+    /// Goes straight to the clip list with no clips and no pose frames, leaving the video
+    /// un-analyzed: the user cuts clips by hand from the list's "+" tile instead. Same guard
+    /// as `start` — only an idle screen with no run in flight can skip. Lands in `.succeeded`
+    /// rather than staying `.idle`: pushing the destination disappears this screen, whose
+    /// `cancel()` wipes `result` and `isShowingClips` from any running state, and `.idle`
+    /// counts as running.
+    func skipAnalysis(video: SelectedVideo) {
+        guard runTask == nil, case .idle = state else { return }
+        runGeneration += 1
+        result = ProcessingResult(
+            detection: DetectedClips(clips: [], poseFrames: []),
+            asset: video.asset,
+            analysisSkipped: true)
+        state = .succeeded
+        isShowingClips = true
     }
 
     /// Stops an in-flight run and returns the screen to `.idle`. A cancel after the run has
@@ -86,7 +105,7 @@ final class ProcessingViewModel: ObservableObject {
         isShowingClips = false
     }
 
-    /// Restarts after a failure or an empty result.
+    /// Restarts after a failure.
     func retry(video: SelectedVideo) {
         guard !isRunning else { return }
         runTask?.cancel()
@@ -105,13 +124,9 @@ final class ProcessingViewModel: ObservableObject {
 
     private func finish(with result: ProcessingResult, from generation: Int) {
         guard generation == runGeneration else { return }
-        if result.clips.isEmpty {
-            state = .empty
-        } else {
-            self.result = result
-            state = .succeeded
-            isShowingClips = true
-        }
+        self.result = result
+        state = .succeeded
+        isShowingClips = true
     }
 
     private func fail(with message: String, from generation: Int) {

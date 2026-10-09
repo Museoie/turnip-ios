@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreVideo
 import Foundation
 import XCTest
 @testable import Turnip
@@ -114,7 +115,7 @@ final class ProcessingPipelineClipTests: XCTestCase {
             TrickWindow(startTime: 1.15, endTime: 1.65)
         ]
 
-        let clips = pipeline.buildClips(windows: windows, frames: frames, naturalSize: size)
+        let clips = pipeline.buildClips(windows: windows, frames: frames, renderedPixelSize: size)
 
         XCTAssertEqual(clips.count, 2)
         XCTAssertEqual(clips.map(\.window), windows)
@@ -137,7 +138,7 @@ final class ProcessingPipelineClipTests: XCTestCase {
         let clips = ProcessingPipeline().buildClips(
             windows: [TrickWindow(startTime: 0, endTime: 1)],
             frames: frames,
-            naturalSize: size
+            renderedPixelSize: size
         )
 
         // The trick was still detected from the motion signal — it stays visible for triage
@@ -147,8 +148,119 @@ final class ProcessingPipelineClipTests: XCTestCase {
     }
 
     func testBuildClipsWithNoWindowsReturnsNoClips() {
-        let clips = ProcessingPipeline().buildClips(windows: [], frames: frames, naturalSize: size)
+        let clips = ProcessingPipeline().buildClips(windows: [], frames: frames, renderedPixelSize: size)
         XCTAssertTrue(clips.isEmpty)
+    }
+}
+
+/// A scripted `FrameSampling` that emits canned frames with a fixed `renderSize`, ignoring the
+/// asset: the regression test below needs frames whose display-orientation size differs from
+/// the video track's encoded size, which the fixture file alone cannot produce (it is written
+/// unrotated on purpose, so its track carries the landscape size).
+private struct ScriptedSampler: FrameSampling, Sendable {
+    let renderSize: CGSize
+    let results: [PoseFrameResult]
+
+    func sampleFrames(
+        from asset: AVURLAsset,
+        handler: @Sendable (SampledFrame) async throws -> Void
+    ) async throws {
+        for (index, result) in results.enumerated() {
+            var pixelBuffer: CVPixelBuffer?
+            let status = CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                Int(renderSize.width), Int(renderSize.height),
+                kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
+            guard status == kCVReturnSuccess, let pixelBuffer else {
+                throw PoseError.videoLoadFailed(underlying: nil)
+            }
+            try await handler(SampledFrame(
+                frameIndex: index,
+                timestamp: result.timestamp,
+                pixelBuffer: pixelBuffer,
+                renderSize: renderSize
+            ))
+        }
+    }
+}
+
+/// `run()` must compute crop rects against the sampled frames'
+/// display-orientation `renderSize`, not the track's encoded `naturalSize`.
+final class ProcessingPipelineRunTests: XCTestCase {
+    /// The track is landscape-encoded (64x48) while the scripted sampler reports the portrait
+    /// renderSize (48x64) the frames were actually decoded at — the iPhone portrait-recording
+    /// shape where measuring against `naturalSize` would transpose the aspect-ratio snap.
+    func testRunComputesCropRectsAgainstTheFramesRenderSize() async throws {
+        let videoURL = try await TestVideoWriter.writeTestVideo(
+            frameCount: 35, width: 64, height: 48, fps: 30)
+        defer { try? FileManager.default.removeItem(at: videoURL) }
+
+        // Vertical slide: 15 quiet frames, 6 moving, 14 quiet — the detector's single-peak
+        // fixture rotated 90°, so the window's athlete box is narrow in x and the aspect snap
+        // has room to discriminate the two sizes instead of clamping to the full frame in both.
+        let yPositions = PoseFixture.slide(
+            quietFrames: 15, from: 0.2, perFrame: 0.1, movingFrames: 6, tailFrames: 14)
+        let fixtures = yPositions.enumerated().map { index, y in
+            PoseFixture.frame(index: index, hip: (x: 0.5, y: y))
+        }
+        let sampler = ScriptedSampler(renderSize: CGSize(width: 48, height: 64), results: fixtures)
+        let makeInference: ProcessingPipeline.InferenceFactory = {
+            { frame in fixtures[frame.frameIndex].keypoints }
+        }
+
+        let pipeline = ProcessingPipeline(sampler: sampler, makeInference: makeInference)
+        let video = SelectedVideo(
+            assetIdentifier: "test",
+            asset: AVURLAsset(url: videoURL),
+            duration: 3.5
+        )
+        let result = try await pipeline.run(video: video) { _ in }
+
+        XCTAssertEqual(result.clips.count, 1, "expected the single-peak fixture to yield one window")
+        // Every scored frame travels with the clips, for the editor's own crop fits.
+        XCTAssertEqual(result.detection.poseFrames.count, fixtures.count)
+        let window = result.clips[0].window
+        let inWindow = fixtures.filter {
+            $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
+        }
+        let calculator = CropRectCalculator()
+        let expected = calculator.cropRect(for: inWindow, renderedPixelSize: CGSize(width: 48, height: 64))
+        // The wrong answer: the same frames snapped against the track's encoded size. Asserting
+        // the two differ proves the fixture discriminates — without it the test would pass
+        // against an encoded-size implementation too.
+        let buggy = calculator.cropRect(for: inWindow, renderedPixelSize: CGSize(width: 64, height: 48))
+        XCTAssertNotNil(expected)
+        XCTAssertNotEqual(expected, buggy, "fixture does not discriminate the size mixup")
+        XCTAssertEqual(result.clips[0].cropRect, expected)
+    }
+
+    /// The camera's live path hands already-scored frames to `detectClips` instead of running
+    /// the sampler. Both routes must produce the same clips for the same frames, or a take
+    /// analyzed live would get a different triage list from the same take analyzed from the file.
+    func testDetectClipsMatchesWhatRunProducesForTheSameFrames() async throws {
+        let videoURL = try await TestVideoWriter.writeTestVideo(
+            frameCount: 35, width: 64, height: 48, fps: 30)
+        defer { try? FileManager.default.removeItem(at: videoURL) }
+
+        let yPositions = PoseFixture.slide(
+            quietFrames: 15, from: 0.2, perFrame: 0.1, movingFrames: 6, tailFrames: 14)
+        let fixtures = yPositions.enumerated().map { index, y in
+            PoseFixture.frame(index: index, hip: (x: 0.5, y: y))
+        }
+        let renderSize = CGSize(width: 48, height: 64)
+        let sampler = ScriptedSampler(renderSize: renderSize, results: fixtures)
+        let makeInference: ProcessingPipeline.InferenceFactory = {
+            { frame in fixtures[frame.frameIndex].keypoints }
+        }
+        let pipeline = ProcessingPipeline(sampler: sampler, makeInference: makeInference)
+        let video = SelectedVideo(
+            assetIdentifier: "test", asset: AVURLAsset(url: videoURL), duration: 3.5)
+
+        let viaRun = try await pipeline.run(video: video) { _ in }
+        let viaDetect = pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize)
+
+        XCTAssertFalse(viaRun.clips.isEmpty, "the fixture should yield at least one clip to compare")
+        XCTAssertEqual(viaDetect, viaRun.clips)
     }
 }
 
@@ -182,16 +294,17 @@ final class ProcessingViewModelTests: XCTestCase {
         XCTAssertFalse(viewModel.isShowingClips)
     }
 
-    func testEmptyResultShowsTheEmptyState() async {
+    func testEmptyResultStillNavigatesToTheClips() async {
         let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .succeed(clips: [])))
 
         viewModel.start(video: Self.video)
         await Self.waitUntilNotRunning(viewModel)
 
-        guard case .empty = viewModel.state else {
-            return XCTFail("expected the empty state, got \(viewModel.state)")
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("expected the succeeded state, got \(viewModel.state)")
         }
-        XCTAssertFalse(viewModel.isShowingClips)
+        XCTAssertEqual(viewModel.result?.clips, [])
+        XCTAssertTrue(viewModel.isShowingClips)
     }
 
     func testSuccessfulRunNavigatesToTheClips() async {
@@ -305,6 +418,63 @@ final class ProcessingViewModelTests: XCTestCase {
         }
         XCTAssertEqual(viewModel.result?.clips, [Self.clip])
         XCTAssertTrue(viewModel.isShowingClips)
+    }
+
+    /// "Clip manually" lands on the clip list with nothing detected and the skip marked, so
+    /// the list can tell it from a run that looked and found nothing.
+    func testSkipAnalysisNavigatesToTheClipsWithoutRunning() async {
+        let flag = CancelFlag()
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .reportThenHang(flag)))
+
+        viewModel.skipAnalysis(video: Self.video)
+
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("expected the succeeded state, got \(viewModel.state)")
+        }
+        XCTAssertEqual(viewModel.result?.clips, [])
+        XCTAssertEqual(viewModel.result?.detection.poseFrames, [])
+        XCTAssertEqual(viewModel.result?.analysisSkipped, true)
+        XCTAssertTrue(viewModel.isShowingClips)
+        // Nothing was started, and a skipped screen is finished: a later `start` (the
+        // view's `.task` fires on every appear) must not run the pipeline over it.
+        viewModel.start(video: Self.video)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("a skipped screen started the pipeline, got \(viewModel.state)")
+        }
+    }
+
+    /// Pushing the clip list disappears Processing, which cancels — the skip's result has
+    /// to survive that the same way a finished run's does.
+    func testCancelAfterSkipKeepsTheResult() {
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .succeed(clips: [])))
+
+        viewModel.skipAnalysis(video: Self.video)
+        viewModel.cancel()
+
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("cancel discarded a skip, got \(viewModel.state)")
+        }
+        XCTAssertEqual(viewModel.result?.analysisSkipped, true)
+        XCTAssertTrue(viewModel.isShowingClips)
+    }
+
+    /// The skip button is gone once a run is in flight, but the model guards it anyway.
+    func testSkipWhileRunningIsIgnored() async {
+        let flag = CancelFlag()
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .reportThenHang(flag)))
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntilProcessing(viewModel)
+        viewModel.skipAnalysis(video: Self.video)
+
+        guard case .processing = viewModel.state else {
+            return XCTFail("a skip abandoned the in-flight run, got \(viewModel.state)")
+        }
+        XCTAssertNil(viewModel.result)
+        XCTAssertFalse(viewModel.isShowingClips)
+        viewModel.cancel()
+        await Self.waitUntil { await flag.observed }
     }
 
     func testRetryAfterFailureRunsAgain() async {
@@ -445,7 +615,7 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
     ) async throws -> ProcessingResult {
         switch behavior {
         case .succeed(let clips):
-            return ProcessingResult(clips: clips, asset: video.asset)
+            return ProcessingResult(detection: DetectedClips(clips: clips, poseFrames: []), asset: video.asset)
         case .fail(let error):
             throw error
         case .reportThenHang(let flag):
@@ -456,11 +626,11 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
                 await flag.noteCancelled()
                 throw error
             }
-            return ProcessingResult(clips: [], asset: video.asset)
+            return ProcessingResult(detection: DetectedClips(clips: [], poseFrames: []), asset: video.asset)
         case .relayProgress(let relay):
             await relay.capture(onProgress)
             try await Task.sleep(nanoseconds: 30_000_000_000)
-            return ProcessingResult(clips: [], asset: video.asset)
+            return ProcessingResult(detection: DetectedClips(clips: [], poseFrames: []), asset: video.asset)
         }
     }
 }

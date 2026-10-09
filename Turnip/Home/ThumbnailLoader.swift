@@ -61,6 +61,46 @@ final class ThumbnailLoader {
         manager.cancelImageRequest(requestID)
     }
 
+    /// A screen-sized poster frame for `asset`, aspect-fit into `pixelSize`: what Processing
+    /// draws under its player until the first decoded frame arrives, and what its neighbor
+    /// pages slide in with. One final-quality delivery rather than the tiles' opportunistic
+    /// two, so a caller can await a single image; requested outside the caching window, since
+    /// nothing else asks for this size. The result is also kept for `cachedPoster(for:)`.
+    func poster(for asset: PHAsset, pixelSize: CGSize) async -> UIImage? {
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .fast
+        options.isNetworkAccessAllowed = true
+        let delivery = SingleDelivery()
+        let image: UIImage? = await withCheckedContinuation { continuation in
+            manager.requestImage(
+                for: asset, targetSize: pixelSize, contentMode: .aspectFit, options: options
+            ) { image, _ in
+                guard delivery.claim() else { return }
+                continuation.resume(returning: image)
+            }
+        }
+        if let image {
+            recentPosters.removeAll { $0.identifier == asset.localIdentifier }
+            recentPosters.append((asset.localIdentifier, image))
+            if recentPosters.count > Self.recentPosterCount {
+                recentPosters.removeFirst()
+            }
+        }
+        return image
+    }
+
+    /// A poster `poster(for:pixelSize:)` delivered recently, available synchronously: the
+    /// screen a swipe slides into place is a new view, and it draws this from its very first
+    /// frame rather than showing black while it requests the same image again.
+    func cachedPoster(for identifier: String) -> UIImage? {
+        recentPosters.last { $0.identifier == identifier }?.image
+    }
+
+    /// Bounded small: the screens that need a poster back are one swipe apart.
+    private static let recentPosterCount = 6
+    private var recentPosters: [(identifier: String, image: UIImage)] = []
+
     /// How many times `asset`'s content has been invalidated. A tile reads this as a plain value
     /// and re-requests when it changes.
     func revision(for asset: PHAsset) -> Int {
@@ -135,5 +175,21 @@ final class ThumbnailLoader {
         let lower = max(0, center - radius)
         let upper = min(count, center + radius + 1)
         return lower..<upper
+    }
+}
+
+/// Guards a continuation against a second result-handler call: PhotoKit documents one
+/// delivery for `.highQualityFormat`, and a second resume would be a crash rather than a
+/// stale image, so the contract is enforced here instead of trusted.
+private final class SingleDelivery: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
     }
 }

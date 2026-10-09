@@ -9,9 +9,14 @@ the PNGs nor post the comment. `workflow_run` runs in the base-repo
 context with full permissions and secrets, so this script can do both.
 
 Reads PNGs from SCREENSHOTS_DIR (the downloaded `pr-screenshots`
-artifact). PR_NUMBER may be omitted, in which case it is resolved from
-HEAD_OWNER/HEAD_BRANCH via the pulls API (reliable for fork PRs), falling
-back to HEAD_SHA via the commits API.
+artifact). Artifact content comes from the PR's own CI run, so it is
+sanitized before anything else touches it: names must match NAME_RE,
+bytes must carry the PNG magic number, each file is capped at
+MAX_PNG_BYTES, and at most MAX_SCREENSHOTS files are published. Skipped
+files are reported in the comment so a silently-empty table never
+passes as "no screenshots". PR_NUMBER may be omitted, in which case it
+is resolved from HEAD_OWNER/HEAD_BRANCH via the pulls API (reliable for
+fork PRs), falling back to HEAD_SHA via the commits API.
 
 Two modes:
   Inline images (preferred): when SCREENSHOTS_PUSH_TOKEN is set -- a
@@ -31,6 +36,7 @@ Uses only the standard library so it runs on a stock runner.
 import base64
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -40,6 +46,31 @@ import urllib.error
 MARKER = "<!-- turnip-ui-screenshots -->"
 BRANCH = "screenshots"
 PUSH_ATTEMPTS = 5
+# SCREENSHOTS_REPO (hoiekim/ci-artifacts) is a shared artifacts repo, not
+# turnip-ios's own -- every path pushed there is namespaced under this
+# prefix so a future project using the same repo can never collide with
+# turnip's screenshots.
+PROJECT_PREFIX = "turnip-ios"
+
+# --- Untrusted-artifact hardening ------------------------------------------
+# Everything under SCREENSHOTS_DIR comes from the PR's own CI run, which a
+# fork PR fully controls -- every artifact name and every byte. workflow_run
+# runs in the base-repo context with secrets (the PAT that pushes to the
+# public screenshots repo) and posts as github-actions[bot], so this script
+# must treat artifact content as data, never as trusted input:
+#
+# - names must match a strict allowlist: no path separators (traversal is
+#   impossible), and none of the markdown-special characters (`]`, `(`, `)`
+#   `` ` ``, `|`) that could break out of the alt text or table cells in the
+#   bot comment;
+# - bytes must start with the PNG magic number, not just end in ".png";
+# - per-file size is capped, and at most MAX_SCREENSHOTS files are
+#   published, so a PR cannot turn the screenshots repo into unbounded
+#   free hosting under a maintainer-owned org.
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+NAME_RE = re.compile(r"[A-Za-z0-9._-]{1,64}\.png")
+MAX_SCREENSHOTS = 20
+MAX_PNG_BYTES = 2 * 1024 * 1024
 
 
 class GitHubApiError(RuntimeError):
@@ -69,10 +100,12 @@ def api(token, method, path, data=None):
         raise GitHubApiError(method, path, e.code, detail)
 
 
-README_CONTENT = (b"# Turnip CI screenshots\n\n"
-                  b"CI-captured UI screenshots, namespaced by PR and run:\n"
-                  b"`pr-<number>/<run_id>/*.png`. Written by automation; "
-                  b"safe to prune old entries.\n")
+README_CONTENT = (b"# CI screenshots\n\n"
+                  b"CI-captured UI screenshots for one or more projects, each\n"
+                  b"namespaced by its own prefix, PR, and run:\n"
+                  b"`<project>/pr-<number>/<run_id>/*.png` -- turnip-ios's own are\n"
+                  b"under `turnip-ios/`. Written by automation; safe to prune old\n"
+                  b"entries.\n")
 
 
 def ensure_branch_empty_repo(pat, shots_repo, branch):
@@ -147,8 +180,9 @@ def push_to_shots_repo(pat, shots_repo, pr_number, run_id, pngs,
                 blob = api(pat, "POST", "/repos/%s/git/blobs" % shots_repo,
                            {"content": base64.b64encode(data).decode(),
                             "encoding": "base64"})
-                entries.append({"path": "pr-%s/%s/%s" % (pr_number, run_id,
-                                                        name),
+                entries.append({"path": "%s/pr-%s/%s/%s" % (PROJECT_PREFIX,
+                                                            pr_number, run_id,
+                                                            name),
                                 "mode": "100644", "type": "blob",
                                 "sha": blob["sha"]})
             tree_payload = {"tree": entries}
@@ -185,9 +219,10 @@ def push_to_shots_repo(pat, shots_repo, pr_number, run_id, pngs,
 
     urls = {}
     for name, _ in pngs:
-        urls[name] = ("https://raw.githubusercontent.com/%s/%s/pr-%s/%s/%s"
-                      % (shots_repo, branch, pr_number, run_id,
-                         urllib.parse.quote(name)))
+        urls[name] = (
+            "https://raw.githubusercontent.com/%s/%s/%s/pr-%s/%s/%s"
+            % (shots_repo, branch, PROJECT_PREFIX, pr_number, run_id,
+               urllib.parse.quote(name)))
     return urls
 
 
@@ -208,13 +243,31 @@ def resolve_pr_number(token, base_repo, head_sha):
 
 
 def resolve_pr_by_head(token, base_repo, head_owner, head_branch):
-    """Find the open PR whose head is owner:branch."""
+    """Find the open PR whose head is owner:branch, or None if there isn't one.
+
+    Returns the raw PR object (not just its number) so the caller can check
+    its head sha against the sha this workflow_run actually built -- a
+    branch-name lookup can resolve to a PR that has since moved past the
+    commit this run is reporting on (two pushes to the same PR in quick
+    succession can have their workflow_run events complete out of order).
+    Unlike resolve_pr_number below, a miss here is not exceptional: the
+    branch may simply have no open PR (yet, or anymore).
+    """
     head = "%s:%s" % (head_owner, head_branch)
     prs = api(token, "GET", "/repos/%s/pulls?head=%s&state=open"
               % (base_repo, urllib.parse.quote(head, safe="")))
-    if prs:
-        return prs[0]["number"]
-    raise RuntimeError("No open PR for head %s in %s" % (head, base_repo))
+    return prs[0] if prs else None
+
+
+def is_stale_head(pr, sha):
+    """Whether `pr` (from resolve_pr_by_head, or None) has moved past `sha`.
+
+    Pure and separated from main() so this decision is unit-testable
+    without mocking the GitHub API. None never counts as stale -- the
+    caller has nothing to compare against and falls through to another
+    resolution path instead.
+    """
+    return pr is not None and pr["head"]["sha"] != sha
 
 
 def find_bot_comment(token, base_repo, pr_number):
@@ -232,6 +285,46 @@ def find_bot_comment(token, base_repo, pr_number):
         page += 1
 
 
+def collect_pngs(shots_dir):
+    """Read and validate the screenshots artifact directory.
+
+    Returns (pngs, skipped): pngs is [(name, bytes)] of validated files;
+    skipped counts rejected files by reason ("invalid_name", "not_png",
+    "too_large", "over_cap"). Every rejection path is a deliberate
+    security boundary, not a silent drop -- callers report the counts.
+    """
+    pngs = []
+    skipped = {"invalid_name": 0, "not_png": 0, "too_large": 0,
+               "over_cap": 0}
+    if not os.path.isdir(shots_dir):
+        return pngs, skipped
+    for name in sorted(os.listdir(shots_dir)):
+        if not NAME_RE.fullmatch(name):
+            # Not a benign name: anything markdown-special, any path
+            # separator, or simply not a lowercase .png.
+            skipped["invalid_name"] += 1
+            continue
+        path = os.path.join(shots_dir, name)
+        if not os.path.isfile(path):
+            skipped["invalid_name"] += 1
+            continue
+        # Size is checked on disk first so a hostile multi-GB "PNG" is
+        # never loaded into memory.
+        if os.path.getsize(path) > MAX_PNG_BYTES:
+            skipped["too_large"] += 1
+            continue
+        with open(path, "rb") as f:
+            data = f.read()
+        if not data.startswith(PNG_MAGIC):
+            skipped["not_png"] += 1
+            continue
+        if len(pngs) >= MAX_SCREENSHOTS:
+            skipped["over_cap"] += 1
+            continue
+        pngs.append((name, data))
+    return pngs, skipped
+
+
 def main():
     token = os.environ["GITHUB_TOKEN"]
     base_repo = os.environ["BASE_REPO"]
@@ -240,46 +333,83 @@ def main():
     sha = os.environ["HEAD_SHA"]
     run_url = "https://github.com/%s/actions/runs/%s" % (base_repo, run_id)
     shots_dir = os.environ["SCREENSHOTS_DIR"]
-    # Prefer resolving by head owner:branch: the workflow passes
-    # HEAD_OWNER/HEAD_BRANCH for exactly this, since the commits API only
-    # indexes commits present in the base repo and misses fork PRs by SHA.
-    head_owner = os.environ.get("HEAD_OWNER")
-    head_branch = os.environ.get("HEAD_BRANCH")
-    by_head = (resolve_pr_by_head(token, base_repo, head_owner, head_branch)
-               if head_owner and head_branch else None)
-    pr_number = (os.environ.get("PR_NUMBER") or by_head
-                 or resolve_pr_number(token, base_repo, sha))
+    pr_number_override = os.environ.get("PR_NUMBER")
+    if pr_number_override:
+        pr_number = pr_number_override
+    elif os.environ.get("HEAD_OWNER") and os.environ.get("HEAD_BRANCH"):
+        # Prefer resolving by head owner:branch: the workflow passes
+        # HEAD_OWNER/HEAD_BRANCH for exactly this, since the commits API
+        # only indexes commits present in the base repo and misses fork
+        # PRs by SHA.
+        head_owner = os.environ["HEAD_OWNER"]
+        head_branch = os.environ["HEAD_BRANCH"]
+        by_head = resolve_pr_by_head(token, base_repo, head_owner, head_branch)
+        if by_head is None:
+            # No open PR for this branch -- most likely merged or closed
+            # while this run was in flight. Falling through to
+            # resolve_pr_number here would hit the exact fork-indexing gap
+            # HEAD_OWNER/HEAD_BRANCH exists to route around, misreporting
+            # "no PR found for this commit" when the real story is "no
+            # OPEN PR for this branch".
+            print("No open PR for %s:%s; skipping." % (head_owner, head_branch))
+            return 0
+        if is_stale_head(by_head, sha):
+            # A later push has already moved this branch's PR past the
+            # commit this run built. Posting now could race a newer run's
+            # screenshots-comment finishing first and silently overwrite
+            # the correct, current comment with a stale one. Not a
+            # failure -- the run for the newer head handles (or already
+            # handled) the comment correctly.
+            print("PR head has moved past %s (now %s); skipping stale comment."
+                  % (sha, by_head["head"]["sha"]))
+            return 0
+        pr_number = by_head["number"]
+    else:
+        pr_number = resolve_pr_number(token, base_repo, sha)
 
-    pngs = []
-    if os.path.isdir(shots_dir):
-        for name in sorted(os.listdir(shots_dir)):
-            if name.lower().endswith(".png"):
-                with open(os.path.join(shots_dir, name), "rb") as f:
-                    pngs.append((name, f.read()))
+    pngs, skipped = collect_pngs(shots_dir)
+    total_skipped = sum(skipped.values())
+    if total_skipped:
+        print("Skipped %d invalid file(s) in %s: %s"
+              % (total_skipped, shots_dir, skipped))
     if not pngs:
-        # No screenshots (non-UI run, or the artifact was missing): nothing
-        # to comment, and not a failure worth reddening CI over.
-        print("No PNGs in %s; skipping comment." % shots_dir)
+        # No screenshots (non-UI run, the artifact was missing, or every
+        # file failed validation): nothing to comment, and not a failure
+        # worth reddening CI over.
+        print("No valid PNGs in %s; skipping comment." % shots_dir)
         return 0
+    skipped_note = ""
+    if total_skipped:
+        skipped_note = (
+            "\n\n_%d file(s) in the artifact were skipped by validation "
+            "(invalid names: %d, not PNG data: %d, over 2 MB: %d, over the "
+            "%d-file cap: %d); only validated PNGs are published._"
+            % (total_skipped, skipped["invalid_name"], skipped["not_png"],
+               skipped["too_large"], MAX_SCREENSHOTS, skipped["over_cap"]))
 
     pat = os.environ.get("SCREENSHOTS_PUSH_TOKEN")
     if pat:
         urls = push_to_shots_repo(pat, shots_repo, pr_number, run_id, pngs)
+        # Names are allowlisted to [A-Za-z0-9._-], so they cannot close the
+        # code span or the image alt text early; URLs are percent-quoted in
+        # push_to_shots_repo.
         header = " | ".join("`%s`" % n for n, _ in pngs)
         sep = " | ".join("---" for _ in pngs)
         cells = " | ".join("![%s](%s)" % (n, urls[n]) for n, _ in pngs)
         body = ("%s\n## \U0001F4F8 UI Screenshots\n\n"
                 "%d screenshot(s) captured from `%s` ([run](%s)):\n\n"
-                "| %s |\n| %s |\n| %s |\n"
-                % (MARKER, len(pngs), sha[:7], run_url, header, sep, cells))
+                "| %s |\n| %s |\n| %s |%s\n"
+                % (MARKER, len(pngs), sha[:7], run_url, header, sep, cells,
+                   skipped_note))
     else:
         names = ", ".join("`%s`" % n for n, _ in pngs)
         body = ("%s\n## \U0001F4F8 UI Screenshots\n\n"
                 "%d screenshot(s) captured from `%s`: %s\n\n"
                 "[Download the PNGs from the workflow run artifacts](%s).\n\n"
                 "_Inline images need a `SCREENSHOTS_PUSH_TOKEN` repo secret "
-                "(fine-grained PAT with contents:write on the screenshots repo)._"
-                % (MARKER, len(pngs), sha[:7], names, run_url))
+                "(fine-grained PAT with contents:write on the screenshots "
+                "repo)._%s"
+                % (MARKER, len(pngs), sha[:7], names, run_url, skipped_note))
 
     comment_id = find_bot_comment(token, base_repo, pr_number)
     if comment_id:

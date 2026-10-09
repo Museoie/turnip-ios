@@ -52,8 +52,14 @@ jobs:
             gh issue create --title "$TRACKER_TITLE" --body-file "$RUNNER_TEMP/settings-report.md"
           fi
 
+      # The report is posted before the close so the comment trail carries what
+      # the run could read and what it could not: GITHUB_TOKEN is not a
+      # repository administrator, so the two scanning settings are unread on
+      # every scheduled run and the verdict being closed here covers the rest.
       - name: Close the tracking issue
         if: steps.check.outputs.drifted == 'false' && steps.tracker.outputs.number != ''
         env:
           TRACKER: ${{ steps.tracker.outputs.number }}
-        run: gh issue close "$TRACKER" --comment "Both settings match the documents again."
+        run: |
+          gh issue comment "$TRACKER" --body-file "$RUNNER_TEMP/settings-report.md"
+          gh issue close "$TRACKER" --comment "Every setting this run could read matches the documents again. The report above names any it could not read; this run claims nothing about those."

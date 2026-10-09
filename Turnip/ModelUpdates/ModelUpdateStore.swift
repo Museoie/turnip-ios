@@ -1,9 +1,10 @@
 import Foundation
 
-/// On-disk home for staged OTA models.
+/// On-disk home for staged OTA models. Not yet read by model loading (see
+/// `ModelUpdateService`); this is the contract that loading is meant to use.
 ///
-/// Layout inside `baseURL` (Application Support in production, a temp dir in
-/// tests):
+/// Layout inside `baseURL` (meant to be Application Support in the app, a temp
+/// dir in tests):
 /// - `<fileName>` — the staged model bytes, written atomically.
 /// - `active-model.json` — `{ "version": "...", "fileName": "..." }`, written
 ///   atomically *after* the bytes, so a crash between the two leaves the
@@ -17,14 +18,46 @@ import Foundation
 /// the full weights — the exact cost the "cheap manifest fetch per launch"
 /// requirement exists to prevent.
 struct ModelUpdateStore: Sendable {
+    /// Name of the sidecar file the store reserves for its own metadata. It
+    /// is never a valid staged-model name: `stage` rejects it so the model
+    /// bytes and the metadata record can never collide on one path. Compared
+    /// case-insensitively, because the store also runs on case-insensitive
+    /// filesystems (macOS test runners), where `ACTIVE-MODEL.JSON` would hit
+    /// the same path.
+    private static let metadataFileName = "active-model.json"
+
+    /// The scalar allowlist for staged file names: ASCII only
+    /// (`[A-Za-z0-9._-]`). `CharacterSet.alphanumerics` is Unicode-wide and
+    /// would admit lookalikes (Cyrillic `м` is an alphanumeric), while the
+    /// documented contract is ASCII, so the set is spelled out explicitly.
+    private static let fileNameAllowedScalars = CharacterSet(charactersIn:
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+
+    /// The single fileName predicate every enforcement point uses. Both the
+    /// service's pre-download gate and `stage`'s write-time gate call this,
+    /// so the two can never disagree on one name — a name rejected here is
+    /// rejected before any download, and the write-time gate catches any
+    /// caller that bypasses the service.
+    ///
+    /// Valid names are a non-empty ASCII allowlist, a single path component
+    /// (no slashes, not `.` or `..`), and never the store's own metadata
+    /// name — compared case-insensitively, because the store also runs on
+    /// case-insensitive filesystems (macOS test runners), where
+    /// `ACTIVE-MODEL.JSON` would hit the same path as `active-model.json`.
+    static func validate(fileName: String) throws {
+        let safe = !fileName.isEmpty
+            && fileName != "."
+            && fileName != ".."
+            && fileName.unicodeScalars.allSatisfy(fileNameAllowedScalars.contains)
+            && fileName.lowercased() != metadataFileName
+        guard safe else {
+            throw ModelUpdateError.invalidManifest
+        }
+    }
+
     /// Directory holding the staged model and its metadata. Not created until
     /// the first stage — a store that never stages anything leaves no trace.
     let baseURL: URL
-
-    /// The sidecar file name, hoisted so `stage()` can reject it: staging a
-    /// model *under* this name would let the metadata write overwrite the
-    /// model bytes it just staged (or vice versa), corrupting the store.
-    private static let metadataFileName = "active-model.json"
 
     init(baseURL: URL) {
         self.baseURL = baseURL
@@ -46,21 +79,11 @@ struct ModelUpdateStore: Sendable {
     /// Atomically replaces the staged model. Bytes land first, metadata
     /// second (see the layout note above).
     func stage(modelData: Data, version: ModelVersion, fileName: String) throws {
-        // Reject hostile file names before touching the filesystem: the name
-        // must be a single path component (no slashes, not empty, not "." or
-        // "..") so a malicious manifest can't stage outside the store dir.
-        // The store's own sidecar name is rejected too — staging a model as
-        // "active-model.json" would collide with the metadata file written
-        // right after the bytes. The comparison is case-insensitive because
-        // the iOS data volume is case-insensitive APFS: "ACTIVE-MODEL.JSON"
-        // would land on the same file as "active-model.json" on device.
-        guard !fileName.isEmpty,
-              !fileName.contains("/"),
-              fileName != ".",
-              fileName != "..",
-              fileName.lowercased() != Self.metadataFileName else {
-            throw ModelUpdateError.invalidManifest
-        }
+        // The write-time gate (one shared predicate, see validate(fileName:) above): rejects
+        // hostile names, the reserved metadata name, and non-ASCII names
+        // before touching the filesystem, so a malicious manifest can't
+        // stage outside the store dir or collide with the sidecar record.
+        try Self.validate(fileName: fileName)
         try FileManager.default.createDirectory(
             at: baseURL, withIntermediateDirectories: true)
         try modelData.write(
@@ -68,23 +91,6 @@ struct ModelUpdateStore: Sendable {
         let payload = try JSONEncoder().encode(
             StoredModel(version: version.rawValue, fileName: fileName))
         try payload.write(to: metadataURL, options: .atomic)
-    }
-
-    /// Evicts the staged record — metadata and bytes — so the next update check re-stages
-    /// from the manifest instead of reusing a file the loader has already proven bad. The
-    /// service short-circuits re-downloads while a record with an older-or-equal version
-    /// exists, so without eviction a wrong-variant publish would repeat the wasted staged
-    /// load on every run until a newer manifest ships.
-    ///
-    /// Best-effort: a failure to delete is swallowed because eviction always runs on an
-    /// already-failing load path, where a second error would only mask the first. Only ever
-    /// called for content/shape failures (see `MoveNetThunderModel.load()`), never transient
-    /// ones — dropping a good model on an OOM would be worse than the retry.
-    func clearActive() {
-        guard let record = try? readRecord() else { return }
-        try? FileManager.default.removeItem(
-            at: baseURL.appendingPathComponent(record.fileName))
-        try? FileManager.default.removeItem(at: metadataURL)
     }
 
     private var metadataURL: URL {
@@ -105,23 +111,4 @@ struct ModelUpdateStore: Sendable {
 private struct StoredModel: Codable {
     var version: String
     var fileName: String
-}
-
-extension ModelUpdateStore {
-    /// The store the app actually wires: `<Application Support>/ModelUpdates`.
-    /// The directory is not created until the first stage — a device that
-    /// never receives an update leaves no trace on disk.
-    ///
-    /// Optional because `urls(for:in:)` can theoretically return nothing; the
-    /// loader and the lifecycle hook both treat a missing directory the way
-    /// they treat an empty store (nothing staged, nothing to do).
-    static var production: ModelUpdateStore? {
-        FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first.map {
-            ModelUpdateStore(
-                baseURL: $0.appendingPathComponent(
-                    "ModelUpdates", isDirectory: true))
-        }
-    }
 }

@@ -28,8 +28,17 @@
 	<true/>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Turnip saves the clips it creates to your Photos library.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Turnip uses the camera so you can record a trick to analyze.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Turnip records audio along with the video when you take a trick.</string>
 	<key>UILaunchScreen</key>
-	<dict/>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+		<key>UIImageName</key>
+		<string>LaunchLogo</string>
+	</dict>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

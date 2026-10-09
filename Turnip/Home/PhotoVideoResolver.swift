@@ -34,6 +34,19 @@ enum VideoResolutionError: LocalizedError {
     }
 }
 
+/// Where a `PhotoVideoResolver.resolve(_:onProgress:)` call currently is, so the UI can label
+/// each phase honestly instead of branching on whether a bare download fraction happens to be
+/// non-nil.
+enum ResolutionProgress: Equatable, Sendable {
+    /// An iCloud download is in flight, with PhotoKit's 0…1 fraction. Only assets PhotoKit
+    /// actually downloads ever report this; a local asset resolves without a single event.
+    case downloading(Double)
+    /// The download (if there was one) finished and the composition export started. Emitted
+    /// exactly once, immediately before the export begins — never for assets that resolve to a
+    /// URL directly.
+    case exporting
+}
+
 /// Resolves a `PHAsset` to an `AVURLAsset` the pipeline can read.
 ///
 /// The common case is free: Photos returns an `AVURLAsset` for ordinary recordings, and that object
@@ -42,16 +55,22 @@ enum VideoResolutionError: LocalizedError {
 /// same path is not guaranteed to open. Two slower paths:
 ///
 /// - **iCloud-only assets.** `isNetworkAccessAllowed` is on, so Photos downloads first and reports
-///   through `onProgress`; the caller shows that progress because a multi-hundred-MB download on
-///   cellular is not instant. Failures surface as `.iCloudDownloadFailed`, not a generic error.
+///   `.downloading` fractions through `onProgress`; the caller shows that progress because a
+///   multi-hundred-MB download on cellular is not instant. Failures surface as
+///   `.iCloudDownloadFailed`, not a generic error.
 /// - **Compositions.** Slow-motion and edited videos come back as `AVComposition`s, which have no
-///   URL. Those are exported to a temp file and returned as an `AVURLAsset` on that file.
+///   URL. Those are exported to a temp file and returned as an `AVURLAsset` on that file; the
+///   export is reported through `onProgress` as `.exporting`, because it is a second, often
+///   slower phase the download bar must not pretend to measure.
 ///
 /// Task cancellation cancels the in-flight PhotoKit request or export.
 struct PhotoVideoResolver {
     var imageManager: PHImageManager = .default()
 
-    func resolve(_ asset: PHAsset, onProgress: @escaping @Sendable (Double) -> Void) async throws -> AVURLAsset {
+    func resolve(
+        _ asset: PHAsset,
+        onProgress: @escaping @Sendable (ResolutionProgress) -> Void
+    ) async throws -> AVURLAsset {
         let options = PHVideoRequestOptions()
         options.isNetworkAccessAllowed = true
         options.version = .current
@@ -62,7 +81,7 @@ struct PhotoVideoResolver {
         let sawDownload = DownloadFlag()
         options.progressHandler = { progress, _, _, _ in
             sawDownload.set()
-            onProgress(progress)
+            onProgress(.downloading(progress))
         }
 
         let avAsset: AVAsset = try await request(
@@ -83,6 +102,9 @@ struct PhotoVideoResolver {
         }
         // Don't start an export the user has already backed out of.
         try Task.checkCancellation()
+        // The download phase (if there was one) is over: report the composition export so the
+        // UI drops the determinate download bar instead of leaving it parked at 100%.
+        onProgress(.exporting)
         return try await export(asset, options: options)
     }
 
@@ -90,7 +112,7 @@ struct PhotoVideoResolver {
 
     /// Filename prefix for the composition exports `export()` writes into the temp directory.
     /// A bare UUID would be indistinguishable from every other temp file; the prefix lets
-    /// `deleteTemporaryExport(for:)` and `deleteOrphanedTemporaryExports()` recognize files
+    /// `deleteTemporaryExport(for:)` and `deleteOrphanedTemporaryExports(olderThan:)` recognize files
     /// this resolver created — and only those.
     static let temporaryExportFilenamePrefix = "turnip-composition-export-"
 

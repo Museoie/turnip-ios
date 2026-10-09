@@ -200,7 +200,7 @@ final class ThumbnailLoaderCachingTests: XCTestCase {
 
 /// A `PHAsset` that carries nothing but a `localIdentifier`, which is the only property the window
 /// diffing reads.
-private final class StubAsset: PHAsset {
+private final class StubAsset: PHAsset, @unchecked Sendable {
     private let identifier: String
 
     init(_ identifier: String) {
@@ -212,7 +212,7 @@ private final class StubAsset: PHAsset {
 }
 
 /// Records the caching calls by identifier so they can be asserted without a real photo library.
-private final class RecordingCachingImageManager: PHCachingImageManager {
+private final class RecordingCachingImageManager: PHCachingImageManager, @unchecked Sendable {
     private(set) var started: [[String]] = []
     private(set) var stopped: [[String]] = []
     private(set) var stoppedAllCount = 0

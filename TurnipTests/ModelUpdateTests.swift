@@ -255,9 +255,8 @@ final class ModelUpdateTests: XCTestCase {
 
     /// A cancelled check is a deliberate stop, not a failed update: a
     /// `CancellationError` thrown mid-check must not be recorded on
-    /// `lastError` where it would be misreported as an update failure. This
-    /// test fails against the old single-catch implementation, which boxed
-    /// the cancellation into `.network(underlying:)`.
+    /// `lastError` where it would be misreported as an update failure — boxing
+    /// it into `.network(underlying:)` would fail this.
     func testCheckForUpdatesIgnoresCancellationError() async throws {
         let store = makeStore()
         let client = MockModelUpdateClient()
@@ -367,6 +366,31 @@ final class ModelUpdateTests: XCTestCase {
         }
     }
 
+    /// The store's reserved metadata name must be rejected by the
+    /// *pre-download* gate, not discovered after the full weights have moved:
+    /// a manifest naming `active-model.json` records `invalidManifest` and
+    /// makes no download request, so a hostile manifest can't force a
+    /// per-launch model download that the store will discard.
+    func testReservedFileNameIsRejectedBeforeDownload() async throws {
+        let store = makeStore()
+        let client = MockModelUpdateClient()
+        let bytes = Data("fake-model-bytes".utf8)
+        await client.setManifest(
+            makeManifest(version: "2026.09.10-1", bytes: bytes, fileName: "active-model.json"))
+        await client.setDownloadBytes(bytes)
+
+        let service = makeService(client: client, store: store)
+        await service.checkForUpdates()
+
+        XCTAssertNil(store.activeModelURL())
+        let downloads = await client.downloadRequests
+        XCTAssertTrue(downloads.isEmpty, "no bytes should move for a reserved name")
+        let lastError = await service.lastError
+        guard case .invalidManifest? = lastError else {
+            return XCTFail("expected invalidManifest, got \(String(describing: lastError))")
+        }
+    }
+
     // MARK: - Configuration
 
     /// Absent, blank, and non-https endpoint values all keep OTA updates
@@ -453,6 +477,47 @@ final class ModelUpdateTests: XCTestCase {
                 stagedPath: staged))
     }
 
+    /// The documented allowlist is ASCII (`[A-Za-z0-9._-]`), but
+    /// `CharacterSet.alphanumerics` is Unicode-wide: a Cyrillic lookalike
+    /// (`"мodel.tflite"`, Cyrillic `м`) must be rejected at both gates — the
+    /// service's pre-download gate and the store's write-time gate.
+    func testNonASCIIFileNameIsRejectedAtBothGates() async throws {
+        let cyrillicName = "мodel.tflite" // first scalar is U+043C CYRILLIC SMALL LETTER EM
+        XCTAssertFalse(
+            cyrillicName.unicodeScalars.first!.isASCII,
+            "test setup: first scalar must be non-ASCII")
+
+        // Pre-download gate: no download, invalidManifest recorded.
+        let store = makeStore()
+        let client = MockModelUpdateClient()
+        let bytes = Data("fake-model-bytes".utf8)
+        await client.setManifest(
+            makeManifest(version: "2026.09.10-1", bytes: bytes, fileName: cyrillicName))
+        await client.setDownloadBytes(bytes)
+
+        let service = makeService(client: client, store: store)
+        await service.checkForUpdates()
+
+        let downloads = await client.downloadRequests
+        XCTAssertTrue(downloads.isEmpty, "no bytes should move for a non-ASCII name")
+        let lastError = await service.lastError
+        guard case .invalidManifest? = lastError else {
+            return XCTFail("expected invalidManifest, got \(String(describing: lastError))")
+        }
+
+        // Write-time gate: staging directly also throws.
+        do {
+            try store.stage(
+                modelData: bytes, version: ModelVersion("2026.09.10-1"),
+                fileName: cyrillicName)
+            XCTFail("expected invalidManifest for '\(cyrillicName)'")
+        } catch ModelUpdateError.invalidManifest {
+            // expected
+        } catch {
+            XCTFail("expected invalidManifest, got \(error)")
+        }
+    }
+
     // MARK: - Store
 
     /// Staging a model under the store's own sidecar name must throw
@@ -482,9 +547,7 @@ final class ModelUpdateTests: XCTestCase {
 
     /// The store enforces the fileName allowlist itself: staging directly with
     /// a traversal name must throw `invalidManifest` and stage nothing, even
-    /// without the service's manifest validation in the loop. This test fails
-    /// against the old implementation, which wrote whatever name it was
-    /// handed.
+    /// without the service's manifest validation in the loop.
     func testStoreStageRejectsUnsafeFileName() throws {
         let store = makeStore()
         let version = ModelVersion("2026.09.10-1")
@@ -530,6 +593,36 @@ final class ModelUpdateTests: XCTestCase {
         store.clearActive()
         XCTAssertNil(store.activeVersion())
         XCTAssertNil(store.activeModelURL())
+    }
+
+    /// The store's own metadata name is reserved: staging a model as
+    /// `active-model.json` must throw `invalidManifest` and leave the store
+    /// untouched. This test fails against the unfixed implementation, which
+    /// wrote the model bytes onto the sidecar path and then let the metadata
+    /// record overwrite them, so the store reported the JSON sidecar as the
+    /// staged model.
+    func testStoreStageRejectsMetadataFileName() throws {
+        let store = makeStore()
+        let version = ModelVersion("2026.09.10-1")
+        for fileName in ["active-model.json", "ACTIVE-MODEL.JSON"] {
+            do {
+                try store.stage(
+                    modelData: Data("fake-model-bytes".utf8),
+                    version: version, fileName: fileName)
+                XCTFail("expected invalidManifest for '\(fileName)'")
+            } catch ModelUpdateError.invalidManifest {
+                // expected
+            } catch {
+                XCTFail("expected invalidManifest, got \(error)")
+            }
+            XCTAssertNil(
+                store.activeVersion(), "nothing staged for '\(fileName)'")
+            XCTAssertNil(
+                store.activeModelURL(), "no model reported for '\(fileName)'")
+        }
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: store.baseURL.path),
+            "store directory untouched by rejected stages")
     }
 
     // MARK: - Client

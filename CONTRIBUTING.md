@@ -73,7 +73,8 @@ official Swift Package Manager distribution. Setup, in order:
    instead (known CocoaPods/Ruby issue, unrelated to this project)
 6. Download the MoveNet Thunder model per
    [`Turnip/Models/README.md`](Turnip/Models/README.md) — the app builds and runs
-   without it, but the pose diagnostic screen needs it to do anything.
+   without it, but nothing pose-related does: live pose on the camera and
+   Processing's analysis both need it.
 7. **Open `Turnip.xcworkspace`, not `Turnip.xcodeproj`.** CocoaPods requires the
    workspace; opening the bare project will fail to resolve `TensorFlowLiteSwift`.
 
@@ -95,13 +96,15 @@ Everything this project pins has a named updater, so no pin rots unnoticed:
 | CocoaPods and the gems it resolves | `Gemfile.lock` | Dependabot (`bundler`, weekly) |
 | `TensorFlowLiteSwift` | `Podfile.lock` | `dependency-check.yml` (weekly) |
 | XcodeGen and its archive checksum | `ci_scripts/install-xcodegen.sh` | `dependency-check.yml` (weekly) |
+| SwiftLint and its archive checksum | `ci_scripts/install-swiftlint.sh` | `dependency-check.yml` (weekly) |
+| gitleaks and its archive checksums | `ci_scripts/install-gitleaks.sh` | `dependency-check.yml` (weekly) |
 
 Dependabot has no CocoaPods ecosystem, and no notion of a shell script that
-downloads a release asset, so the last two are watched by
+downloads a release asset, so the last four are watched by
 [`.github/workflows/dependency-check.yml`](.github/workflows/dependency-check.yml)
-instead. It runs `ci_scripts/check-unwatched-pins.sh`, which compares both pins
+instead. It runs `ci_scripts/check-unwatched-pins.sh`, which compares the four pins
 against the newest published release and opens a tracking issue when one has
-moved — refreshing that issue's body on later runs, and closing it once both
+moved — refreshing that issue's body on later runs, and closing it once all four
 pins are current again. The same check runs locally:
 
 ```
@@ -124,6 +127,41 @@ shasum -a 256 /tmp/xcodegen.zip
 
 The setup steps above pin the same version for local development; update those
 too, and re-run `xcodegen generate` to confirm the emitted project still opens.
+
+### Bumping SwiftLint
+
+`VERSION` and `SHA256` in `ci_scripts/install-swiftlint.sh` are the only copies
+CI reads. Regenerate the checksum from the asset the new release publishes,
+since the version in the URL pins a name and the checksum pins the bytes:
+
+```
+curl -fsSL -o /tmp/swiftlint.zip \
+  https://github.com/realm/SwiftLint/releases/download/<version>/portable_swiftlint.zip
+shasum -a 256 /tmp/swiftlint.zip
+```
+
+`swiftlint lint --strict` is a hard merge gate, so install the new version
+locally and confirm the repo still lints clean before pushing the bump.
+
+### Bumping gitleaks
+
+`VERSION` and both `SHA256_*` values in `ci_scripts/install-gitleaks.sh` are the
+only copies CI reads. gitleaks publishes one archive per platform, so each
+architecture has its own checksum and both belong to the same version:
+
+```
+for asset in darwin_arm64 darwin_x64; do
+  curl -fsSL -o "/tmp/gitleaks_$asset.tar.gz" \
+    "https://github.com/gitleaks/gitleaks/releases/download/v<version>/gitleaks_<version>_$asset.tar.gz"
+  shasum -a 256 "/tmp/gitleaks_$asset.tar.gz"
+done
+```
+
+A new version can recognise patterns the old one did not, so run
+`ci_scripts/scan-secrets.sh` over the working tree with the new binary before
+pushing the bump — a version that starts matching something already committed
+turns every open pull request red at once, and that is worth finding on the
+bump rather than on someone else's branch.
 
 ### Bumping TensorFlowLiteSwift
 
@@ -156,13 +194,16 @@ files are committed; they change together.
 
 The setting behind *CI must pass before merge* — a required `build-and-test`
 check on `main` — is repository configuration rather than a file, as is the
-private reporting route [`SECURITY.md`](SECURITY.md) offers alongside email.
-Neither shows up in a diff, so
+private reporting route [`SECURITY.md`](SECURITY.md) offers alongside email,
+and as are secret scanning and its push protection. None of them shows up in a
+diff, so
 [`ci_scripts/check-repo-settings.sh`](ci_scripts/check-repo-settings.sh)
-compares both against what these documents say — weekly from
+reports on all four — weekly from
 [`.github/workflows/repo-settings-check.yml`](.github/workflows/repo-settings-check.yml),
-which opens a tracking issue while one is missing and closes it once both are
-in place. The same check runs locally:
+which opens a tracking issue while one is missing and closes it once they are
+all in place. The scanning settings are readable only by a caller with admin
+access; run with any other token the check says so rather than guessing. The
+same check runs locally:
 
 ```
 ci_scripts/check-repo-settings.sh
@@ -195,8 +236,8 @@ prints the device it chose and then the UDID on its own line, hence the
 
 ## Lint
 
-SwiftLint runs in CI on every PR (`lint + build + test` — see
-`.github/workflows/ci.yml`) and as a step of Xcode Cloud's
+SwiftLint runs in CI on every PR (the `build-and-test` job's `Lint` step —
+see `.github/workflows/ci.yml`) and as a step of Xcode Cloud's
 `ci_scripts/ci_post_clone.sh`. It is a hard gate: both pipelines run
 `swiftlint lint --strict`, so warnings fail the run too.
 
@@ -225,17 +266,25 @@ SwiftLint runs in CI on every PR (`lint + build + test` — see
 ## Code organization
 
 `Turnip/` is a single Xcode target; its subdirectories are flat, one per
-domain, named for the domain they own (`App`, `Home`, `Models`, `Pose`,
-`PoseDiagnostic`, `Resources`, `TrickDetection`).
+domain, named for the domain they own (`App`, `Camera`, `ClipEditor`,
+`ClipList`, `DesignSystem`, `Home`, `LivePose`, `Media`, `ModelUpdates`,
+`Models`, `Photos`, `Pose`, `Processing`, `Resources`,
+`Settings`, `TrickDetection`).
+`ci_scripts/check-directory-list.sh` compares that list against the tree on
+every PR, so adding a directory without naming it here fails CI.
 
 - A new screen or feature adds a new top-level directory. A directory named
   for a screen keeps only that screen's view, view model, and screen-private
   helpers.
 - Shared pipeline infrastructure lives in its own domain directory — never
-  under a feature screen's directory. The v1 pose pipeline's model types
-  live in `Turnip/Pose/` (not `Turnip/PoseDiagnostic/`, which is the throwaway
-  measurement screen) precisely so deleting the screen never strands
-  load-bearing code.
+  under a feature screen's directory. The v1 pose pipeline's model types,
+  the keypoint overlay and the per-frame pose logger live in `Turnip/Pose/`
+  rather than under the screen that draws the overlay (`Turnip/Processing/`),
+  so deleting or reworking a screen never strands load-bearing code.
+  Likewise the live capture-side pose path lives in `Turnip/LivePose/`,
+  not `Turnip/Camera/`: the camera screen drives it, but the frame gate,
+  queue, thermal policy and coverage rule are pipeline code with their own
+  tests, and only the preview overlay's drawing sits with the camera.
 - `project.yml` takes `Turnip/` (and `TurnipTests/`) wholesale, so a
   subdirectory rename is picked up by `xcodegen generate` with no
   `project.yml` change.
@@ -272,3 +321,26 @@ exist for bug reports and feature requests.
 
 Do not open a public issue for security vulnerabilities. See
 [SECURITY.md](SECURITY.md) for the responsible disclosure process.
+
+### Credentials
+
+This repository is public, so a credential committed to it is compromised the
+moment it is pushed — rewriting the history afterwards does not un-publish it.
+Two things guard against that, and neither replaces reading your own diff:
+
+- `ci_scripts/scan-secrets.sh` runs in CI on every pull request over the
+  commits the branch adds, so a credential added and then deleted before review
+  is still caught. Run it locally the same way CI does:
+
+  ```
+  ci_scripts/install-gitleaks.sh "$HOME/.local"
+  PATH="$HOME/.local/bin:$PATH" ci_scripts/scan-secrets.sh origin/main
+  ```
+
+- `.gitignore` covers the code-signing and API credential material an iOS
+  project accumulates — `*.p12`, `*.mobileprovision`, `AuthKey_*.p8`,
+  `ExportOptions.plist`, `.env` and their siblings — so `git add -A` does not
+  stage one by accident.
+
+If a credential does reach a branch, treat it as leaked: rotate it first, and
+only then worry about the history.

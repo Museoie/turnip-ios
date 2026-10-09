@@ -12,11 +12,17 @@ import Foundation
 struct ClipSpec: Equatable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
+    let cropAdjustment: CropAdjustment
+
+    init(window: TrickWindow, cropRect: NormalizedRect, cropAdjustment: CropAdjustment = .identity) {
+        self.window = window
+        self.cropRect = cropRect
+        self.cropAdjustment = cropAdjustment
+    }
 }
 
 /// A successfully exported clip.
 struct ExportedClip: Sendable {
-    let spec: ClipSpec
     let fileURL: URL
 }
 
@@ -43,8 +49,7 @@ struct ClipExportTransform {
     /// `cropRect` is normalized in the *displayed* (upright) frame's space — the same space
     /// as the pose keypoints it is computed from, since the frame sampler applies the
     /// track's `preferredTransform` when decoding. It is denormalized against the displayed
-    /// size (the bounding box of the encoded frame's corners through `preferredTransform`),
-    /// not `naturalSize`: on a 90°-rotated track those differ by a transpose, and
+    /// size (`VideoTrackGeometry`), not `naturalSize`: on a 90°-rotated track those differ by a transpose, and
     /// denormalizing a display-normalized rect in the encoded size silently crops the wrong
     /// region. The layer transform therefore uprights the encoded frame into origin-based
     /// displayed space and then translates the crop's displayed top-left corner to the
@@ -58,30 +63,38 @@ struct ClipExportTransform {
     ///
     /// `nil` when the source dimensions are unknown or the crop rect is degenerate — in
     /// either case there is no frame to render into.
+    ///
+    /// `cropAdjustment` is the editor's manual pinch/rotate/drag on top of `cropRect`: the
+    /// crop rect's on-screen marker stays fixed, so the adjustment transforms the *video*
+    /// around the rect's center, and the export has to reproduce that exactly — the
+    /// render frame stays `cropRect`'s own size, only the source content landing inside it
+    /// changes. At `.identity` this reduces to the un-adjusted crop translation.
     static func make(
         cropRect: NormalizedRect,
         naturalSize: CGSize,
-        preferredTransform: CGAffineTransform
+        preferredTransform: CGAffineTransform,
+        cropAdjustment: CropAdjustment = .identity
     ) -> ClipExportTransform? {
-        guard naturalSize.width > 0, naturalSize.height > 0 else { return nil }
+        // The crop is already in displayed space (`VideoTrackGeometry`), so after the upright
+        // transform its top-left subtracts directly — no second trip through preferredTransform.
+        let geometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
+        guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
 
-        // The displayed (upright) frame: the bounding box of the encoded frame's corners
-        // through preferredTransform. On a 90°-rotated track this transposes naturalSize.
-        let displayedFrame = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
-        let displayedSize = CGSize(
-            width: abs(displayedFrame.width), height: abs(displayedFrame.height))
-        let crop = cropRect.denormalized(in: displayedSize)
-        guard crop.width > 0, crop.height > 0 else { return nil }
-
-        // Upright the encoded frame into origin-based displayed space: a rotation about
-        // the origin can place the content outside [0, displayedSize], so the transform
-        // is normalized by the displayed frame's origin before the crop offset applies.
-        // The crop itself is already in displayed space (denormalized above), so its
-        // top-left subtracts directly — no second trip through preferredTransform.
-        let uprightTransform = preferredTransform.concatenating(CGAffineTransform(
-            translationX: -displayedFrame.minX, y: -displayedFrame.minY))
-        let layerTransform = uprightTransform.concatenating(CGAffineTransform(
-            translationX: -crop.minX, y: -crop.minY))
+        // Maps upright displayed-space points into the crop's render space, anchored on
+        // the crop rect's own center so the preview's fixed marker rectangle and this
+        // export transform agree: un-anchor, apply the user's scale/rotation about the
+        // origin (they commute — both are uniform/linear), then re-anchor and land the
+        // crop's top-left at the render origin. At identity (scale 1, no rotation, no
+        // offset) this is exactly `translate(-crop.minX, -crop.minY)`, the un-adjusted
+        // crop translation.
+        let anchor = CGPoint(x: crop.midX, y: crop.midY)
+        let cropTransform = CGAffineTransform(translationX: -anchor.x, y: -anchor.y)
+            .concatenating(CGAffineTransform(rotationAngle: cropAdjustment.rotationRadians))
+            .concatenating(CGAffineTransform(scaleX: cropAdjustment.scale, y: cropAdjustment.scale))
+            .concatenating(CGAffineTransform(
+                translationX: anchor.x + cropAdjustment.offset.width - crop.minX,
+                y: anchor.y + cropAdjustment.offset.height - crop.minY))
+        let layerTransform = geometry.uprightTransform.concatenating(cropTransform)
 
         // H.264 requires integral, even width and height, and the crop math above is
         // float — round here. The layer transform already pins the crop's displayed
@@ -92,6 +105,29 @@ struct ClipExportTransform {
             height: crop.height.roundedToEvenDimensions)
 
         return ClipExportTransform(renderSize: renderSize, layerTransform: layerTransform)
+    }
+
+    /// Builds an `AVMutableVideoComposition` applying this transform to `track`, covering
+    /// `duration` from the start with a single instruction — shared by `ClipExporter`
+    /// (over a trimmed composition track) and the clip list's live preview player (over
+    /// the untrimmed source track; `AVPlayerLooper`'s own `timeRange` bounds what
+    /// actually loops, this only shapes the frame). `frameRate` falls back to 30 when the
+    /// track doesn't report one, rather than a 1 fps timescale, to keep the render clock
+    /// sane.
+    func makeVideoComposition(
+        for track: AVAssetTrack, duration: CMTime, frameRate: Float
+    ) -> AVMutableVideoComposition {
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = renderSize
+        let timescale = frameRate > 0 ? Int32(frameRate.rounded()) : 30
+        videoComposition.frameDuration = CMTime(value: 1, timescale: timescale)
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        layerInstruction.setTransform(layerTransform, at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        videoComposition.instructions = [instruction]
+        return videoComposition
     }
 }
 
@@ -143,8 +179,8 @@ struct ClipInsertRanges {
 ///
 /// An actor so the `AVAssetExportSession` — which is not `Sendable` — stays confined off the
 /// main thread while exports run; per-frame decoding and encoding never touch the main
-/// thread. The exporter is UI-independent: it takes clip specs and returns file URLs, and a
-/// preview screen or a test calls it the same way. Writing the files to Photos is
+/// thread. The exporter is UI-independent: it takes clip specs and returns file URLs, and the
+/// clip list's Save Clips or a test calls it the same way. Writing the files to Photos is
 /// `ClipPhotosSaver`'s job, and the caller owns the output directory (and cleaning it up).
 actor ClipExporter {
     /// Per-clip progress: 0.0-1.0 fraction of this clip's export completed.
@@ -220,7 +256,8 @@ actor ClipExporter {
         let naturalSize = try await videoTrack.load(.naturalSize)
         let preferredTransform = try await videoTrack.load(.preferredTransform)
         guard let transform = ClipExportTransform.make(
-            cropRect: spec.cropRect, naturalSize: naturalSize, preferredTransform: preferredTransform
+            cropRect: spec.cropRect, naturalSize: naturalSize, preferredTransform: preferredTransform,
+            cropAdjustment: spec.cropAdjustment
         ) else {
             throw ClipExportError.invalidCropRect(window: spec.window)
         }
@@ -230,8 +267,8 @@ actor ClipExporter {
             start: CMTime(seconds: range.lowerBound, preferredTimescale: 600),
             end: CMTime(seconds: range.upperBound, preferredTimescale: 600))
         // The ranges are computed here, where spec.window is in hand, so an empty video
-        // range reports invalidTimeRange (a deterministic bad window) instead of the
-        // retryable exportFailed that a window-less makeComposition had to throw.
+        // range reports invalidTimeRange (a deterministic bad window), not the retryable
+        // exportFailed.
         let videoTrackRange = try await videoTrack.load(.timeRange)
         let audioTrackRange = try await audioTrack?.load(.timeRange)
         guard let ranges = Self.insertRanges(
@@ -258,7 +295,7 @@ actor ClipExporter {
         session.videoComposition = videoComposition
 
         try await runExport(session, progress: progress)
-        return ExportedClip(spec: spec, fileURL: outputURL)
+        return ExportedClip(fileURL: outputURL)
     }
 
     /// Deletes any file already at `url`. Export sessions refuse to write over an
@@ -312,23 +349,12 @@ actor ClipExporter {
         in composition: AVMutableComposition,
         transform: ClipExportTransform
     ) async throws -> AVMutableVideoComposition {
-        let videoComposition = AVMutableVideoComposition()
-        videoComposition.renderSize = transform.renderSize
         let frameRate = try await videoTrack.load(.nominalFrameRate)
-        // nominalFrameRate is 0 on assets that don't report one; fall back to 30 rather
-        // than a 1 fps timescale so the render clock stays sane.
-        let timescale = frameRate > 0 ? Int32(frameRate.rounded()) : 30
-        videoComposition.frameDuration = CMTime(value: 1, timescale: timescale)
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: composition.duration)
         guard let compositionTrack = composition.tracks(withMediaType: .video).first else {
             throw ClipExportError.exportFailed(reason: "composition lost its video track")
         }
-        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionTrack)
-        layerInstruction.setTransform(transform.layerTransform, at: .zero)
-        instruction.layerInstructions = [layerInstruction]
-        videoComposition.instructions = [instruction]
-        return videoComposition
+        return transform.makeVideoComposition(
+            for: compositionTrack, duration: composition.duration, frameRate: frameRate)
     }
 
     /// Runs the session to a terminal state, reporting progress along the way.
@@ -366,33 +392,5 @@ actor ClipExporter {
         } onCancel: {
             box.session.cancelExport()
         }
-    }
-
-    /// Exports every clip, collecting a per-clip `Result` so one bad window doesn't abort the
-    /// rest — multi-trick recordings routinely produce a window the trimmer has to reject.
-    /// Results come back in the same order as `specs`. If the task is cancelled, the
-    /// in-flight clip records `.cancelled` and the remaining clips are skipped:
-    /// cancellation stops the batch instead of failing every clip after it.
-    func export(
-        _ specs: [ClipSpec],
-        from asset: AVAsset,
-        to directory: URL,
-        progress: (@Sendable (Int, Double) -> Void)? = nil
-    ) async -> [Result<ExportedClip, Error>] {
-        var results: [Result<ExportedClip, Error>] = []
-        for (index, spec) in specs.enumerated() {
-            // Cancellation is not a bad window — stop instead of recording a failure
-            // per remaining clip.
-            guard !Task.isCancelled else { break }
-            do {
-                let clip = try await export(spec, from: asset, to: directory) { fraction in
-                    progress?(index, fraction)
-                }
-                results.append(.success(clip))
-            } catch {
-                results.append(.failure(error))
-            }
-        }
-        return results
     }
 }

@@ -166,6 +166,119 @@ final class FramePreprocessorTests: XCTestCase {
         XCTAssertEqual(padRight[0].y, 0.5, accuracy: 0.0001)
     }
 
+    // MARK: - Upright rotation
+
+    func testUprightTransformIsIdentityAtZeroDegrees() {
+        let extent = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+
+        let (transform, rotated) = FramePreprocessor.uprightTransform(forExtent: extent, clockwiseDegrees: 0)
+
+        XCTAssertEqual(transform, .identity)
+        XCTAssertEqual(rotated, extent)
+    }
+
+    func testUprightTransformSwapsDimensionsForAQuarterTurn() {
+        let extent = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+
+        for degrees in [90, 270] {
+            let (_, rotated) = FramePreprocessor.uprightTransform(forExtent: extent, clockwiseDegrees: degrees)
+            XCTAssertEqual(
+                rotated, CGRect(x: 0, y: 0, width: 1080, height: 1920),
+                "\(degrees)\u{b0} must swap width and height")
+        }
+    }
+
+    func testUprightTransformKeepsDimensionsForAHalfTurn() {
+        let extent = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+
+        let (_, rotated) = FramePreprocessor.uprightTransform(forExtent: extent, clockwiseDegrees: 180)
+
+        XCTAssertEqual(rotated, extent)
+    }
+
+    /// A value that is not a multiple of 90 is exactly what `LivePoseKeypointRotation.rotated`
+    /// also refuses to guess at — no capture connection ever reports one, so both types fall back
+    /// to leaving their input alone.
+    func testUprightTransformIsIdentityForANonQuarterTurn() {
+        let extent = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+
+        let (transform, rotated) = FramePreprocessor.uprightTransform(forExtent: extent, clockwiseDegrees: 45)
+
+        XCTAssertEqual(transform, .identity)
+        XCTAssertEqual(rotated, extent)
+    }
+
+    /// Rotating the pixels by `uprightTransform` and rotating a normalized
+    /// keypoint by `LivePoseKeypointRotation.rotatedPoint` must agree on where content moves for
+    /// every corner and every quarter turn, since production applies the first before
+    /// inference and relies on the second having already validated that same "clockwise degrees"
+    /// convention. A sign or axis error here would upright frames using an implicit rotation not
+    /// actually matching the sensor-to-movie relationship the app measures.
+    func testUprightTransformAgreesWithKeypointRotationOnEveryCorner() {
+        let extent = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let corners: [(Float, Float)] = [(0, 0), (1, 0), (0, 1), (1, 1)]
+
+        for degrees in [90, 180, 270] {
+            let (transform, rotated) = FramePreprocessor.uprightTransform(
+                forExtent: extent, clockwiseDegrees: degrees)
+
+            for (normalizedX, normalizedY) in corners {
+                // Frame-normalized coordinates (top-left origin, y down, what `rotatedPoint`
+                // reasons in) convert to Core Image pixel coordinates (bottom-left origin, y up)
+                // by flipping y only — x is not mirrored between the two conventions.
+                let sourcePixel = CGPoint(
+                    x: CGFloat(normalizedX) * extent.width,
+                    y: (1 - CGFloat(normalizedY)) * extent.height)
+                let transformedPixel = sourcePixel.applying(transform)
+
+                let (expectedNormalizedX, expectedNormalizedY) = LivePoseKeypointRotation.rotatedPoint(
+                    x: normalizedX, y: normalizedY, clockwiseDegrees: degrees)
+                let expectedPixel = CGPoint(
+                    x: CGFloat(expectedNormalizedX) * rotated.width,
+                    y: (1 - CGFloat(expectedNormalizedY)) * rotated.height)
+
+                XCTAssertEqual(
+                    transformedPixel.x, expectedPixel.x, accuracy: 1e-6,
+                    "\(degrees)\u{b0} x for corner (\(normalizedX), \(normalizedY))")
+                XCTAssertEqual(
+                    transformedPixel.y, expectedPixel.y, accuracy: 1e-6,
+                    "\(degrees)\u{b0} y for corner (\(normalizedX), \(normalizedY))")
+            }
+        }
+    }
+
+    /// A physically unambiguous rendered fixture, independent of the corner-math test above: a
+    /// 4x2 source lit only in its top-left quadrant, rendered through the real `CIContext`. Where
+    /// the lit region lands is checked against physically rotating a marked corner by hand — 90°
+    /// clockwise sends top-left to top-right, 180° to bottom-right, 270° to bottom-left — not
+    /// against a second derivation of the same formula, so a bug shared between the transform and
+    /// its own analytic check can't hide here.
+    func testUprightTransformRotatesAMarkedCornerClockwiseWhenRendered() throws {
+        let width = 4
+        let height = 2
+        let source = try makeQuadrantMarkedImage(width: width, height: height)
+
+        let cases: [(degrees: Int, isBright: (_ row: Int, _ col: Int) -> Bool)] = [
+            (90, { row, col in row < 2 && col == 1 }),   // top-right of the rotated 2x4 frame
+            (180, { row, col in row == 1 && col >= 2 }), // bottom-right of the rotated 4x2 frame
+            (270, { row, col in row >= 2 && col == 0 })  // bottom-left of the rotated 2x4 frame
+        ]
+
+        for testCase in cases {
+            let (transform, extent) = FramePreprocessor.uprightTransform(
+                forExtent: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)),
+                clockwiseDegrees: testCase.degrees)
+
+            try assertRendered(
+                source.transformed(by: transform), width: Int(extent.width), height: Int(extent.height)
+            ) { row, col, isBright in
+                XCTAssertEqual(
+                    isBright, testCase.isBright(row, col),
+                    "\(testCase.degrees)\u{b0}: pixel (row \(row), col \(col))")
+            }
+        }
+    }
+
     // MARK: - Render
 
     /// The render must leave the letterbox pad a known constant: a non-square source rendered
@@ -361,6 +474,71 @@ final class FramePreprocessorTests: XCTestCase {
     }
 
     // MARK: - Fixture
+
+    /// A `width`x`height` BGRA image, bright only where `row == 0 && col < width / 2` — the
+    /// top-left quadrant, a mark asymmetric on both axes so all four quarter turns land it
+    /// somewhere different. Backed by an allocator-owned `CVPixelBuffer` (not test-owned storage
+    /// like `withBGRABuffer` below) so the `CIImage` returned can safely outlive this call.
+    ///
+    /// `CIImage(cvPixelBuffer:)` is constructed only after the fill's lock is fully released —
+    /// matching, byte for byte, the standalone script this test's expected corners were measured
+    /// from — rather than while `defer` still holds it locked.
+    private func makeQuadrantMarkedImage(width: Int, height: Int) throws -> CIImage {
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferCGImageCompatibilityKey: true] as CFDictionary, &buffer
+        )
+        guard status == kCVReturnSuccess, let buffer else {
+            throw FixtureFailure(message: "could not allocate a \(width)x\(height) fixture buffer")
+        }
+        fillTopLeftQuadrant(buffer, width: width, height: height)
+        return CIImage(cvPixelBuffer: buffer)
+    }
+
+    private func fillTopLeftQuadrant(_ buffer: CVPixelBuffer, width: Int, height: Int) {
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+        for row in 0..<height {
+            for col in 0..<width {
+                let value: UInt8 = (row == 0 && col < width / 2) ? 255 : 0
+                let offset = row * bytesPerRow + col * 4
+                base[offset] = value
+                base[offset + 1] = value
+                base[offset + 2] = value
+                base[offset + 3] = 255
+            }
+        }
+    }
+
+    /// Renders `image` into a fresh `width`x`height` buffer and hands each pixel's brightness to
+    /// `body` as `(row, col)` in the same top-down, left-right order the fixtures above fill in.
+    private func assertRendered(
+        _ image: CIImage, width: Int, height: Int, body: (_ row: Int, _ col: Int, _ isBright: Bool) -> Void
+    ) throws {
+        var buffer: CVPixelBuffer?
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferCGImageCompatibilityKey: true] as CFDictionary, &buffer
+        )
+        guard status == kCVReturnSuccess, let buffer else {
+            throw FixtureFailure(message: "could not allocate a \(width)x\(height) render target")
+        }
+        CIContext().render(image, to: buffer)
+
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+        for row in 0..<height {
+            for col in 0..<width {
+                let isBright = base[row * bytesPerRow + col * 4] > 128
+                body(row, col, isBright)
+            }
+        }
+    }
 
     /// Builds a BGRA pixel buffer over test-owned storage so `bytesPerRow` is chosen by the test
     /// rather than by the allocator. The storage outlives `body` and nothing escapes it.
