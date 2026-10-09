@@ -415,11 +415,11 @@ final class ClipListViewModel: ObservableObject {
         return image
     }
 
-    /// The "Done" action: exports and saves every non-trashed derived clip to
+    /// The "Save Clips" action: exports and saves every non-trashed derived clip to
     /// Photos, then — only once every one of them has succeeded — deletes the
     /// original video from Photos if its tile was trashed. Returns `true` when the
     /// screen should pop to Home; `false` when a clip failed, in which case
-    /// `saveFailureMessage` is set and the screen stays up so Done can be retried.
+    /// `saveFailureMessage` is set and the screen stays up so Save Clips can be retried.
     ///
     /// The original is never deleted if any clip failed: deleting the source before
     /// every derived clip has confirmed safely landed in Photos would risk losing
@@ -438,7 +438,7 @@ final class ClipListViewModel: ObservableObject {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        // Read once for the whole run rather than per clip: every clip in one Done tap saves to
+        // Read once for the whole run rather than per clip: every clip in one Save Clips tap saves to
         // the same destination, and a setting change mid-save shouldn't split a run across two
         // albums.
         let albumTitle = settingsProvider().albumDestination

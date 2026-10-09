@@ -5,7 +5,7 @@ way Auto crop's do, so a detected clip opens the way Auto crop would frame
 it; the editor's preview keeps looping on a window that ends at the
 asset's end.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -125,7 +125,7 @@ flowchart TD
     C -->|tap a derived clip's tile| D[Clip Detail / Editor]
     D -->|back, commits edits| C
     D -->|delete| C
-    C -->|tap Done| A
+    C -->|tap Save Clips| A
     C -->|back| A
 ```
 
@@ -255,7 +255,7 @@ default empty state, so it never reads as "your library is empty."
   taking effect at its own integration point rather than needing a restart:
   - **Analysis mode** (segmented Real-time / Offline) — whether the camera scores pose live while
     recording (§1b below) or always defers to Processing (§2). Real-time is the default.
-  - **Save to an album**, with a name field shown once it's on — whether Clip List's Done action
+  - **Save to an album**, with a name field shown once it's on — whether Clip List's Save Clips action
     (§3) adds each saved clip to a named Photos album (created on first use) instead of landing
     with no album, the default. Scoped to the curated clip exports only: a camera recording's raw
     take, saved to Photos the moment recording stops (§1b), never goes in the album.
@@ -278,6 +278,12 @@ default empty state, so it never reads as "your library is empty."
   Settings, matching Home's own denied state.
 - While recording, pose inference runs on the live camera frames and the
   scored skeleton is drawn over the preview (`docs/LIVE_POSE.md`).
+- While recording, the phone's roll is written into the take as a timed
+  metadata track (`RollTrack`, `RollTrackRecorder`): gravity from the motion
+  sensors, sampled 30 times a second and expressed as the horizon's tilt in
+  the recorded picture. It needs no permission prompt and leaves the device
+  only inside the user's own video file. The editor's Auto rotate (§4)
+  levels an in-app take by it, instead of guessing from the picture.
 - A finished recording is saved to the Photos library (via the same
   `ClipPhotosSaver` Clip List uses) rather than kept as a private file —
   that turns it into an ordinary `PHAsset`, so it re-enters the flow the
@@ -295,10 +301,13 @@ default empty state, so it never reads as "your library is empty."
   screen (fit to the screen, no native playback chrome) and starts playing
   automatically on arrival, Photos-app style — no tap needed to see it. A thin
   scrub bar (play/pause, seek, mute) draws over the bottom, with a large,
-  full-width "Start analysis" button below it — black background, no title,
+  full-width "Analyze clips" button below it and a quieter "Clip manually"
+  text button under that, in the same bar — black background, no title,
   no caption text, back chevron to Home. The user watches the autoplaying
   video, pausing/scrubbing it via the scrub bar if they want, and starts
-  analysis when ready. The back chevron, and a swipe down anywhere outside
+  analysis when ready — or skips it: "Clip manually" goes straight to Clip
+  List (§3) with no detected clips and no notice, for cutting clips by hand
+  from the "+" tile. The back chevron, and a swipe down anywhere outside
   the video surface itself (see the swipe bullet below), both shrink the
   screen back into Home's tile rather than popping or dismissing outright —
   [`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md) covers the mechanics
@@ -346,9 +355,12 @@ default empty state, so it never reads as "your library is empty."
   original tile and the "+" tile — with a dismissible Liquid Glass notice
   ("No tricks found") centered over the top of the grid, tap-to-dismiss or
   auto-dismissing after 5 seconds, instead of a dead-end screen of its own.
+  A video that arrived by "Clip manually" (§2) shows the same two tiles with
+  no notice: nothing looked, so nothing was "not found".
 - Every tile autoplay-loops its window inline continuously (accessibility
-  permitting), layered over its poster thumbnail so there's no blank flash
-  while the loop starts — cropped and rotated to match the clip's manual
+  permitting); its poster thumbnail stands in only until the loop's first
+  frame, so there's no blank flash while the loop starts and no second
+  picture under the loop once it plays — cropped and rotated to match the clip's manual
   adjustment, the same framing the poster and the exported clip use, not the
   raw source frame. A derived clip's tile also draws a thin, read-only
   timeline over its bottom edge: it spans the whole source video with the
@@ -363,7 +375,9 @@ default empty state, so it never reads as "your library is empty."
   150ms — the editor's Delete (§4) removes the tile the same way behind its
   own fade. Trashing the original tile is a
   reversible toggle — tap again to restore it — that marks the source video
-  itself for deletion from Photos once Done runs.
+  itself for deletion from Photos once Save Clips runs: the tile dims and a
+  "Will be deleted" label sits over it, so the consequence is spelled out
+  rather than implied by a red trash icon.
 - Tapping a derived clip's tile flies it open, Photos-style, into the full
   Clip Detail / Editor (§4) directly — the single entry point into "view
   large" and "edit," not a separate pencil icon — the same tap-to-expand
@@ -372,12 +386,12 @@ default empty state, so it never reads as "your library is empty."
   tile's own cropped thumbnail immediately rather than the screen sliding in.
   The original tile isn't tappable — there's nothing to edit on the source
   video.
-- A "Done" action, always enabled: exports and saves every non-trashed
+- A "Save Clips" action, always enabled: exports and saves every non-trashed
   derived clip to Photos, deletes the original video from Photos if its tile
   was trashed, and pops back to Home. A full-screen spinner covers the grid
   while this runs. The original is deleted only once every derived clip has
   confirmed it saved — a clip that fails leaves the original alone and shows
-  an alert naming the failure, so Done can be retried without risking the
+  an alert naming the failure, so Save Clips can be retried without risking the
   user's only copy of a trick that never actually saved.
 - The back chevron pops to Home, not to Processing; the title sits centered
   inline on the same line as the chevron, Photos-app style. The chevron is
@@ -424,16 +438,31 @@ default empty state, so it never reads as "your library is empty."
     leave it: no black beyond the frame's edge ever shows in the crop, which
     outranks holding every body part. Detection's own crop rects (DESIGN.md
     step 6) follow the same rule, so a clip opens the way Auto crop would
-    frame it. "Auto rotate" levels the horizon: it
-    reads the horizon's tilt off frames sampled across the clip range,
-    averages the tilt over the range (the roll can drift during a clip), and
-    turns the video so the horizon lies along the screen's horizontal. The
-    recordings carry no motion data, so the horizon in the picture *is* the
-    roll; a clip with no horizon to find says so in a notice and keeps its
-    rotation. The two are independent one-shot fits: Auto rotate changes only
-    the rotation, so a limb the turn carries out of the marker is Auto crop's
-    to bring back. Both move the video to their result rather than cutting
-    to it ("An automatic change moves, it never cuts", above).
+    frame it. "Auto rotate" levels the clip by the camera's roll: a take
+    recorded in the app carries its roll as a track in the file (§1b), read
+    off the phone's gravity sensor while it recorded, and the button averages
+    the samples across the clip range (the roll can drift during a clip) and
+    turns the video so that roll is cancelled. A video with no roll track —
+    every imported one — falls back to reading the horizon's tilt off frames
+    sampled across the range with Vision's horizon detector, which is a guess:
+    right on a sky-over-ground scene, confidently wrong in a gym, where it
+    locks onto the ceiling trusses and floor lines. A clip with nothing to
+    level by says so in a notice and keeps its rotation. The two are
+    independent one-shot fits: Auto rotate changes only the rotation, so a
+    limb the turn carries out of the marker is Auto crop's to bring back.
+    Both move the video to their result rather than cutting to it ("An
+    automatic change moves, it never cuts", above).
+    Each button is a toggle. Once its fit is on screen it reads "Reset crop"
+    or "Reset rotate" and returns to the original video — Reset crop to the
+    whole source frame centered in the marker, the way a clip added by hand
+    opens (not the detected crop), Reset rotate to no rotation — not to
+    whatever the fingers had set just before the Auto tap. It moves there the same
+    way the fit moved, and then offers the fit again. The two are independent:
+    resetting one leaves the other's result and button alone. Any manual
+    pinch, turn or drag returns both buttons to "Auto", since the fits are
+    no longer what's on screen; a trim does not, since a trim is not a
+    re-crop. The state is per editor session: a clip reopened starts at
+    "Auto".
   - Scrub bar spanning the whole source video (not a zoomed range around the
     window) with drag handles on start/end — adjusts the trick window from
     issue #8's output. A handle drag is a trim, not a re-crop: the framing
@@ -533,13 +562,13 @@ Resolved 2026-09-04.
    appearance everywhere, dropping light-mode support.
 6. **Export Confirmation retired; Clip List saves inline → Changed.** Recorded
    2026-09-22: the separate Export Confirmation screen (formerly §5) is gone.
-   Clip List's "Done" action now exports and saves every non-trashed derived
+   Clip List's "Save Clips" action now exports and saves every non-trashed derived
    clip directly, with a full-screen spinner while it runs — no per-clip
    progress rows, no summary screen, no Share action. Clip List also gained a
    tile for the original source video (always first), and the per-card
    keep/discard toggle became a trash toggle that applies to any tile,
    including the original: trashing the original marks it for deletion from
-   Photos, which Done carries out once every derived clip has confirmed it
+   Photos, which Save Clips carries out once every derived clip has confirmed it
    saved. The "Select All" / "Deselect All" toolbar action is gone along with
    the keep/discard concept it bulk-toggled.
 7. **Camera takes skip Processing → Added.** Recorded 2026-09-23: the camera

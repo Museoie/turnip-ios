@@ -39,7 +39,7 @@ video in your Photos library — the first of the v1 screens in
 [`docs/UIUX.md`](docs/UIUX.md)) pushes `Processing` when you tap a video;
 `Processing` runs the detection pipeline and pushes `ClipList`, whose
 triage grid opens `ClipEditor` for a derived clip and saves everything
-kept straight to Photos when you tap "Done" — no separate export or
+kept straight to Photos when you tap "Save Clips" — no separate export or
 confirmation screen.
 
 Steps 4-6 of the pipeline — turning pose keypoints into trick windows and

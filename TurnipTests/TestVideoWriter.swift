@@ -9,10 +9,12 @@ import XCTest
 enum TestVideoWriter {
     /// Writes a `frameCount`-frame solid-color movie. `transform` is written as the track's
     /// preferredTransform — e.g. a 90° rotation to mimic an iPhone portrait recording stored
-    /// as landscape-encoded frames.
+    /// as landscape-encoded frames. `rollSamples`, when given, become a `RollTrack` metadata
+    /// track like the one the in-app camera writes, one sample per (time, tilt).
     static func writeTestVideo(
         frameCount: Int, width: Int, height: Int, fps: Int32,
-        transform: CGAffineTransform = .identity
+        transform: CGAffineTransform = .identity,
+        rollSamples: [(time: TimeInterval, tilt: Double)]? = nil
     ) async throws -> URL {
         let url = URL.temporaryDirectory.appending(path: "TestVideoWriter-\(UUID().uuidString).mov")
 
@@ -36,6 +38,7 @@ enum TestVideoWriter {
             throw XCTSkip("AVAssetWriter cannot add a video input on this platform")
         }
         writer.add(input)
+        let rollTrack = rollSamples == nil ? nil : try TestRollTrackWriter.add(to: writer)
 
         guard writer.startWriting() else {
             throw writer.error ?? PoseError.videoLoadFailed(underlying: nil)
@@ -49,6 +52,9 @@ enum TestVideoWriter {
             adaptor: adaptor,
             writer: writer
         )
+        if let rollTrack, let rollSamples {
+            try await rollTrack.append(rollSamples, writer: writer)
+        }
 
         input.markAsFinished()
         await writer.finishWriting()
@@ -94,5 +100,40 @@ enum TestVideoWriter {
                 throw writer.error ?? PoseError.videoLoadFailed(underlying: nil)
             }
         }
+    }
+}
+
+/// A `RollTrack` metadata track on a test movie's writer: the same format description and
+/// timed groups the in-app camera's capture input writes, so the reader is tested against a
+/// file shaped like a real take. Added before the writer starts; samples are appended after
+/// the video frames and the input finished before the writer is.
+struct TestRollTrackWriter {
+    let input: AVAssetWriterInput
+    let adaptor: AVAssetWriterInputMetadataAdaptor
+
+    static func add(to writer: AVAssetWriter) throws -> TestRollTrackWriter {
+        let input = AVAssetWriterInput(
+            mediaType: .metadata, outputSettings: nil, sourceFormatHint: try RollTrack.makeFormatDescription())
+        input.expectsMediaDataInRealTime = false
+        guard writer.canAdd(input) else {
+            throw XCTSkip("AVAssetWriter cannot add a metadata input on this platform")
+        }
+        writer.add(input)
+        return TestRollTrackWriter(input: input, adaptor: AVAssetWriterInputMetadataAdaptor(assetWriterInput: input))
+    }
+
+    /// Appends `samples` in the order given (they must be in time order) and finishes the input.
+    func append(_ samples: [(time: TimeInterval, tilt: Double)], writer: AVAssetWriter) async throws {
+        for sample in samples {
+            while !input.isReadyForMoreMediaData && writer.status == .writing {
+                try await Task.sleep(nanoseconds: 1_000_000)
+            }
+            let group = RollTrack.timedGroup(
+                tilt: sample.tilt, start: CMTime(seconds: sample.time, preferredTimescale: 600))
+            guard adaptor.append(group) else {
+                throw writer.error ?? PoseError.videoLoadFailed(underlying: nil)
+            }
+        }
+        input.markAsFinished()
     }
 }

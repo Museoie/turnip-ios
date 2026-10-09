@@ -13,13 +13,15 @@ private enum DragAxis {
 /// Pushed onto the flow's shared `NavigationStack` when a video is picked. It does *not*
 /// start the pipeline on appear: the idle state fills the screen with the picked video
 /// (no native playback chrome — a thin scrub bar draws over the bottom) and a manual
-/// "Start analysis" button — black background, no title, Photos-app look. Once started
+/// "Analyze clips" button — black background, no title, Photos-app look. Once started
 /// it shows real per-frame progress ("Analyzing frame 400 of 1,200"), and on success
 /// navigates to `destination` with the detected clips — including a run that detected
 /// zero tricks, which still navigates there rather than stopping on this screen; the
-/// clip list itself puts up the "no tricks found" notice. Only the error state stays on
-/// this screen, with a way back. Like the other pushed screens, it declares no
-/// `NavigationStack` of its own.
+/// clip list itself puts up the "no tricks found" notice. A "Clip manually" button under
+/// "Analyze clips" navigates to the same `destination` with an empty, `analysisSkipped`
+/// result instead of running the pipeline at all, for a user who wants to cut clips by
+/// hand. Only the error state stays on this screen, with a way back. Like the other
+/// pushed screens, it declares no `NavigationStack` of its own.
 ///
 /// The success destination is injected rather than hardcoded to the clip list, so
 /// `Processing` never depends on `ClipList`'s view type (`ClipListView`): the screen
@@ -500,7 +502,7 @@ struct ProcessingView<Destination: View>: View {
     /// then browses. The browse waits for the slide to finish: a local video resolves faster
     /// than the page moves, and landing mid-slide would cut the motion short. Stops the idle
     /// player first — nothing would call `pause()` on it once this screen's identity changes
-    /// underneath it, the same reason `idleControls`' "Start analysis" button pauses first.
+    /// underneath it, the same reason `idleControls`' "Analyze clips" button pauses first.
     private func commit(_ direction: BrowseSwipe.Direction) {
         committedDirection = direction
         player?.pause()
@@ -525,7 +527,7 @@ struct ProcessingView<Destination: View>: View {
     /// The full-window surface the swipe is measured and hit-tested against. A `.background`
     /// rather than an `.ignoresSafeArea()` on the screen's own content: that would also move
     /// what `videoStage`'s `.safeAreaInset` insets from, dropping the scrub bar and the
-    /// "Start analysis" button under the home indicator. Black, so it reads as the same
+    /// "Analyze clips" button under the home indicator. Black, so it reads as the same
     /// backdrop `videoStage` already draws.
     private var swipeBackdrop: some View {
         GeometryReader { proxy in
@@ -549,7 +551,7 @@ struct ProcessingView<Destination: View>: View {
     /// here would double up rather than hand off. Inert: nothing here can be tapped, and
     /// nothing here is an accessibility element — the stand-in controls are replaced wholesale
     /// by an empty representation rather than merely hidden, since the real controls arrive
-    /// with the real screen and a second "Start analysis" a screen-width offstage would still
+    /// with the real screen and a second "Analyze clips" a screen-width offstage would still
     /// be found by anything walking the element tree.
     private func neighborPage(_ direction: BrowseSwipe.Direction) -> some View {
         ZStack {
@@ -566,7 +568,7 @@ struct ProcessingView<Destination: View>: View {
             VStack(spacing: 12) {
                 VideoScrubBar.Placeholder()
                     .padding(.horizontal)
-                PrimaryActionBar("Start analysis") {}
+                PrimaryActionBar("Analyze clips", secondary: .init("Clip manually") {}) {}
             }
         }
         .allowsHitTesting(false)
@@ -628,7 +630,7 @@ struct ProcessingView<Destination: View>: View {
 
     /// The video stage: the picked video fills the screen with no native playback
     /// chrome (`BareVideoPlayerView`) — Photos-app look, black background, no title, no
-    /// caption. This backs both `.idle` (scrub bar + "Start analysis" button over the
+    /// caption. This backs both `.idle` (scrub bar + "Analyze clips" button over the
     /// bottom) and `.processing` (progress overlay over the bottom instead) — the video
     /// stays on screen and paused behind the progress UI rather than the analysis
     /// replacing it with a separate page.
@@ -727,8 +729,16 @@ struct ProcessingView<Destination: View>: View {
             }
             // Pause the idle player before this state leaves the hierarchy:
             // nothing would call `pause()` on it afterwards, so its audio would
-            // keep playing behind the progress UI and the clip list.
-            PrimaryActionBar("Start analysis") {
+            // keep playing behind the progress UI and the clip list. The skip
+            // leaves the hierarchy the same way (the clip list pushes over this
+            // screen), so it pauses first for the same reason.
+            PrimaryActionBar(
+                "Analyze clips",
+                secondary: .init("Clip manually") {
+                    player?.pause()
+                    viewModel.skipAnalysis(video: video)
+                }
+            ) {
                 player?.pause()
                 viewModel.start(video: video)
             }

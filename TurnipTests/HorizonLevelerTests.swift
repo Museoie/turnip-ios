@@ -55,12 +55,15 @@ enum HorizonVideoFixture {
     /// Writes a one-second movie of the tilted horizon. `width`/`height` are the *encoded*
     /// frame's; with a `transform`, the horizon is drawn so that it shows at `tilt` once
     /// the track is uprighted through it — a portrait recording stored on its side, the
-    /// way iPhones store them.
+    /// way iPhones store them. `rollSamples` adds a `RollTrack` metadata track, so a test
+    /// can give the picture and the track different answers.
     static func write(
-        tilt: Double, width: Int, height: Int, transform: CGAffineTransform = .identity, fps: Int32 = 30
+        tilt: Double, width: Int, height: Int, transform: CGAffineTransform = .identity, fps: Int32 = 30,
+        rollSamples: [(time: TimeInterval, tilt: Double)]? = nil
     ) async throws -> URL {
         let url = URL.temporaryDirectory.appending(path: "HorizonVideoFixture-\(UUID().uuidString).mov")
-        let output = try startWriting(to: url, width: width, height: height, transform: transform)
+        let output = try startWriting(
+            to: url, width: width, height: height, transform: transform, withRollTrack: rollSamples != nil)
         // The displayed frame: the encoded rect's corners through the transform. Encoded
         // pixels map into it so the horizon can be drawn in displayed space.
         let displayed = CGRect(x: 0, y: 0, width: width, height: height).applying(transform)
@@ -83,6 +86,9 @@ enum HorizonVideoFixture {
                 throw output.writer.error ?? PoseError.videoLoadFailed(underlying: nil)
             }
         }
+        if let rollTrack = output.rollTrack, let rollSamples {
+            try await rollTrack.append(rollSamples, writer: output.writer)
+        }
         output.input.markAsFinished()
         await output.writer.finishWriting()
         guard output.writer.status == .completed else {
@@ -95,11 +101,13 @@ enum HorizonVideoFixture {
         let writer: AVAssetWriter
         let input: AVAssetWriterInput
         let adaptor: AVAssetWriterInputPixelBufferAdaptor
+        let rollTrack: TestRollTrackWriter?
     }
 
-    /// An H.264 writer with one BGRA video input, started and ready for frames.
+    /// An H.264 writer with one BGRA video input (and a roll track's metadata input when
+    /// asked), started and ready for frames.
     private static func startWriting(
-        to url: URL, width: Int, height: Int, transform: CGAffineTransform
+        to url: URL, width: Int, height: Int, transform: CGAffineTransform, withRollTrack: Bool = false
     ) throws -> Output {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -118,9 +126,10 @@ enum HorizonVideoFixture {
             ])
         guard writer.canAdd(input) else { throw XCTSkip("AVAssetWriter cannot add a video input here") }
         writer.add(input)
+        let rollTrack = withRollTrack ? try TestRollTrackWriter.add(to: writer) : nil
         guard writer.startWriting() else { throw writer.error ?? PoseError.videoLoadFailed(underlying: nil) }
         writer.startSession(atSourceTime: .zero)
-        return Output(writer: writer, input: input, adaptor: adaptor)
+        return Output(writer: writer, input: input, adaptor: adaptor, rollTrack: rollTrack)
     }
 
     private static func makePixelBuffer(from adaptor: AVAssetWriterInputPixelBufferAdaptor) throws -> CVPixelBuffer {

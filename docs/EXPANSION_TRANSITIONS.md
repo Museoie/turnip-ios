@@ -1214,7 +1214,7 @@ chevron and `ResolvingDestination`'s cancel still fly back into the tile.
   (`tile0 (247,174,0)` throughout; the slot is never black before the card).
   The flag log shows `false` for both the placeholder's and Processing's
   mid-flight mount, `true` ~270ms after `onAppear`, `false` on close.
-- *Cross-fade:* Home open — `Start analysis` region rises `16 → 59 → 103 →
+- *Cross-fade:* Home open — `Analyze clips` region rises `16 → 59 → 103 →
   133 → 139` (blue channel) over consecutive frames while the scrim goes
   `247 → 165 → 81 → 19 → 8` on an uncovered tile; Home close — the chevron,
   scrub bar and button fade out over 354–356 while the card shrinks. Editor
@@ -1310,7 +1310,7 @@ what ruled the earlier shapes out:
 fade with the curve's prediction at that frame's `progress`. Clip (the
 `-screenshotClipListMedia` tap flow through the scratch driver): `p` from the
 card's left edge lerped between the tile's (592px) and the editor preview's
-(163px); scrim from the clip list's Done button showing through (`1 −
+(163px); scrim from the clip list's Save Clips button showing through (`1 −
 blue/255`); chrome from the brightest pixel of the editor's Delete pill
 (nothing of the list under it) over its landed value. Home (the seeded
 library, second tile): `p` from the card's top edge (345px → 836px); scrim
@@ -1341,7 +1341,7 @@ predicted:
   button.
 
 Also on the record from the earlier rounds: an idle editor sampled 30 times
-over ~3s with `XCUIScreen.main.screenshot()` read Done-blue 0 on all — the
+over ~3s with `XCUIScreen.main.screenshot()` read Save Clips-blue 0 on all — the
 "nearly closed" frames the recorder emitted while the app idled, alternating
 with a list frame that had no card and a hidden slot, were lesson 19's
 interleave, not the app; the recorder can also emit a flight's frames *late*

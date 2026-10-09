@@ -78,6 +78,12 @@ struct ProcessingResult: Sendable {
     let detection: DetectedClips
     /// The analyzed asset, for thumbnail loading downstream.
     let asset: AVURLAsset
+    /// `true` when the user went straight to the clip list from Processing's idle state
+    /// without running the pipeline (`ProcessingViewModel.skipAnalysis`). The detection is
+    /// then empty by construction, not by finding nothing, so the clip list must not put up
+    /// its "No tricks found" notice over it — that is the one thing a consumer can't tell
+    /// from an empty `detection` alone.
+    var analysisSkipped = false
 
     var clips: [ProcessedClip] { detection.clips }
 }

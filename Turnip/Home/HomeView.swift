@@ -125,8 +125,15 @@ struct HomeView: View {
         { pixelSize in await viewModel.thumbnails.poster(for: asset, pixelSize: pixelSize) }
     }
 
+    /// `analysisSkipped` is Processing's "Clip manually" path: the detection is empty because
+    /// nothing looked, not because nothing was found, so the "No tricks found" notice stays
+    /// down. The camera path never skips; it always has a real detection.
     private func clipList(
-        for video: SelectedVideo, detection: DetectedClips, asset: AVURLAsset, popToRoot: @escaping () -> Void
+        for video: SelectedVideo,
+        detection: DetectedClips,
+        asset: AVURLAsset,
+        analysisSkipped: Bool = false,
+        popToRoot: @escaping () -> Void
     ) -> ClipListView {
         ClipListView(
             items: detection.clips.map { ClipListItem(window: $0.window, cropRect: $0.cropRect) },
@@ -134,7 +141,7 @@ struct HomeView: View {
             asset: asset,
             assetIdentifier: video.assetIdentifier,
             duration: video.duration,
-            showsNoTricksFound: detection.clips.isEmpty,
+            showsNoTricksFound: detection.clips.isEmpty && !analysisSkipped,
             popToRoot: popToRoot
         )
     }
@@ -229,7 +236,7 @@ struct HomeView: View {
                             destination: { result, popToRoot in
                                 clipList(
                                     for: video, detection: result.detection, asset: result.asset,
-                                    popToRoot: popToRoot)
+                                    analysisSkipped: result.analysisSkipped, popToRoot: popToRoot)
                             }
                         )
                         // Ties the screen's identity to the video it's showing: without this,

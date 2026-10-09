@@ -86,7 +86,7 @@ screen's PR rather than retrofitting later.
 
 ### Export Confirmation (#19) — retired
 
-- The screen is gone (UIUX decision 6): Clip List's "Done" saves inline. Its one item moves
+- The screen is gone (UIUX decision 6): Clip List's "Save Clips" saves inline. Its one item moves
   there — the save's completion, and any per-clip failure, must be announced, not only shown
   as the spinner leaving.
 

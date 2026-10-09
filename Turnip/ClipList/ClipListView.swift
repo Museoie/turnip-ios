@@ -14,7 +14,7 @@ import UIKit
 /// point, not a separate icon; the original tile isn't tappable, since editing the
 /// source video isn't a thing this screen does.
 ///
-/// "Done" exports and saves every non-trashed derived clip to Photos, deletes the
+/// "Save Clips" exports and saves every non-trashed derived clip to Photos, deletes the
 /// original from Photos if its tile was trashed, and pops back to Home — there is no
 /// separate export/confirmation screen.
 ///
@@ -128,7 +128,7 @@ struct ClipListView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            PrimaryActionBar("Done", isEnabled: !viewModel.isSaving) {
+            PrimaryActionBar("Save Clips", isEnabled: !viewModel.isSaving) {
                 Task {
                     if await viewModel.save() {
                         popToRoot()
@@ -274,9 +274,10 @@ private struct AddClipTile: View {
     }
 }
 
-/// One triage tile: a square clip surface (an autoplay-looping preview layered over its
-/// poster thumbnail, so there's no blank flash while the loop's player becomes ready)
-/// with the trash button at the top-trailing corner and, for a derived clip, a
+/// One triage tile: a square clip surface (an autoplay-looping preview; its poster
+/// thumbnail stands in only until the loop's first frame is up, so there's no blank flash
+/// while the loop's player becomes ready and no second picture under the loop once it
+/// plays) with the trash button at the top-trailing corner and, for a derived clip, a
 /// read-only range timeline overlaid on the bottom edge — siblings drawn as overlays
 /// on the tap-driven media layer rather than nested inside a shared `Button`, so each
 /// keeps its own hit target instead of racing the tile's tap.
@@ -305,6 +306,11 @@ private struct ClipCardView: View {
 
     @State private var thumbnail: CGImage?
     @State private var duration: TimeInterval?
+    /// Whether the mounted loop's player layer has a frame to draw. The poster is drawn
+    /// only until then: a trashed tile is translucent, and a poster left under a playing
+    /// loop would show through it as a second, offset copy of the picture. Reset whenever
+    /// the loop is rebuilt (an editor commit), since the new player starts frameless.
+    @State private var isLoopReady = false
     @StateObject private var playback: ClipCardPlayback
 
     init(
@@ -391,6 +397,26 @@ private struct ClipCardView: View {
         .overlay(alignment: .topTrailing) { trashButton }
         .overlay(alignment: .bottom) { trimOverlay }
         .opacity(item.isTrashed ? 0.4 : 1)
+        // After the opacity, so the notice reads at full strength over the dimmed tile.
+        .overlay { deletionNotice }
+    }
+
+    /// What trashing the original tile means, said in words over it: the source video
+    /// itself leaves Photos when "Save Clips" runs, which the dimmed tile and red trash
+    /// button alone don't say. A derived clip's tile is gone the moment it's trashed, so
+    /// only the original ever shows this.
+    @ViewBuilder
+    private var deletionNotice: some View {
+        if item.isOriginal, item.isTrashed {
+            Text("Will be deleted")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.red.opacity(0.85), in: Capsule())
+                .allowsHitTesting(false)
+                .accessibilityIdentifier("original-deletion-notice")
+        }
     }
 
     /// Pauses the loop first, then reads its position: the frame handed to the presenter
@@ -412,11 +438,16 @@ private struct ClipCardView: View {
     @ViewBuilder
     private var mediaLayer: some View {
         ZStack {
-            if let thumbnail {
+            if isLoopReady {
+                // The loop covers the whole tile from its first frame on; nothing is drawn
+                // under it — see `isLoopReady`.
+                Color.clear
+            } else if let thumbnail {
                 // The generator hands back the displayed (upright) frame, so `.up` is
-                // exact — no UIKit bridge needed. Drawn under the player unconditionally
-                // as a poster: the looper's item takes a moment to become ready, and
-                // without this the tile would show black until it does.
+                // exact — no UIKit bridge needed. The poster, until the loop's first frame:
+                // the looper's item takes a moment to become ready, and without this the
+                // tile would show black until it does. Also the tile's whole picture when
+                // accessibility rules loops out (`ClipCardPlayback`).
                 Image(decorative: thumbnail, scale: 1.0, orientation: .up)
                     .resizable()
                     .scaledToFill()
@@ -425,9 +456,17 @@ private struct ClipCardView: View {
                     .overlay { ProgressView() }
             }
             if let loop = playback.loop {
-                BareVideoPlayerView(player: loop.player, videoGravity: .resizeAspectFill)
+                BareVideoPlayerView(
+                    player: loop.player, videoGravity: .resizeAspectFill,
+                    onReadyForDisplay: { isLoopReady = true })
             }
         }
+        // A rebuilt loop is a new player with no frame yet, and a torn-down one (the tile
+        // scrolled off) is no player at all: the poster comes back until the next player
+        // has a frame. Watched on the stack, not inside the `if let` — a branch that is
+        // removed and re-inserted never fires its own `onChange`, so a reset there would
+        // miss exactly the teardown-and-rebuild a scroll-off-and-back is.
+        .onChange(of: playback.loop.map { ObjectIdentifier($0.player) }) { _ in isLoopReady = false }
     }
 
     /// The diameter every top-corner icon circle renders at.
@@ -435,7 +474,7 @@ private struct ClipCardView: View {
 
     /// The per-tile trash button: a solid red circle while trashed, the same
     /// semi-transparent grey circle the other tile buttons use otherwise. For the
-    /// original item, tapping it is the reversible toggle that tells "Done" to
+    /// original item, tapping it is the reversible toggle that tells "Save Clips" to
     /// delete the source video from Photos; for a derived clip, tapping it removes
     /// the tile from the grid, with no restore.
     private var trashButton: some View {

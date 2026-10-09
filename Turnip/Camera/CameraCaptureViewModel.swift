@@ -91,6 +91,10 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// so the recording delegate, which AVFoundation calls off the main actor, can reach it; the
     /// tap is `Sendable` and does its own locking.
     nonisolated let livePoseTap = LivePoseFrameTap()
+    /// The take's roll, written into the file as it records (`RollTrack`): a metadata input
+    /// on the session connected to the movie output, sampling gravity between record start
+    /// and the output's finish. What the editor's Auto rotate levels an in-app take by.
+    nonisolated let rollRecorder = RollTrackRecorder()
     /// Loaded once, when the camera first starts, and reused across recordings. Nil until it
     /// loads, or if the bundled model is missing; recordings made meanwhile skip live pose.
     private var poseModel: MoveNetThunderModel?
@@ -199,6 +203,20 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
         }
         isTorchOn = false
         cancelLivePose()
+        rollRecorder.stop()
+    }
+
+    /// Starts the roll track's sampling for the take about to record, with the picture
+    /// geometry it maps gravity through read now: the movie connection's rotation and which
+    /// camera is up, both of which a camera switch changes between takes. Samples are only
+    /// appended while the movie output says it is recording.
+    private func armRollTrack() {
+        guard let movieConnection = movieOutput.connection(with: .video) else { return }
+        let movieOutput = self.movieOutput
+        rollRecorder.start(
+            videoRotationDegrees: LivePoseFrameTap.rotationDegrees(of: movieConnection),
+            isFrontCamera: videoDevice?.position == .front,
+            isRecording: { movieOutput.isRecording })
     }
 
     func toggleRecording() {
@@ -215,6 +233,7 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
             if settingsProvider().analysisMode == .realTime {
                 armLivePose()
             }
+            armRollTrack()
             movieOutput.startRecording(to: url, recordingDelegate: self)
             isRecording = true
         }
@@ -422,10 +441,31 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// on its own and silently overrides a manually chosen `activeFormat`/frame-duration
     /// (the resolution/fps menu) if left in a preset mode. The data output goes in ahead of
     /// the movie output so the recorder's connection is formed after it.
+    /// Puts the roll track's metadata input on the session and connects it to the movie
+    /// output, which then records it alongside the video and audio. Inside the session's
+    /// configuration, after the movie output is on the session — a connection needs both
+    /// ends there. Best-effort: a session that refuses the input or the connection records
+    /// takes with no roll track, which the editor treats like an imported video.
+    private nonisolated static func addRollTrack(
+        from recorder: RollTrackRecorder,
+        to session: AVCaptureSession,
+        recordingInto movieOutput: AVCaptureMovieFileOutput
+    ) {
+        guard let input = try? recorder.makeInput(), session.canAddInput(input) else { return }
+        session.addInputWithNoConnections(input)
+        let connection = AVCaptureConnection(inputPorts: input.ports, output: movieOutput)
+        guard session.canAddConnection(connection) else {
+            session.removeInput(input)
+            return
+        }
+        session.addConnection(connection)
+    }
+
     private func configureSessionAndStart() async -> (AVCaptureDevice?, AVCaptureDeviceInput?) {
         let session = self.session
         let movieOutput = self.movieOutput
         let dataOutput = livePoseTap.output
+        let rollRecorder = self.rollRecorder
         return await withCheckedContinuation { continuation in
             sessionQueue.async {
                 session.beginConfiguration()
@@ -452,6 +492,7 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
                 if session.canAddOutput(movieOutput) {
                     session.addOutput(movieOutput)
                 }
+                Self.addRollTrack(from: rollRecorder, to: session, recordingInto: movieOutput)
                 session.commitConfiguration()
                 Self.applyMirroringPolicy(to: movieOutput)
                 Self.applyMirroringPolicy(to: dataOutput)
@@ -658,6 +699,7 @@ extension CameraCaptureViewModel: AVCaptureFileOutputRecordingDelegate {
         from connections: [AVCaptureConnection],
         error: Error?
     ) {
+        rollRecorder.stop()
         Task { @MainActor in
             isRecording = false
             livePoseKeypoints = []

@@ -47,6 +47,16 @@ final class ClipEditorViewModel: ObservableObject {
     /// Set when Auto rotate found no horizon in the window, so the view can say so — a
     /// button whose tap changes nothing reads as broken. Cleared by the notice itself.
     @Published var isShowingNoHorizonNotice = false
+    /// True while the last Auto crop's fit is what's on screen — what turns the button into
+    /// "Reset crop", which returns the framing to the whole source video (`resetCrop`).
+    /// Cleared by the reset itself and by any manual crop gesture, since the fit is then no
+    /// longer what's on screen. The reset leaves the rotation alone, as Auto crop itself
+    /// does.
+    @Published private(set) var isAutoCropApplied = false
+    /// True while the last Auto rotate's turn is what's on screen — "Reset rotate", which
+    /// returns the video to its original, unrotated orientation. Cleared the same way
+    /// `isAutoCropApplied` is.
+    @Published private(set) var isAutoRotateApplied = false
 
     /// The pinch's committed scale is clamped here, and Auto crop's fitted scale too, so
     /// neither can shrink the video to a sliver or blow it up past usefulness.
@@ -61,8 +71,13 @@ final class ClipEditorViewModel: ObservableObject {
     /// player; the item is attached in `prepare()`.
     let player = AVPlayer()
 
+    /// What Auto rotate levels by: `ClipLeveler` in the app (the take's roll track, else the
+    /// picture's horizon), a canned answer in tests.
+    typealias LevelingRotation = @Sendable (AVAsset, TrickWindow) async throws -> Double?
+
     private let source: ClipEditorSource
     private let calculator: CropRectCalculator
+    private let levelingRotation: LevelingRotation
     private var timeObserver: Any?
     /// The item's end-of-playback observer: a window ending at the asset's end plays the
     /// item out, which pauses the player on its own (`AVPlayer`'s default
@@ -100,9 +115,14 @@ final class ClipEditorViewModel: ObservableObject {
     /// to the start the moment it got there.
     private var isPresenterScrubbing = false
 
-    init(source: ClipEditorSource, calculator: CropRectCalculator = CropRectCalculator()) {
+    init(
+        source: ClipEditorSource,
+        calculator: CropRectCalculator = CropRectCalculator(),
+        levelingRotation: @escaping LevelingRotation = { try await ClipLeveler.levelingRotation(in: $0, window: $1) }
+    ) {
         self.source = source
         self.calculator = calculator
+        self.levelingRotation = levelingRotation
         self.window = source.window
         self.cropRect = source.cropRect
         self.cropAdjustment = source.cropAdjustment
@@ -260,13 +280,27 @@ final class ClipEditorViewModel: ObservableObject {
     /// usefulness.
     func applyCropScale(_ delta: CGFloat) {
         guard delta.isFinite, delta > 0 else { return }
+        guard delta != 1 else { return }
+        clearAutoFits()
         cropAdjustment.scale = Self.clampedScale(cropAdjustment.scale * delta)
     }
 
     /// Applies a two-finger rotation's cumulative angle since the gesture started.
     func applyCropRotation(_ deltaRadians: Double) {
         guard deltaRadians.isFinite else { return }
+        guard deltaRadians != 0 else { return }
+        clearAutoFits()
         cropAdjustment.rotationRadians += deltaRadians
+    }
+
+    /// A manual gesture takes over the framing from both automatic fits at once: whatever
+    /// Auto crop or Auto rotate put on screen is no longer what's there, so both buttons
+    /// return to offering their fit. The gesture methods above and below call this only for
+    /// a gesture that actually changed something — a pinch that ends where it started is
+    /// not an edit.
+    private func clearAutoFits() {
+        isAutoCropApplied = false
+        isAutoRotateApplied = false
     }
 
     /// Applies a drag's cumulative translation since the gesture started. `screenPoints`
@@ -279,6 +313,8 @@ final class ClipEditorViewModel: ObservableObject {
         guard screenPoints.width.isFinite, screenPoints.height.isFinite,
               previewScale.isFinite, previewScale > 0
         else { return }
+        guard screenPoints != .zero else { return }
+        clearAutoFits()
         cropAdjustment.offset.width += screenPoints.width / previewScale
         cropAdjustment.offset.height += screenPoints.height / previewScale
     }
@@ -302,6 +338,64 @@ final class ClipEditorViewModel: ObservableObject {
         else { return }
         withAnimation(Self.fitAnimation) {
             cropAdjustment = adjustment
+        }
+        isAutoCropApplied = true
+    }
+
+    /// "Reset crop": returns the framing to the whole source video — the full frame centered
+    /// in the marker at the marker's ratio, the way a clip added by hand opens — moving
+    /// there the same way the fit moved. Not the detected crop and not the framing from
+    /// just before the Auto tap: the reset is the way back to the original video whatever
+    /// was done in between. The rotation stays, as Auto crop left it alone too. The button
+    /// then offers Auto crop again.
+    func resetCrop() {
+        guard isAutoCropApplied, let overlay = previewOverlay else { return }
+        isAutoCropApplied = false
+        let adjustment = Self.fullFrameAdjustment(
+            cropRect: overlay.cropRect, videoSize: overlay.videoSize,
+            rotationRadians: cropAdjustment.rotationRadians, calculator: calculator)
+        withAnimation(Self.fitAnimation) {
+            cropAdjustment = adjustment
+        }
+    }
+
+    /// The adjustment that shows the whole source frame in the marker: the full frame's own
+    /// marker-ratio box (`markerBox`, the same box a full-frame crop rect lays the marker out
+    /// from) scaled and moved onto the marker, in the same terms `autoCropAdjustment`
+    /// expresses its fit — the scale is the two boxes' width ratio, the offset moves the
+    /// box's center onto the marker's after the scale. The rotation passes through
+    /// untouched, and the frame is shown turned by it about the marker's center: the video
+    /// turns about the crop center before the offset applies, so the box's center is turned
+    /// the same way before the offset that cancels it is read off. For a clip whose crop
+    /// rect is already the full frame this is the identity.
+    nonisolated static func fullFrameAdjustment(
+        cropRect: CGRect, videoSize: CGSize, rotationRadians: Double, calculator: CropRectCalculator
+    ) -> CropAdjustment {
+        let aspectRatio = CGFloat(calculator.targetAspectRatio)
+        let marker = markerBox(around: cropRect, aspectRatio: aspectRatio)
+        let center = CGPoint(x: cropRect.midX, y: cropRect.midY)
+        let fullFrame = markerBox(around: CGRect(origin: .zero, size: videoSize), aspectRatio: aspectRatio)
+            .offsetBy(dx: -center.x, dy: -center.y)
+        guard marker.width > 0, fullFrame.width > 0 else {
+            return CropAdjustment(scale: 1, rotationRadians: rotationRadians, offset: .zero)
+        }
+        let scale = clampedScale(marker.width / fullFrame.width)
+        let turnedCenter = CGPoint(x: fullFrame.midX, y: fullFrame.midY)
+            .applying(CGAffineTransform(rotationAngle: rotationRadians))
+        return CropAdjustment(
+            scale: scale,
+            rotationRadians: rotationRadians,
+            offset: CGSize(width: -turnedCenter.x * scale, height: -turnedCenter.y * scale))
+    }
+
+    /// "Reset rotate": returns the video to its original, unrotated orientation, moving
+    /// there the same way the turn moved. Scale and offset stay. The button then offers
+    /// Auto rotate again.
+    func resetRotate() {
+        guard isAutoRotateApplied else { return }
+        isAutoRotateApplied = false
+        withAnimation(Self.fitAnimation) {
+            cropAdjustment.rotationRadians = CropAdjustment.identity.rotationRadians
         }
     }
 
@@ -407,26 +501,30 @@ final class ClipEditorViewModel: ObservableObject {
             width: size.width, height: size.height)
     }
 
-    /// The "Auto rotate" action: levels the horizon as `HorizonLeveler` reads it off frames
-    /// sampled across the draft window. Replaces the rotation rather than adding to it —
-    /// the tilt is measured on the source frames, not on the rotated preview. Scale and
-    /// offset stay as they are; Auto crop refits them if the turn carries a limb out of
-    /// the marker. One detection at a time: a tap while one is running is ignored, and
-    /// `teardown()` cancels it. Finding no horizon raises the notice and changes nothing;
-    /// finding one turns the video to level over `fitAnimation` rather than cutting to it.
+    /// The "Auto rotate" action: levels the clip by the take's own roll track when it has
+    /// one, else by the horizon read off frames sampled across the draft window
+    /// (`ClipLeveler`). Replaces the rotation rather than adding to it — the roll is
+    /// measured on the source, not on the rotated preview. Scale and offset stay as they
+    /// are; Auto crop refits them if the turn carries a limb out of the marker. One
+    /// detection at a time: a tap while one is running is ignored, and `teardown()` cancels
+    /// it. Finding nothing to level by raises the notice and changes nothing; finding a
+    /// rotation turns the video to level over `fitAnimation` rather than cutting to it, and
+    /// the button becomes "Reset rotate".
     func autoRotate() {
         guard !isDetectingHorizon, duration != nil else { return }
         isDetectingHorizon = true
         let asset = source.asset
         let window = window
+        let levelingRotation = levelingRotation
         horizonTask = Task { [weak self] in
-            let rotation = try? await HorizonLeveler.levelingRotation(in: asset, window: window)
+            let rotation = try? await levelingRotation(asset, window)
             guard let self, !Task.isCancelled else { return }
             isDetectingHorizon = false
             if let rotation {
                 withAnimation(Self.fitAnimation) {
                     cropAdjustment.rotationRadians = rotation
                 }
+                isAutoRotateApplied = true
             } else {
                 // Inside a transaction so the notice's slide-and-fade transition plays.
                 withAnimation(Self.fitAnimation) {

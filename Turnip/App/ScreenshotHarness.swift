@@ -1,6 +1,7 @@
 #if DEBUG
 import AVFoundation
 import CoreVideo
+import os
 import Photos
 import SwiftUI
 
@@ -141,6 +142,19 @@ struct ScreenshotClipEditorHarness: View {
     /// queue from `TurnipApp.init()` (when the `-screenshotClipEditor` launch arg
     /// is present) before any view appears, keeping the encode off the UI thread.
     fileprivate static let sampleMovieURL: URL = makeScreenshotSampleMovie()
+    /// The roll written into the sample movie's track: a small, clearly non-zero tilt,
+    /// so Auto rotate has something to level and the result is visibly a turn.
+    static let sampleRollTilt = 3.0 * .pi / 180
+
+    /// A standing pose at every half second of the sample movie, so Auto crop has
+    /// keypoints to frame in whatever window the trim handles hold — the same stick
+    /// figure the Processing pose harness draws, which the crop fit only needs to be
+    /// located, not accurate.
+    private static let samplePoseFrames: [PoseFrameResult] = (0...12).map { index in
+        PoseFrameResult(
+            frameIndex: index * 15, timestamp: Double(index) / 2,
+            keypoints: ScreenshotProcessingPoseRunner.sampleKeypoints)
+    }
 
     /// Starts the sample-movie encode on a background queue ahead of first use.
     /// Called from `TurnipApp.init()` when the `-screenshotClipEditor` launch arg
@@ -161,7 +175,7 @@ struct ScreenshotClipEditorHarness: View {
                     window: TrickWindow(startTime: 2, endTime: 5),
                     cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.25, maxY: 0.75),
                     asset: AVURLAsset(url: Self.sampleMovieURL),
-                    poseFrames: []),
+                    poseFrames: Self.samplePoseFrames),
                 onCommit: { _ in },
                 onDelete: {})
         }
@@ -204,29 +218,71 @@ private func makeScreenshotSampleMovie() -> URL {
         // `/dev/null` fallback.
         guard writer.canAdd(input) else { throw ScreenshotMovieError.setupFailed }
         writer.add(input)
+        let rollInput = AVAssetWriterInput(
+            mediaType: .metadata, outputSettings: nil, sourceFormatHint: try RollTrack.makeFormatDescription())
+        rollInput.expectsMediaDataInRealTime = false
+        guard writer.canAdd(rollInput) else { throw ScreenshotMovieError.setupFailed }
+        writer.add(rollInput)
+        // Like the pixel buffer adaptor above, created before writing starts: an adaptor
+        // made for an input that is already writing raises an uncaught NSException.
+        let rollAdaptor = AVAssetWriterInputMetadataAdaptor(assetWriterInput: rollInput)
         guard writer.startWriting() else { throw ScreenshotMovieError.setupFailed }
-        try appendSampleFrames(writer: writer, adaptor: adaptor, input: input, fps: fps)
+        try appendSampleFrames(
+            writer: writer, adaptor: adaptor, input: input, roll: (rollAdaptor, rollInput), fps: fps)
+        input.markAsFinished()
+        rollInput.markAsFinished()
         return try finishSampleMovieWriting(writer: writer, to: url)
     } catch {
+        // Named in the log, so a UI test that lands on the editor's load-failure state can
+        // be traced to the step that failed instead of only to "the encode failed".
+        Logger(subsystem: "com.hoiekim.turnip", category: "ScreenshotHarness")
+            .error("sample movie encode failed: \(String(describing: error), privacy: .public)")
         try? FileManager.default.removeItem(at: url)
         return URL(fileURLWithPath: "/dev/null")
     }
 }
 
-/// Starts the writer session and encodes the solid-color frames, then marks the
-/// input finished. Extracted from `makeScreenshotSampleMovie()` so each function
-/// stays under the repo's SwiftLint `function_body_length` limit.
+/// Starts the writer session and encodes the solid-color frames, each followed by that
+/// frame's roll sample. The two inputs advance together, frame by frame: a writer
+/// interleaves its inputs, and one left seconds ahead of the other stops reporting ready
+/// for data until the other catches up — which, with the roll track appended only after
+/// all six seconds of video, stalled the video input and failed the encode. The caller
+/// marks both inputs finished. Extracted from `makeScreenshotSampleMovie()` so each
+/// function stays under the repo's SwiftLint `function_body_length` limit.
 private func appendSampleFrames(
     writer: AVAssetWriter,
     adaptor: AVAssetWriterInputPixelBufferAdaptor,
     input: AVAssetWriterInput,
+    roll: (adaptor: AVAssetWriterInputMetadataAdaptor, input: AVAssetWriterInput),
     fps: Int32
 ) throws {
     writer.startSession(atSourceTime: .zero)
     for frame in 0 ..< (6 * Int(fps)) {
         try appendSolidFrame(adaptor: adaptor, input: input, writer: writer, frame: frame, fps: fps)
+        try appendRollSample(adaptor: roll.adaptor, input: roll.input, writer: writer, frame: frame, fps: fps)
     }
-    input.markAsFinished()
+}
+
+/// One sample of the sample movie's roll track (`RollTrack`), at
+/// `ScreenshotClipEditorHarness.sampleRollTilt`, the way an in-app take carries its own:
+/// the editor's Auto rotate then levels the harness clip by the real reader, so the UI
+/// test that taps it sees "Reset rotate" without a horizon in the picture.
+private func appendRollSample(
+    adaptor: AVAssetWriterInputMetadataAdaptor,
+    input: AVAssetWriterInput,
+    writer: AVAssetWriter,
+    frame: Int,
+    fps: Int32
+) throws {
+    let deadline = Date().addingTimeInterval(15)
+    while !input.isReadyForMoreMediaData, writer.status == .writing, Date() < deadline {
+        Thread.sleep(forTimeInterval: 0.002)
+    }
+    guard input.isReadyForMoreMediaData else { throw ScreenshotMovieError.appendFailed }
+    let group = RollTrack.timedGroup(
+        tilt: ScreenshotClipEditorHarness.sampleRollTilt,
+        start: CMTime(value: CMTimeValue(frame), timescale: fps))
+    guard adaptor.append(group) else { throw ScreenshotMovieError.appendFailed }
 }
 
 /// Waits for the writer to finish and returns the movie URL on success, throwing
@@ -360,7 +416,9 @@ private struct ScreenshotProcessingPoseRunner: ProcessingRunning {
 
 /// Processing's resting state (`-screenshotProcessingIdle`): the picked video filling
 /// the screen with no native playback chrome, the thin scrub bar, and the manual
-/// "Start analysis" button. `autostart: false` so the pipeline never actually runs.
+/// "Analyze clips" button. `autostart: false` so the pipeline never actually runs.
+/// The destination is a labeled stand-in rather than `EmptyView`, so the UI test that taps
+/// "Clip manually" can see the push land and read the result it landed with.
 struct ScreenshotProcessingIdleHarness: View {
     var body: some View {
         NavigationStack {
@@ -370,7 +428,10 @@ struct ScreenshotProcessingIdleHarness: View {
                     asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
                     duration: 60),
                 autostart: false,
-                destination: { _, _ in EmptyView() })
+                destination: { result, _ in
+                    Text(result.analysisSkipped ? "Clip list stand-in: skipped" : "Clip list stand-in")
+                        .accessibilityIdentifier("clip-list-stand-in")
+                })
         }
     }
 }

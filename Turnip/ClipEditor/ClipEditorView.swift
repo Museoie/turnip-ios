@@ -337,25 +337,43 @@ struct ClipEditorView: View {
 
     /// The two automatic fits, side by side above the trim slider: Auto crop frames every
     /// located keypoint in the window inside the marker at the current rotation, Auto
-    /// rotate levels the horizon over the window. Both wait for media info — before it
-    /// there is no stage geometry to fit and no window to sample — and Auto rotate shows
-    /// its detection in place of its icon while it runs.
+    /// rotate levels the clip by its roll track or its horizon. Each is a toggle: once its
+    /// fit is on screen the same button reads "Reset crop" / "Reset rotate" and returns to
+    /// the original video — the whole frame, unturned — independently of the other; a manual pinch, turn or drag
+    /// returns both to offering their fit (`ClipEditorViewModel.isAutoCropApplied` /
+    /// `isAutoRotateApplied`). Both wait for media info — before it there is no stage geometry
+    /// to fit and no window to sample — and Auto rotate shows its detection in place of
+    /// its icon while it runs.
     private var autoFramingButtons: some View {
         HStack(spacing: 12) {
             Button {
-                viewModel.autoCrop()
+                if viewModel.isAutoCropApplied {
+                    viewModel.resetCrop()
+                } else {
+                    viewModel.autoCrop()
+                }
             } label: {
-                Label("Auto crop", systemImage: "crop")
+                if viewModel.isAutoCropApplied {
+                    Label("Reset crop", systemImage: "arrow.uturn.backward")
+                } else {
+                    Label("Auto crop", systemImage: "crop")
+                }
             }
             .accessibilityIdentifier("auto-crop-button")
             Button {
-                viewModel.autoRotate()
+                if viewModel.isAutoRotateApplied {
+                    viewModel.resetRotate()
+                } else {
+                    viewModel.autoRotate()
+                }
             } label: {
                 Label {
-                    Text("Auto rotate")
+                    Text(viewModel.isAutoRotateApplied ? "Reset rotate" : "Auto rotate")
                 } icon: {
                     if viewModel.isDetectingHorizon {
                         ProgressView()
+                    } else if viewModel.isAutoRotateApplied {
+                        Image(systemName: "arrow.uturn.backward")
                     } else {
                         Image(systemName: "level")
                     }
@@ -366,6 +384,11 @@ struct ClipEditorView: View {
         }
         .buttonStyle(.bordered)
         .disabled(viewModel.previewOverlay == nil)
+        // The labels cut between Auto and Reset: the fit's own `fitAnimation` is in flight
+        // in the same update, and a label swap riding it reads as text sliding under a
+        // clip while the button changes width. The video moves; the words don't.
+        .animation(nil, value: viewModel.isAutoCropApplied)
+        .animation(nil, value: viewModel.isAutoRotateApplied)
     }
 
     /// Auto rotate's answer when the window shows no horizon the detector can find: the

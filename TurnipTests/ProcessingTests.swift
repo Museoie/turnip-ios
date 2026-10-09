@@ -420,6 +420,63 @@ final class ProcessingViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isShowingClips)
     }
 
+    /// "Clip manually" lands on the clip list with nothing detected and the skip marked, so
+    /// the list can tell it from a run that looked and found nothing.
+    func testSkipAnalysisNavigatesToTheClipsWithoutRunning() async {
+        let flag = CancelFlag()
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .reportThenHang(flag)))
+
+        viewModel.skipAnalysis(video: Self.video)
+
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("expected the succeeded state, got \(viewModel.state)")
+        }
+        XCTAssertEqual(viewModel.result?.clips, [])
+        XCTAssertEqual(viewModel.result?.detection.poseFrames, [])
+        XCTAssertEqual(viewModel.result?.analysisSkipped, true)
+        XCTAssertTrue(viewModel.isShowingClips)
+        // Nothing was started, and a skipped screen is finished: a later `start` (the
+        // view's `.task` fires on every appear) must not run the pipeline over it.
+        viewModel.start(video: Self.video)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("a skipped screen started the pipeline, got \(viewModel.state)")
+        }
+    }
+
+    /// Pushing the clip list disappears Processing, which cancels — the skip's result has
+    /// to survive that the same way a finished run's does.
+    func testCancelAfterSkipKeepsTheResult() {
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .succeed(clips: [])))
+
+        viewModel.skipAnalysis(video: Self.video)
+        viewModel.cancel()
+
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("cancel discarded a skip, got \(viewModel.state)")
+        }
+        XCTAssertEqual(viewModel.result?.analysisSkipped, true)
+        XCTAssertTrue(viewModel.isShowingClips)
+    }
+
+    /// The skip button is gone once a run is in flight, but the model guards it anyway.
+    func testSkipWhileRunningIsIgnored() async {
+        let flag = CancelFlag()
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .reportThenHang(flag)))
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntilProcessing(viewModel)
+        viewModel.skipAnalysis(video: Self.video)
+
+        guard case .processing = viewModel.state else {
+            return XCTFail("a skip abandoned the in-flight run, got \(viewModel.state)")
+        }
+        XCTAssertNil(viewModel.result)
+        XCTAssertFalse(viewModel.isShowingClips)
+        viewModel.cancel()
+        await Self.waitUntil { await flag.observed }
+    }
+
     func testRetryAfterFailureRunsAgain() async {
         let runner = ScriptedRunner(behavior: .fail(TestError.boom))
         let viewModel = ProcessingViewModel(runner: runner)

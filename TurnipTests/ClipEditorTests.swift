@@ -693,6 +693,208 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertFalse(viewModel.isShowingNoHorizonNotice)
     }
 
+    // MARK: - Auto fits toggle to resets
+
+    /// A view model whose Auto rotate answers at once with `rotation` (nil: nothing to
+    /// level by), with media info loaded so the button is live.
+    @MainActor
+    private func makeLevelingViewModel(rotation: Double?) -> ClipEditorViewModel {
+        let viewModel = ClipEditorViewModel(
+            source: makeSource(window: TrickWindow(startTime: 0, endTime: 3.9), frames: twoPositionFrames()),
+            levelingRotation: { _, _ in rotation })
+        viewModel.setMediaInfo(
+            duration: duration, naturalSize: CGSize(width: 100, height: 200), preferredTransform: .identity)
+        return viewModel
+    }
+
+    @MainActor
+    private func autoRotateAndWait(_ viewModel: ClipEditorViewModel) async throws {
+        viewModel.autoRotate()
+        let deadline = Date().addingTimeInterval(5)
+        while viewModel.isDetectingHorizon, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(viewModel.isDetectingHorizon)
+    }
+
+    /// A clip detected in the middle of a portrait frame, with media info loaded and a
+    /// leveler that answers at once, so both fits and both resets are live.
+    @MainActor
+    private func makeDetectedCropViewModel() -> ClipEditorViewModel {
+        let viewModel = ClipEditorViewModel(
+            source: ClipEditorSource(
+                window: TrickWindow(startTime: 0, endTime: 3.9),
+                cropRect: NormalizedRect(minX: 0.3, maxX: 0.7, minY: 0.2, maxY: 0.6),
+                asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
+                poseFrames: twoPositionFrames()),
+            levelingRotation: { _, _ in 0.25 })
+        viewModel.setMediaInfo(
+            duration: duration, naturalSize: CGSize(width: 100, height: 200), preferredTransform: .identity)
+        return viewModel
+    }
+
+    /// Reset crop shows the whole source video — the full frame's marker-ratio box landing
+    /// exactly on the marker, the way a clip added by hand opens — not the detected crop
+    /// and not whatever pinch or drag preceded the Auto tap.
+    @MainActor
+    func testResetCropShowsTheWholeSourceVideo() throws {
+        let viewModel = makeDetectedCropViewModel()
+        viewModel.applyCropScale(2)
+        viewModel.applyCropOffset(CGSize(width: 10, height: 5), previewScale: 1)
+        XCTAssertFalse(viewModel.isAutoCropApplied)
+        viewModel.autoCrop()
+        XCTAssertTrue(viewModel.isAutoCropApplied)
+
+        viewModel.resetCrop()
+
+        XCTAssertFalse(viewModel.isAutoCropApplied)
+        let overlay = try XCTUnwrap(viewModel.previewOverlay)
+        let marker = ClipEditorViewModel.markerBox(around: overlay.cropRect, aspectRatio: 9.0 / 16.0)
+        let fullFrame = ClipEditorViewModel.markerBox(
+            around: CGRect(origin: .zero, size: overlay.videoSize), aspectRatio: 9.0 / 16.0)
+        // Each corner of the full frame's box lands on the matching corner of the marker.
+        for (signX, signY) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            let corner = CGPoint(
+                x: fullFrame.midX + signX * fullFrame.width / 2, y: fullFrame.midY + signY * fullFrame.height / 2)
+            let shown = markerPosition(of: corner, cropRect: overlay.cropRect, adjustment: viewModel.cropAdjustment)
+            XCTAssertEqual(shown.x, signX * marker.width / 2, accuracy: 0.01, "corner \(corner)")
+            XCTAssertEqual(shown.y, signY * marker.height / 2, accuracy: 0.01, "corner \(corner)")
+        }
+    }
+
+    /// Reset crop leaves the rotation alone, as Auto crop did: the turned full frame is
+    /// centered on the marker at the same turn.
+    @MainActor
+    func testResetCropKeepsTheRotation() throws {
+        let viewModel = makeDetectedCropViewModel()
+        viewModel.applyCropRotation(0.3)
+        viewModel.autoCrop()
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0.3, accuracy: 1e-9)
+
+        viewModel.resetCrop()
+
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0.3, accuracy: 1e-9)
+        let overlay = try XCTUnwrap(viewModel.previewOverlay)
+        let frameCenter = CGPoint(x: overlay.videoSize.width / 2, y: overlay.videoSize.height / 2)
+        let shown = markerPosition(of: frameCenter, cropRect: overlay.cropRect, adjustment: viewModel.cropAdjustment)
+        XCTAssertEqual(shown.x, 0, accuracy: 0.01)
+        XCTAssertEqual(shown.y, 0, accuracy: 0.01)
+    }
+
+    /// A clip that opened on the full frame is already showing the whole video: its reset is
+    /// the identity framing.
+    @MainActor
+    func testResetCropOnAFullFrameClipIsTheIdentity() {
+        let viewModel = makeLevelingViewModel(rotation: nil)
+        viewModel.applyCropScale(2)
+        viewModel.autoCrop()
+
+        viewModel.resetCrop()
+
+        XCTAssertEqual(viewModel.cropAdjustment.scale, 1, accuracy: 1e-9)
+        XCTAssertEqual(viewModel.cropAdjustment.offset, .zero)
+    }
+
+    /// Reset rotate returns the video to its original, unrotated orientation, not to the
+    /// rotation the fingers had set before the Auto tap.
+    @MainActor
+    func testResetRotateReturnsToTheOriginalOrientation() async throws {
+        let viewModel = makeLevelingViewModel(rotation: 0.25)
+        viewModel.applyCropRotation(1)
+        viewModel.applyCropScale(2)
+
+        try await autoRotateAndWait(viewModel)
+
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0.25, accuracy: 1e-9)
+        XCTAssertTrue(viewModel.isAutoRotateApplied)
+        XCTAssertFalse(viewModel.isAutoCropApplied)
+
+        viewModel.resetRotate()
+
+        XCTAssertFalse(viewModel.isAutoRotateApplied)
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0, accuracy: 1e-9)
+        // The reset only touches the rotation, as the fit did.
+        XCTAssertEqual(viewModel.cropAdjustment.scale, 2, accuracy: 1e-9)
+    }
+
+    /// The two resets are independent: returning one to the original leaves the other's
+    /// result and its button alone.
+    @MainActor
+    func testResetCropAndResetRotateAreIndependent() async throws {
+        let viewModel = makeLevelingViewModel(rotation: 0.25)
+        viewModel.autoCrop()
+        try await autoRotateAndWait(viewModel)
+        XCTAssertTrue(viewModel.isAutoCropApplied)
+        XCTAssertTrue(viewModel.isAutoRotateApplied)
+        let fitted = viewModel.cropAdjustment
+
+        viewModel.resetCrop()
+
+        XCTAssertFalse(viewModel.isAutoCropApplied)
+        XCTAssertTrue(viewModel.isAutoRotateApplied)
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, fitted.rotationRadians, accuracy: 1e-9)
+        XCTAssertEqual(viewModel.cropAdjustment.scale, 1, accuracy: 1e-9)
+
+        viewModel.resetRotate()
+
+        XCTAssertFalse(viewModel.isAutoRotateApplied)
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0, accuracy: 1e-9)
+    }
+
+    /// A manual pinch, turn or drag takes over from both fits at once, so both buttons go
+    /// back to offering their fit; a gesture that changed nothing is not an edit.
+    @MainActor
+    func testAManualGestureReturnsBothButtonsToAuto() async throws {
+        let viewModel = makeLevelingViewModel(rotation: 0.25)
+        viewModel.autoCrop()
+        try await autoRotateAndWait(viewModel)
+
+        viewModel.applyCropScale(1)
+        viewModel.applyCropRotation(0)
+        viewModel.applyCropOffset(.zero, previewScale: 1)
+        XCTAssertTrue(viewModel.isAutoCropApplied, "a no-op pinch is not an edit")
+        XCTAssertTrue(viewModel.isAutoRotateApplied)
+
+        viewModel.applyCropOffset(CGSize(width: 1, height: 0), previewScale: 1)
+        XCTAssertFalse(viewModel.isAutoCropApplied)
+        XCTAssertFalse(viewModel.isAutoRotateApplied)
+
+        viewModel.autoCrop()
+        viewModel.applyCropScale(1.5)
+        XCTAssertFalse(viewModel.isAutoCropApplied)
+
+        viewModel.autoCrop()
+        viewModel.applyCropRotation(0.1)
+        XCTAssertFalse(viewModel.isAutoCropApplied)
+    }
+
+    /// Nothing to level by (an imported clip with no horizon) changes nothing, so the button
+    /// stays on Auto rotate and the notice says why.
+    @MainActor
+    func testAutoRotateFindingNothingLeavesTheButtonOnAuto() async throws {
+        let viewModel = makeLevelingViewModel(rotation: nil)
+
+        try await autoRotateAndWait(viewModel)
+
+        XCTAssertFalse(viewModel.isAutoRotateApplied)
+        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0)
+        XCTAssertTrue(viewModel.isShowingNoHorizonNotice)
+    }
+
+    /// A trim is not a re-crop, so it is not a manual edit of the framing either: the fits
+    /// stay on screen and their buttons keep offering the reset.
+    @MainActor
+    func testTrimmingLeavesTheResetButtonsInPlace() async throws {
+        let viewModel = makeLevelingViewModel(rotation: 0.25)
+        viewModel.autoCrop()
+        try await autoRotateAndWait(viewModel)
+
+        viewModel.trimStart(to: 1)
+
+        XCTAssertTrue(viewModel.isAutoCropApplied)
+        XCTAssertTrue(viewModel.isAutoRotateApplied)
+    }
+
     // MARK: - Playback and mute
 
     @MainActor

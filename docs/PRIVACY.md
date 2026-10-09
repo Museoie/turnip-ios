@@ -37,7 +37,14 @@ it's summarized from — keep both in sync when data handling changes.
   on-device to draw the skeleton and detect clips; the frames are reduced to
   model input in memory and released immediately, nothing but the recording
   itself is written, and the only trace left behind is per-recording timing
-  and count figures in the device's own log. If the user
+  and count figures in the device's own log. The in-app camera also reads
+  the phone's gravity vector from Core Motion while it records and writes
+  the resulting roll angle into the recording as a metadata track
+  (`Turnip/Media/RollTrack.swift`), so the editor can level the clip
+  without guessing from the picture; this is the device-motion API, which
+  needs no `NSMotionUsageDescription` and raises no prompt (unlike the
+  pedometer and activity APIs), and the angles live only inside the user's
+  own video file in their Photos library. If the user
   trashes the original video's tile in Clip List, the original is deleted
   from Photos too — a user-initiated, on-device change to their own library,
   not data leaving the device.
@@ -87,7 +94,7 @@ require a manifest/signature. If a dependency is added, check both.
   write half anyway, so one honest prompt covers both. The write half is
   also what lets Clip List delete the original video (`PhotoAssetDeleter`,
   `PHAssetChangeRequest.deleteAssets`) when the user trashes its tile and
-  taps Done — PhotoKit shows its own "Allow Turnip to delete?" system
+  taps Save Clips — PhotoKit shows its own "Allow Turnip to delete?" system
   confirmation before the deletion happens, on top of the one-time
   read/write grant.
 - `NSPhotoLibraryUsageDescription` explains the read side in plain
@@ -114,7 +121,7 @@ require a manifest/signature. If a dependency is added, check both.
   never accumulates files. `TurnipApp` sweeps orphans left by crashed sessions
   at launch. The prefix is what makes both the delete and the sweep recognize
   only our files.
-- **Clip exports.** Tapping "Done" in Clip List (`ClipListViewModel.save()`)
+- **Clip exports.** Tapping "Save Clips" in Clip List (`ClipListViewModel.save()`)
   stages every non-trashed derived clip in a fresh `tmp/turnip-export-<uuid>/`
   scratch directory, hands each one to Photos through `ClipPhotosSaver`
   (add-only), and deletes the whole directory once the run ends — success or
