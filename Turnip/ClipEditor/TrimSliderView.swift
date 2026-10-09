@@ -95,8 +95,10 @@ struct TrimSliderView: View {
             let startX = position(of: viewModel.window.startTime, in: range, width: width)
             let endX = position(of: viewModel.window.endTime, in: range, width: width)
             ZStack(alignment: .leading) {
+                // An opaque mid gray, not a background tone or a translucent fill: the track
+                // sits on the editor's frosted surround, which both all but vanish into.
                 RoundedRectangle(cornerRadius: Self.trackCornerRadius)
-                    .fill(Color(.tertiarySystemBackground))
+                    .fill(Color(.systemGray3))
                     .frame(height: Self.trackHeight)
                 TrimWindowFrameShape()
                     .fill(Color.accentColor, style: FillStyle(eoFill: true))

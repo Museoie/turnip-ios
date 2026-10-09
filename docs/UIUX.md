@@ -61,7 +61,7 @@ Where it applies today:
 |---|---|---|---|
 | Home ↔ Camera (Root navigation) | Horizontal page swipe | Floating bar's camera / gallery icons; Camera's cancel chevron | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Tile ↔ Processing (§1, §2) | Swipe down outside the video surface | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
-| Clip List tile ↔ Clip Editor (§3, §4) | Swipe down outside the crop stage | Back chevron | Same, with the card showing the editor's own player |
+| Clip List tile ↔ Clip Editor (§3, §4) | Swipe down above the crop marker | Back chevron | Same, with the card showing the editor's own player |
 
 Not every state change has a gesture counterpart that it owes an animation.
 A recording that finishes on Camera switches to Home *instantly*, because the
@@ -497,10 +497,11 @@ default empty state, so it never reads as "your library is empty."
   - Back to Clip List commits the edits and shrinks the screen back into its
     tile — the reverse of the tap that opened it, no separate "save" step
     needed since edits are held in view state until back-navigation. A swipe
-    down anywhere outside the crop stage does the same — including the top
-    row and the band above it (the crop pinch/rotate/drag gesture keeps sole
-    ownership of the band the marker sits in, even though the video itself
-    runs under the whole screen). The screen draws that top row (back
+    down in the band above the crop marker — the top row and the status-bar
+    band over it — does the same; the crop pinch/rotate/drag gesture keeps
+    sole ownership of the band the marker sits in, and below the marker the
+    buttons, the scrub bar and their margins never dismiss, so a drag that
+    slips off a control goes nowhere. The screen draws that top row (back
     chevron, title, Delete) as its own content rather than a navigation bar,
     the same way Processing does, so no bar sits over the swipe band — laid
     out in the band a bar would occupy, with the chevron and title at the same

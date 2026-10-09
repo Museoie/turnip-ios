@@ -1479,8 +1479,10 @@ to the marker, not to the whole screen; the card's `ClipEditorVideoSurface`
 still lays the whole frame out around the marker, past the card's bounds,
 and the window never reaches past them. `ClipEditorView` draws the frosted
 surround only while `expansionHasLanded`, so on landing the editor's
-edge-to-edge surface and the frosted frame around the crop appear together —
-the "uncrop" — and on any close (including Delete, whose `closeForDelete()`
+edge-to-edge surface, the frosted frame around the crop and the marker's
+white outline appear together — the "uncrop"; the outline is gated with the
+frost rather than cross-faded with the chrome, so on a close it doesn't
+outlive the frost around the bare crop — and on any close (including Delete, whose `closeForDelete()`
 now calls `setLanded(false)` like `close()`) they go in the first frame and
 the crop alone flies or fades. Rev 12's "the card must end as the full frame"
 was about a dim surround that showed the frame sharp; a frosted surround

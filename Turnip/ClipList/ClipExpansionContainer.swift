@@ -188,10 +188,10 @@ struct ClipExpansionContainer: View {
 
                 if chromeCrossfades {
                     // Over the card, fading in with the flight: the editor's chrome (its
-                    // top row, the crop marker and its surround, the playback pill, the
-                    // trim slider) cross-fades in place over the growing picture, while its
-                    // own video surface stays hidden under `expansionVideoSurface()` until
-                    // the card has landed. A plain `.opacity`, not a cut: it's meant to
+                    // top row, the playback pill, the trim slider) cross-fades in place over
+                    // the growing picture, while its own video surface, frosted surround and
+                    // marker outline stay hidden under `expansionHasLanded` until the card
+                    // has landed. A plain `.opacity`, not a cut: it's meant to
                     // interpolate across the whole flight, which `.opacity` does on its own.
                     editor(size: screen.size)
                         .expansionCrossfade(

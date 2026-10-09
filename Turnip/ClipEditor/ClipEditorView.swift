@@ -103,15 +103,20 @@ struct ClipEditorView: View {
         }
     }
 
+    /// The presenter's swipe-to-dismiss surface: the band above the crop marker only — the
+    /// top row and the status-bar band over it — never the controls below the marker or
+    /// their margins, where a downward drag reads as a slip off a button or the slider.
     @ViewBuilder
     private var dismissGestureLayer: some View {
         if let dismissGesture {
-            Color.clear
-                .contentShape(Rectangle())
-                .gesture(dismissGesture)
-                // Edge to edge, so the status-bar band above the top row counts too: only the
-                // stage is meant to keep a downward drag for itself.
-                .ignoresSafeArea()
+            GeometryReader { proxy in
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(dismissGesture)
+                    .frame(height: max(markerFrame.minY - proxy.frame(in: .global).minY, 0))
+            }
+            // Edge to edge, so the status-bar band above the top row counts too.
+            .ignoresSafeArea()
         }
     }
 
@@ -129,16 +134,16 @@ struct ClipEditorView: View {
         }
         .preference(key: ClipEditorCropMarkerFramePreferenceKey.self, value: markerFrame)
         // Behind this view's own content rather than wrapping it, so the dismiss
-        // gesture only ever sees the margins/empty space this content doesn't already
-        // claim with its own gesture (the stage, the trim slider, the buttons)
-        // — see `ClipExpansionContainer`'s doc comment for why it has to be attached
-        // here rather than behind this whole view in a presenter's own hierarchy.
+        // gesture only ever sees the empty space this content doesn't already claim
+        // with its own gesture (the stage's band, the top row's buttons) — see
+        // `ClipExpansionContainer`'s doc comment for why it has to be attached here
+        // rather than behind this whole view in a presenter's own hierarchy.
         .background(dismissGestureLayer)
         // No navigation bar: the bar is the stack's own view laid over this screen, so a
         // drag that starts in its band never reaches the dismiss gesture behind this
         // content. `topRow` draws the same controls as content instead, in the band the
         // bar would occupy (`ScreenHeaderBand`), which leaves the whole area above the
-        // stage to that gesture — `ProcessingView` hides its bar for the same reason.
+        // marker to that gesture — `ProcessingView` hides its bar for the same reason.
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
         .task {
@@ -256,16 +261,19 @@ struct ClipEditorView: View {
                     CropOverlayShape(hole: marker)
                         .fill(.thinMaterial, style: FillStyle(eoFill: true))
                         .allowsHitTesting(false)
+                    // The marker's outline comes and goes with the frost, in the same frame,
+                    // rather than cross-fading with the rest of the chrome: on a close the
+                    // outline would otherwise outlive the frost around the bare crop.
+                    Rectangle()
+                        .stroke(.white, lineWidth: 2)
+                        .frame(width: marker.width, height: marker.height)
+                        .position(x: marker.midX, y: marker.midY)
+                        .allowsHitTesting(false)
+                        // Lets a UI test read the marker's frame, to check a presenting
+                        // container's card lands its picture exactly here. Not a control:
+                        // the gesture surface below carries the stage's label and hint.
+                        .accessibilityIdentifier("crop-marker")
                 }
-                Rectangle()
-                    .stroke(.white, lineWidth: 2)
-                    .frame(width: marker.width, height: marker.height)
-                    .position(x: marker.midX, y: marker.midY)
-                    .allowsHitTesting(false)
-                    // Lets a UI test read the marker's frame, to check a presenting
-                    // container's card lands its picture exactly here. Not a control:
-                    // the gesture surface below carries the stage's label and hint.
-                    .accessibilityIdentifier("crop-marker")
                 loadingState(in: marker)
                 Color.clear
                     .contentShape(Rectangle())
