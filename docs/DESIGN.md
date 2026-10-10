@@ -1,8 +1,8 @@
 # Turnip — Tricking Video Auto-Editor + Community Labeling Platform
 
-*Rev 9 · 2026-10-06 · Draft for review.*
+*Rev 10 · 2026-10-09 · Draft for review.*
 
-*(Rev 1 targeted iOS-only, personal-use. Rev 2 expanded to open-source app + backend + community labeling + continuous ML training. Rev 3 depersonalized for public repo and added the pose-model escalation ladder + motion-signal blur mitigations. Rev 4 swapped GitHub OAuth for Sign in with Apple, added iOS Share Sheet for social-media publishing, and added v2 social features — following relationships + video feed. Rev 5 tightens the Sign in with Apple validation contract (`iss` + `exp` on top of `aud` + signature), adds the videos-side feed indexes, adds a self-follow guard, and pins MoveNet Thunder's quantization variant. Rev 6 resolves the seven open questions into recorded decisions and adds the screen-flow companion doc pointer. Rev 7 records that camera takes run steps 1-3 live during recording and skip the post-recording decode when that covered the take. Rev 8 notes the analysis sample rate is a Settings-screen preference, not a fixed constant, defaulting to the 10/sec this doc otherwise assumes. Rev 9 applies the merged turnip-farm master plan (§8): the backend is rewritten around pose-format blobs (no video upload or storage anywhere), labels become free-text multi-labels with no server crop rects, the ML program is retargeted at trick detection, Decision #2 is reversed and #4 mooted plus a new keypoints-only privacy decision, the two-model OTA story replaces the pose+action language, the label editor moves into the clip confirmation flow (the server labeling queue is dropped), a new video-identity section is added, the social feed is deferred, and the problem statement is restated.)*
+*(Rev 1 targeted iOS-only, personal-use. Rev 2 expanded to open-source app + backend + community labeling + continuous ML training. Rev 3 depersonalized for public repo and added the pose-model escalation ladder + motion-signal blur mitigations. Rev 4 swapped GitHub OAuth for Sign in with Apple, added iOS Share Sheet for social-media publishing, and added v2 social features — following relationships + video feed. Rev 5 tightens the Sign in with Apple validation contract (`iss` + `exp` on top of `aud` + signature), adds the videos-side feed indexes, adds a self-follow guard, and pins MoveNet Thunder's quantization variant. Rev 6 resolves the seven open questions into recorded decisions and adds the screen-flow companion doc pointer. Rev 7 records that camera takes run steps 1-3 live during recording and skip the post-recording decode when that covered the take. Rev 8 notes the analysis sample rate is a Settings-screen preference, not a fixed constant, defaulting to the 10/sec this doc otherwise assumes. Rev 9 applies the merged turnip-farm master plan (§8): the backend is rewritten around pose-format blobs (no video upload or storage anywhere), labels become free-text multi-labels with no server crop rects, the ML program is retargeted at trick detection, Decision #2 is reversed and #4 mooted plus a new keypoints-only privacy decision, the two-model OTA story replaces the pose+action language, the label editor moves into the clip confirmation flow (the server labeling queue is dropped), a new video-identity section is added, the social feed is deferred, and the problem statement is restated. Rev 10 replaces the hip-displacement motion signal with whole-body speed in torso lengths per second, measures peaks against the athlete's own activity level, and adds an evaluation against labelled footage.)*
 
 *Screen-level flow for the v1 app lives in [`UIUX.md`](UIUX.md). Running the pose pass during recording, rather than after, is designed in [`LIVE_POSE.md`](LIVE_POSE.md).*
 
@@ -64,9 +64,9 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
   2. Sample ~10 frames/sec of footage — stride derived from the track's nominal frame rate
      (3 at 30 fps, 24 at 240 fps slo-mo) — scaling each kept frame straight to the model's own
      input size (256x256 for Thunder), letterboxed so the frame's aspect ratio survives
-  3. Run pose detection, extract hip-midpoint per frame
-  4. Motion signal = frame-to-frame hip displacement, smoothed (3-sample moving average)
-  5. Peak detection with sustained-above-threshold logic → list of trick windows
+  3. Run pose detection on each kept frame
+  4. Motion signal = whole-body speed between consecutive frames, in torso lengths per second, median-smoothed
+  5. Peak detection against the athlete's own activity level, sustained ≥ 300 ms → list of trick windows
   6. Crop rect = union of 17 keypoints across window (confidence-filtered), expanded 10%, snapped to aspect ratio
   7. Export N clips per input
 
@@ -110,21 +110,20 @@ by on-device profiling on the oldest supported hardware (iPhone 8 / A11, iOS 16)
 
 Pose detection gives us, per processed frame, 17 keypoints — each `{x, y, confidence}` with x/y normalized 0-1 relative to the source frame (nominally — a keypoint landing in the letterbox pad region honestly reports a value outside [0, 1] instead of being clamped to the edge). Turning that into concrete clip ranges and crop rects:
 
-**Step 4 (motion signal):** collapse 17 points per frame into one anchor via **hip midpoint** = average of `left_hip` and `right_hip`. Frame-to-frame displacement is `sqrt((hip_x[t] − hip_x[t−1])² + (hip_y[t] − hip_y[t−1])²)`. Smooth with a 3-sample moving average to kill per-frame confidence jitter.
+**Step 4 (motion signal):** how fast the whole body moves, in torso lengths per second:
+- Keep each frame's keypoints above confidence (`> 0.3`), in pixels — a normalized unit is 1.78x longer down a portrait frame than across it, which would weigh a jump below a walk
+- Between consecutive frames, average how far each joint located in both frames moved. Every joint, not one anchor: a kick barely moves the hips, and comparing each joint only with itself means no fixed offset between two body points can read as motion. A pair sharing fewer than 6 joints is unknown. A left/right pair whose labels crossed — pose models swap them when the athlete turns side-on — counts the crossed matching when that is shorter
+- Divide by the body scale, the median torso length (shoulder midpoint to hip midpoint) within 2 s, and by the time between the frames. The same trick then reads the same near the camera or far from it, a passer-by at the lens reads as walking, and a body with no torso in view (legs passing the lens) has no scale and stays unknown
+- Median over ±0.1 s, one sample either side at 10/sec. A median, not a mean: a mean spreads one glitched frame over its neighbours, enough to pass the 300 ms rule below
 
-**Step 5 (peak detection):** given the 1D `motion[t]` time-series, identify sustained peaks:
-- Threshold at ≈ 0.05 normalized units per sample at the default 10 samples/sec rate (roughly —
-  the achieved rate is quantized to the source fps' nearest whole-frame stride, so it can differ
-  slightly from the configured one) — `motion[t]` is a per-sample-pair *positional* delta, not a
-  velocity, so above the default rate this threshold scales down as Settings' granularity rises:
-  unscaled, a higher sample rate would silently raise the effective speed a trick needs to clear
-  the bar, since the same real motion covers less ground between denser samples. Below the
-  default rate the threshold stays fixed rather than also scaling up, unlike the sample counts
-  below — real trick footage doesn't reliably clear the larger per-sample displacement a
-  symmetric scale-up would demand
-- Require ≥ 3 consecutive samples above threshold (≥ 300 ms of sustained motion — filters out one-frame anomalies)
-- Require ≥ 10 samples of quiet between peaks (≥ 1 s — prevents splitting one trick into two)
-- Merge peaks within the minimum gap; expand each window by a 1 s leading buffer and a 3 s trailing buffer — the motion signal reads quiet as soon as the athlete's translation slows on landing, which is consistently earlier than the trick visually reads as complete, so the trailing edge needs more room than the leading edge
+**Step 5 (peak detection):** given the speed series, identify sustained bursts:
+- Divide each speed by the median speed within 5 s of it — the athlete's own activity level, so bouncing on a sprung floor or walking back to the start sets the bar a trick has to clear. A speed at or below 2.5 torso lengths/s never counts, so a still athlete's keypoint jitter over a near-zero level is not a burst
+- A burst starts above 2x that level and holds while above 1.4x, so a trick stays whole through its slower moments; one unknown sample inside it is bridged, a second ends it
+- Require ≥ 300 ms of burst (filters out one-frame anomalies)
+- Require ≥ 1 s of unbroken quiet between bursts (prevents splitting one trick into two); unknown samples are neither motion nor quiet
+- Merge bursts within the minimum gap; expand each window by a 1 s leading buffer and a 3 s trailing buffer — the motion signal reads quiet as soon as the athlete slows on landing, which is consistently earlier than the trick visually reads as complete, so the trailing edge needs more room than the leading edge
+- Every threshold is a speed or a duration, so Settings' analysis granularity changes how finely motion is sampled, not how fast it has to be
+- Known limit: a burst holding one speed for more than about 5 s raises its own activity level and stops standing out. No labelled footage has one yet; capping the level would keep such bursts
 
 Output: list of `(start_time, end_time)` in seconds.
 
@@ -143,6 +142,8 @@ Static crop (one rect per clip) is Rev 1's choice — simpler, works well when t
 Everything above is ~400 lines of Swift on top of the pose output. The pose model does the heavy lifting; this code just interprets it.
 
 Steps 4, 5 and 6 are implemented in `Turnip/TrickDetection/` as `MotionSignalBuilder`, `TrickWindowDetector` and `CropRectCalculator`, each with a test file under `TurnipTests/`. `ProcessingPipeline` drives all three (the camera's live path runs the same steps on its own results), and the clip editor's Auto crop reuses `CropRectCalculator`. Start from these types rather than from the prose above.
+
+`TrickDetectionEvaluationTests` runs the whole pipeline on hand-labelled footage and scores the clips — tricks caught, partly caught and missed, and clips that hold no trick. The footage and labels are recordings of real people, so they live outside the repository; the test skips unless a run names their directory, and its doc comment has the layout. Tune a threshold against it, not against the prose above.
 
 ### Model escalation ladder
 
@@ -163,13 +164,13 @@ Fast acrobatic motion produces motion-blurred frames (a body spinning at 720°/s
 
 The pipeline handles this at multiple layers:
 
-1. **Confidence filtering** — drop keypoints with `confidence < 0.3` before averaging. If both hips fail on frame t, mark that frame as a gap in the motion series.
-2. **Interpolation across single-frame gaps** — if frame t has no hip but frames t-1 and t+1 do, estimate `hip[t] = (hip[t-1] + hip[t+1]) / 2`.
-3. **Fallback anchor keypoint** — if hips fail but shoulders / nose / torso survive (bigger targets, more resistant to blur), use their midpoint instead.
+1. **Confidence filtering** — drop keypoints with `confidence < 0.3`. A frame pair sharing fewer than 6 located joints is a gap in the motion series.
+2. **Single-frame dropout bridging** — a frame that loses its pose on its own takes the speed measured straight across it from its neighbours, the joint-by-joint form of interpolating it. Two missing frames in a row stay a gap.
+3. **Whole-body signal** — every located joint counts, so the blur-prone ones (wrists, ankles) dropping out leaves the torso and head to carry the measurement rather than the frame going dark.
 4. **Optical-flow fallback** *(planned, not implemented)* — `VNGenerateOpticalFlowRequest` returns per-pixel motion magnitude between two frames with no pose needed. On frames where pose fails entirely, substitute optical-flow magnitude for the motion signal.
-5. **3-sample moving average** — a single-frame dropout is 33 ms at 30 fps; surrounding frames still carry the signal.
+5. **Median smoothing** — one bad frame cannot survive it, where a moving average would spread it over its neighbours.
 6. **Peak-detection sustained-above-threshold logic** — requires ≥ 300 ms of high motion, so a single-frame anomaly can't create a false peak.
-7. **Partial-group anchor reconstruction** — a frame where only part of a keypoint group clears confidence (e.g. one hip lost to blur) reconstructs the full-group midpoint from the most recent full-group frame, at most 3 frames back: the offset between the full midpoint and the usable subset's mean is measured there and applied now, so the anchor stays on the body centerline instead of jumping to the lone point. Past that bound the frame keeps its partial identity and its displacement stays unknown, rather than measuring a fixed body offset as motion.
+7. **Per-joint identity** — each joint is compared only with itself, so a partial pose never measures the fixed offset between two different body points, and a left/right label swap is matched crossed rather than read as both joints jumping.
 
 **Recording-side lever (biggest single improvement)**: default to **240 fps slo-mo mode** on the phone. Exposure is ~4 ms instead of 33 ms → **8× less motion blur per frame**. Pose confidence stays > 0.7 through the aerial phase and mitigations 2-4 rarely need to fire. The app processes at native frame rate (30 or 240) and can export at whichever the user picks. Slo-mo is a shooting-technique change users adopt once and forget, not a per-clip decision.
 

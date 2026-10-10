@@ -66,8 +66,7 @@ struct VideoFrameSampler: Sendable {
             // The track doesn't declare a rate (nominalFrameRate == 0): assume a 30 fps
             // baseline instead of sampling every frame or dividing by zero, but still honor
             // `sampleRate` — a hardcoded `3` here would silently ignore the configured
-            // granularity for exactly the tracks (VFR, re-encoded) most likely to hit this path,
-            // leaving the sampler at one rate and `TrickWindowDetector` calibrated for another.
+            // granularity for exactly the tracks (VFR, re-encoded) most likely to hit this path.
             return max(1, Int((30.0 / Double(sampleRate)).rounded()))
         }
         return max(1, Int((Double(nominalFrameRate) / Double(sampleRate)).rounded()))

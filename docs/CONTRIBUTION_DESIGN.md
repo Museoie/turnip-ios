@@ -130,8 +130,8 @@ authority. iOS-side rules:
   as a gap when no keypoint clears the confidence floor used by the
   detector.
 - **Raw, not reconstructed**: the blob records raw per-frame detections.
-  The detector's gap mitigations (single-frame interpolation, fallback
-  anchors, optical flow — `DESIGN.md` "Motion signal robustness") feed
+  The detector's gap mitigations (single-frame dropout bridging, optical
+  flow — `DESIGN.md` "Motion signal robustness") feed
   the *motion signal only*; they must not be written into the training
   blob as if they were detections *(judgment call — training data
   should reflect what the model actually emitted; the farm's resampling

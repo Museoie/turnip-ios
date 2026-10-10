@@ -234,6 +234,33 @@ a device name here that can drift from the one CI uses. Run outside CI it
 prints the device it chose and then the UDID on its own line, hence the
 `tail -1`.
 
+### Detection evaluation
+
+Unit tests pin the detector's rules on synthetic poses; whether those rules
+find tricks in real footage is a separate question.
+`TrickDetectionEvaluationTests` answers it: it runs the whole pipeline on
+hand-labelled videos and scores the clips — tricks caught, partly caught and
+missed, and clips holding no trick. Change a detection threshold against it,
+not by feel.
+
+The footage is recordings of real people, so it never goes in this
+repository (`.gitignore` excludes `turnip-eval/` in case a copy lands
+inside). Keep it in a directory of your own with a `labels.json` — the test's
+doc comment has the layout — and name it on the run; without it the test
+skips, which is what CI does:
+
+```
+TEST_RUNNER_TURNIP_EVAL_DIR=$HOME/turnip-eval TEST_RUNNER_TURNIP_EVAL_LABEL=my-change \
+  xcodebuild test -workspace Turnip.xcworkspace -scheme Turnip \
+  -destination "id=$UDID" -only-testing:TurnipTests/TrickDetectionEvaluationTests
+```
+
+A run prints its scores (`TURNIP_EVAL` lines), writes them to
+`results/<label>.json`, and saves the pose it scored under `pose/`. Add
+`TEST_RUNNER_TURNIP_EVAL_REUSE_POSE=1` to score that saved pose instead of
+running the model again: seconds instead of minutes, and identical frames on
+both sides of a detector change.
+
 ## Lint
 
 SwiftLint runs in CI on every PR (the `build-and-test` job's `Lint` step —

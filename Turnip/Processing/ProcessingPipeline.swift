@@ -129,9 +129,9 @@ struct ProcessingPipeline: Sendable {
     let sampler: any FrameSampling
     /// Samples per second of footage this run targets — `TurnipSettings.analysisGranularity`
     /// when a caller reads settings, `VideoFrameSampler.targetSamplesPerSecond` otherwise. Drives
-    /// both the default `sampler` and `windowDetector` below (when the caller doesn't supply its
-    /// own) and the progress denominator in `estimatedSampledFrames`, so all three agree on one
-    /// rate instead of each defaulting to 10 independently.
+    /// both the default `sampler` (when the caller doesn't supply its own) and the progress
+    /// denominator in `estimatedSampledFrames`, so the two agree on one rate. Detection needs no
+    /// rate: its signal is a speed and its thresholds are durations.
     let sampleRate: Int
     let makeInference: InferenceFactory
     let cropRectCalculator: CropRectCalculator
@@ -148,10 +148,7 @@ struct ProcessingPipeline: Sendable {
         self.sampleRate = sampleRate
         self.makeInference = makeInference
         self.cropRectCalculator = cropRectCalculator
-        // TrickWindowDetector's sustained/quiet thresholds are stated in docs/DESIGN.md as
-        // durations (300 ms / 1 s), expressed as sample counts against the sampler's rate — so
-        // they're derived here from the same `sampleRate` the sampler above uses.
-        self.windowDetector = windowDetector ?? TrickWindowDetector(sampleRate: sampleRate)
+        self.windowDetector = windowDetector ?? TrickWindowDetector()
     }
 
     /// Loads the bundled MoveNet Thunder model once, then answers each frame from it.
@@ -207,7 +204,8 @@ struct ProcessingPipeline: Sendable {
     /// and the camera's live inference, whose results arrive in the same frame-normalized,
     /// display-orientation space with file-relative timestamps at the same sample rate.
     func detectClips(in frames: [PoseFrameResult], renderedPixelSize: CGSize) -> [ProcessedClip] {
-        let windows = windowDetector.detectWindows(in: MotionSignalBuilder.buildSignal(from: frames))
+        let windows = windowDetector.detectWindows(
+            in: MotionSignalBuilder.buildSignal(from: frames, renderedPixelSize: renderedPixelSize))
         return buildClips(windows: windows, frames: frames, renderedPixelSize: renderedPixelSize)
     }
 

@@ -48,6 +48,9 @@ confirmation screen.
 Steps 4-6 of the pipeline — turning pose keypoints into trick windows and
 a crop rect — are library code under `Turnip/TrickDetection/`, unit-tested
 and driven by `Processing`'s pipeline rather than by a screen of their own.
+How well they find tricks in real footage is measured by an evaluation test
+over hand-labelled videos kept outside the repository; see
+[`CONTRIBUTING.md`](CONTRIBUTING.md#detection-evaluation).
 
 The camera runs pose inference on its live frames while a take is being
 recorded, draws the skeleton on the preview, and — when live inference

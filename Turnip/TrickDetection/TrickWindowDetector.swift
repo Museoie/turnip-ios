@@ -12,187 +12,188 @@ struct TrickWindow: Hashable, Sendable {
 
 /// Peak-detects the motion signal into trick windows (docs/DESIGN.md's pipeline step 5).
 ///
-/// `minimumSustainedSamples`/`minimumQuietSamples` default to the design doc's durations (300 ms
-/// / 1 s) rounded to samples at `sampleRate` — the signal is one sample per kept frame pair, so
-/// at the shipped default of 10 samples/sec that is 3 and 10 samples, scaling freely (floored at
-/// 1 sample) in both directions as `sampleRate` moves. `displacementThreshold` defaults to a
-/// rate-scaled value for the same reason, but only scales *down* above the shipped default rate
-/// — see `scaledDisplacementThreshold` below for why it stays fixed rather than also scaling up
-/// below it. Passing any of `displacementThreshold`/`minimumSustainedSamples`/
-/// `minimumQuietSamples` explicitly overrides its derivation, for a caller (tests) that wants an
-/// exact value regardless of rate.
+/// A trick has to stand out from what the athlete is doing around it, not clear one fixed bar:
+/// each sample's speed is divided by the median speed within `baselineHalfWindow` of it, so
+/// bouncing on a sprung floor or walking back to the start sets the level a burst is measured
+/// against. A burst starts above `entryRatio` and holds while it stays above `exitRatio`, which
+/// keeps a trick whole through the moments mid-trick that read slower than its peak. Speeds at or
+/// below `minimumSpeed` never count as motion, whatever the ratio — a still athlete's keypoint
+/// jitter over a near-zero median would otherwise read as a burst.
+///
+/// Every duration is in seconds, so the analysis granularity setting changes how finely the
+/// signal is sampled and nothing else.
 struct TrickWindowDetector: Sendable {
-    /// Normalized units per sample.
-    let displacementThreshold: Float
-    /// Consecutive samples above threshold before a burst counts as a trick.
-    let minimumSustainedSamples: Int
-    /// Unbroken quiet samples needed to call two peaks separate tricks.
-    let minimumQuietSamples: Int
+    let entryRatio: Float
+    let exitRatio: Float
+    /// Torso lengths per second.
+    let minimumSpeed: Float
+    /// Half-width of the window the baseline is the median speed over. A burst longer than about
+    /// this raises its own baseline, so a single trick or combo that keeps going for much longer
+    /// can fall below `entryRatio` partway through.
+    let baselineHalfWindow: TimeInterval
+    /// Seconds of measured samples a baseline needs inside its window.
+    let minimumBaselineCoverage: TimeInterval
+    /// A burst shorter than this is a glitch, not a trick.
+    let minimumSustainedSeconds: TimeInterval
+    /// Unbroken quiet needed to call two bursts separate tricks.
+    let minimumQuietSeconds: TimeInterval
     /// Seconds of buffer added before the detected motion starts.
     let leadingBufferSeconds: TimeInterval
     /// Seconds of buffer added after the detected motion ends. Larger than
-    /// `leadingBufferSeconds`: the motion signal reads "quiet" as soon as the athlete's
-    /// translation slows on landing, which is consistently earlier than the trick visually
-    /// reads as complete — absorbing the landing and any follow-through still takes another
-    /// beat. A short trailing buffer cuts clips before the landing lands.
+    /// `leadingBufferSeconds`: the motion signal reads quiet as soon as the athlete slows on
+    /// landing, which is consistently earlier than the trick visually reads as complete —
+    /// absorbing the landing and any follow-through still takes another beat. A short trailing
+    /// buffer cuts clips before the landing lands.
     let trailingBufferSeconds: TimeInterval
 
-    private static let sustainedSeconds = 0.3
-    private static let quietSeconds = 1.0
-    /// `displacementThreshold`'s calibrated value at `VideoFrameSampler.targetSamplesPerSecond`
-    /// — see `scaledDisplacementThreshold` below for why it doesn't stay fixed across rates.
-    private static let displacementThresholdAtBaseRate: Float = 0.05
-
     init(
-        displacementThreshold: Float? = nil,
-        minimumSustainedSamples: Int? = nil,
-        minimumQuietSamples: Int? = nil,
-        sampleRate: Int = VideoFrameSampler.targetSamplesPerSecond,
+        entryRatio: Float = 2,
+        exitRatio: Float = 1.4,
+        minimumSpeed: Float = 2.5,
+        baselineHalfWindow: TimeInterval = 5,
+        minimumBaselineCoverage: TimeInterval = 1,
+        minimumSustainedSeconds: TimeInterval = 0.3,
+        minimumQuietSeconds: TimeInterval = 1,
         leadingBufferSeconds: TimeInterval = 1,
         trailingBufferSeconds: TimeInterval = 3
     ) {
-        self.displacementThreshold = displacementThreshold
-            ?? Self.scaledDisplacementThreshold(sampleRate: sampleRate)
-        self.minimumSustainedSamples = minimumSustainedSamples
-            ?? Self.sampleCount(seconds: Self.sustainedSeconds, sampleRate: sampleRate)
-        self.minimumQuietSamples = minimumQuietSamples
-            ?? Self.sampleCount(seconds: Self.quietSeconds, sampleRate: sampleRate)
+        self.entryRatio = entryRatio
+        self.exitRatio = exitRatio
+        self.minimumSpeed = minimumSpeed
+        self.baselineHalfWindow = baselineHalfWindow
+        self.minimumBaselineCoverage = minimumBaselineCoverage
+        self.minimumSustainedSeconds = minimumSustainedSeconds
+        self.minimumQuietSeconds = minimumQuietSeconds
         self.leadingBufferSeconds = leadingBufferSeconds
         self.trailingBufferSeconds = trailingBufferSeconds
     }
 
-    /// `MotionSample.displacement` is a raw positional delta between two *consecutive*
-    /// samples, not a velocity — so the same real motion covers proportionally less distance
-    /// as `sampleRate` rises, since denser samples land closer together in time. Scaling
-    /// `displacementThresholdAtBaseRate` by the baseline rate over the actual one keeps the
-    /// effective velocity threshold roughly constant, so raising Settings' analysis
-    /// granularity samples motion more finely instead of silently raising the bar a trick's
-    /// motion has to clear to register as moving at all. ("Roughly" — `VideoFrameSampler`
-    /// quantizes the achieved rate to `round(fps / stride)`, so it can differ slightly from
-    /// the configured one; the same approximation `minimumSustainedSamples`/
-    /// `minimumQuietSamples` already carry.)
-    ///
-    /// Only scales *down*, never up: below the baseline rate, a naive scale-up (0.5 at
-    /// `sampleRate == 1`) demands more real per-sample motion than trick footage actually
-    /// produces, so nothing would be detected at that end of the granularity range.
-    /// `max(sampleRate, ...)` floors the denominator at the baseline, so a rate below it keeps
-    /// the un-scaled (more permissive) base threshold.
-    private static func scaledDisplacementThreshold(sampleRate: Int) -> Float {
-        guard sampleRate > 0 else { return displacementThresholdAtBaseRate }
-        let flooredRate = max(sampleRate, VideoFrameSampler.targetSamplesPerSecond)
-        return displacementThresholdAtBaseRate
-            * Float(VideoFrameSampler.targetSamplesPerSecond) / Float(flooredRate)
-    }
-
-    /// Rounds a duration to whole samples at `sampleRate`, floored at 1 — a zero-sample
-    /// threshold would trigger on any single moving/quiet sample instead of requiring the
-    /// sustained/quiet run the design doc specifies.
-    private static func sampleCount(seconds: Double, sampleRate: Int) -> Int {
-        max(1, Int((seconds * Double(sampleRate)).rounded()))
-    }
+    /// Durations are compared with this much slack: ten 0.1 s samples sum to just under 1 s.
+    private static let durationTolerance: TimeInterval = 1e-6
 
     func detectWindows(in samples: [MotionSample]) -> [TrickWindow] {
-        let states = samples.map(state(of:))
-        let sustained = runsOfMotion(in: states).filter { $0.count >= minimumSustainedSamples }
-
-        return merging(sustained, separatedBy: states).map { peak in
+        let states = states(of: samples)
+        let sustained = runsOfMotion(in: states).filter { run in
+            samples[run.upperBound].endTime - samples[run.lowerBound].startTime
+                >= minimumSustainedSeconds - Self.durationTolerance
+        }
+        return merging(sustained, separatedBy: states, in: samples).map { burst in
             TrickWindow(
-                startTime: max(0, samples[peak.lowerBound].startTime - leadingBufferSeconds),
-                endTime: samples[peak.upperBound].endTime + trailingBufferSeconds
+                startTime: max(0, samples[burst.lowerBound].startTime - leadingBufferSeconds),
+                endTime: samples[burst.upperBound].endTime + trailingBufferSeconds
             )
         }
     }
 
-    /// A sample with no displacement is evidence of neither motion nor rest: it never
-    /// contributes to the quiet stretch that would split two tricks, and a single unknown
-    /// inside a burst does not end the run of motion — only a second consecutive unknown,
+    /// A sample with no speed — or no baseline to measure it against — is evidence of neither
+    /// motion nor rest: it never contributes to the quiet stretch that would split two tricks,
+    /// and a single unknown inside a burst does not end it — only a second consecutive unknown,
     /// or a quiet sample, does.
     private enum SampleState {
+        /// Above `entryRatio`: can start a burst.
+        case bursting
+        /// Above `exitRatio`: can continue one.
         case moving
         case quiet
         case unknown
     }
 
-    private func state(of sample: MotionSample) -> SampleState {
-        guard let displacement = sample.displacement else { return .unknown }
-        return displacement > displacementThreshold ? .moving : .quiet
+    private func states(of samples: [MotionSample]) -> [SampleState] {
+        let baselines = baselines(of: samples)
+        return zip(samples, baselines).map { sample, baseline in
+            guard let speed = sample.speed else { return .unknown }
+            guard speed > minimumSpeed else { return .quiet }
+            guard let baseline else { return .unknown }
+            let ratio = speed / max(baseline, .leastNormalMagnitude)
+            if ratio > entryRatio { return .bursting }
+            return ratio > exitRatio ? .moving : .quiet
+        }
     }
 
-    /// A single unknown sample inside a burst does not terminate the run: it is an
-    /// anchor-identity seam — e.g. a dropout that outlasts the reconstruction bound — one
-    /// frame of missing evidence, not evidence of rest. This is the design doc's layer-5
-    /// reasoning (a 33 ms dropout carries no signal either way) applied to the state machine:
-    /// closing the run at the seam would split a real trick below the sustained minimum and
-    /// drop it entirely. The seam must be isolated: a second consecutive unknown closes the
-    /// run at the last moving sample, so sustained pose loss still ends a trick.
+    /// The median known speed within `baselineHalfWindow` of each sample, by end time; nil where
+    /// the window holds less than `minimumBaselineCoverage` of measured samples.
+    private func baselines(of samples: [MotionSample]) -> [Float?] {
+        let times = samples.map(\.endTime)
+        let required = max(3, Int((minimumBaselineCoverage / samples.typicalSpacing).rounded()))
+        var lower = 0
+        var upper = 0
+        return times.map { time in
+            while times[lower] < time - baselineHalfWindow { lower += 1 }
+            while upper < times.count, times[upper] <= time + baselineHalfWindow { upper += 1 }
+            let known = samples[lower..<upper].compactMap(\.speed).map(Double.init)
+            return known.count >= required ? Float(known.median) : nil
+        }
+    }
+
+    /// A burst opens on a `.bursting` sample and runs through `.moving` and `.bursting` ones. A
+    /// single unknown sample inside it does not close it: it is one frame pair of missing
+    /// evidence — pose lost to blur mid-trick, typically — not evidence of rest, and closing at it
+    /// would split a real trick below the sustained minimum and drop it. A second consecutive
+    /// unknown, or a quiet sample, closes the burst at its last measured sample.
     private func runsOfMotion(in states: [SampleState]) -> [ClosedRange<Int>] {
         var runs: [ClosedRange<Int>] = []
         var start: Int?
-        /// Index of the tolerated unknown inside the open run, if one is being bridged.
-        var openSeam: Int?
+        var lastMoving = 0
+        var bridgedUnknown = false
 
-        /// The run's last sample when everything before `index` belongs to the run.
-        func endOfOpenRun(excluding index: Int) -> Int {
-            (openSeam ?? index) - 1
-        }
-
-        for index in states.indices {
-            switch states[index] {
-            case .moving:
-                if start == nil { start = index }
-                openSeam = nil
-            case .unknown:
-                if start != nil, openSeam == nil {
-                    openSeam = index
-                } else if let begin = start {
-                    runs.append(begin...endOfOpenRun(excluding: index))
-                    start = nil
-                    openSeam = nil
-                }
-            case .quiet:
-                if let begin = start {
-                    runs.append(begin...endOfOpenRun(excluding: index))
-                    start = nil
-                    openSeam = nil
-                }
+        for (index, state) in states.enumerated() {
+            switch (state, start) {
+            case (.bursting, nil):
+                start = index
+                lastMoving = index
+            case (.bursting, .some), (.moving, .some):
+                lastMoving = index
+                bridgedUnknown = false
+            case (.unknown, .some) where !bridgedUnknown:
+                bridgedUnknown = true
+            case (.unknown, .some(let begin)), (.quiet, .some(let begin)):
+                runs.append(begin...lastMoving)
+                start = nil
+                bridgedUnknown = false
+            default:
+                break
             }
         }
         if let begin = start {
-            runs.append(begin...endOfOpenRun(excluding: states.count))
+            runs.append(begin...lastMoving)
         }
         return runs
     }
 
     private func merging(
-        _ peaks: [ClosedRange<Int>],
-        separatedBy states: [SampleState]
+        _ bursts: [ClosedRange<Int>],
+        separatedBy states: [SampleState],
+        in samples: [MotionSample]
     ) -> [ClosedRange<Int>] {
         var merged: [ClosedRange<Int>] = []
-
-        for peak in peaks {
+        for burst in bursts {
             guard let previous = merged.last else {
-                merged.append(peak)
+                merged.append(burst)
                 continue
             }
-            let between = (previous.upperBound + 1)..<peak.lowerBound
-            if longestQuietRun(in: states, over: between) >= minimumQuietSamples {
-                merged.append(peak)
+            let between = (previous.upperBound + 1)..<burst.lowerBound
+            if longestQuietStretch(in: states, over: between, of: samples)
+                >= minimumQuietSeconds - Self.durationTolerance {
+                merged.append(burst)
             } else {
-                merged[merged.count - 1] = previous.lowerBound...peak.upperBound
+                merged[merged.count - 1] = previous.lowerBound...burst.upperBound
             }
         }
         return merged
     }
 
-    /// Measures the longest unbroken quiet stretch rather than the distance between peaks, so a
-    /// burst too short to be its own trick still counts against the separation it sits in.
-    private func longestQuietRun(in states: [SampleState], over range: Range<Int>) -> Int {
-        var longest = 0
-        var current = 0
-
+    /// Measures the longest unbroken quiet stretch rather than the gap between bursts, so motion
+    /// too short to be its own trick still counts against the separation it sits in.
+    private func longestQuietStretch(
+        in states: [SampleState],
+        over range: Range<Int>,
+        of samples: [MotionSample]
+    ) -> TimeInterval {
+        var longest: TimeInterval = 0
+        var current: TimeInterval = 0
         for index in range {
             if case .quiet = states[index] {
-                current += 1
+                current += samples[index].endTime - samples[index].startTime
                 longest = max(longest, current)
             } else {
                 current = 0

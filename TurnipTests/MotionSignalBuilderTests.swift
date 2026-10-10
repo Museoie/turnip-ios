@@ -2,224 +2,215 @@ import XCTest
 @testable import Turnip
 
 final class MotionSignalBuilderTests: XCTestCase {
+    /// Square, so a normalized unit is the same number of pixels on both axes: the fixtures'
+    /// default 0.1 torso is 100 px.
+    private let square = CGSize(width: 1000, height: 1000)
 
-    // MARK: - Anchor resolution
+    // MARK: - Units
 
-    func testHipAnchorIsTheMidpointOfBothHips() throws {
-        let frame = PoseFixture.frame(
-            index: 0,
-            hip: nil,
-            leftHip: KeypointSeed(x: 0.4, y: 0.5, confidence: 0.9),
-            rightHip: KeypointSeed(x: 0.6, y: 0.7, confidence: 0.9)
-        )
+    func testAStillAthleteReadsZero() throws {
+        let samples = build(PoseFixture.bodies(hipXPositions: [0.5, 0.5, 0.5, 0.5]))
 
-        let anchor = try XCTUnwrap(MotionSignalBuilder.anchors(for: [frame])[0])
-
-        XCTAssertEqual(anchor.x, 0.5, accuracy: 0.0001)
-        XCTAssertEqual(anchor.y, 0.6, accuracy: 0.0001)
-        XCTAssertEqual(anchor.source, .hips)
+        XCTAssertEqual(samples.count, 3)
+        for sample in samples {
+            XCTAssertEqual(try XCTUnwrap(sample.speed), 0, accuracy: 0.0001)
+        }
     }
 
-    func testHipAnchorAveragesOnlyTheHipsAboveTheConfidenceThreshold() throws {
-        let frame = PoseFixture.frame(
-            index: 0,
-            hip: nil,
-            leftHip: KeypointSeed(x: 0.4, y: 0.5, confidence: 0.9),
-            rightHip: KeypointSeed(x: 0.9, y: 0.9, confidence: 0.1)
-        )
+    /// 10 px per 0.1 s against a 100 px torso is one torso length per second.
+    func testSpeedIsInTorsoLengthsPerSecond() throws {
+        let samples = build(PoseFixture.bodies(hipXPositions: (0..<6).map { 0.5 + Float($0) * 0.01 }))
 
-        let anchor = try XCTUnwrap(MotionSignalBuilder.anchors(for: [frame])[0])
-
-        XCTAssertEqual(anchor.x, 0.4, accuracy: 0.0001, "the low-confidence hip was averaged in")
-        XCTAssertEqual(anchor.y, 0.5, accuracy: 0.0001)
-        XCTAssertEqual(anchor.source, .hips)
+        for sample in samples {
+            XCTAssertEqual(try XCTUnwrap(sample.speed), 1, accuracy: 0.0001)
+        }
     }
 
-    func testFallsBackToTheUpperBodyAnchorWhenBothHipsFail() throws {
-        let frame = PoseFixture.frame(index: 0, hip: nil, upperBody: (x: 0.3, y: 0.2))
+    /// The same move filmed from four times further away covers a quarter of the frame — and
+    /// reads the same.
+    func testTheSameMotionReadsTheSameNearAndFar() throws {
+        let far = build(PoseFixture.bodies(hipXPositions: (0..<6).map { 0.5 + Float($0) * 0.025 }, torso: 0.05))
+        let near = build(PoseFixture.bodies(hipXPositions: (0..<6).map { 0.2 + Float($0) * 0.1 }, torso: 0.2))
 
-        let anchor = try XCTUnwrap(MotionSignalBuilder.anchors(for: [frame])[0])
-
-        XCTAssertEqual(anchor.x, 0.3, accuracy: 0.0001)
-        XCTAssertEqual(anchor.y, 0.2, accuracy: 0.0001)
-        XCTAssertEqual(anchor.source, .upperBody)
+        for (farSample, nearSample) in zip(far, near) {
+            XCTAssertEqual(try XCTUnwrap(farSample.speed), 5, accuracy: 0.0001)
+            XCTAssertEqual(try XCTUnwrap(nearSample.speed), 5, accuracy: 0.0001)
+        }
     }
 
-    func testProducesNoAnchorWhenEveryCandidateKeypointFails() {
-        let frame = PoseFixture.frame(index: 0, hip: nil)
-
-        XCTAssertNil(MotionSignalBuilder.anchors(for: [frame])[0])
-    }
-
-    // MARK: - Partial-group anchors
-
-    /// A one-hip frame between two full-hip frames must not read as motion: the anchor is the
-    /// full-group midpoint reconstructed from the neighbouring frame's hip geometry, so a
-    /// stationary athlete measures zero displacement on both sides.
-    /// Negative control: without reconstruction the middle frame anchors on the lone hip and
-    /// both samples read 0.06 — above the 0.05 displacement threshold even after smoothing.
-    func testOneHipDropoutOnAStationaryAthleteStaysQuiet() throws {
-        let frames = [
-            PoseFixture.frame(
-                index: 0,
-                hip: nil,
-                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.9)
-            ),
-            PoseFixture.frame(
-                index: 1,
-                hip: nil,
-                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.1)
-            ),
-            PoseFixture.frame(
-                index: 2,
-                hip: nil,
-                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.9)
-            )
-        ]
-
-        let anchors = MotionSignalBuilder.anchors(for: frames)
-        let samples = MotionSignalBuilder.buildSignal(from: frames)
-
-        // The reconstructed anchor estimates the full-group midpoint, so it carries the full
-        // group's identity and compares against its genuine full-group neighbours.
-        XCTAssertEqual(try XCTUnwrap(anchors[1]).members, MotionSignalBuilder.hipKeypointNames)
-        XCTAssertEqual(samples.count, 2)
-        XCTAssertEqual(try XCTUnwrap(samples[0].displacement), 0, accuracy: 0.0001)
-        XCTAssertEqual(try XCTUnwrap(samples[1].displacement), 0, accuracy: 0.0001)
-    }
-
-    /// The same defect one level down: the upper-body group's three members are not symmetric
-    /// about a common center, so a nose-only frame after an all-three frame reads 0.053 of
-    /// motion without reconstruction.
-    /// Negative control: without reconstruction both samples read 0.053 — above threshold.
-    func testNoseOnlyDropoutOnAStationaryAthleteStaysQuiet() throws {
-        let frames = [
-            upperBodyFrame(index: 0, seeds: [
-                "left_shoulder": KeypointSeed(x: 0.42, y: 0.30, confidence: 0.9),
-                "right_shoulder": KeypointSeed(x: 0.58, y: 0.30, confidence: 0.9),
-                "nose": KeypointSeed(x: 0.50, y: 0.22, confidence: 0.9)
-            ]),
-            upperBodyFrame(index: 1, seeds: [
-                "nose": KeypointSeed(x: 0.50, y: 0.22, confidence: 0.9)
-            ]),
-            upperBodyFrame(index: 2, seeds: [
-                "left_shoulder": KeypointSeed(x: 0.42, y: 0.30, confidence: 0.9),
-                "right_shoulder": KeypointSeed(x: 0.58, y: 0.30, confidence: 0.9),
-                "nose": KeypointSeed(x: 0.50, y: 0.22, confidence: 0.9)
-            ])
-        ]
-
-        let samples = MotionSignalBuilder.buildSignal(from: frames)
-
-        XCTAssertEqual(samples.count, 2)
-        XCTAssertEqual(try XCTUnwrap(samples[0].displacement), 0, accuracy: 0.0001)
-        XCTAssertEqual(try XCTUnwrap(samples[1].displacement), 0, accuracy: 0.0001)
-    }
-
-    /// With no recent full-group frame to reconstruct from, a partial anchor keeps its partial
-    /// identity and its displacement stays unknown — rather than measuring the subset offset
-    /// as motion.
-    func testPartialAnchorWithoutARecentFullGroupFrameHasUnknownDisplacement() {
-        let frames = [
-            PoseFixture.frame(
-                index: 0,
-                hip: nil,
-                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.1)
-            ),
-            PoseFixture.frame(
-                index: 1,
-                hip: nil,
-                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: 0.9)
-            )
-        ]
-
-        let samples = MotionSignalBuilder.buildSignal(from: frames)
-
-        XCTAssertEqual(samples.count, 1)
-        XCTAssertNil(samples[0].displacement, "the subset offset was measured as motion")
-    }
-
-    /// The reconstruction bound is exactly three frames: a partial frame three frames
-    /// after the last full-group frame reconstructs and carries the full identity, while a
-    /// frame one step further keeps its partial identity and its displacement stays
-    /// unknown. This pins the constant both ways — relaxing it to 1 reconstructs frame 3
-    /// too, widening it to 1000 reconstructs frame 4 too, and either mutation must fail
-    /// here rather than hide inside an invisible boundary.
-    func testReconstructionBoundIsThreeFrames() throws {
-        let frames = (0...4).map { index in
-            PoseFixture.frame(
-                index: index,
-                hip: nil,
-                leftHip: KeypointSeed(x: 0.44, y: 0.55, confidence: 0.9),
-                rightHip: KeypointSeed(x: 0.56, y: 0.55, confidence: index == 0 ? 0.9 : 0.1)
-            )
+    /// In a portrait frame a normalized unit is 1920 px down but 1080 px across. Measured in
+    /// frame fractions, a jump would read 1.78x slower than the same pixels of sideways travel.
+    func testUpAndSidewaysReadAlikeInAPortraitFrame() throws {
+        let portrait = CGSize(width: 1080, height: 1920)
+        let pixelsPerFrame: Float = 54
+        let sideways = (0..<6).map { index in
+            PoseFixture.body(index: index, hip: (x: 0.3 + Float(index) * pixelsPerFrame / 1080, y: 0.5))
+        }
+        let upward = (0..<6).map { index in
+            PoseFixture.body(index: index, hip: (x: 0.5, y: 0.6 - Float(index) * pixelsPerFrame / 1920))
         }
 
-        let anchors = MotionSignalBuilder.anchors(for: frames)
-        let samples = MotionSignalBuilder.buildSignal(from: frames)
+        let sidewaysSpeed = try XCTUnwrap(
+            MotionSignalBuilder.buildSignal(from: sideways, renderedPixelSize: portrait)[2].speed)
+        let upwardSpeed = try XCTUnwrap(
+            MotionSignalBuilder.buildSignal(from: upward, renderedPixelSize: portrait)[2].speed)
 
-        XCTAssertEqual(samples.count, 4)
-        // Frame 3 is exactly 3 after the full-group frame: reconstructed, full identity.
-        XCTAssertEqual(try XCTUnwrap(anchors[3]).members, MotionSignalBuilder.hipKeypointNames)
-        XCTAssertEqual(try XCTUnwrap(samples[2].displacement), 0, accuracy: 0.0001)
-        // Frame 4 is one step past the bound: partial identity, unknown displacement.
-        XCTAssertEqual(try XCTUnwrap(anchors[4]).members, ["left_hip"])
-        XCTAssertNil(samples[3].displacement, "the identity seam must appear exactly past the bound")
+        XCTAssertEqual(sidewaysSpeed, upwardSpeed, accuracy: 0.0001)
+        XCTAssertGreaterThan(upwardSpeed, 0)
     }
 
-    // MARK: - Gap interpolation
+    /// Every located joint counts, so a leg moving under still hips is motion.
+    func testLimbMotionCountsWithoutHipTravel() throws {
+        let frames = (0..<6).map { index in
+            PoseFixture.body(
+                index: index, hip: (x: 0.5, y: 0.5),
+                offsets: ["right_knee": (0, -0.05 * Float(index)), "right_ankle": (0, -0.1 * Float(index))])
+        }
 
-    func testInterpolatesASingleFrameAnchorGapFromItsNeighbours() throws {
-        let frames = PoseFixture.frames(hipXPositions: [0.2, 0.4, 0.0, 0.8], blankFrames: [2])
+        let speed = try XCTUnwrap(build(frames)[2].speed)
 
-        let anchor = try XCTUnwrap(MotionSignalBuilder.anchors(for: frames)[2])
-
-        XCTAssertEqual(anchor.x, 0.6, accuracy: 0.0001)
-        XCTAssertEqual(anchor.y, 0.5, accuracy: 0.0001)
-        XCTAssertEqual(anchor.source, .hips)
+        // 50 px + 100 px of the 17 joints' travel per 0.1 s, over a 100 px torso.
+        XCTAssertEqual(speed, 150 / 17 / 100 / 0.1, accuracy: 0.0001)
     }
 
-    /// Interpolation reads its neighbours from the unfilled input, so a two-frame hole cannot
-    /// close by having the first estimate feed the second.
-    func testDoesNotInterpolateTwoConsecutiveAnchorGaps() {
-        let frames = PoseFixture.frames(hipXPositions: [0.2, 0.4, 0.0, 0.0, 0.8], blankFrames: [2, 3])
+    // MARK: - Unknown motion
 
-        let anchors = MotionSignalBuilder.anchors(for: frames)
+    /// Two frames in a row with five joints: too few to measure, and too long a stretch to bridge.
+    func testAPairWithFewerThanSixSharedJointsIsUnknown() {
+        let keep: Set<String> = ["left_shoulder", "right_shoulder", "left_hip", "right_hip", "nose"]
+        let frames = (0..<6).map { index in
+            PoseFixture.body(
+                index: index, hip: (x: 0.5, y: 0.5),
+                dropped: (2...3).contains(index) ? Set(PoseKeypoint.names).subtracting(keep) : [])
+        }
 
-        XCTAssertNil(anchors[2])
-        XCTAssertNil(anchors[3])
+        let samples = build(frames)
+
+        XCTAssertNotNil(samples[0].speed)
+        XCTAssertNil(samples[1].speed, "five joints were enough to measure")
+        XCTAssertNil(samples[2].speed, "five joints were enough to measure")
+        XCTAssertNil(samples[3].speed, "five joints were enough to measure")
+        XCTAssertNotNil(samples[4].speed)
     }
 
-    // MARK: - Displacement
+    /// Legs passing close to the lens have no torso in view, so nothing tells their size and
+    /// their motion stays unknown — rather than reading as fast because they fill the frame.
+    func testABodyWithNoTorsoInViewHasUnknownSpeed() {
+        let frames = (0..<6).map { index in
+            PoseFixture.body(
+                index: index, hip: (x: 0.2 + Float(index) * 0.1, y: 0.5),
+                dropped: ["left_shoulder", "right_shoulder"])
+        }
 
-    /// A hip midpoint and an upper-body midpoint sit a torso apart. Differencing across the two
-    /// would report that offset as a burst of athlete motion several times the peak threshold.
-    func testDisplacementIsUnknownAcrossAnAnchorSourceChange() throws {
-        let frames = [
-            PoseFixture.frame(index: 0, hip: (x: 0.5, y: 0.5)),
-            PoseFixture.frame(index: 1, hip: (x: 0.5, y: 0.5)),
-            PoseFixture.frame(index: 2, hip: nil, upperBody: (x: 0.5, y: 0.2)),
-            PoseFixture.frame(index: 3, hip: nil, upperBody: (x: 0.5, y: 0.2))
-        ]
+        XCTAssertTrue(build(frames).allSatisfy { $0.speed == nil })
+    }
 
-        let samples = MotionSignalBuilder.buildSignal(from: frames)
+    /// A torso lost for a moment — a shoulder hidden mid-turn — keeps the scale its neighbours
+    /// measured, so the motion through it is still measured.
+    func testTheScaleHoldsThroughABriefTorsoLoss() {
+        let frames = (0..<9).map { index in
+            PoseFixture.body(
+                index: index, hip: (x: 0.3 + Float(index) * 0.01, y: 0.5),
+                dropped: (3...5).contains(index) ? ["left_shoulder"] : [])
+        }
 
-        XCTAssertEqual(try XCTUnwrap(samples[0].displacement), 0, accuracy: 0.0001)
-        XCTAssertNil(samples[1].displacement, "the torso offset was measured as motion")
-        XCTAssertEqual(try XCTUnwrap(samples[2].displacement), 0, accuracy: 0.0001)
+        XCTAssertTrue(build(frames).allSatisfy { $0.speed != nil })
+    }
+
+    // MARK: - Pose-model artifacts
+
+    /// Pose models trade left and right labels when an athlete turns side-on. A still athlete
+    /// whose labels cross reads as still, not as every limb jumping across the body.
+    func testCrossedLeftRightLabelsOnAStillAthleteReadAsStill() throws {
+        let torso: Float = 0.1
+        var crossed: [String: (x: Float, y: Float)] = [:]
+        for (name, position) in PoseFixture.standingLayout {
+            let mirror = name.hasPrefix("left_") ? "right_" + name.dropFirst(5)
+                : name.hasPrefix("right_") ? "left_" + name.dropFirst(6) : name
+            guard let other = PoseFixture.standingLayout[mirror] else { continue }
+            crossed[name] = ((other.x - position.x) * torso, (other.y - position.y) * torso)
+        }
+        let frames = (0..<4).map { index in
+            PoseFixture.body(index: index, hip: (x: 0.5, y: 0.5), torso: torso, offsets: index == 2 ? crossed : [:])
+        }
+
+        for sample in build(frames) {
+            XCTAssertEqual(try XCTUnwrap(sample.speed), 0, accuracy: 0.0001)
+        }
+    }
+
+    /// A one-off jump — the single-person pose landing on someone else and staying — is one raw
+    /// sample. The median drops it, where a moving average would spread it over three samples —
+    /// exactly enough to pass for sustained motion.
+    func testAOneOffJumpIsSmoothedAway() throws {
+        let positions = [Float](repeating: 0.3, count: 6) + [Float](repeating: 0.7, count: 6)
+
+        for sample in build(PoseFixture.bodies(hipXPositions: positions)) {
+            XCTAssertEqual(try XCTUnwrap(sample.speed), 0, accuracy: 0.0001)
+        }
+    }
+
+    /// The median spans a fixed duration, so at 30 samples per second a 0.1 s flicker is dropped
+    /// the way a single sample is at 10.
+    func testTheMedianSpansAFixedDurationAtAnySampleRate() throws {
+        let interval = 1.0 / 30
+        let positions = [Float](repeating: 0.5, count: 10) + [0.6, 0.7, 0.8] + [Float](repeating: 0.8, count: 10)
+        let frames = positions.enumerated().map { index, x in
+            PoseFixture.body(index: index, hip: (x: x, y: 0.5), interval: interval)
+        }
+
+        for sample in MotionSignalBuilder.buildSignal(from: frames, renderedPixelSize: square) {
+            XCTAssertEqual(try XCTUnwrap(sample.speed), 0, accuracy: 0.0001)
+        }
+    }
+
+    func testSpeedDoesNotDependOnTheSampleRate() throws {
+        let tenPerSecond = build(PoseFixture.bodies(hipXPositions: (0..<6).map { 0.5 + Float($0) * 0.03 }))
+        let thirtyPerSecond = build(PoseFixture.bodies(
+            hipXPositions: (0..<18).map { 0.5 + Float($0) * 0.01 }, interval: 1.0 / 30))
+
+        XCTAssertEqual(try XCTUnwrap(tenPerSecond[2].speed), 3, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(thirtyPerSecond[8].speed), 3, accuracy: 0.0001)
+    }
+
+    /// One frame that lost every joint, mid-motion: the frames either side of it are measured
+    /// against each other, and both samples touching it take that speed.
+    func testASingleFrameDropoutIsBridgedFromItsNeighbours() throws {
+        let frames = (0..<7).map { index in
+            PoseFixture.body(
+                index: index, hip: (x: 0.3 + Float(index) * 0.01, y: 0.5),
+                dropped: index == 3 ? Set(PoseKeypoint.names) : [])
+        }
+
+        for sample in build(frames) {
+            XCTAssertEqual(try XCTUnwrap(sample.speed), 1, accuracy: 0.0001)
+        }
+    }
+
+    // MARK: - Shape of the signal
+
+    /// Filling a gap would hand peak detection a speed for a frame pair where the athlete was
+    /// never located. Two missing frames in a row are a gap, not a dropout to bridge.
+    func testGapsSurviveSmoothing() {
+        let frames = (0..<7).map { index in
+            PoseFixture.body(
+                index: index, hip: (x: 0.3 + Float(index) * 0.01, y: 0.5),
+                dropped: (3...4).contains(index) ? Set(PoseKeypoint.names) : [])
+        }
+
+        let samples = build(frames)
+
+        XCTAssertNotNil(samples[1].speed)
+        XCTAssertNil(samples[2].speed)
+        XCTAssertNil(samples[3].speed)
+        XCTAssertNil(samples[4].speed)
+        XCTAssertNotNil(samples[5].speed)
     }
 
     func testSampleTimesSpanTheFramePairTheyMeasure() {
-        let frames = PoseFixture.frames(hipXPositions: [0.1, 0.2, 0.3])
+        let samples = build(PoseFixture.bodies(hipXPositions: [0.1, 0.2, 0.3]))
 
-        let samples = MotionSignalBuilder.buildSignal(from: frames)
-
-        XCTAssertEqual(samples.count, 2, "n frames yield n-1 displacements")
+        XCTAssertEqual(samples.count, 2, "n frames yield n-1 samples")
         XCTAssertEqual(samples[0].startTime, 0.0, accuracy: 0.0001)
         XCTAssertEqual(samples[0].endTime, 0.1, accuracy: 0.0001)
         XCTAssertEqual(samples[1].startTime, 0.1, accuracy: 0.0001)
@@ -227,60 +218,11 @@ final class MotionSignalBuilderTests: XCTestCase {
     }
 
     func testFewerThanTwoFramesProduceNoSamples() {
-        XCTAssertTrue(MotionSignalBuilder.buildSignal(from: []).isEmpty)
-        XCTAssertTrue(MotionSignalBuilder.buildSignal(from: PoseFixture.frames(hipXPositions: [0.5])).isEmpty)
+        XCTAssertTrue(build([]).isEmpty)
+        XCTAssertTrue(build(PoseFixture.bodies(hipXPositions: [0.5])).isEmpty)
     }
 
-    // MARK: - Smoothing
-
-    func testSmoothsWithAThreeSampleMovingAverage() throws {
-        let frames = PoseFixture.frames(hipXPositions: [0.0, 0.0, 0.3, 0.3, 0.3])
-
-        let smoothed = MotionSignalBuilder.buildSignal(from: frames)
-
-        // Raw displacements are [0, 0.3, 0, 0]; the window is clipped at both ends.
-        XCTAssertEqual(try XCTUnwrap(smoothed[0].displacement), 0.15, accuracy: 0.0001)
-        XCTAssertEqual(try XCTUnwrap(smoothed[1].displacement), 0.1, accuracy: 0.0001)
-        XCTAssertEqual(try XCTUnwrap(smoothed[2].displacement), 0.1, accuracy: 0.0001)
-        XCTAssertEqual(try XCTUnwrap(smoothed[3].displacement), 0.0, accuracy: 0.0001)
-    }
-
-    /// Averaging a gap away would hand peak detection a displacement for a frame pair where the
-    /// athlete was never located.
-    func testGapsSurviveSmoothing() {
-        let frames = PoseFixture.frames(
-            hipXPositions: [0.1, 0.2, 0.0, 0.0, 0.5, 0.6],
-            blankFrames: [2, 3]
-        )
-
-        let samples = MotionSignalBuilder.buildSignal(from: frames)
-
-        XCTAssertNotNil(samples[0].displacement)
-        XCTAssertNil(samples[1].displacement)
-        XCTAssertNil(samples[2].displacement)
-        XCTAssertNil(samples[3].displacement)
-        XCTAssertNotNil(samples[4].displacement)
-    }
-
-    // MARK: - Helpers
-
-    /// A frame whose upper-body keypoints carry individual positions and confidences; every
-    /// other keypoint sits below the confidence threshold. The shared fixture writes one
-    /// position into the whole group, which cannot express a nose-only dropout.
-    private func upperBodyFrame(
-        index: Int,
-        seeds: [String: KeypointSeed]
-    ) -> PoseFrameResult {
-        let keypoints = PoseKeypoint.names.map { name -> PoseKeypoint in
-            if let seed = seeds[name] {
-                return PoseKeypoint(name: name, y: seed.y, x: seed.x, confidence: seed.confidence)
-            }
-            return PoseKeypoint(name: name, y: 0, x: 0, confidence: 0.05)
-        }
-        return PoseFrameResult(
-            frameIndex: index * 3,
-            timestamp: Double(index) * PoseFixture.frameInterval,
-            keypoints: keypoints
-        )
+    private func build(_ frames: [PoseFrameResult]) -> [MotionSample] {
+        MotionSignalBuilder.buildSignal(from: frames, renderedPixelSize: square)
     }
 }

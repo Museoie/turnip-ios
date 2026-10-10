@@ -201,7 +201,7 @@ final class ProcessingPipelineRunTests: XCTestCase {
         let yPositions = PoseFixture.slide(
             quietFrames: 15, from: 0.2, perFrame: 0.1, movingFrames: 6, tailFrames: 14)
         let fixtures = yPositions.enumerated().map { index, y in
-            PoseFixture.frame(index: index, hip: (x: 0.5, y: y))
+            PoseFixture.body(index: index, hip: (x: 0.5, y: y))
         }
         let sampler = ScriptedSampler(renderSize: CGSize(width: 48, height: 64), results: fixtures)
         let makeInference: ProcessingPipeline.InferenceFactory = {
@@ -245,7 +245,7 @@ final class ProcessingPipelineRunTests: XCTestCase {
         let yPositions = PoseFixture.slide(
             quietFrames: 15, from: 0.2, perFrame: 0.1, movingFrames: 6, tailFrames: 14)
         let fixtures = yPositions.enumerated().map { index, y in
-            PoseFixture.frame(index: index, hip: (x: 0.5, y: y))
+            PoseFixture.body(index: index, hip: (x: 0.5, y: y))
         }
         let renderSize = CGSize(width: 48, height: 64)
         let sampler = ScriptedSampler(renderSize: renderSize, results: fixtures)

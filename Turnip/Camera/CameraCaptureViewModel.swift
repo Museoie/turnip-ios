@@ -104,15 +104,14 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// The pixel size the current take's keypoints are normalized against, read at record start.
     private var liveRenderedPixelSize: CGSize = .zero
     /// Steps 4-6 over the take's live results, built for the sample rate the take was actually
-    /// armed at (see `armedSampleRate` below) — the same `TrickWindowDetector` sustained/quiet
-    /// thresholds the file path derives from `TurnipSettings.analysisGranularity`, so a take
-    /// scored live and the same take analyzed from the file detect the same tricks. Injected so
-    /// the camera can be tested without a real `ProcessingPipeline`; the default is the same
-    /// detection the Processing screen runs.
+    /// armed at (see `armedSampleRate` below). Detection itself reads no rate — its signal is a
+    /// speed and its thresholds are durations — so a take scored live and the same take analyzed
+    /// from the file detect the same tricks. Injected so the camera can be tested without a real
+    /// `ProcessingPipeline`; the default is the same detection the Processing screen runs.
     private let makeDetectClips: (Int) -> ClipDetection
     /// The granularity `armLivePose()` last armed the tap with, read again in `finishLivePose()`
-    /// so detection uses the same rate the recording was sampled at even if the setting changed
-    /// mid-recording.
+    /// so coverage is checked at the rate the recording was sampled at even if the setting
+    /// changed mid-recording.
     private var armedSampleRate = VideoFrameSampler.targetSamplesPerSecond
     /// Reads the current settings snapshot at the point a setting takes effect (Record tap),
     /// rather than once at init — a change made while the camera tab is already open is picked
@@ -781,7 +780,7 @@ extension CameraCaptureViewModel {
             drainingLivePose = nil
         }
         // `armedSampleRate` is what the gate (the `LivePoseFrameGate` `LivePoseFrameTap.arm` builds)
-        // was actually configured with — the same granularity the file path's detector uses — so
+        // was actually configured with — the same granularity the file path samples at — so
         // coverage is checked against the grid the recording actually ran, not the shipped default.
         let interval = 1.0 / Double(armedSampleRate)
         guard LivePoseCoverage.isComplete(outcome, interval: interval) else { return nil }
