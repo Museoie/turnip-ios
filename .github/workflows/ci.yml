@@ -93,6 +93,11 @@ jobs:
       - name: Test the screenshots-comment script
         run: python3 .github/scripts/test_post_screenshots_comment.py
 
+      # The screenshots job only runs on UI changes, so the extraction it
+      # depends on is tested here, on every run.
+      - name: Test the screenshot extraction
+        run: python3 .github/scripts/test_extract_screenshots.py
+
       # A gate that never fails is indistinguishable from no gate, so the scan
       # above is itself exercised against a planted credential.
       - name: Test the credential scan
@@ -334,16 +339,7 @@ jobs:
           OUT="$RUNNER_TEMP/screenshots"
           mkdir -p "$OUT"
           # Tests print TURNIP_SCREENSHOT:<name>:<base64> to stdout; decode them here.
-          (grep "TURNIP_SCREENSHOT:" "$RUNNER_TEMP/xcodebuild.log" 2>/dev/null || true) | while IFS= read -r line; do
-            # Extract name and base64 (format: ...TURNIP_SCREENSHOT:<name>:<base64>)
-            payload="${line##*TURNIP_SCREENSHOT:}"
-            name="${payload%%:*}"
-            b64="${payload#*:}"
-            if [[ -n "$name" && -n "$b64" ]]; then
-              echo "$b64" | base64 -d > "$OUT/${name}.png"
-              echo "Decoded $name.png ($(wc -c < "$OUT/${name}.png") bytes)"
-            fi
-          done
+          python3 .github/scripts/extract_screenshots.py "$RUNNER_TEMP/xcodebuild.log" "$OUT"
           count="$(find "$OUT" -name '*.png' | wc -l | tr -d ' ')"
           echo "Collected $count screenshot(s):"
           ls -la "$OUT" || true
