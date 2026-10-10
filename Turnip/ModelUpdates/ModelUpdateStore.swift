@@ -77,7 +77,9 @@ struct ModelUpdateStore: Sendable {
     }
 
     /// Atomically replaces the staged model. Bytes land first, metadata
-    /// second (see the layout note above).
+    /// second (see the layout note above); once the metadata names the new
+    /// file, the file the previous record pointed at is deleted, so versioned
+    /// file names don't leave dead weights behind in Application Support.
     func stage(modelData: Data, version: ModelVersion, fileName: String) throws {
         // The write-time gate (one shared predicate, see validate(fileName:) above): rejects
         // hostile names, the reserved metadata name, and non-ASCII names
@@ -86,11 +88,21 @@ struct ModelUpdateStore: Sendable {
         try Self.validate(fileName: fileName)
         try FileManager.default.createDirectory(
             at: baseURL, withIntermediateDirectories: true)
+        let previous = try readRecord()
         try modelData.write(
             to: baseURL.appendingPathComponent(fileName), options: .atomic)
         let payload = try JSONEncoder().encode(
             StoredModel(version: version.rawValue, fileName: fileName))
         try payload.write(to: metadataURL, options: .atomic)
+        // The previous file must survive until the sidecar names the new
+        // file: a crash between the two writes leaves the old record intact,
+        // and deleting first would leave a dangling reference. The delete is
+        // best-effort — the update is complete at this point, so a failed
+        // removal must not turn a successful stage into a throw.
+        if let previous, previous.fileName != fileName {
+            try? FileManager.default.removeItem(
+                at: baseURL.appendingPathComponent(previous.fileName))
+        }
     }
 
     private var metadataURL: URL {

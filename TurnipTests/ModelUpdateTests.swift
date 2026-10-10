@@ -389,30 +389,79 @@ final class ModelUpdateTests: XCTestCase {
             "store directory untouched by rejected stages")
     }
 
+    /// Staging a new model under a new fileName must delete the file the
+    /// previous record pointed at: Application Support is never purged by
+    /// iOS, so every versioned update would otherwise leak ~12 MB of dead
+    /// weights. This test fails against the old implementation, which never
+    /// removed the previous file.
+    func testStoreStageDeletesPreviousStagedFileOnRename() throws {
+        let store = makeStore()
+        let oldName = "movenet_thunder_2026.09.10.tflite"
+        let newName = "movenet_thunder_2026.10.01.tflite"
+        try store.stage(
+            modelData: Data("old-bytes".utf8),
+            version: ModelVersion("2026.09.10"),
+            fileName: oldName)
+        let oldURL = store.baseURL.appendingPathComponent(oldName)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: oldURL.path))
+
+        try store.stage(
+            modelData: Data("new-bytes".utf8),
+            version: ModelVersion("2026.10.01"),
+            fileName: newName)
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: oldURL.path),
+            "previous staged file must be deleted after the sidecar is repointed")
+        let newURL = store.baseURL.appendingPathComponent(newName)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newURL.path))
+        XCTAssertEqual(try Data(contentsOf: newURL), Data("new-bytes".utf8))
+        XCTAssertEqual(store.activeVersion(), ModelVersion("2026.10.01"))
+    }
+
+    /// Staging the same fileName twice must keep the just-overwritten file:
+    /// the delete-on-replace must not remove the file it just wrote.
+    func testStoreStageKeepsFileWhenFileNameIsUnchanged() throws {
+        let store = makeStore()
+        let name = "movenet_thunder_int8.tflite"
+        try store.stage(
+            modelData: Data("v1".utf8),
+            version: ModelVersion("2026.09.10"),
+            fileName: name)
+        try store.stage(
+            modelData: Data("v2".utf8),
+            version: ModelVersion("2026.10.01"),
+            fileName: name)
+        let url = store.baseURL.appendingPathComponent(name)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(try Data(contentsOf: url), Data("v2".utf8))
+        XCTAssertEqual(store.activeVersion(), ModelVersion("2026.10.01"))
+    }
+
     // MARK: - Client
 
-    /// Model bytes are trust material: the client refuses to fetch or download
-    /// over plain http, before any bytes move.
-    func testClientRequiresHTTPS() async {
-        let client = URLSessionModelUpdateClient()
-        do {
-            _ = try await client.fetchManifest(
-                from: URL(string: "http://models.example.com/api/models/current")!)
-            XCTFail("expected endpointNotHTTPS")
-        } catch ModelUpdateError.endpointNotHTTPS {
-            // expected
-        } catch {
-            XCTFail("expected endpointNotHTTPS, got \(error)")
-        }
-        do {
-            _ = try await client.downloadModel(from: URL(string: "http://models.example.com/m.tflite")!)
-            XCTFail("expected endpointNotHTTPS")
-        } catch ModelUpdateError.endpointNotHTTPS {
-            // expected
-        } catch {
-            XCTFail("expected endpointNotHTTPS, got \(error)")
-        }
-    }
+   /// Model bytes are trust material: the client refuses to fetch or download
+   /// over plain http, before any bytes move.
+   func testClientRequiresHTTPS() async {
+       let client = URLSessionModelUpdateClient()
+       do {
+           _ = try await client.fetchManifest(
+               from: URL(string: "http://models.example.com/api/models/current")!)
+           XCTFail("expected endpointNotHTTPS")
+       } catch ModelUpdateError.endpointNotHTTPS {
+           // expected
+       } catch {
+           XCTFail("expected endpointNotHTTPS, got \(error)")
+       }
+       do {
+           _ = try await client.downloadModel(from: URL(string: "http://models.example.com/m.tflite")!)
+           XCTFail("expected endpointNotHTTPS")
+       } catch ModelUpdateError.endpointNotHTTPS {
+           // expected
+       } catch {
+           XCTFail("expected endpointNotHTTPS, got \(error)")
+       }
+   }
 }
 
 // MARK: - Mock configuration
