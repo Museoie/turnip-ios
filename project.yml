@@ -15,7 +15,11 @@ settings:
     # warnings-as-errors question is settled. Follow-up: raise to `complete`.
     SWIFT_STRICT_CONCURRENCY: targeted
     IPHONEOS_DEPLOYMENT_TARGET: "16.0"
-    MARKETING_VERSION: 0.1.0
+    # The App Store version, CFBundleShortVersionString. App Store Connect only
+    # takes builds of a version above the last one approved, so this moves past
+    # each release before the next archive can upload. Xcode Cloud sets the
+    # build number (CFBundleVersion) itself.
+    MARKETING_VERSION: "1.1"
     CURRENT_PROJECT_VERSION: 1
 
 targets:
