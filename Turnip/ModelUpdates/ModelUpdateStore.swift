@@ -88,7 +88,11 @@ struct ModelUpdateStore: Sendable {
         try Self.validate(fileName: fileName)
         try FileManager.default.createDirectory(
             at: baseURL, withIntermediateDirectories: true)
-        let previous = try readRecord()
+        // An unreadable sidecar (corrupt or future-schema) must not wedge the
+        // store: `stage` is the only writer, so a throwing read here could never
+        // heal. Treat it as "no previous model" — the stage proceeds and the
+        // sidecar is rewritten below.
+        let previous = try? readRecord()
         try modelData.write(
             to: baseURL.appendingPathComponent(fileName), options: .atomic)
         let payload = try JSONEncoder().encode(
