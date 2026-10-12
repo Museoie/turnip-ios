@@ -18,7 +18,7 @@ enum FloatingTabBarMetrics {
     static let clearance: CGFloat = 100
 }
 
-/// The app's root screen once past the splash: a swipeable, two-page `TabView` (Camera,
+/// The app's root screen: a swipeable, two-page `TabView` (Camera,
 /// then the gallery) with a custom floating pill replacing the system tab bar — this app
 /// has exactly two destinations, not the several a real `UITabBar` assumes.
 ///
@@ -33,12 +33,13 @@ struct RootTabView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            CameraCaptureView(onFinished: handleRecorded, onCancel: { selectedTab = .home })
+            CameraCaptureView(onFinished: handleRecorded, onCancel: { slide(to: .home) })
                 .tag(MainTab.camera)
             HomeView(viewModel: viewModel)
-                // The Camera/Home swipe belongs to Home's root alone. A screen pushed
-                // inside Home (`viewModel.path` non-empty) owns its own horizontal
-                // gestures — Processing browses videos with one — and the pager's
+                // The Camera/Home swipe belongs to Home's root alone. While Home presents
+                // a destination (`viewModel.isPresentingDestination`, true from the tap on),
+                // that screen owns its own horizontal gestures — Processing browses videos
+                // with one — and the pager's
                 // recognizer would otherwise take every one of them first.
                 .background(PageSwipeLock(swipeEnabled: !viewModel.isPresentingDestination))
                 .tag(MainTab.home)
@@ -52,7 +53,7 @@ struct RootTabView: View {
         .ignoresSafeArea()
         // An overlay, not a safe-area inset: the grid scrolls underneath it rather than
         // stopping short, so it reads as floating over the content instead of a docked
-        // bar. Visible on both pages (root-only, `viewModel.path.isEmpty`) so its
+        // bar. Visible on both pages (root-only, `!viewModel.isPresentingDestination`) so its
         // selection marker actually has something to slide between — it's the reason a
         // tab bar's marker animates in Slack/Instagram-style apps at all. Hidden only
         // once Home drills into Processing/ClipList/ClipEditor, each of which has its own
@@ -60,7 +61,7 @@ struct RootTabView: View {
         // so the bar there is an additional way back, not a replacement.
         .overlay(alignment: .bottom) {
             if !viewModel.isPresentingDestination {
-                FloatingTabBar(selectedTab: $selectedTab)
+                FloatingTabBar(selectedTab: selectedTab, onSelect: slide(to:))
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
@@ -68,11 +69,7 @@ struct RootTabView: View {
         // A distinct alert from Home's "Couldn't open video" — that one is about
         // resolving an existing library asset, not about this just-recorded file
         // failing to save. Sharing it would misname the failure to the user.
-        .alert("Couldn't Save Recording", isPresented: recordingSaveErrorPresented) {
-            Button("OK") {}
-        } message: {
-            Text(recordingSaveError ?? "")
-        }
+        .errorAlert("Couldn't Save Recording", message: $recordingSaveError)
     }
 
     /// A recording finished: save it to Photos (reusing the same `ClipPhotosSaver` the
@@ -96,6 +93,9 @@ struct RootTabView: View {
                 guard let asset = PHAsset.fetchAssets(
                     withLocalIdentifiers: [identifier], options: nil
                 ).firstObject else { return }
+                // Instant, unlike `slide(to:)`: `select` opens the expansion cover in this
+                // same update, and a page still sliding in underneath it would hand the
+                // cover's flight a moving source frame.
                 selectedTab = .home
                 viewModel.select(asset, detectedClips: recording.detectedClips)
             } catch {
@@ -105,18 +105,25 @@ struct RootTabView: View {
         }
     }
 
-    private var recordingSaveErrorPresented: Binding<Bool> {
-        Binding(
-            get: { recordingSaveError != nil },
-            set: { if !$0 { recordingSaveError = nil } }
-        )
+    /// Pages to `tab` the way a swipe does. A control that leads to another page plays the
+    /// same slide the page swipe plays (docs/UIUX.md, "A gesture and its button play one
+    /// animation"); the page `TabView` only scrolls to a selection that changes inside an
+    /// animated transaction and otherwise cuts straight to it.
+    private func slide(to tab: MainTab) {
+        withAnimation {
+            selectedTab = tab
+        }
     }
+
 }
 
 /// The floating bottom nav: camera on the left, the gallery grid on the right. A custom
 /// capsule rather than `TabView`'s own bar, which assumes more than two items.
 private struct FloatingTabBar: View {
-    @Binding var selectedTab: MainTab
+    let selectedTab: MainTab
+    /// Pages to the tapped tab. The bar never writes the selection itself, so a tap can't
+    /// skip the slide a swipe to the same page plays.
+    let onSelect: (MainTab) -> Void
     /// Ties the selection pill to whichever icon is currently selected: only one of the
     /// two `tabButton`s ever draws it (see `indicator`), so a change in `selectedTab`
     /// reads to SwiftUI as that same shape flying from its old spot to its new one
@@ -131,8 +138,9 @@ private struct FloatingTabBar: View {
         .padding(.horizontal, 28)
         .padding(.vertical, 8)
         // Drives the indicator's slide for every path to a selection change alike — a
-        // tap (handled inline by the `Button`) and a swipe of the page `TabView` (which
-        // changes `selectedTab` from outside this view entirely).
+        // tap, a swipe of the page `TabView`, or Camera's cancel chevron — overriding
+        // whatever transaction the change arrived in, so the pill moves the same way for
+        // all of them.
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: selectedTab)
 
         // Real Liquid Glass where the OS supports it (iOS 26+); `.ultraThinMaterial`
@@ -144,13 +152,12 @@ private struct FloatingTabBar: View {
                 buttons.background(.ultraThinMaterial, in: Capsule())
             }
         }
-        .padding(.bottom, 6)
     }
 
     private func tabButton(_ tab: MainTab, systemImage: String, label: String) -> some View {
         let isSelected = selectedTab == tab
         return Button {
-            selectedTab = tab
+            onSelect(tab)
         } label: {
             Image(systemName: systemImage)
                 .font(.title2.weight(.semibold))

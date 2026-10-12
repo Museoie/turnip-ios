@@ -2,9 +2,9 @@ import SwiftUI
 
 /// The capsule chrome behind every bare-`AVPlayer` transport control in the app —
 /// `VideoScrubBar`'s track-plus-buttons bar, and `ClipEditorView`'s buttons-only
-/// pill. The two had copy-pasted the same font/padding/background; this is the one
-/// definition both build on. Content (which buttons, how they're spaced) stays with
-/// the caller, since a scrub track and a bare button pair aren't the same layout.
+/// pill: one font/padding/background definition both build on. Content (which buttons,
+/// how they're spaced) stays with the caller, since a scrub track and a bare button pair
+/// aren't the same layout.
 struct PlaybackControlsPill<Content: View>: View {
     @ViewBuilder let content: Content
 

@@ -8,8 +8,8 @@ import Foundation
 /// whether to delete the source video from Photos — while a derived clip's trash
 /// button removes the item outright (`ClipListViewModel.delete(_:)`) instead of
 /// setting this, so it never goes `true` on one in practice. `Identifiable` by a
-/// stable `id` (not the window times) so view state survives a re-run of detection
-/// producing slightly different windows.
+/// stable `id` (not the window times) so view state survives an edit that changes
+/// the window.
 ///
 /// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
 /// stands for the source video already in Photos rather than a derived clip: it

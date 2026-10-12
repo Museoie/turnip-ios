@@ -49,8 +49,6 @@ struct TurnipApp: App {
                     ScreenshotProcessingPoseHarness()
                 } else if CommandLine.arguments.contains("-screenshotHomeExpansion") {
                     ScreenshotHomeExpansionHarness()
-                } else if CommandLine.arguments.contains("-screenshotPoseDiagnostic") {
-                    ScreenshotPoseDiagnosticHarness()
                 } else if CommandLine.arguments.contains("-screenshotSettings") {
                     ScreenshotSettingsHarness()
                 } else {

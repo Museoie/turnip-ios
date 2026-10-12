@@ -14,14 +14,21 @@ struct CameraCaptureView: View {
 
     @StateObject private var viewModel = CameraCaptureViewModel()
     @State private var showExposureSlider = false
+    /// Whether this page has started the session and not yet stopped it — see
+    /// `CameraPreviewView.isLive`.
+    @State private var isPreviewLive = false
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             switch viewModel.authorization {
             case .authorized:
-                CameraPreviewView(session: viewModel.session, poseKeypoints: viewModel.livePoseKeypoints)
-                    .ignoresSafeArea()
+                CameraPreviewView(
+                    session: viewModel.session, isLive: isPreviewLive,
+                    poseKeypoints: viewModel.livePoseKeypoints)
+                    // The top inset is kept so the top-pinned picture starts just under the
+                    // status bar, with the cancel and settings buttons floating inside it.
+                    .ignoresSafeArea(edges: [.horizontal, .bottom])
                     .overlay {
                         // A transparent gesture catcher, not `.gesture` directly on the
                         // representable: the hosted `UIView` would otherwise hit-test the
@@ -50,20 +57,22 @@ struct CameraCaptureView: View {
         }
         .task {
             viewModel.onFinished = onFinished
+            isPreviewLive = true
             await viewModel.start()
         }
-        .onDisappear { viewModel.stop() }
-        .alert("Couldn't record video", isPresented: errorPresented) {
-            Button("OK") {}
-        } message: {
-            Text(viewModel.errorMessage ?? "")
+        .onDisappear {
+            isPreviewLive = false
+            viewModel.stop()
         }
+        .errorAlert("Couldn't record video", message: $viewModel.errorMessage)
     }
 
+    /// Placed where a navigation bar's leading item would sit (`screenHeaderItemPlacement`),
+    /// level with Home's own bar controls across the pager swipe.
     private var cancelButton: some View {
         ScrimIconButton(
             systemImage: "xmark", accessibilityLabel: "Cancel", style: .scrim, action: onCancel)
-            .padding()
+            .screenHeaderItemPlacement()
     }
 
     private var bottomControls: some View {
@@ -76,7 +85,7 @@ struct CameraCaptureView: View {
             }
             recordButton
         }
-        // The floating tab bar (`RootTabView`) now stays visible over this page too, so
+        // The floating tab bar (`RootTabView`) stays visible over this page too, so
         // without this the record button and lens row would sit directly underneath it.
         .padding(.bottom, FloatingTabBarMetrics.clearance)
     }
@@ -154,7 +163,7 @@ struct CameraCaptureView: View {
                 flipButton
             }
         }
-        .padding()
+        .screenHeaderItemPlacement()
     }
 
     private var exposureToggleButton: some View {
@@ -225,30 +234,18 @@ struct CameraCaptureView: View {
         .accessibilityLabel("Exposure bias")
     }
 
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { if !$0 { viewModel.errorMessage = nil } }
-        )
-    }
 }
 
 private struct CameraAccessDeniedView: View {
     let restricted: Bool
 
     var body: some View {
-        StatusStateView(
+        AccessDeniedStateView(
             systemImage: "camera.fill",
             title: "Turnip needs camera access",
             message: restricted
                 ? "Camera access is restricted on this device."
-                : "Allow camera and microphone access in Settings to record a trick."
-        ) {
-            if !restricted, let settingsURL = URL(string: UIApplication.openSettingsURLString) {
-                Link("Open Settings", destination: settingsURL)
-                    .buttonStyle(.borderedProminent)
-                    .padding(.top, 8)
-            }
-        }
+                : "Allow camera and microphone access in Settings to record a trick.",
+            restricted: restricted)
     }
 }

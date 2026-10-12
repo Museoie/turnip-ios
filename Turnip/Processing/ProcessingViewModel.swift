@@ -74,6 +74,23 @@ final class ProcessingViewModel: ObservableObject {
         }
     }
 
+    /// Goes straight to the clip list with no clips and no pose frames, leaving the video
+    /// un-analyzed: the user cuts clips by hand from the list's "+" tile instead. Same guard
+    /// as `start` — only an idle screen with no run in flight can skip. Lands in `.succeeded`
+    /// rather than staying `.idle`: pushing the destination disappears this screen, whose
+    /// `cancel()` wipes `result` and `isShowingClips` from any running state, and `.idle`
+    /// counts as running.
+    func skipAnalysis(video: SelectedVideo) {
+        guard runTask == nil, case .idle = state else { return }
+        runGeneration += 1
+        result = ProcessingResult(
+            detection: DetectedClips(clips: [], poseFrames: []),
+            asset: video.asset,
+            analysisSkipped: true)
+        state = .succeeded
+        isShowingClips = true
+    }
+
     /// Stops an in-flight run and returns the screen to `.idle`. A cancel after the run has
     /// already reached a terminal state is a no-op: the view cancels on disappear, and pushing
     /// the success destination disappears this screen, so wiping `result` there would pop the

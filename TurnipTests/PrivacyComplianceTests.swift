@@ -26,7 +26,7 @@ final class PrivacyComplianceTests: XCTestCase {
     }
 
     /// The temp export's lifetime is the resolved asset's lifetime on `VideoLibraryViewModel.path`:
-    /// popping the `SelectedVideo` must delete the file even though no diagnostic ever ran.
+    /// popping the `SelectedVideo` must delete the file even though no analysis ever ran.
     /// (Browse-and-back-out is the dominant interaction, not an edge case.)
     @MainActor
     func testPoppingSelectedVideoDeletesItsTempExport() {

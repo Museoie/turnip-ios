@@ -21,8 +21,8 @@ struct CropAdjustment: Hashable, Sendable {
 /// What the clip editor opens with (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
 /// `poseFrames` carries *every* sampled frame, not just the window's: dragging a handle
-/// outward pulls new frames into play, and the crop rect is re-derived from whichever
-/// frames are in play.
+/// outward pulls new frames into the window, and Auto crop fits whichever frames the
+/// trimmed window holds.
 struct ClipEditorSource {
     let window: TrickWindow
     let cropRect: NormalizedRect
@@ -47,8 +47,8 @@ struct ClipEditorSource {
 
 /// The editor's edits, committed on back-navigation: the design doc wants no separate save
 /// step, so the view hands `result` to its commit closure when the editor disappears, and
-/// the clip list applies it to its item. Keep/discard is no longer the editor's decision —
-/// the list's own toggle owns it — so the clip list preserves the item's existing `isKept`
+/// the clip list applies it to its item. Trashing isn't the editor's decision — the list's
+/// own trash button owns it — so the clip list preserves the item's existing `isTrashed`
 /// when applying a result.
 struct ClipEditorResult: Equatable, Sendable {
     let window: TrickWindow

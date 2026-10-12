@@ -38,10 +38,15 @@ final class VideoLibrarySelectionTests: XCTestCase {
             window: TrickWindow(startTime: 1, endTime: 3),
             cropRect: NormalizedRect(minX: 0.1, maxX: 0.9, minY: 0, maxY: 1))]
 
-        model.select(StubAsset("take-1", duration: 4), detectedClips: clips)
+        let frames = PoseFixture.frames(hipXPositions: [0.4, 0.5, 0.6])
+        let detection = DetectedClips(clips: clips, poseFrames: frames)
+
+        model.select(StubAsset("take-1", duration: 4), detectedClips: detection)
         await wait(until: { model.path.count == 1 }, "the resolved take should reach the path")
 
-        XCTAssertEqual(model.path.first?.detectedClips, clips)
+        XCTAssertEqual(model.path.first?.detectedClips, detection)
+        // The frames ride along: the editor fits crops from them.
+        XCTAssertEqual(model.path.first?.detectedClips?.poseFrames.count, 3)
     }
 
     /// Tiles are disabled while a resolution is in flight, but the state machine must not lean on

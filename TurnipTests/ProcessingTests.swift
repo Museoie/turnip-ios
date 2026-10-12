@@ -184,12 +184,12 @@ private struct ScriptedSampler: FrameSampling, Sendable {
     }
 }
 
-/// Regression tests for issue #89: `run()` must compute crop rects against the sampled frames'
+/// `run()` must compute crop rects against the sampled frames'
 /// display-orientation `renderSize`, not the track's encoded `naturalSize`.
 final class ProcessingPipelineRunTests: XCTestCase {
     /// The track is landscape-encoded (64x48) while the scripted sampler reports the portrait
     /// renderSize (48x64) the frames were actually decoded at — the iPhone portrait-recording
-    /// shape where the old code transposed the aspect-ratio snap.
+    /// shape where measuring against `naturalSize` would transpose the aspect-ratio snap.
     func testRunComputesCropRectsAgainstTheFramesRenderSize() async throws {
         let videoURL = try await TestVideoWriter.writeTestVideo(
             frameCount: 35, width: 64, height: 48, fps: 30)
@@ -201,7 +201,7 @@ final class ProcessingPipelineRunTests: XCTestCase {
         let yPositions = PoseFixture.slide(
             quietFrames: 15, from: 0.2, perFrame: 0.1, movingFrames: 6, tailFrames: 14)
         let fixtures = yPositions.enumerated().map { index, y in
-            PoseFixture.frame(index: index, hip: (x: 0.5, y: y))
+            PoseFixture.body(index: index, hip: (x: 0.5, y: y))
         }
         let sampler = ScriptedSampler(renderSize: CGSize(width: 48, height: 64), results: fixtures)
         let makeInference: ProcessingPipeline.InferenceFactory = {
@@ -217,15 +217,17 @@ final class ProcessingPipelineRunTests: XCTestCase {
         let result = try await pipeline.run(video: video) { _ in }
 
         XCTAssertEqual(result.clips.count, 1, "expected the single-peak fixture to yield one window")
+        // Every scored frame travels with the clips, for the editor's own crop fits.
+        XCTAssertEqual(result.detection.poseFrames.count, fixtures.count)
         let window = result.clips[0].window
         let inWindow = fixtures.filter {
             $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
         }
         let calculator = CropRectCalculator()
         let expected = calculator.cropRect(for: inWindow, renderedPixelSize: CGSize(width: 48, height: 64))
-        // The buggy answer: the same frames snapped against the track's encoded size. Asserting
-        // the two differ proves the fixture discriminates — without it the test would pass on
-        // the buggy code too.
+        // The wrong answer: the same frames snapped against the track's encoded size. Asserting
+        // the two differ proves the fixture discriminates — without it the test would pass
+        // against an encoded-size implementation too.
         let buggy = calculator.cropRect(for: inWindow, renderedPixelSize: CGSize(width: 64, height: 48))
         XCTAssertNotNil(expected)
         XCTAssertNotEqual(expected, buggy, "fixture does not discriminate the size mixup")
@@ -243,7 +245,7 @@ final class ProcessingPipelineRunTests: XCTestCase {
         let yPositions = PoseFixture.slide(
             quietFrames: 15, from: 0.2, perFrame: 0.1, movingFrames: 6, tailFrames: 14)
         let fixtures = yPositions.enumerated().map { index, y in
-            PoseFixture.frame(index: index, hip: (x: 0.5, y: y))
+            PoseFixture.body(index: index, hip: (x: 0.5, y: y))
         }
         let renderSize = CGSize(width: 48, height: 64)
         let sampler = ScriptedSampler(renderSize: renderSize, results: fixtures)
@@ -418,6 +420,63 @@ final class ProcessingViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isShowingClips)
     }
 
+    /// "Clip manually" lands on the clip list with nothing detected and the skip marked, so
+    /// the list can tell it from a run that looked and found nothing.
+    func testSkipAnalysisNavigatesToTheClipsWithoutRunning() async {
+        let flag = CancelFlag()
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .reportThenHang(flag)))
+
+        viewModel.skipAnalysis(video: Self.video)
+
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("expected the succeeded state, got \(viewModel.state)")
+        }
+        XCTAssertEqual(viewModel.result?.clips, [])
+        XCTAssertEqual(viewModel.result?.detection.poseFrames, [])
+        XCTAssertEqual(viewModel.result?.analysisSkipped, true)
+        XCTAssertTrue(viewModel.isShowingClips)
+        // Nothing was started, and a skipped screen is finished: a later `start` (the
+        // view's `.task` fires on every appear) must not run the pipeline over it.
+        viewModel.start(video: Self.video)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("a skipped screen started the pipeline, got \(viewModel.state)")
+        }
+    }
+
+    /// Pushing the clip list disappears Processing, which cancels — the skip's result has
+    /// to survive that the same way a finished run's does.
+    func testCancelAfterSkipKeepsTheResult() {
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .succeed(clips: [])))
+
+        viewModel.skipAnalysis(video: Self.video)
+        viewModel.cancel()
+
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("cancel discarded a skip, got \(viewModel.state)")
+        }
+        XCTAssertEqual(viewModel.result?.analysisSkipped, true)
+        XCTAssertTrue(viewModel.isShowingClips)
+    }
+
+    /// The skip button is gone once a run is in flight, but the model guards it anyway.
+    func testSkipWhileRunningIsIgnored() async {
+        let flag = CancelFlag()
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .reportThenHang(flag)))
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntilProcessing(viewModel)
+        viewModel.skipAnalysis(video: Self.video)
+
+        guard case .processing = viewModel.state else {
+            return XCTFail("a skip abandoned the in-flight run, got \(viewModel.state)")
+        }
+        XCTAssertNil(viewModel.result)
+        XCTAssertFalse(viewModel.isShowingClips)
+        viewModel.cancel()
+        await Self.waitUntil { await flag.observed }
+    }
+
     func testRetryAfterFailureRunsAgain() async {
         let runner = ScriptedRunner(behavior: .fail(TestError.boom))
         let viewModel = ProcessingViewModel(runner: runner)
@@ -556,7 +615,7 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
     ) async throws -> ProcessingResult {
         switch behavior {
         case .succeed(let clips):
-            return ProcessingResult(clips: clips, asset: video.asset)
+            return ProcessingResult(detection: DetectedClips(clips: clips, poseFrames: []), asset: video.asset)
         case .fail(let error):
             throw error
         case .reportThenHang(let flag):
@@ -567,11 +626,11 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
                 await flag.noteCancelled()
                 throw error
             }
-            return ProcessingResult(clips: [], asset: video.asset)
+            return ProcessingResult(detection: DetectedClips(clips: [], poseFrames: []), asset: video.asset)
         case .relayProgress(let relay):
             await relay.capture(onProgress)
             try await Task.sleep(nanoseconds: 30_000_000_000)
-            return ProcessingResult(clips: [], asset: video.asset)
+            return ProcessingResult(detection: DetectedClips(clips: [], poseFrames: []), asset: video.asset)
         }
     }
 }

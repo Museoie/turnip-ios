@@ -1,92 +1,69 @@
 import SwiftUI
 
-/// The tapped tile's Photos-style open/close flight, adapted for Turnip's crop-hole
-/// editor — whose settled content is a different composition (full frame plus a
-/// dimmed crop surround) rather than literally the same image Photos keeps on screen
-/// throughout. Two layers share one `progress` clock (`0` = exactly at the tile,
-/// `1` = fully open): a lightweight "card" (the tile's own cropped thumbnail) carries
-/// the geometry the whole way, while the real `ClipEditorView` is hidden entirely
-/// until the last stretch of travel, then cut in instantly, with no cross-dissolve —
-/// late enough that its toolbar/trim-slider text never has to be legible mid-shrink
-/// (`crossfadeThreshold`), but an instant swap rather than a fade so neither layer is
-/// ever seen at partial opacity.
+/// The tapped tile's Photos-style open/close flight into Turnip's crop-hole editor.
 ///
-/// `progress` is driven by a spring for the tap-to-open and back-button-close paths,
-/// and 1:1 by drag translation for the interactive swipe-to-dismiss — the same
-/// geometry/opacity math serves both, so there's no separate "interactive" branch.
-/// The swipe-to-dismiss gesture is handed to `ClipEditorView` to attach on its own
-/// root view's background, rather than living out here behind it: `NavigationStack`
-/// is backed by a real `UIViewController`, and a touch landing on *its* empty space
-/// resolves to that hosting view, not through to a SwiftUI sibling behind it in this
-/// `ZStack` — a gesture out here would never fire at all. Planted inside the same
-/// content `NavigationStack` hosts, it only fires where the editor's own crop-drag/
-/// trim-slider gestures don't claim the touch first — the "outside the video" dismiss
-/// zone this feature was scoped to.
+/// Two layers share one `progress` clock (`0` = exactly at the tile, `1` = fully open).
+/// A "card" carries the geometry the whole way: the editor's own video surface
+/// (`ClipEditorVideoSurface`, rendering the very same `AVPlayer` the editor renders),
+/// laid out at the editor's fixed crop marker exactly as the editor's stage lays it out
+/// — the video placed so its crop rect fills the marker — and shown through a window that
+/// uncrops from the part the tile showed — the marker's center square — to the marker,
+/// scaled uniformly so the picture is cropped as it grows, never stretched
+/// (`ExpansionFlightGeometry`). The real `ClipEditorView`'s video surface and frosted
+/// surround are hidden for the entire flight and cut in once the card has arrived
+/// (`expansionHasLanded`); inside the marker both layers draw the same player at the
+/// same frame in the same place, so the cut there is invisible, and the rest of the
+/// frame appears around it under the frosted glass with the landing.
+///
+/// The player is scrubbed alongside the geometry. Opening, it starts on the frame the
+/// tile was showing when tapped (`sourceTime`) and plays back to the clip's first frame
+/// as the card grows, so the editor's loop then starts where the card left off. Closing,
+/// it starts on whatever frame the editor is showing and scrubs to the frame the tile
+/// will show again when it's revealed, so the video shrinks into the tile with no cut.
+///
+/// `progress` is animated for the tap-to-open and back-button-close paths, and driven
+/// 1:1 by drag translation for the interactive swipe-to-dismiss — the same geometry
+/// math serves both. The swipe-to-dismiss gesture is handed to `ClipEditorView` to
+/// attach on its own root view's background rather than living out here behind it:
+/// `NavigationStack` is backed by a real `UIViewController`, and a touch landing on
+/// *its* empty space resolves to that hosting view, not through to a SwiftUI sibling
+/// behind it in this `ZStack` — a gesture out here would never fire at all.
 struct ClipExpansionContainer: View {
     /// The tapped tile's on-screen frame at the moment of the tap, in global
     /// coordinate space — the flight's start (opening) and end (closing) point.
     let sourceFrame: CGRect
-    /// The tile's already-decoded poster frame, so the flying card has something to
-    /// show instantly instead of waiting on a second image load.
+    /// The frame the tile was showing when tapped, in asset time: its paused loop's
+    /// position, or its poster's time when it has no loop. The opening flight starts on
+    /// this frame, and a closing flight lands back on it, because the tile is still
+    /// showing it when it's revealed.
+    let sourceTime: TimeInterval
+    /// The tile's already-decoded poster frame, drawn under the card's video surface at
+    /// the crop rect so the card has a picture from the first frame of a flight even
+    /// when the player hasn't decoded one yet.
     let thumbnail: CGImage?
     let source: ClipEditorSource
     let onCommit: (ClipEditorResult) -> Void
     let onDelete: () -> Void
+    /// Called the instant the opening flight starts moving — which is when the presenter
+    /// should hide the tile underneath. Not at presentation: the card waits for its video
+    /// surface to be able to show `sourceTime`'s frame first, and until then the tile
+    /// itself is what's on screen.
+    let onFlightStarted: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var viewModel: ClipEditorViewModel
+    @StateObject private var scrubber: FlightScrubber
     @State private var progress: CGFloat = 0
-    /// The editor's real, untransformed preview frame — recovered from
-    /// `ClipEditorPreviewFramePreferenceKey`'s report by dividing out this container's
-    /// own `.scaleEffect`/`.offset`, rather than used as reported. `previewSection`'s
-    /// `GeometryReader` sits *inside* that transform, so its raw `.global` frame is the
-    /// *transformed* position, not the editor's natural one — using it directly would
-    /// feed back on itself (the transform moves the measured frame, which moves
-    /// `destination`, which moves the transform...), which a previous version dodged by
-    /// only ever accepting a report once `progress` had already settled near 1 (where
-    /// the transform is ~identity). That meant the destination this container grew
-    /// *toward* stayed a placeholder guess for the entire opening flight, and a closing
-    /// flight's start point was only ever an approximation (whatever the transform's
-    /// small residual error happened to be at the moment it crossed the settle
-    /// threshold) rather than the editor's true frame. Dividing out the known transform
-    /// recovers the true frame from *any* report, so it can stay live for the opening
-    /// flight — necessary there: the very first reports, taken before
-    /// `editorScale` has grown much past its starting value, are still visibly off (an
-    /// early-mount report doesn't yet reflect the real composited transform), and only
-    /// settle to the true frame after a few more arrive. `acceptsDestinationUpdates`
-    /// below stops accepting new reports once any close begins, though — see that
-    /// property's own doc comment for why staying live for the *whole* lifetime
-    /// (what this used to do) doesn't just risk working for longer than it needs to.
-    @State private var measuredDestination: CGRect?
-    /// Gates `measuredDestination` updates: `true` through the opening flight (where
-    /// convergence from a placeholder-ish early report to the true frame is the actual
-    /// point of dividing out the transform live — see `measuredDestination`'s own doc
-    /// comment), `false` from the first touch-move of an interactive drag, or from the
-    /// moment `close()`/`closeForDelete()` runs, whichever comes first — i.e. for the rest
-    /// of this container's life, cancelled drag included, once the user could possibly be
-    /// leaving.
-    ///
-    /// Why: unlike `HomeExpansionContainer`, which applies no transform to its own
-    /// content, this container's `editorScale`/`editorOffsetX`/`editorOffsetY` (what
-    /// `measuredDestination` is divided out of) are themselves computed *from*
-    /// `measuredDestination` — self-referential. At a steady `progress` (fully open, fully
-    /// closed) that has one chance to converge and then goes quiet, since
-    /// `previewSection`'s on-screen frame stops moving and no more reports arrive. While
-    /// `progress` is animating or being dragged, though, it keeps moving for the whole
-    /// transition, through this exact same `onPreferenceChange` handler every intermediate
-    /// frame, so a self-referential loop there has far more chances to compound than it
-    /// does at a steady state.
-    ///
-    /// What's actually confirmed, from a user's real device, where the old always-live
-    /// version of this code froze on every close (never reproduced on the simulator): the
-    /// main thread livelocked and never recovered, and two debugger pauses taken a few
-    /// seconds apart each landed inside a `CATransaction` commit — one inside SwiftUI's own
-    /// graph update, the other 25 frames into a `CALayer` tree walk — with no app code in
-    /// either stack. That's real evidence of a genuine, unrecovering main-thread livelock
-    /// triggered by closing the editor; it is not a confirmation that *this specific
-    /// self-reference* is the mechanism (two samples can't show that, and the fix below is
-    /// inference from the code's structure, not from stepping through the actual loop). If
-    /// a user's device still freezes after this change, that inference was wrong and the
-    /// real cause is still out there.
+    /// The editor's crop marker frame, as `ClipEditorCropMarkerFramePreferenceKey` reports
+    /// it — the flight's destination. Live through the opening flight — a newly mounted view's
+    /// first reports settle over a few passes — and frozen from the moment a close can
+    /// begin, see `acceptsDestinationUpdates`.
+    @State private var measuredMarker: CGRect?
+    /// Gates `measuredMarker` updates: `true` through the opening flight, `false`
+    /// from the first touch-move of an interactive drag, or from the moment
+    /// `close()`/`closeForDelete()` runs, whichever comes first — for the rest of this
+    /// container's life. Once the user could be leaving, the flight's endpoint shouldn't
+    /// keep tracking a value that could still move underneath it.
     @State private var acceptsDestinationUpdates = true
     /// The live drag, via `@GestureState` rather than a plain `@State` flag: a system
     /// cancellation (an incoming call, Control Center, the home-indicator swipe-up
@@ -100,120 +77,131 @@ struct ClipExpansionContainer: View {
     /// resolved to a commit or a cancel-spring) from a system cancellation (which
     /// still needs the cancel-spring applied, since `onEnded` never ran it).
     @State private var didHandleDragEnd = false
+    /// The frame the editor was showing when an interactive drag began scrubbing, so a
+    /// cancelled drag can scrub back to it. `nil` while no drag is in progress.
+    @State private var dragScrubOrigin: TimeInterval?
     /// Delete fades the whole view out in place instead of flying to `sourceFrame`:
     /// by the time this runs, that tile's slot in the grid holds a different item (or
     /// nothing), so flying there would land in the wrong spot.
     @State private var deleteFadeOpacity: CGFloat = 1
+    /// The two readiness signals the opening flight waits for, and whether it has
+    /// started. The card's video surface is transparent until the player has decoded a
+    /// frame, and that frame is only the right one once the seek to `sourceTime` has
+    /// completed; starting the flight before both would grow either an empty window or
+    /// the wrong frame over the hidden tile.
+    @State private var isSeekedToSource = false
+    @State private var isSurfaceReady = false
+    @State private var hasStartedOpenFlight = false
+    /// Set by `close()`/`closeForDelete()`, so a deferred step from an earlier flight
+    /// (releasing playback after an open, resuming it after a cancelled drag) that lands
+    /// after the user has already started leaving does nothing instead of restarting the
+    /// loop under the closing scrub.
+    @State private var isClosing = false
+    /// Whether the card has landed on the editor's preview: `true` from the opening
+    /// flight's completion until the first frame of any close. Drives the hard cut
+    /// between the card and the editor's video surface — both read it, and it's written
+    /// with animations disabled (`setLanded`), so the swap is one atomic, unanimated
+    /// frame. Also handed to the editor as `expansionHasLanded`; see that environment
+    /// value for why it's a flag rather than the live `progress`.
+    @State private var hasLanded = false
 
-    /// How long the open and close flights take, wall-clock. A timing curve with an
-    /// explicit duration rather than a spring: a critically-damped `.spring(response:
-    /// 1, …)` does ~85% of its travel in the first ~0.65s and then crawls for most of
-    /// another second, so the *visible* growth read as well under a second while only
-    /// the scrim fade looked lengthened — see `docs/EXPANSION_TRANSITIONS.md`'s Rev 7.
-    private let flightDuration: TimeInterval = 1
-    /// Below this, the real editor is invisible and the card alone carries the
-    /// geometry; at/above it, the editor is. Effectively `1`: the swap has to happen
-    /// where the card's rect *equals* the editor's settled frame, and `currentRect`
-    /// only reaches `destination` at `progress == 1`. The previous `0.85` cut swapped a
-    /// card that was still 15% of the way short of its destination for content that
-    /// was already there — a hard, visible size pop at the end of every open, which was
-    /// the reported "gap between the expansion's maximum size and the video frame".
-    /// Fractionally under `1` only so an interactive drag's very first touch-move
-    /// (`progress = 1 - travel / dismissTravel`) already hands back to the card.
-    private let crossfadeThreshold: CGFloat = 0.999
-    /// Downward drag distance, in points, that fully closes the view.
-    private let dismissTravel: CGFloat = 420
+    private let flightDuration = ExpansionFlightGeometry.flightDuration
+    /// How long the opening flight waits for the card's video surface before starting
+    /// anyway, with the poster thumbnail standing in for a frame that never came.
+    private let surfaceReadinessTimeout: TimeInterval = 0.3
     /// The tile's own corner radius (`ClipCardView.tile`'s `clipShape`) — the flying
     /// card's radius eases to 0 as it grows, matching the editor's sharp-cornered
     /// preview.
     private let sourceCornerRadius: CGFloat = 8
 
+    init(
+        sourceFrame: CGRect,
+        sourceTime: TimeInterval,
+        thumbnail: CGImage?,
+        source: ClipEditorSource,
+        onCommit: @escaping (ClipEditorResult) -> Void,
+        onDelete: @escaping () -> Void,
+        onFlightStarted: @escaping () -> Void
+    ) {
+        self.sourceFrame = sourceFrame
+        self.sourceTime = sourceTime
+        self.thumbnail = thumbnail
+        self.source = source
+        self.onCommit = onCommit
+        self.onDelete = onDelete
+        self.onFlightStarted = onFlightStarted
+        let viewModel = ClipEditorViewModel(source: source)
+        _viewModel = StateObject(wrappedValue: viewModel)
+        _scrubber = StateObject(wrappedValue: FlightScrubber { time in await viewModel.scrub(to: time) })
+    }
+
     var body: some View {
         GeometryReader { screen in
-            let destination = measuredDestination ?? fallbackDestination(in: screen.size)
-            let editorOpacity = editorOpacity(for: progress)
-            // The *target* geometry — `progress`'s body-committed value, not a live one —
-            // used only to divide the raw preference report back out below. That report
-            // comes from `previewSection`'s `GeometryReader`, which lays out against
-            // SwiftUI's own model transform (this container's target `.scaleEffect`/
-            // `.offset`), not whatever's currently mid-spring on screen — so dividing out
-            // the *live* transform would divide out the wrong thing even setting aside
-            // `measuredDestination`'s own doc comment on why this has to stay decoupled
-            // from live re-interpolation regardless (Rev 3's self-referential livelock).
-            let targetRect = currentRect(destination: destination)
-            let targetEditorScale = targetRect.width / max(destination.width, 1)
-            let targetEditorOffsetX = targetRect.minX - destination.minX * targetEditorScale
-            let targetEditorOffsetY = targetRect.minY - destination.minY * targetEditorScale
+            let screenRect = CGRect(origin: .zero, size: screen.size)
+            // The card is the editor's crop marker: the video placed in it exactly as the
+            // editor places it under the marker, so inside the marker the settled card and
+            // the editor's own surface are the same picture. The flight shows the crop and
+            // nothing outside it; the rest of the frame, under the editor's frosted
+            // surround, only appears once the card has landed and the editor's own
+            // edge-to-edge surface takes over.
+            let destination = measuredMarker ?? fallbackMarker(in: screenRect)
+            // The card's whole content, in its own coordinates: what the tile shows, and so
+            // the part of the card the window starts on.
+            let focus = CGRect(origin: .zero, size: destination.size)
+            let chromeCrossfades = ExpansionFlightGeometry.destinationChromeCrossfades
 
             ZStack {
                 Color(.systemBackground)
-                    .opacity(progress)
+                    .expansionCrossfade(
+                        progress: progress,
+                        inflection: ExpansionFlightGeometry.scrimCrossfadeInflection,
+                        steepness: ExpansionFlightGeometry.scrimCrossfadeSteepness)
                     .ignoresSafeArea()
 
-                NavigationStack {
-                    ClipEditorView(
-                        source: source,
-                        onCommit: onCommit,
-                        onDelete: onDelete,
-                        onRequestClose: close,
-                        onRequestDeleteClose: closeForDelete,
-                        dismissGesture: dismissDragGesture)
-                }
-                .frame(width: screen.size.width, height: screen.size.height)
-                // Plain, body-level (`targetEditorScale`/`targetEditorOffsetX/Y`, not a
-                // live `GeometryEffect`) — deliberately, unlike the card's own
-                // `CardFlightEffect`. The editor is invisible (`CrossfadeCut`) for the
-                // entire flight until `progress` nears 1, by which point `destination`
-                // has long since stabilized (the real measurement consistently arrives
-                // within the first ~15% of the flight, per on-device timing — see
-                // `docs/EXPANSION_TRANSITIONS.md`'s Rev 6), so there's no visible snap
-                // left to fix here the way there was on the card. Tried making this live
-                // too (`EditorFlightEffect`, since removed): `previewSection`'s own
-                // `GeometryReader` reports its `.global` frame, which — once the editor's
-                // own transform is live — genuinely changes every rendered frame, so
-                // `onPreferenceChange` below fired continuously instead of a bounded few
-                // times, writing `measuredDestination` every frame and triggering a full
-                // re-render each time. Confirmed: tens of thousands of calls in under a
-                // minute, not a plausible per-frame rate for a ~1.5s flight — Rev 3's
-                // self-referential livelock, reintroduced through a different door.
-                .scaleEffect(targetEditorScale, anchor: .topLeading)
-                .offset(x: targetEditorOffsetX, y: targetEditorOffsetY)
-                .modifier(CrossfadeCut(
-                    progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: true))
-                .allowsHitTesting(editorOpacity > 0.99)
-                .onPreferenceChange(ClipEditorPreviewFramePreferenceKey.self) { frame in
-                    // See `acceptsDestinationUpdates`'s own doc comment for why this
-                    // stops once a close begins instead of staying live for the whole
-                    // lifetime.
-                    guard acceptsDestinationUpdates, frame != .zero, targetEditorScale > 0 else { return }
-                    measuredDestination = CGRect(
-                        x: (frame.minX - targetEditorOffsetX) / targetEditorScale,
-                        y: (frame.minY - targetEditorOffsetY) / targetEditorScale,
-                        width: frame.width / targetEditorScale,
-                        height: frame.height / targetEditorScale)
+                if !chromeCrossfades {
+                    // Under the card, hidden for the whole flight and cut in once the card
+                    // has landed: the pre-iOS 18 fallback, where the editor's navigation
+                    // container can't be made see-through (see `destinationChromeCrossfades`).
+                    editor(size: screen.size)
+                        .opacity(hasLanded ? 1 : 0)
                 }
 
-                cardLayer(destination: destination)
-                    .modifier(CrossfadeCut(
-                        progress: progress, threshold: crossfadeThreshold, visibleAboveThreshold: false))
-                    // Outside `CrossfadeCut`, not inside it — order matters here, and
-                    // only here: `CrossfadeCut` ends in `.transaction { $0.animation =
-                    // nil }`, which applies to its whole subtree, so an `Animatable`
-                    // nested *under* it never gets per-frame values and snaps straight
-                    // to its target (confirmed three separate times — see Rev 7 in
-                    // `docs/EXPANSION_TRANSITIONS.md`). The scrim-sized layer this
-                    // wraps (post-`.position`) has its origin at the screen's, which
-                    // `CardFlightEffect`'s transform relies on.
-                    .modifier(CardFlightEffect(
-                        progress: progress, sourceFrame: sourceFrame, destination: destination))
-                    .allowsHitTesting(editorOpacity < 0.99)
+                cardLayer(destination: destination, focus: focus)
+                    // Rendered as one group before any opacity touches it: with Delete's
+                    // fade applied straight to the live player view, the video spilled past
+                    // the window's clip below and showed the frame outside the marker sharp
+                    // for the whole fade.
+                    .compositingGroup()
+                    // The hard cut to the editor's video surface — unanimated, since
+                    // `hasLanded` is only ever written with animations disabled.
+                    .opacity(hasLanded ? 0 : 1)
+                    // The layer these wrap (post-`.position`) has its origin at the
+                    // screen's, which both rely on.
+                    .clipShape(ExpansionFlightClip(
+                        progress: progress, sourceFrame: sourceFrame, destination: destination,
+                        focus: focus, sourceCornerRadius: sourceCornerRadius))
+                    .modifier(ExpansionFlightEffect(
+                        progress: progress, sourceFrame: sourceFrame, destination: destination, focus: focus))
+                    .allowsHitTesting(!hasLanded)
+
+                if chromeCrossfades {
+                    // Over the card, fading in with the flight: the editor's chrome (its
+                    // top row, the playback pill, the trim slider) cross-fades in place over
+                    // the growing picture, while its own video surface, frosted surround and
+                    // marker outline stay hidden under `expansionHasLanded` until the card
+                    // has landed. A plain `.opacity`, not a cut: it's meant to
+                    // interpolate across the whole flight, which `.opacity` does on its own.
+                    editor(size: screen.size)
+                        .expansionCrossfade(
+                            progress: progress,
+                            inflection: ExpansionFlightGeometry.chromeCrossfadeInflection,
+                            steepness: ExpansionFlightGeometry.chromeCrossfadeSteepness)
+                }
             }
             .opacity(deleteFadeOpacity)
         }
         .ignoresSafeArea()
-        .onAppear {
-            withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
-        }
+        .onAppear(perform: armOpenFlight)
         .onChange(of: dragTranslation != nil) { isDraggingNow in
             guard !isDraggingNow else { return }
             guard !didHandleDragEnd else {
@@ -221,76 +209,164 @@ struct ClipExpansionContainer: View {
                 return
             }
             // `onEnded` never ran (system-cancelled) — fall back to the same
-            // cancel-spring a normal non-committing release would use.
-            withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
+            // cancel-flight a normal non-committing release would use.
+            cancelDrag()
         }
     }
 
-    /// Laid out at `destination`'s size/position — fixed, not animated — with
-    /// `CardFlightEffect` doing the actual flight as a render-time transform on top.
-    /// See that type's own doc comment for why laying this out at the live `rect`
-    /// directly (what a pre-`GeometryEffect` version of this fix did) isn't safe.
+    /// The real editor in its own navigation stack, with `hasLanded` handed down for its
+    /// video-surface cut and its crop marker frame handed back up. Built by one of the two
+    /// branches in `body`. The stack's own background is made see-through so the editor can
+    /// fade in over the card; this container's scrim is its backdrop instead.
+    private func editor(size: CGSize) -> some View {
+        NavigationStack {
+            ClipEditorView(
+                viewModel: viewModel,
+                onCommit: onCommit,
+                onDelete: onDelete,
+                onRequestClose: close,
+                onRequestDeleteClose: closeForDelete,
+                dismissGesture: dismissDragGesture)
+            .expansionTransparentNavigationContainer()
+        }
+        .frame(width: size.width, height: size.height)
+        .environment(\.expansionHasLanded, hasLanded)
+        .allowsHitTesting(hasLanded)
+        .onPreferenceChange(ClipEditorCropMarkerFramePreferenceKey.self) { frame in
+            guard acceptsDestinationUpdates, frame != .zero else { return }
+            measuredMarker = frame
+        }
+    }
+
+    /// Laid out at `destination` (the marker) — fixed, not animated — with
+    /// `ExpansionFlightClip`/`ExpansionFlightEffect` doing the actual flight on top. The
+    /// video surface inside lays the whole frame out around `focus`, past the card's own
+    /// bounds; the flight's window never reaches past them, so only the crop ever shows.
+    /// The video surface is invisible until the seek to `sourceTime` has completed, so
+    /// a frame the player happened to have before that never shows over the tile; the
+    /// poster underneath only joins once the flight has started, so that while the card
+    /// still sits transparent over the visible tile, nothing covers it.
     @ViewBuilder
-    private func cardLayer(destination: CGRect) -> some View {
-        Group {
-            if let thumbnail {
-                Image(decorative: thumbnail, scale: 1, orientation: .up)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Color(.quaternarySystemFill)
+    private func cardLayer(destination: CGRect, focus: CGRect) -> some View {
+        ZStack {
+            if hasStartedOpenFlight {
+                poster(in: focus)
             }
+            // The same placement the editor's stage uses, from a marker of the same size:
+            // the surface itself hides the player until the displayed size is known, so no
+            // guessed geometry ever shows over the tile before `prepare()` finishes.
+            ClipEditorVideoSurface(
+                player: viewModel.player,
+                geometry: viewModel.previewOverlay,
+                marker: focus,
+                adjustment: viewModel.cropAdjustment,
+                onReadyForDisplay: surfaceDidBecomeReady)
+            .opacity(isSeekedToSource ? 1 : 0)
         }
         .frame(width: destination.width, height: destination.height)
-        .clipped()
-        // Linear in `progress`, same reasoning as the scrim's `.opacity(progress)`:
-        // interpolating this modifier's two endpoint outputs equals evaluating it
-        // continuously would have, so it doesn't need to ride the live path.
-        .clipShape(RoundedRectangle(cornerRadius: sourceCornerRadius * (1 - progress)))
-        .position(x: destination.midX, y: destination.midY)
         // Lets a UI test read this layer's laid-out (pre-transform, i.e. settled)
         // frame — accessibility reports geometry independent of opacity — to verify it
-        // tracks the real destination rather than a placeholder; see
-        // `docs/EXPANSION_TRANSITIONS.md`'s "Measuring the destination without a race
-        // or a feedback loop". It cannot see the live transform (Rev 7).
+        // tracks the real destination rather than a placeholder. It cannot see the live
+        // transform.
+        .accessibilityElement(children: .ignore)
         .accessibilityIdentifier("expansion-card")
+        .position(x: destination.midX, y: destination.midY)
     }
 
-    /// Only feeds `allowsHitTesting` now — see `CrossfadeCut` for why this plain
-    /// computed property can't drive the layers' actual visibility. Since `body` only
-    /// ever runs once per `withAnimation`-driven `progress` change (at the *target*
-    /// value), this returns the same two endpoints `CrossfadeCut` does, which is all
-    /// hit-testing needs: it only has to be right once the flight has fully committed
-    /// to a direction, not frame-by-frame mid-flight.
-    private func editorOpacity(for progress: CGFloat) -> CGFloat {
-        progress >= crossfadeThreshold ? 1 : 0
+    /// The tile's poster at the crop marker — it's the crop rect's content, already
+    /// adjusted the way the tile shows it — or the tile's placeholder fill without one.
+    @ViewBuilder
+    private func poster(in focus: CGRect) -> some View {
+        if let thumbnail {
+            Image(decorative: thumbnail, scale: 1, orientation: .up)
+                .resizable()
+                .scaledToFill()
+                .frame(width: focus.width, height: focus.height)
+                .clipped()
+                .position(x: focus.midX, y: focus.midY)
+        } else {
+            Color(.quaternarySystemFill)
+        }
     }
 
-    /// Linear interpolation between `sourceFrame` and `destination`, lerping the
-    /// center and size separately rather than the raw `minX`/`minY` so the card grows
-    /// from its own middle instead of its corner.
-    private func currentRect(destination: CGRect) -> CGRect {
-        let width = sourceFrame.width + (destination.width - sourceFrame.width) * progress
-        let height = sourceFrame.height + (destination.height - sourceFrame.height) * progress
-        let midX = sourceFrame.midX + (destination.midX - sourceFrame.midX) * progress
-        let midY = sourceFrame.midY + (destination.midY - sourceFrame.midY) * progress
-        return CGRect(x: midX - width / 2, y: midY - height / 2, width: width, height: height)
+    /// Writes `hasLanded` with animations disabled, so the card/editor swap it drives is
+    /// an instant cut even when it lands in the same update as an animated `progress`
+    /// change (a close's first frame).
+    private func setLanded(_ landed: Bool) {
+        guard hasLanded != landed else { return }
+        withAnimationsDisabled { hasLanded = landed }
     }
 
-    /// A placeholder destination for the brief window before `ClipEditorView`'s own
-    /// preference report arrives (its aspect ratio needs the asset's track info,
-    /// loaded asynchronously in `prepare()`) — close enough that the retarget once the
-    /// real frame lands isn't a visible jump.
-    private func fallbackDestination(in size: CGSize) -> CGRect {
-        let side = size.width - 32
-        return CGRect(x: 16, y: 100, width: side, height: side)
+    /// A placeholder marker for the brief window before `ClipEditorView`'s own preference
+    /// report arrives: the marker depends only on the editor's layout, not on media, so the
+    /// real frame lands with the editor's first layout pass — before the flight, which waits
+    /// on the player, can start. The same marker rule over a rough stage band, so even that
+    /// first frame is close.
+    private func fallbackMarker(in destination: CGRect) -> CGRect {
+        let stage = destination.insetBy(dx: 0, dy: destination.height * 0.15)
+        return ClipEditorStage.markerRect(in: stage, aspectRatio: viewModel.targetAspectRatio)
     }
 
-    /// Drives `progress` directly from drag translation — the same geometry/opacity
-    /// math the open/close springs use, just sampled live instead of animated. Per
-    /// the real Photos app, there's no real distance threshold on release: any
-    /// downward-released drag (or one still moving down) commits; only a drag
-    /// released while still moving upward snaps back.
+    /// The frame a closing flight scrubs to: `sourceTime` when the tile will show the
+    /// same clip it did at the tap — its loop resumes from where it paused — or the new
+    /// window's midpoint, the tile's new poster frame, when an edit means the tile
+    /// rebuilds anyway.
+    private var landingTime: TimeInterval {
+        let originalWindow = viewModel.duration.map {
+            ClipEditorViewModel.clamped(window: source.window, to: $0)
+        } ?? source.window
+        let isUnchanged = viewModel.window == originalWindow
+            && viewModel.cropRect == source.cropRect
+            && viewModel.cropAdjustment == source.cropAdjustment
+        return isUnchanged ? sourceTime : (viewModel.window.startTime + viewModel.window.endTime) / 2
+    }
+
+    // MARK: - Opening
+
+    /// Seeks the shared player to `sourceTime` and starts the flight once the card can
+    /// show that frame — or after `surfaceReadinessTimeout`, with the poster standing in.
+    private func armOpenFlight() {
+        Task { @MainActor in
+            await viewModel.holdPlayback(at: sourceTime)
+            isSeekedToSource = true
+            startOpenFlightIfReady(force: false)
+        }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(surfaceReadinessTimeout * 1_000_000_000))
+            startOpenFlightIfReady(force: true)
+        }
+    }
+
+    private func surfaceDidBecomeReady() {
+        isSurfaceReady = true
+        startOpenFlightIfReady(force: false)
+    }
+
+    private func startOpenFlightIfReady(force: Bool) {
+        guard !hasStartedOpenFlight, force || (isSeekedToSource && isSurfaceReady) else { return }
+        hasStartedOpenFlight = true
+        onFlightStarted()
+        ExpansionFlightGeometry.animateFlight({ progress = 1 }, completion: {
+            guard !isClosing else { return }
+            setLanded(true)
+            viewModel.releasePlayback()
+        })
+        scrubber.animate(from: sourceTime, to: viewModel.window.startTime, duration: flightDuration)
+    }
+
+    // MARK: - Closing
+
+    /// Drives `progress` directly from drag translation — the same geometry math the
+    /// open/close flights use, just sampled live instead of animated — and scrubs the
+    /// player in step with it. On release, `ExpansionFlightGeometry.dismissCommits`
+    /// decides: a drag that carried the card far enough, or a downward flick, closes;
+    /// a short or slow one springs back to fully open.
+    ///
+    /// A committing release is the editor's back-navigation by another route
+    /// (`docs/UIUX.md` § "Clip Detail / Editor"), so it hands the edits back through
+    /// `onCommit` exactly as `ClipEditorView`'s own back chevron does before closing —
+    /// the editor holds its draft in view state until it's left, and nothing else
+    /// delivers it. A cancelled drag commits nothing: the editor stays open.
     private var dismissDragGesture: AnyGesture<DragGesture.Value> {
         AnyGesture(
             DragGesture(minimumDistance: 8)
@@ -298,199 +374,87 @@ struct ClipExpansionContainer: View {
                     state = value.translation
                 }
                 .onChanged { value in
-                    // Stops `measuredDestination` updates for the rest of this container's
-                    // lifetime, cancel or commit: see `acceptsDestinationUpdates`'s own doc
-                    // comment for why a live interactive drag is unstable — the opening
-                    // flight converged long before dragging was possible, so there's no
-                    // destination left to lose by not remeasuring during or after one.
                     acceptsDestinationUpdates = false
-                    let travel = max(0, value.translation.height)
-                    progress = 1 - min(travel / dismissTravel, 1)
+                    setLanded(false)
+                    let origin = dragScrubOrigin ?? viewModel.beginPresenterScrub()
+                    dragScrubOrigin = origin
+                    progress = ExpansionFlightGeometry.progress(forDismissTranslation: value.translation.height)
+                    scrubber.request(origin + (landingTime - origin) * (1 - progress))
                 }
                 .onEnded { value in
                     didHandleDragEnd = true
-                    let committing = value.translation.height > 12
-                        || value.predictedEndTranslation.height > value.translation.height
-                    if committing {
+                    if ExpansionFlightGeometry.dismissCommits(
+                        translation: value.translation.height,
+                        predictedTranslation: value.predictedEndTranslation.height) {
+                        onCommit(viewModel.result)
                         close()
                     } else {
-                        withAnimation(.easeInOut(duration: flightDuration)) { progress = 1 }
+                        cancelDrag()
                     }
                 }
         )
     }
 
-    /// Reverse flight back to the tile, then — once it's visually landed — the actual
-    /// dismiss. `Transaction.disablesAnimations` alone leaves a residual slide visible:
-    /// it suppresses SwiftUI's own animation system but not the UIKit `dismiss(animated:)`
-    /// call that backs `fullScreenCover` underneath, so the already-landed card would
-    /// visibly slide off with the system's own cover-dismiss transition —
-    /// `UIView.setAnimationsEnabled(false)` reaches that layer directly, the same fix
-    /// `HomeView.presentSlot` uses on the opening side. Re-enabling it needs a longer hold
-    /// than that opening-side fix does, though: per `HomeExpansionContainer.close()`'s own
-    /// doc comment, frame-by-frame inspection of screen recordings showed UIKit scheduling
-    /// `dismiss(animated:)`'s transition later than `present(animated:)`'s, so re-enabling
-    /// on just the next run loop turn still let the slide play out.
+    /// Flies back to fully open and scrubs the player back to the frame the drag
+    /// started on, then resumes playback if the user hadn't paused it.
+    private func cancelDrag() {
+        if progress < 1 {
+            ExpansionFlightGeometry.animateFlight({ progress = 1 }, completion: {
+                // Not if another drag has started, or a close, while this snap-back ran.
+                guard dragTranslation == nil, !isClosing else { return }
+                setLanded(true)
+            })
+        } else {
+            // The drag never moved the card (it only ever went up), so there is nothing to
+            // animate and no completion to wait for.
+            setLanded(true)
+        }
+        guard let origin = dragScrubOrigin else { return }
+        dragScrubOrigin = nil
+        scrubber.animate(from: viewModel.currentTime, to: origin, duration: flightDuration)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(flightDuration * 1_000_000_000))
+            guard dragScrubOrigin == nil, !isClosing else { return }
+            viewModel.endPresenterScrub()
+        }
+    }
+
+    /// Reverse flight back to the tile, scrubbing the player from the frame it's showing
+    /// to `landingTime`, then — once it's visually landed — the actual dismiss, with no
+    /// system transition (`SystemTransition.dismiss`), so the already-landed card doesn't
+    /// slide off with the cover's own dismiss.
     private func close() {
         acceptsDestinationUpdates = false
+        isClosing = true
+        setLanded(false)
+        let from = viewModel.beginPresenterScrub()
+        dragScrubOrigin = nil
         withAnimation(.easeInOut(duration: flightDuration)) { progress = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + flightDuration + 0.05) {
-            UIView.setAnimationsEnabled(false)
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { dismiss() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                UIView.setAnimationsEnabled(true)
-            }
-        }
+        scrubber.animate(from: from, to: landingTime, duration: flightDuration)
+        dismissAfterLanding(delay: flightDuration + 0.05)
     }
 
     /// Delete's own close: a plain fade in place, not a flight back to `sourceFrame`
-    /// — see `deleteFadeOpacity`'s own comment for why. Same `setAnimationsEnabled`
-    /// guard as `close()`, for the same reason.
+    /// — see `deleteFadeOpacity`'s own comment for why.
     private func closeForDelete() {
         acceptsDestinationUpdates = false
+        isClosing = true
+        scrubber.cancel()
+        // Back onto the card for the fade, as `close()` does: under the fade's opacity the
+        // editor's frosted surround can't blur, and would show the frame outside the
+        // marker sharp; the card is the marker alone.
+        setLanded(false)
         withAnimation(.easeOut(duration: 0.22)) { deleteFadeOpacity = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-            UIView.setAnimationsEnabled(false)
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { dismiss() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                UIView.setAnimationsEnabled(true)
-            }
+        dismissAfterLanding(delay: 0.22)
+    }
+
+    /// Dismisses once the flight has visually landed — `delay` after it began, and never
+    /// before the scrub's final seek has put the landing frame on screen.
+    private func dismissAfterLanding(delay: TimeInterval) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            await scrubber.waitUntilDone()
+            SystemTransition.dismiss { dismiss() }
         }
-    }
-}
-
-/// The actual hard cut `editorOpacity`/`cardLayer`'s own `1 - editorOpacity` tried and
-/// failed to produce: a plain `View.body` getter is only ever invoked once per
-/// `withAnimation`-driven `progress` change, at the *target* value — for the
-/// tap-to-open/back-close/cancel-spring paths that means a threshold test like
-/// `progress >= crossfadeThreshold` only ever sees `progress`'s two endpoints (0 and 1),
-/// never an intermediate value, so it always evaluates to the same two opacities (0 and
-/// 1) a plain `.opacity()` modifier was already going to receive — and since `.opacity`
-/// is itself animatable, SwiftUI's own animation system then smoothly interpolates
-/// between those two opacities across the *entire* spring, reproducing exactly the
-/// cross-dissolve this container exists to avoid. (The interactive drag path never
-/// showed this: it writes `progress` directly, outside `withAnimation`, which forces a
-/// genuine `body` re-evaluation — and an un-animated opacity jump — on every touch-move.)
-///
-/// Conforming to `Animatable` fixes this the same way a custom `GeometryEffect` would:
-/// `progress` becomes this modifier's own `animatableData`, so SwiftUI calls
-/// `body(content:)` once per rendered frame with the *live* interpolated value for the
-/// whole duration of the spring, not just at the start and end — the threshold test
-/// actually fires partway through the flight instead of only ever comparing the two
-/// endpoints. `.transaction { $0.animation = nil }` on the inner `.opacity()` stops that
-/// per-frame discrete jump from itself being treated as a new animatable change and
-/// smoothed over whatever's left of the enclosing spring.
-private struct CrossfadeCut: Animatable, ViewModifier {
-    var progress: CGFloat
-    let threshold: CGFloat
-    /// `true` for the real editor content (visible at/above `threshold`), `false` for
-    /// the card (visible below it) — the two are never both `true` at once.
-    let visibleAboveThreshold: Bool
-
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    func body(content: Content) -> some View {
-        let isVisible = visibleAboveThreshold ? progress >= threshold : progress < threshold
-        content
-            .opacity(isVisible ? 1 : 0)
-            .transaction { $0.animation = nil }
-    }
-}
-
-/// Linear interpolation between `sourceFrame` and `destination`, lerping center and
-/// size separately so the card grows from its own middle — the same formula
-/// `currentRect(destination:)` uses, factored out so both live geometry modifiers
-/// below can share it without duplicating the arithmetic (they still each compute
-/// their own `rect` independently at render time; see their own doc comments for why
-/// that's correct, not just convenient).
-private func liveRect(progress: CGFloat, sourceFrame: CGRect, destination: CGRect) -> CGRect {
-    let width = sourceFrame.width + (destination.width - sourceFrame.width) * progress
-    let height = sourceFrame.height + (destination.height - sourceFrame.height) * progress
-    let midX = sourceFrame.midX + (destination.midX - sourceFrame.midX) * progress
-    let midY = sourceFrame.midY + (destination.midY - sourceFrame.midY) * progress
-    return CGRect(x: midX - width / 2, y: midY - height / 2, width: width, height: height)
-}
-
-/// Flies `cardLayer(destination:)` — laid out at `destination`, fixed — to the live
-/// `rect` as a render-time `ProjectionTransform`, the `GeometryEffect` analog of what
-/// `CrossfadeCut` does for opacity via a plain `ViewModifier`. Without this, `rect`
-/// was a plain `body`-level value (computed once, from `progress`'s committed target
-/// only) — harmless for `progress` changes by themselves, since `liveRect` is linear
-/// in `progress` and interpolating a linear function's two endpoint *outputs* equals
-/// evaluating it continuously would have (why the geometry was never broken by the
-/// opacity bug `CrossfadeCut` fixes). But it broke the moment `destination` changed
-/// *mid-flight*, from an event independent of `progress` entirely (the real
-/// measurement arriving): recomputing `rect` from the new `destination` at whatever
-/// `progress` is already committed to has nothing to interpolate from on its own.
-/// Wrapping just that assignment in its own `withAnimation` (tried, reverted — see
-/// `docs/EXPANSION_TRANSITIONS.md`'s Rev 5 postscript) fixed the jump but
-/// *retargeted* the exact same `.frame`/`.position` the main spring was still
-/// animating — SwiftUI's retargeting takes the newest animation's curve, not a
-/// blend, so the short correction silently took over the whole geometry's pacing.
-///
-/// Applied only to the card, deliberately — not to the editor's own
-/// `.scaleEffect`/`.offset` (see those call sites' own comment for why making the
-/// editor's transform live too reintroduced Rev 3's self-referential livelock
-/// through a different door). The card is the only layer actually *visible* during
-/// the snap this fixes; the editor stays invisible (`CrossfadeCut`) until
-/// `destination` has long since stabilized.
-///
-/// Three shapes of "compute geometry from live `progress`" were tried; the first
-/// two caused confirmed hangs before landing on `GeometryEffect`, which is the
-/// primitive actually meant for this (a per-frame animatable render-time transform,
-/// composed *after* layout, with no way to feed back into it):
-/// - A `View` taking a `@ViewBuilder content` closure, built fresh every rendered
-///   frame — which included `NavigationStack { ClipEditorView(...) }`, so every
-///   frame of the ~1s open spring reconstructed that entire `UIViewController`-
-///   backed subtree from scratch. Confirmed: a sustained ~98% CPU hang.
-/// - A plain `ViewModifier` applying `.frame`/`.position`/`.clipShape` — *layout*
-///   modifiers, not render-time ones — inside `body(content:)`. Each per-frame call
-///   changed the laid-out size, which can trigger a parent layout pass, which
-///   re-invokes the `Animatable` body, which changes the size again: a layout
-///   feedback loop, confirmed as tens of thousands of calls in under a minute (not
-///   a plausible per-frame rate for a ~1.5s flight).
-/// - This type, applied to *both* card and editor: safe for the card (its own
-///   doc comment above), but applying the same live transform to the editor's
-///   `.scaleEffect`/`.offset` caused a *third* hang — see those call sites' own
-///   comment for that mechanism, different from the first two.
-///
-/// `GeometryEffect.effectValue(size:)` sidesteps the first two problems: layout
-/// sees `cardLayer`'s *fixed* `destination` size throughout (nothing for a layout
-/// pass to feed back into), and the transform it returns is applied after layout
-/// has already settled, purely for rendering. Independently scales width/height
-/// (not a single uniform factor): the card deliberately stretches its own
-/// thumbnail non-uniformly as it grows, since `liveRect`'s own aspect ratio
-/// changes from `sourceFrame`'s to `destination`'s over the flight, matching the
-/// real Photos app's own "uncropping" growth (see this doc's own research notes).
-private struct CardFlightEffect: GeometryEffect {
-    var progress: CGFloat
-    let sourceFrame: CGRect
-    let destination: CGRect
-
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    func effectValue(size: CGSize) -> ProjectionTransform {
-        let rect = liveRect(progress: progress, sourceFrame: sourceFrame, destination: destination)
-        // Applied to the post-`.position` layer, whose local origin is the screen's
-        // (the enclosing `GeometryReader` ignores the safe area edge to edge), so this
-        // maps `destination` — where the card is laid out — onto `rect` in global space:
-        // scale about the screen origin, then translate so `destination.minX * scaleX`
-        // lands on `rect.minX`.
-        let scaleX = rect.width / max(destination.width, 1)
-        let scaleY = rect.height / max(destination.height, 1)
-        let offsetX = rect.minX - destination.minX * scaleX
-        let offsetY = rect.minY - destination.minY * scaleY
-        return ProjectionTransform(
-            CGAffineTransform(a: scaleX, b: 0, c: 0, d: scaleY, tx: offsetX, ty: offsetY))
     }
 }

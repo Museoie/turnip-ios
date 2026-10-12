@@ -57,7 +57,7 @@ final class MoveNetThunderModelTests: XCTestCase {
         )
     }
 
-    /// The failure must be the typed diagnostic error naming the expected shape, so the
+    /// The failure must be the typed `PoseError` naming the expected shape, so the
     /// contributor sees *which* variant to fetch rather than a bare mismatch.
     func testValidateInputShapeErrorNamesTheExpectedShape() {
         XCTAssertThrowsError(

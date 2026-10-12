@@ -26,7 +26,7 @@ struct DurationStats: Equatable, Sendable {
 
 /// What one live-inference recording measured, in the terms docs/LIVE_POSE.md "Acceptance gate"
 /// is written in. Filled in by the capture side (`LivePoseFrameTap`) and the inference side
-/// (`LivePoseRecording`) and read by the pose diagnostic screen.
+/// (`LivePoseRecording`), logged by `LivePoseLogger`, and read by `LivePoseCoverage`.
 struct LivePoseMetrics: Equatable, Sendable {
     /// Data-output callbacks received while the movie output was recording.
     var framesDelivered = 0

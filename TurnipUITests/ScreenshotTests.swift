@@ -116,8 +116,8 @@ final class ScreenshotTests: XCTestCase {
 
     /// Trashing the original tile flips its icon button's accessibility label rather
     /// than removing it, and the screen carries no leftover select-all affordance —
-    /// the triage screen's toolbar now has only the back chevron, and "Done"
-    /// replaced "Export N clips". The original tile is always the first of the
+    /// the triage screen's toolbar has only the back chevron, and "Save Clips" is
+    /// the screen's action. The original tile is always the first of the
     /// grid's "Trash clip" buttons, since `ClipListViewModel` prepends it to `items`.
     func testTrashButtonTogglesToRestoreOnTheOriginalTile() throws {
         let app = XCUIApplication()
@@ -130,14 +130,18 @@ final class ScreenshotTests: XCTestCase {
         originalTrashButton.tap()
 
         XCTAssertTrue(app.buttons["Restore clip"].firstMatch.waitForExistence(timeout: 5))
+        // The dimmed tile says in words what trashing the original means.
+        XCTAssertTrue(app.staticTexts["original-deletion-notice"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["original-deletion-notice"].label, "Will be deleted")
         XCTAssertFalse(app.buttons["Select All"].exists)
         XCTAssertFalse(app.buttons["Deselect All"].exists)
-        XCTAssertTrue(app.buttons["Done"].exists)
+        XCTAssertTrue(app.buttons["Save Clips"].exists)
+        addScreenshot(named: "clip-list-original-trashed")
     }
 
-    /// A derived clip's trash button removes its tile from the grid immediately,
-    /// unlike the original tile's reversible toggle above — no "Restore clip" label
-    /// ever appears for it.
+    /// A derived clip's trash button removes its tile from the grid outright (a 150ms
+    /// fade-and-reflow, which the poll below outlasts), unlike the original tile's
+    /// reversible toggle above — no "Restore clip" label ever appears for it.
     func testTrashButtonRemovesADerivedClipImmediately() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
@@ -163,6 +167,66 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertFalse(app.buttons["Restore clip"].exists)
     }
 
+    /// Auto crop and Auto rotate are toggles: each tap puts its fit on screen and the same
+    /// button then offers to put back what the fit replaced, independently of the other.
+    /// Auto rotate levels the harness clip by the roll track its sample movie carries, so
+    /// this also proves the track reader works inside the app, not just in the unit tests.
+    func testClipEditorAutoFitsToggleToResets() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipEditor"]
+        app.launch()
+        waitForClipEditorToLoad(app)
+        let crop = app.buttons["auto-crop-button"]
+        let rotate = app.buttons["auto-rotate-button"]
+        XCTAssertTrue(waitUntilHittable(crop))
+        XCTAssertEqual(crop.label, "Auto crop")
+        XCTAssertEqual(rotate.label, "Auto rotate")
+
+        crop.tap()
+        XCTAssertTrue(waitUntil { crop.label == "Reset crop" }, "Auto crop did not become Reset crop")
+        XCTAssertEqual(rotate.label, "Auto rotate")
+
+        rotate.tap()
+        XCTAssertTrue(waitUntil { rotate.label == "Reset rotate" }, "Auto rotate did not become Reset rotate")
+        XCTAssertEqual(crop.label, "Reset crop")
+        // The fit moves the video over 0.4 s; the screenshot is of the settled result.
+        Thread.sleep(forTimeInterval: 1)
+        addScreenshot(named: "clip-editor-resets")
+
+        crop.tap()
+        XCTAssertTrue(waitUntil { crop.label == "Auto crop" }, "Reset crop did not return to Auto crop")
+        XCTAssertEqual(rotate.label, "Reset rotate", "resetting the crop must leave the rotate button alone")
+    }
+
+    /// Waits for the clip editor harness to reach its loaded state (the trim range label),
+    /// failing fast with a reason if its sample movie failed to encode — see `testClipEditor`.
+    private func waitForClipEditorToLoad(_ app: XCUIApplication) {
+        let trimRange = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Trim range 2.0s to 5.0s'"))
+            .firstMatch
+        let loadFailure = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Couldn't load this clip"))
+            .firstMatch
+        let deadline = Date().addingTimeInterval(45)
+        while Date() < deadline, !trimRange.exists {
+            XCTAssertFalse(
+                loadFailure.exists,
+                "editor reached its load-failure state: the harness's sample movie failed to encode")
+            if loadFailure.exists { return }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        XCTAssertTrue(trimRange.exists, "the editor never reached its loaded state")
+    }
+
+    private func waitUntil(timeout: TimeInterval = 10, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return condition()
+    }
+
     /// Tapping a tile opens the full `ClipEditorView` directly — the tile itself is
     /// the single entry point into detail/editing, not a separate expand icon and not
     /// an intermediate full-screen viewer.
@@ -176,12 +240,12 @@ final class ScreenshotTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
-        XCTAssertTrue(app.navigationBars["Edit clip"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
         addScreenshot(named: "clip-list-expand-to-editor")
     }
 
     /// Clip editor over a generated sample movie: the preview with the live crop
-    /// rect, the trim slider, and the keep toggle. The trim range's accessibility
+    /// rect and the trim slider. The trim range's accessibility
     /// label ("Trim range 2.0s to 5.0s") only appears once the movie's duration
     /// loads, so it also proves the editor reached its loaded state.
     ///
@@ -231,14 +295,29 @@ final class ScreenshotTests: XCTestCase {
     }
 
     /// Processing's resting state: the picked video full-screen with the custom scrub
-    /// bar and the "Start analysis" button — no native `VideoPlayer` chrome and no
+    /// bar and the "Analyze clips" button — no native `VideoPlayer` chrome and no
     /// caption text.
     func testProcessingIdle() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotProcessingIdle"]
         app.launch()
-        XCTAssertTrue(app.buttons["Start analysis"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["Analyze clips"].waitForExistence(timeout: 15))
         addScreenshot(named: "processing-idle")
+    }
+
+    /// "Clip manually" pushes the clip list destination straight from the idle state, with
+    /// the result marked as skipped — the real `navigationDestination` binding flip, not
+    /// just the view model's state.
+    func testProcessingSkipAnalysisPushesTheClipList() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotProcessingIdle"]
+        app.launch()
+        let skip = app.buttons["Clip manually"]
+        XCTAssertTrue(skip.waitForExistence(timeout: 15))
+        skip.tap()
+        let standIn = app.staticTexts["clip-list-stand-in"]
+        XCTAssertTrue(standIn.waitForExistence(timeout: 15), "the skip never pushed the destination")
+        XCTAssertEqual(standIn.label, "Clip list stand-in: skipped")
     }
 
     /// A swipe on Processing browses to the neighboring video — the whole page follows the
@@ -253,13 +332,13 @@ final class ScreenshotTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotProcessingBrowse"]
         app.launch()
-        XCTAssertTrue(app.buttons["Start analysis"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["Analyze clips"].waitForExistence(timeout: 15))
         XCTAssertTrue(waitForCenterColor(.green), "did not start on the middle (green) stand-in video")
 
         // Left, from the middle of the screen: the next (blue) video.
         drag(app, fromX: 0.7, toX: 0.05, y: 0.5)
         XCTAssertTrue(waitForCenterColor(.blue), "left swipe did not land on the next video")
-        XCTAssertTrue(waitUntilHittable(app.buttons["Start analysis"]), "the landed screen's controls never arrived")
+        XCTAssertTrue(waitUntilHittable(app.buttons["Analyze clips"]), "the landed screen's controls never arrived")
 
         // Right, starting at the leading edge where the navigation stack's edge-pop would
         // otherwise claim it: back to green.
@@ -275,19 +354,8 @@ final class ScreenshotTests: XCTestCase {
         drag(app, fromX: 0.3, toX: 0.95, y: 0.5)
         sleep(1)
         XCTAssertTrue(waitForCenterColor(.red), "right swipe at the end of the grid left the video")
-        XCTAssertTrue(waitUntilHittable(app.buttons["Start analysis"]), "the screen's controls did not settle")
+        XCTAssertTrue(waitUntilHittable(app.buttons["Analyze clips"]), "the screen's controls did not settle")
         addScreenshot(named: "processing-browse")
-    }
-
-    /// Pose diagnostic before a run: the video length and the "Run diagnostic"
-    /// button. No inference runs until the button is tapped, so the initial state
-    /// needs neither the model nor a real video file.
-    func testPoseDiagnosticInitial() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["-screenshotPoseDiagnostic"]
-        app.launch()
-        XCTAssertTrue(app.buttons["Run diagnostic"].waitForExistence(timeout: 15))
-        addScreenshot(named: "pose-diagnostic")
     }
 
     /// Settings sheet at its defaults: the analysis-mode segmented control, the

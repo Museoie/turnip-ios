@@ -16,10 +16,16 @@ struct HomeView: View {
     private let settings = TurnipSettingsStore.shared
     @State private var showSettings = false
     /// Stable for the life of one tap-to-close cycle — its own `id` never changes even though
-    /// the video showing inside it can (`VideoLibraryViewModel.browse()` replacing `path`'s top
-    /// element while this cover is up). `HomeExpansionContainer`'s doc comment on why a cover
-    /// bound directly to a changing video would re-slide on every browse.
+    /// the video showing inside it can (`VideoLibraryViewModel.browse(to:)` replacing `path`'s top
+    /// element while this cover is up). See docs/EXPANSION_TRANSITIONS.md, "Stable presentation
+    /// identity", for why a cover bound directly to a changing video would re-slide on every browse.
     @State private var presentationSlot: HomePresentationSlot?
+    /// Whether the expanded video's tile is hidden under the cover's flying card. Not simply
+    /// "is a slot presented": the cover takes a few frames to actually appear after
+    /// `presentSlot`, and a tile hidden before its stand-in exists leaves an empty slot in the
+    /// grid meanwhile. Set by the container the instant its flight starts, cleared when it
+    /// slides off sideways (the grid shows through as it goes) and on every new presentation.
+    @State private var hidesSourceTile = false
     /// Every visible tile's own frame, keyed by asset identifier — bubbled up from
     /// `VideoGalleryView`'s tiles via `VideoTileFramePreferenceKey` rather than threaded down,
     /// since a preference already climbs the view tree with no plumbing needed.
@@ -38,11 +44,7 @@ struct HomeView: View {
         }
         .onPreferenceChange(VideoTileFramePreferenceKey.self) { tileFrames = $0 }
         .task { await viewModel.start() }
-        .alert("Couldn't open video", isPresented: errorPresented) {
-            Button("OK") {}
-        } message: {
-            Text(viewModel.errorMessage ?? "")
-        }
+        .errorAlert("Couldn't open video", message: $viewModel.errorMessage)
         .sheet(isPresented: $showSettings) {
             SettingsView(settings: settings)
         }
@@ -81,25 +83,11 @@ struct HomeView: View {
     /// cover's appearance: `HomeExpansionContainer` plays its own flight from `progress = 0`,
     /// which renders identically to the tile still sitting there (now hidden, replaced by the
     /// container's own card at the same frame) — any extra system animation on top shows as
-    /// the whole screen additionally sliding up from the bottom during the transition.
-    /// `Transaction.disablesAnimations` alone left a residual slide visible (confirmed by
-    /// frame-by-frame inspection of a screen recording — the cover's content only occupied the
-    /// bottom portion of the screen for the first couple of frames, growing to fill it, with no
-    /// trace of this container's own scrim over the gap at the top): that flag suppresses
-    /// SwiftUI's own animation system, but apparently not the UIKit `present(animated:)` call
-    /// that backs `fullScreenCover` underneath. `UIView.setAnimationsEnabled(false)` reaches
-    /// that layer directly; it's re-enabled on the next run loop turn, after the presentation
-    /// has already been issued.
+    /// the whole screen additionally sliding up from the bottom during the transition. See
+    /// `SystemTransition` for why suppressing it takes both SwiftUI and UIKit.
     private func presentSlot(_ slot: HomePresentationSlot) {
-        UIView.setAnimationsEnabled(false)
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            presentationSlot = slot
-        }
-        DispatchQueue.main.async {
-            UIView.setAnimationsEnabled(true)
-        }
+        hidesSourceTile = false
+        SystemTransition.present { presentationSlot = slot }
     }
 
     /// The video Processing's swipe reaches at `offset` (`-1` previous, `+1` next) — nil when
@@ -118,15 +106,23 @@ struct HomeView: View {
         { pixelSize in await viewModel.thumbnails.poster(for: asset, pixelSize: pixelSize) }
     }
 
+    /// `analysisSkipped` is Processing's "Clip manually" path: the detection is empty because
+    /// nothing looked, not because nothing was found, so the "No tricks found" notice stays
+    /// down. The camera path never skips; it always has a real detection.
     private func clipList(
-        for video: SelectedVideo, clips: [ProcessedClip], asset: AVURLAsset, popToRoot: @escaping () -> Void
+        for video: SelectedVideo,
+        detection: DetectedClips,
+        asset: AVURLAsset,
+        analysisSkipped: Bool = false,
+        popToRoot: @escaping () -> Void
     ) -> ClipListView {
         ClipListView(
-            items: clips.map { ClipListItem(window: $0.window, cropRect: $0.cropRect) },
+            items: detection.clips.map { ClipListItem(window: $0.window, cropRect: $0.cropRect) },
+            poseFrames: detection.poseFrames,
             asset: asset,
             assetIdentifier: video.assetIdentifier,
             duration: video.duration,
-            showsNoTricksFound: clips.isEmpty,
+            showsNoTricksFound: detection.clips.isEmpty && !analysisSkipped,
             popToRoot: popToRoot
         )
     }
@@ -149,8 +145,11 @@ struct HomeView: View {
         let container = HomeExpansionContainer(
             sourceFrame: { identifier.flatMap { tileFrames[$0] } },
             thumbnail: identifier.flatMap { tileThumbnails[$0] },
+            poster: identifier.flatMap { viewModel.thumbnails.cachedPoster(for: $0) },
             initialAspectRatio: slot.initialAspectRatio,
-            content: { handlers in destinationContent(identifier: identifier, handlers: handlers) }
+            content: { handlers in destinationContent(identifier: identifier, handlers: handlers) },
+            onFlightStarted: { hidesSourceTile = true },
+            onSlideOutStarted: { hidesSourceTile = false }
         )
         // Lets the grid show through the cover while the card/scrim animate —
         // `HomeExpansionContainer` draws its own opaque scrim at `progress`, so without
@@ -181,15 +180,24 @@ struct HomeView: View {
         identifier: String?, handlers: HomeExpansionCloseHandlers
     ) -> some View {
         NavigationStack {
-            if let video = viewModel.path.last {
-                if let clips = video.detectedClips {
-                    clipList(for: video, clips: clips, asset: video.asset, popToRoot: handlers.onRequestClose)
-                } else {
-                    ProcessingView(
-                        video: video,
-                        runner: ProcessingPipeline(sampleRate: settings.analysisGranularity),
-                        autostart: false,
-                        popToRoot: handlers.onRequestClose,
+            Group {
+                if let video = viewModel.path.last {
+                    if let detection = video.detectedClips {
+                        clipList(
+                            for: video, detection: detection, asset: video.asset,
+                            popToRoot: handlers.onRequestSlideClose)
+                            // The list has no backdrop of its own and the stack's is made
+                            // see-through below, so it gets one here — hidden, like a video
+                            // surface, until the flying card has landed.
+                            .background(Color(.systemBackground).ignoresSafeArea().expansionVideoSurface())
+                    } else {
+                        ProcessingView(
+                            video: video,
+                            runner: ProcessingPipeline(sampleRate: settings.analysisGranularity),
+                            autostart: false,
+                            // The clip list it pushes pops sideways back to Home; this
+                            // screen's own chevron still flies back into the tile.
+                            popToRoot: handlers.onRequestSlideClose,
                         initialPoster: viewModel.thumbnails.cachedPoster(for: video.assetIdentifier),
                         poster: viewModel.asset(withIdentifier: video.assetIdentifier).map(posterLoader),
                         previous: browseNeighbor(of: video, offset: -1),
@@ -206,30 +214,37 @@ struct HomeView: View {
                             onChanged: handlers.dismissTranslationChanged,
                             onEnded: handlers.dismissEnded,
                             onCancelled: handlers.dismissCancelled),
-                        destination: { result, popToRoot in
-                            clipList(for: video, clips: result.clips, asset: result.asset, popToRoot: popToRoot)
-                        }
-                    )
-                    // Ties the screen's identity to the video it's showing: without this,
-                    // browsing to a neighbor replaces `path`'s top element but SwiftUI can
-                    // reuse the existing `ProcessingView`, leaving its `@StateObject` and
-                    // player pointed at the video that just left.
-                    .id(video.assetIdentifier)
+                            destination: { result, popToRoot in
+                                clipList(
+                                    for: video, detection: result.detection, asset: result.asset,
+                                    analysisSkipped: result.analysisSkipped, popToRoot: popToRoot)
+                            }
+                        )
+                        // Ties the screen's identity to the video it's showing: without this,
+                        // browsing to a neighbor replaces `path`'s top element but SwiftUI can
+                        // reuse the existing `ProcessingView`, leaving its `@StateObject` and
+                        // player pointed at the video that just left.
+                        .id(video.assetIdentifier)
+                    }
+                } else {
+                    ResolvingDestination(
+                        thumbnail: identifier.flatMap { tileThumbnails[$0] },
+                        resolution: viewModel.resolution,
+                        cancel: {
+                            viewModel.cancelSelection()
+                            handlers.onRequestClose()
+                        })
+                    // Matches `ProcessingView`'s own bar state (`.toolbar(.hidden, for:
+                    // .navigationBar)`), so the swap from this to it never flips the bar
+                    // shown→hidden on top of the root-content swap.
+                    .toolbar(.hidden, for: .navigationBar)
+                    .navigationBarBackButtonHidden(true)
                 }
-            } else {
-                ResolvingDestination(
-                    thumbnail: identifier.flatMap { tileThumbnails[$0] },
-                    resolution: viewModel.resolution,
-                    cancel: {
-                        viewModel.cancelSelection()
-                        handlers.onRequestClose()
-                    })
-                // Matches `ProcessingView`'s own bar state (`.toolbar(.hidden, for:
-                // .navigationBar)`), so the swap from this to it never flips the bar
-                // shown→hidden on top of the root-content swap.
-                .toolbar(.hidden, for: .navigationBar)
-                .navigationBarBackButtonHidden(true)
             }
+            // See-through, so `HomeExpansionContainer` can fade this content in over its
+            // flying card; the container's scrim is the backdrop until each destination's
+            // own (cut in with its video surface) takes over.
+            .expansionTransparentNavigationContainer()
         }
     }
 
@@ -247,8 +262,12 @@ struct HomeView: View {
         case .authorized, .limited:
             VideoGalleryView(
                 viewModel: viewModel,
-                hiddenAssetIdentifier: presentationSlot.flatMap(currentIdentifier),
+                hiddenAssetIdentifier: hidesSourceTile ? presentationSlot.flatMap(currentIdentifier) : nil,
+                isCovered: presentationSlot != nil,
                 onTileTapped: { asset, thumbnail in
+                    // A second tap before the cover is up (it takes a few frames to appear)
+                    // must not replace the slot that's already presenting.
+                    guard presentationSlot == nil else { return }
                     // A grid tap always calls `select(asset)` below with no `detectedClips`, so
                     // this always lands on `ProcessingView` once resolved — always worth an
                     // aspect-ratio guess, known synchronously from the tapped `PHAsset` itself
@@ -268,15 +287,8 @@ struct HomeView: View {
         }
     }
 
-    private var errorPresented: Binding<Bool> {
-        Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { if !$0 { viewModel.errorMessage = nil } }
-        )
-    }
-
     /// `PHAsset.pixelWidth`/`pixelHeight` already reflect display orientation — the same thing
-    /// `ClipEditorViewModel.displayedSize` computes from a track's `naturalSize` +
+    /// `VideoTrackGeometry.displayedSize` computes from a track's `naturalSize` +
     /// `preferredTransform`, just available synchronously, with no asset resolve needed. `nil`
     /// for the degenerate dimensions PhotoKit can report while an asset's metadata is still
     /// settling.
@@ -303,63 +315,65 @@ private final class HomePresentationSlot: Identifiable {
 /// The destination while a tapped tile's video is still resolving (PhotoKit fetch, possibly an
 /// iCloud download) — Photos-faithful: the flight happens instantly on tap, onto this full-
 /// screen poster-plus-progress state, rather than waiting for the resolve to finish before
-/// showing any motion. Mirrors `ProcessingView.browsingOverlay`'s look, since this is the same
-/// situation (a swipe or tap landed on a video that needs a moment) for the first video instead
-/// of a neighbor.
+/// showing any motion. Shares `ResolutionProgressContent` with `ProcessingView.browsingOverlay`,
+/// since this is the same situation (a swipe or tap landed on a video that needs a moment) for
+/// the first video instead of a neighbor.
 private struct ResolvingDestination: View {
     let thumbnail: UIImage?
     let resolution: VideoLibraryViewModel.Resolution?
     let cancel: () -> Void
 
+    /// Whether the progress box is up. Lags this view's appearance by `progressDelay`, the
+    /// way `ProcessingView.browsingOverlayDelay` lags a browse: a local video resolves during
+    /// the opening flight, and a box that fades in with the flight's chrome only to be
+    /// replaced by `ProcessingView`'s controls a few frames later would read as a flicker.
+    @State private var showsProgress = false
+
+    private static let progressDelay: TimeInterval = 0.4
+
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-            if let thumbnail {
-                Image(uiImage: thumbnail)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .ignoresSafeArea()
-            }
-            VStack(spacing: 12) {
-                if let progress = resolution?.downloadProgress {
-                    Text("Downloading from iCloud…")
-                        .font(.subheadline)
-                        .foregroundStyle(.white)
-                    ProgressView(value: progress)
-                        .tint(.white)
-                } else {
-                    Text("Preparing video…")
-                        .font(.subheadline)
-                        .foregroundStyle(.white)
-                    ProgressView()
-                        .tint(.white)
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let thumbnail {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .ignoresSafeArea()
                 }
-                Button("Cancel", role: .cancel, action: cancel)
-                    .tint(.white)
             }
-            .padding(32)
-            .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16))
+            // The flying card draws the same poster until it lands.
+            .expansionVideoSurface()
+            if showsProgress {
+                progressBox
+                    .transition(.opacity)
+            }
         }
+        .task {
+            try? await Task.sleep(for: .seconds(Self.progressDelay))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.15)) { showsProgress = true }
+        }
+    }
+
+    private var progressBox: some View {
+        ResolutionProgressContent(resolution: resolution, cancel: cancel)
+            .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
 /// The settings entry point's pre-iOS 26 fallback: `HomeNavigationBar` hides the real
 /// navigation bar outright on those OSes (no Liquid Glass to anchor a toolbar item to), so
-/// this instead floats as a manually-styled corner overlay. On iOS 26 the settings button is
-/// a real `ToolbarItem` in `HomeNavigationBar`'s toolbar instead — living inside the bar's own
-/// hit-testing hierarchy rather than layered over it, and picking up the system's native
-/// Liquid Glass bar-button styling for free.
-///
-/// Extracted to its own type, not a private computed property, so the DEBUG screenshot
-/// harness composes the exact same view `HomeNavigationBar` does instead of a hand-built
-/// duplicate that can drift from it.
+/// this instead floats in a manually-styled corner overlay row, which supplies the row's
+/// padding. On iOS 26 the settings button is a real `ToolbarItem` in `HomeNavigationBar`'s
+/// toolbar instead — living inside the bar's own hit-testing hierarchy rather than layered
+/// over it, and picking up the system's native Liquid Glass bar-button styling for free.
 struct HomeSettingsButton: View {
     let action: () -> Void
 
     var body: some View {
         ScrimIconButton(systemImage: "gearshape", accessibilityLabel: "Settings", action: action)
-            .padding()
             .accessibilityIdentifier("settings-button")
     }
 }
@@ -369,13 +383,14 @@ struct HomeSettingsButton: View {
 /// itself while recording — there is nothing for it to filter, and a Favorites tap that
 /// silently changes nothing would be worse than an unavailable control.
 ///
-/// Placed by `HomeNavigationBar`, which picks the `Placement` for the OS: a real `ToolbarItem`
-/// on iOS 26 (in the bar's own hit-testing hierarchy, native Liquid Glass styling applied
-/// automatically) or a manually-styled corner overlay pre-26 (no system glass to anchor to,
-/// same reasoning as `HomeSettingsButton`). Not `ScrimIconButton` for the overlay glyph:
-/// `Menu`'s `label` closure needs a bare glyph rather than a nested `Button`, the same reason
-/// `formatMenu` doesn't use it either — mirrors `ScrimIconButton`'s look so it still reads as
-/// the same control family.
+/// Placed by `HomeNavigationBar` just before the settings gear at the band's trailing end,
+/// which picks the `Placement` for the OS: a real `ToolbarItem` on iOS 26 (in the bar's own
+/// hit-testing hierarchy, native Liquid Glass styling applied automatically) or a
+/// manually-styled corner overlay pre-26 (no system glass to anchor to, same reasoning as
+/// `HomeSettingsButton`; the overlay row supplies the padding). Not `ScrimIconButton` for the
+/// overlay glyph: `Menu`'s `label` closure needs a bare glyph rather than a nested `Button`,
+/// the same reason `formatMenu` doesn't use it either — mirrors `ScrimIconButton`'s look so it
+/// still reads as the same control family.
 struct GalleryFilterButton: View {
     enum Placement {
         case toolbar
@@ -386,22 +401,15 @@ struct GalleryFilterButton: View {
     let placement: Placement
 
     var body: some View {
-        Group {
-            switch placement {
-            case .toolbar:
-                menu
-            case .overlay:
-                menu.padding()
-            }
-        }
-        .opacity(viewModel.authorization.canReadLibrary ? 1 : 0.4)
-        .disabled(!viewModel.authorization.canReadLibrary)
-        .accessibilityLabel("Filter")
-        // The filled-vs-outline glyph below is a purely visual signal; this carries the same
-        // state into the accessibility tree, the same convention TrimSliderView's handles use
-        // for a control whose state must never depend only on its shape.
-        .accessibilityValue(viewModel.filter.label)
-        .accessibilityIdentifier("gallery-filter-button")
+        menu
+            .opacity(viewModel.authorization.canReadLibrary ? 1 : 0.4)
+            .disabled(!viewModel.authorization.canReadLibrary)
+            .accessibilityLabel("Filter")
+            // The filled-vs-outline glyph below is a purely visual signal; this carries the
+            // same state into the accessibility tree, the same convention TrimSliderView's
+            // handles use for a control whose state must never depend only on its shape.
+            .accessibilityValue(viewModel.filter.label)
+            .accessibilityIdentifier("gallery-filter-button")
     }
 
     private var menu: some View {
@@ -435,8 +443,7 @@ struct GalleryFilterButton: View {
         switch placement {
         case .toolbar:
             // No manual background: the system paints the native Liquid Glass bar-button
-            // circle behind a plain toolbar glyph, the same way `ClipEditorView`'s toolbar
-            // buttons stay unstyled and let the bar do it.
+            // circle behind a plain toolbar glyph.
             image
         case .overlay:
             image
@@ -473,10 +480,11 @@ struct GalleryFilterButton: View {
     }
 }
 
-/// Home's title row: the "Turnip" wordmark image (mark + text baked into one asset), centered
-/// in a nav-bar-height band. Scroll content (not a nav bar title) so it scrolls away with the
-/// tiles like the rest of Home's header (docs/UIUX.md). Internal so the DEBUG screenshot
-/// harness can render the denied state exactly as Home does.
+/// Home's title row: the "Turnip" wordmark image (mark + text baked into one asset), leading
+/// in a nav-bar-height band whose trailing end `HomeNavigationBar` fills with the filter and
+/// settings controls. Scroll content (not a nav bar title) so it scrolls away with the tiles
+/// like the rest of Home's header (docs/UIUX.md). Internal so the DEBUG screenshot harness can
+/// render the denied state exactly as Home does.
 struct HomeHeader: View {
     private static let logoHeight: CGFloat = 36
     private static let rowHeight: CGFloat = 44
@@ -486,7 +494,8 @@ struct HomeHeader: View {
             .resizable()
             .scaledToFit()
             .frame(height: Self.logoHeight)
-            .frame(maxWidth: .infinity, minHeight: Self.rowHeight)
+            .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
+            .padding(.horizontal)
             .accessibilityLabel("Turnip")
             .accessibilityAddTraits(.isHeader)
     }
@@ -502,6 +511,14 @@ struct VideoGalleryView: View {
     /// `ClipCardView.isHidden`: `HomeExpansionContainer`'s flying card stands in at this tile's
     /// exact frame, so hiding avoids any grid reflow underneath it.
     let hiddenAssetIdentifier: String?
+    /// Whether the expansion cover is presented over this grid. The grid shows through the
+    /// cover while its card flies, so nothing here may change in response to the tap's own
+    /// resolution meanwhile: the tiles aren't disabled (a disabled plain button dims its
+    /// label, and a grid that dims under the flight and un-dims when the resolve lands reads
+    /// as a flicker) and the resolution banner stays down (the cover's own resolving state
+    /// shows the same progress). The
+    /// cover already blocks input, so neither guard is needed while it's up.
+    var isCovered = false
     /// Opens the expansion on this asset, passing its already-decoded thumbnail (nil if the
     /// tile hasn't finished its own first decode yet) so the presenter can fly open from
     /// exactly here without a second image request.
@@ -527,7 +544,7 @@ struct VideoGalleryView: View {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if let resolution = viewModel.resolution {
+                if !isCovered, let resolution = viewModel.resolution {
                     ResolutionBanner(resolution: resolution, cancel: viewModel.cancelSelection)
                 }
             }
@@ -618,7 +635,7 @@ struct VideoGalleryView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(viewModel.resolution != nil)
+        .disabled(viewModel.resolution != nil && !isCovered)
         .opacity(asset.localIdentifier == hiddenAssetIdentifier ? 0 : 1)
         .background(
             GeometryReader { proxy in
@@ -699,13 +716,10 @@ private struct ResolutionBanner: View {
         HStack(spacing: 12) {
             ProgressView()
             VStack(alignment: .leading, spacing: 2) {
+                Text(resolution.statusTitle)
+                    .font(.subheadline)
                 if let progress = resolution.downloadProgress {
-                    Text("Downloading from iCloud…")
-                        .font(.subheadline)
                     ProgressView(value: progress)
-                } else {
-                    Text("Preparing video…")
-                        .font(.subheadline)
                 }
             }
             Spacer()
@@ -724,21 +738,15 @@ struct PhotosAccessDeniedView: View {
     let restricted: Bool
 
     var body: some View {
-        StatusStateView(
+        AccessDeniedStateView(
             systemImage: "photo.on.rectangle.angled",
             title: "Turnip needs access to your videos",
             message: restricted
                 ? "Photos access is restricted on this device, so Turnip can't show your videos."
                 : "Turnip finds and trims tricks in recordings from your Photos library. "
-                    + "Allow access in Settings to get started."
-        ) {
-            if !restricted, let settingsURL = URL(string: UIApplication.openSettingsURLString) {
-                Link("Open Settings", destination: settingsURL)
-                    .buttonStyle(.borderedProminent)
-                    .padding(.top, 8)
-                    .accessibilityIdentifier("open-settings")
-            }
-        }
+                    + "Allow access in Settings to get started.",
+            restricted: restricted,
+            openSettingsIdentifier: "open-settings")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("photos-access-denied")
     }
@@ -760,17 +768,18 @@ struct PhotosAccessDeniedView: View {
 /// alike, so it doesn't jump when the grid replaces the loading state — and the glass
 /// fades in over the band only once tiles scroll under it.
 ///
-/// Also places the filter and settings controls, since where they can live depends on the
-/// same OS split as the glass itself: on iOS 26 they're real `ToolbarItem`s in this same bar
-/// — at the title's level at rest, riding the bar's own scroll-edge glass once scrolled, and
-/// reachable because they're part of the bar's hit-testing hierarchy rather than layered over
-/// it. Pre-26 the bar is hidden outright (no glass to anchor a toolbar item to), so they fall
-/// back to a manually-styled corner overlay instead. Internal so the DEBUG screenshot harness
-/// and previews match.
+/// Also places the filter and settings controls — both at the trailing end of the band the
+/// wordmark leads, filter then gear — since where they can live depends on the same OS split
+/// as the glass itself: on iOS 26 they're real `ToolbarItem`s in this same bar — at the
+/// title's level at rest, riding the bar's own scroll-edge glass once scrolled, and reachable
+/// because they're part of the bar's hit-testing hierarchy rather than layered over it. Pre-26
+/// the bar is hidden outright (no glass to anchor a toolbar item to), so they fall back to a
+/// manually-styled corner overlay instead. Internal so the DEBUG screenshot harness and
+/// previews match.
 struct HomeNavigationBar: ViewModifier {
-    /// The inline bar's height on iOS 26 (measured: the top safe area with the bar minus
-    /// the top safe area without it). There is no public constant for it.
-    private static let barHeight: CGFloat = 54
+    /// The gap between the two pre-26 overlay controls — the same spacing Camera's own
+    /// corner-control row uses.
+    private static let overlaySpacing: CGFloat = 12
 
     @ObservedObject var viewModel: VideoLibraryViewModel
     let showSettings: () -> Void
@@ -789,7 +798,8 @@ struct HomeNavigationBar: ViewModifier {
                     // lone spinner (the not-yet-determined state) centered.
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .safeAreaInset(edge: .top, spacing: 0) {
-                        Color.clear.frame(height: max(proxy.safeAreaInsets.top - Self.barHeight, 0))
+                        Color.clear.frame(
+                            height: max(proxy.safeAreaInsets.top - ScreenHeaderMetrics.barHeight, 0))
                     }
                     .ignoresSafeArea(.container, edges: .top)
             }
@@ -811,9 +821,14 @@ struct HomeNavigationBar: ViewModifier {
                             .opacity(0)
                             .accessibilityHidden(true)
                     }
-                    ToolbarItem(placement: .topBarLeading) {
+                    // Filter first, then the gear, as two separate items: adjacent trailing
+                    // items share one glass capsule by default on iOS 26, and the fixed
+                    // spacer between them is what splits that into two circles — the same
+                    // two circles the pre-26 overlay row below draws.
+                    ToolbarItem(placement: .topBarTrailing) {
                         GalleryFilterButton(viewModel: viewModel, placement: .toolbar)
                     }
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(action: showSettings) {
                             Image(systemName: "gearshape")
@@ -825,11 +840,15 @@ struct HomeNavigationBar: ViewModifier {
         } else {
             content
                 .toolbar(.hidden, for: .navigationBar)
-                .overlay(alignment: .topLeading) {
-                    GalleryFilterButton(viewModel: viewModel, placement: .overlay)
-                }
                 .overlay(alignment: .topTrailing) {
-                    HomeSettingsButton(action: showSettings)
+                    HStack(spacing: Self.overlaySpacing) {
+                        GalleryFilterButton(viewModel: viewModel, placement: .overlay)
+                        HomeSettingsButton(action: showSettings)
+                    }
+                    // The same placement every other bar-less screen's corner controls use,
+                    // but level with the wordmark header's row (laid out from the safe-area
+                    // top as content) rather than where a bar's items would hang.
+                    .screenHeaderItemPlacement(hangsFromStatusBar: false)
                 }
         }
     }

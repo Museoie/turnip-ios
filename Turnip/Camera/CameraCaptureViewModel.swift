@@ -91,6 +91,10 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// so the recording delegate, which AVFoundation calls off the main actor, can reach it; the
     /// tap is `Sendable` and does its own locking.
     nonisolated let livePoseTap = LivePoseFrameTap()
+    /// The take's roll, written into the file as it records (`RollTrack`): a metadata input
+    /// on the session connected to the movie output, sampling gravity between record start
+    /// and the output's finish. What the editor's Auto rotate levels an in-app take by.
+    nonisolated let rollRecorder = RollTrackRecorder()
     /// Loaded once, when the camera first starts, and reused across recordings. Nil until it
     /// loads, or if the bundled model is missing; recordings made meanwhile skip live pose.
     private var poseModel: MoveNetThunderModel?
@@ -100,15 +104,14 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// The pixel size the current take's keypoints are normalized against, read at record start.
     private var liveRenderedPixelSize: CGSize = .zero
     /// Steps 4-6 over the take's live results, built for the sample rate the take was actually
-    /// armed at (see `armedSampleRate` below) — the same `TrickWindowDetector` sustained/quiet
-    /// thresholds the file path derives from `TurnipSettings.analysisGranularity`, so a take
-    /// scored live and the same take analyzed from the file detect the same tricks. Injected so
-    /// the camera can be tested without a real `ProcessingPipeline`; the default is the same
-    /// detection the Processing screen runs.
+    /// armed at (see `armedSampleRate` below). Detection itself reads no rate — its signal is a
+    /// speed and its thresholds are durations — so a take scored live and the same take analyzed
+    /// from the file detect the same tricks. Injected so the camera can be tested without a real
+    /// `ProcessingPipeline`; the default is the same detection the Processing screen runs.
     private let makeDetectClips: (Int) -> ClipDetection
     /// The granularity `armLivePose()` last armed the tap with, read again in `finishLivePose()`
-    /// so detection uses the same rate the recording was sampled at even if the setting changed
-    /// mid-recording.
+    /// so coverage is checked at the rate the recording was sampled at even if the setting
+    /// changed mid-recording.
     private var armedSampleRate = VideoFrameSampler.targetSamplesPerSecond
     /// Reads the current settings snapshot at the point a setting takes effect (Record tap),
     /// rather than once at init — a change made while the camera tab is already open is picked
@@ -199,6 +202,20 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
         }
         isTorchOn = false
         cancelLivePose()
+        rollRecorder.stop()
+    }
+
+    /// Starts the roll track's sampling for the take about to record, with the picture
+    /// geometry it maps gravity through read now: the movie connection's rotation and which
+    /// camera is up, both of which a camera switch changes between takes. Samples are only
+    /// appended while the movie output says it is recording.
+    private func armRollTrack() {
+        guard let movieConnection = movieOutput.connection(with: .video) else { return }
+        let movieOutput = self.movieOutput
+        rollRecorder.start(
+            videoRotationDegrees: LivePoseFrameTap.rotationDegrees(of: movieConnection),
+            isFrontCamera: videoDevice?.position == .front,
+            isRecording: { movieOutput.isRecording })
     }
 
     func toggleRecording() {
@@ -215,6 +232,7 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
             if settingsProvider().analysisMode == .realTime {
                 armLivePose()
             }
+            armRollTrack()
             movieOutput.startRecording(to: url, recordingDelegate: self)
             isRecording = true
         }
@@ -414,18 +432,39 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Puts the roll track's metadata input on the session and connects it to the movie
+    /// output, which then records it alongside the video and audio. Inside the session's
+    /// configuration, after the movie output is on the session — a connection needs both
+    /// ends there. Best-effort: a session that refuses the input or the connection records
+    /// takes with no roll track, which the editor treats like an imported video.
+    private nonisolated static func addRollTrack(
+        from recorder: RollTrackRecorder,
+        to session: AVCaptureSession,
+        recordingInto movieOutput: AVCaptureMovieFileOutput
+    ) {
+        guard let input = try? recorder.makeInput(), session.canAddInput(input) else { return }
+        session.addInputWithNoConnections(input)
+        let connection = AVCaptureConnection(inputPorts: input.ports, output: movieOutput)
+        guard session.canAddConnection(connection) else {
+            session.removeInput(input)
+            return
+        }
+        session.addConnection(connection)
+    }
+
     /// One-time session setup: adds the back camera + microphone inputs, the live-pose data
-    /// output and the movie output, then starts the session — all on `sessionQueue`, since
-    /// `AVCaptureSession` configuration and `startRunning()` are the same kind of blocking
-    /// call the rest of this class avoids running on the caller's thread. Uses
-    /// `.inputPriority`, not `.high`: a session preset actively manages the device's format
-    /// on its own and silently overrides a manually chosen `activeFormat`/frame-duration
-    /// (the resolution/fps menu) if left in a preset mode. The data output goes in ahead of
-    /// the movie output so the recorder's connection is formed after it.
+    /// output, the movie output and the roll track's metadata input (`addRollTrack`), then
+    /// starts the session — all on `sessionQueue`, since `AVCaptureSession` configuration and
+    /// `startRunning()` are the same kind of blocking call the rest of this class avoids running
+    /// on the caller's thread. Uses `.inputPriority`, not `.high`: a session preset actively
+    /// manages the device's format on its own and silently overrides a manually chosen
+    /// `activeFormat`/frame-duration (the resolution/fps menu) if left in a preset mode. The data
+    /// output goes in ahead of the movie output so the recorder's connection is formed after it.
     private func configureSessionAndStart() async -> (AVCaptureDevice?, AVCaptureDeviceInput?) {
         let session = self.session
         let movieOutput = self.movieOutput
         let dataOutput = livePoseTap.output
+        let rollRecorder = self.rollRecorder
         return await withCheckedContinuation { continuation in
             sessionQueue.async {
                 session.beginConfiguration()
@@ -452,6 +491,7 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
                 if session.canAddOutput(movieOutput) {
                     session.addOutput(movieOutput)
                 }
+                Self.addRollTrack(from: rollRecorder, to: session, recordingInto: movieOutput)
                 session.commitConfiguration()
                 Self.applyMirroringPolicy(to: movieOutput)
                 Self.applyMirroringPolicy(to: dataOutput)
@@ -658,6 +698,7 @@ extension CameraCaptureViewModel: AVCaptureFileOutputRecordingDelegate {
         from connections: [AVCaptureConnection],
         error: Error?
     ) {
+        rollRecorder.stop()
         Task { @MainActor in
             isRecording = false
             livePoseKeypoints = []
@@ -727,10 +768,10 @@ extension CameraCaptureViewModel {
 
     /// The movie output finished. Waits for the consumer to score what is still queued — one
     /// inference in steady state — logs the recording's metrics (where the acceptance gate in
-    /// docs/LIVE_POSE.md is read from), and returns the take's clips when live inference covered
-    /// the whole take. Nil sends the take through Processing: no live recording ran, the camera
-    /// was left mid-drain, or coverage fell short.
-    private func finishLivePose() async -> [ProcessedClip]? {
+    /// docs/LIVE_POSE.md is read from), and returns the take's clips, with the scored frames,
+    /// when live inference covered the whole take. Nil sends the take through Processing: no
+    /// live recording ran, the camera was left mid-drain, or coverage fell short.
+    private func finishLivePose() async -> DetectedClips? {
         guard let recording = livePoseTap.endRecording() else { return nil }
         drainingLivePose = recording
         let outcome = await recording.outcome()
@@ -738,12 +779,14 @@ extension CameraCaptureViewModel {
         if drainingLivePose === recording {
             drainingLivePose = nil
         }
-        // `armedSampleRate` is what the gate (`LivePoseFrameGate(baseInterval:)` in `armLivePose`)
-        // was actually configured with — the same granularity the file path's detector uses — so
+        // `armedSampleRate` is what the gate (the `LivePoseFrameGate` `LivePoseFrameTap.arm` builds)
+        // was actually configured with — the same granularity the file path samples at — so
         // coverage is checked against the grid the recording actually ran, not the shipped default.
         let interval = 1.0 / Double(armedSampleRate)
         guard LivePoseCoverage.isComplete(outcome, interval: interval) else { return nil }
-        return makeDetectClips(armedSampleRate)(outcome.results, liveRenderedPixelSize)
+        return DetectedClips(
+            clips: makeDetectClips(armedSampleRate)(outcome.results, liveRenderedPixelSize),
+            poseFrames: outcome.results)
     }
 
     private func cancelLivePose() {

@@ -100,3 +100,9 @@ AuthKey_*.p8
 ExportOptions.plist
 .env
 .env.*
+
+# Labelled footage and saved pose for the detection evaluation
+# (TurnipTests/TrickDetectionEvaluationTests.swift). It is kept outside the
+# repository — recordings and keypoint sequences of real people — and this
+# keeps it out if a copy ever lands inside.
+turnip-eval/

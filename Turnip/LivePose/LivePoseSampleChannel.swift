@@ -1,8 +1,9 @@
 import Foundation
 import os
 
-/// One kept live frame, already reduced to its model input. The pixel buffer it came from was
-/// released before this value existed.
+/// One kept live frame, already reduced to its model input. Holds no reference to the pixel buffer
+/// it came from, so the capture output can recycle that buffer as soon as the delegate callback
+/// returns.
 struct LivePoseSample: Sendable {
     /// The frame's approximate index in the written file: file-relative time × capture frame rate.
     /// Approximate because the live path never sees the file's own sample numbering.

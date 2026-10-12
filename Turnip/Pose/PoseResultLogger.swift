@@ -1,9 +1,11 @@
 import os
 
 enum PoseResultLogger {
+    /// The category log-collection filters (`log collect`, Console) match on; renaming it
+    /// silently empties them.
     private static let logger = Logger(subsystem: "com.hoiekim.turnip", category: "PoseDiagnostic")
 
-    /// The per-frame diagnostic line, rendered as a plain `String` so tests can assert on the
+    /// The per-frame pose line, rendered as a plain `String` so tests can assert on the
     /// exact emitted text. Rendered up front rather than interpolated at the call site: `os.Logger`
     /// redacts interpolated `String` values to `<private>` by default, which would silently drop
     /// the two numbers this line exists to carry.

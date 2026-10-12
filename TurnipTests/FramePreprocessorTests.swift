@@ -208,9 +208,9 @@ final class FramePreprocessorTests: XCTestCase {
         XCTAssertEqual(rotated, extent)
     }
 
-    /// The crux of the fix: rotating the pixels by `uprightTransform` and rotating a normalized
+    /// Rotating the pixels by `uprightTransform` and rotating a normalized
     /// keypoint by `LivePoseKeypointRotation.rotatedPoint` must agree on where content moves for
-    /// every corner and every quarter turn, since production now applies the first before
+    /// every corner and every quarter turn, since production applies the first before
     /// inference and relies on the second having already validated that same "clockwise degrees"
     /// convention. A sign or axis error here would upright frames using an implicit rotation not
     /// actually matching the sensor-to-movie relationship the app measures.

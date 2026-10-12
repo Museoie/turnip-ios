@@ -79,6 +79,22 @@ final class ClipExporterTests: XCTestCase {
         assertPoint(CGPoint(x: 1440, y: 810), mapsTo: CGPoint(x: 960, y: 540), by: transform.layerTransform)
     }
 
+    /// A crop rect overhanging the frame (`CropRectCalculator.fittedInFrame` keeps the
+    /// target ratio over fitting inside): the render is the whole crop, overhang included,
+    /// and the frame's content lands shifted down by the overhang, so the rows above it
+    /// are the black letterbox the editor's fixed marker shows there.
+    func testCropOverhangingTheFrameRendersTheWholeCropWithTheFrameOffsetInside() throws {
+        let transform = try XCTUnwrap(ClipExportTransform.make(
+            cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: -0.25, maxY: 1.25),
+            naturalSize: landscape,
+            preferredTransform: .identity))
+
+        // 960 wide, 1.5 × 1080 = 1620 tall: 270 of overhang above and below the frame.
+        XCTAssertEqual(transform.renderSize, CGSize(width: 960, height: 1620))
+        assertPoint(CGPoint(x: 480, y: 0), mapsTo: CGPoint(x: 0, y: 270), by: transform.layerTransform)
+        assertPoint(CGPoint(x: 1440, y: 1080), mapsTo: CGPoint(x: 960, y: 1350), by: transform.layerTransform)
+    }
+
     func testRotatedTrackExportsUpright() throws {
         let transform = try XCTUnwrap(ClipExportTransform.make(
             cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
@@ -115,7 +131,7 @@ final class ClipExporterTests: XCTestCase {
     func testRotatedTrackCropUsesTheDisplayedSize() throws {
         // Athlete in the upper middle of the upright frame: display-normalized rect
         // x in [0.25, 0.75], y in [0.10, 0.60]. Denormalizing against the *encoded*
-        // size (the old bug) maps this to the displayed middle band instead of the
+        // size maps this to the displayed middle band instead of the
         // upper middle; the layer transform then points at the wrong region.
         let transform = try XCTUnwrap(ClipExportTransform.make(
             cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.10, maxY: 0.60),

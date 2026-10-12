@@ -1,8 +1,7 @@
 import AVFoundation
 import Foundation
 
-/// The hand-off from Home to whatever consumes the picked video — the pose diagnostic today, the
-/// Processing screen once it exists.
+/// The hand-off from Home to the Processing screen, which consumes the picked video.
 ///
 /// Carries the resolved `AVURLAsset` rather than a bare file URL. For ordinary Photos videos the
 /// asset points into the Photos container, and it is the object PhotoKit handed back that carries
@@ -19,8 +18,9 @@ struct SelectedVideo: Hashable, Sendable {
     /// (slow-motion, edited) it wraps a temp-file export — see `PhotoVideoResolver`.
     let asset: AVURLAsset
     let duration: TimeInterval
-    /// Clips already detected for this video, when the camera scored it live while it was being
-    /// recorded (docs/LIVE_POSE.md). Home lands such a video on the clip list directly; nil
-    /// means nothing has analyzed it yet and Home goes to Processing.
-    var detectedClips: [ProcessedClip]?
+    /// Clips already detected for this video (with the frames they were scored from), when the
+    /// camera scored it live while it was being recorded (docs/LIVE_POSE.md). Home lands such a
+    /// video on the clip list directly; nil means nothing has analyzed it yet and Home goes to
+    /// Processing.
+    var detectedClips: DetectedClips?
 }

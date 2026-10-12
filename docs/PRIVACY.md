@@ -37,7 +37,15 @@ it's summarized from — keep both in sync when data handling changes.
   on-device to draw the skeleton and detect clips; the frames are reduced to
   model input in memory and released immediately, nothing but the recording
   itself is written, and the only trace left behind is per-recording timing
-  and count figures in the device's own log. If the user
+  and count figures in the device's own log. The in-app camera also reads
+  the phone's gravity vector from Core Motion while it records and writes
+  the resulting roll angle into the recording as a metadata track
+  (`Turnip/Camera/RollTrackRecorder.swift`, format in
+  `Turnip/Media/RollTrack.swift`), so the editor can level the clip
+  without guessing from the picture; this is the device-motion API, which
+  needs no `NSMotionUsageDescription` and raises no prompt (unlike the
+  pedometer and activity APIs), and the angles live only inside the user's
+  own video file in their Photos library. If the user
   trashes the original video's tile in Clip List, the original is deleted
   from Photos too — a user-initiated, on-device change to their own library,
   not data leaving the device.
@@ -46,23 +54,33 @@ it's summarized from — keep both in sync when data handling changes.
 ## Privacy manifest (`Turnip/Resources/PrivacyInfo.xcprivacy`)
 
 Declares: no tracking (`NSPrivacyTracking` false, no tracking domains),
-no collected data types, and two required-reason API categories —
+no collected data types, and three required-reason API categories —
 `NSPrivacyAccessedAPICategoryFileTimestamp` with approved reason `C617.1`
 (the orphan sweep in `PhotoVideoResolver` reads `.creationDateKey` on files
-inside the app's own `tmp/` container) and
+inside the app's own `tmp/` container),
 `NSPrivacyAccessedAPICategorySystemBootTime` with approved reason `35F9.1`
-(`ProgressReportClock` measures elapsed time between in-app progress reports
-via `systemUptime`). See the audit table below.
+(elapsed time between in-app progress reports, measured via `systemUptime`),
+and `NSPrivacyAccessedAPICategoryUserDefaults` with approved reason `CA92.1`
+(`TurnipSettingsStore` persists the settings screen's four keys, readable only
+by the app itself). See the audit table below.
 
-Required-reason API audit (re-run if these change):
+Required-reason API audit. `ci_scripts/check-privacy-manifest.sh` enforces it
+on every pull request: it matches a table of API spellings — which lives in
+the script, since the categories and evidence below are not themselves
+greppable — against everything under `Turnip/`, and fails when a hit has no
+matching `NSPrivacyAccessedAPIType` in the manifest. So a `No` row whose
+category is undeclared is a claim CI re-checks: a call site landing behind it
+fails the build. The other direction is a note rather than a failure — a
+declared category nothing references is reported without failing, because
+Apple rejects undeclared usage, not an unused declaration.
 
 | API category | Used? | Evidence |
 |---|---|---|
-| UserDefaults | No | No `UserDefaults` references in `Turnip/` |
+| UserDefaults | Yes — CA92.1 | `TurnipSettingsStore` reads four keys in `init` and writes through to `UserDefaults` on every published change; `TurnipSettingsStore.shared` takes the `.standard` suite. All four keys are app-local — no app group, no shared suite outside the screenshot and preview harnesses — which is what CA92.1 approves. |
 | File timestamps | Yes — C617.1 | `PhotoVideoResolver.deleteOrphanedTemporaryExports` reads `.creationDateKey` via `resourceValues(forKeys:)` on files in the app's own `tmp/` container — in-container metadata reads, declared with approved reason C617.1. (`PHAsset.creationDate` is PhotoKit metadata on user-granted assets, not a file-timestamp API.) |
-| System boot time | Yes — 35F9.1 | `ProgressReportClock.shouldReport` (in `ProcessingPipeline.swift`) defaults its clock to `ProcessInfo.processInfo.systemUptime` to measure elapsed time between in-app progress reports — declared with approved reason 35F9.1. |
-| Disk space | No | No volume-capacity queries |
-| Active keyboards | No | No text fields anywhere in the app |
+| System boot time | Yes — 35F9.1 | `ProgressReportClock.shouldReport` (in `ProcessingPipeline.swift`) defaults its clock to `ProcessInfo.processInfo.systemUptime` to measure elapsed time between in-app progress reports; `LivePoseRecording` and `LivePoseFrameTap` read the same clock for inference timing and thermal accounting. All in-app elapsed-time measurement — declared with approved reason 35F9.1. |
+| Disk space | No | No volume-capacity resource keys and no `statfs` family call sites. |
+| Active keyboards | No | The category covers querying `UITextInputMode.activeInputModes`, which nothing does. `SettingsView` has one `TextField` for the album name; presenting a keyboard is not the declarable access. |
 
 Third-party SDKs: the only dependency is `TensorFlowLiteSwift`
 (`Podfile.lock` resolves its `Privacy` subspec, which carries the pod's
@@ -77,7 +95,7 @@ require a manifest/signature. If a dependency is added, check both.
   write half anyway, so one honest prompt covers both. The write half is
   also what lets Clip List delete the original video (`PhotoAssetDeleter`,
   `PHAssetChangeRequest.deleteAssets`) when the user trashes its tile and
-  taps Done — PhotoKit shows its own "Allow Turnip to delete?" system
+  taps Save Clips — PhotoKit shows its own "Allow Turnip to delete?" system
   confirmation before the deletion happens, on top of the one-time
   read/write grant.
 - `NSPhotoLibraryUsageDescription` explains the read side in plain
@@ -92,6 +110,21 @@ require a manifest/signature. If a dependency is added, check both.
   limited access the app shows its own "select more" affordance instead
   of iOS re-prompting on its own schedule.
 
+## Camera and microphone
+
+- The in-app camera requests both when its screen first starts
+  (`CameraCaptureViewModel.start()`); a recording needs both, so
+  `CameraAccessState` treats them as one grant. `NSCameraUsageDescription`
+  and `NSMicrophoneUsageDescription` explain each in plain language.
+- Video and audio go only into the take's movie file,
+  `tmp/turnip-recording-<uuid>.mov`, which is saved to Photos through
+  `ClipPhotosSaver` and then deleted (`RootTabView.handleRecorded`). If
+  the save fails, the file stays in `tmp/` rather than destroying the
+  user's only copy of the footage.
+- Live pose inference reads frames from the same capture session, and
+  the roll track reads Core Motion's device motion (both described
+  above); neither adds a permission prompt of its own.
+
 ## Temp-file and cache hygiene
 
 - **Composition exports.** Slow-motion/edited videos come back from
@@ -104,7 +137,7 @@ require a manifest/signature. If a dependency is added, check both.
   never accumulates files. `TurnipApp` sweeps orphans left by crashed sessions
   at launch. The prefix is what makes both the delete and the sweep recognize
   only our files.
-- **Clip exports.** Tapping "Done" in Clip List (`ClipListViewModel.save()`)
+- **Clip exports.** Tapping "Save Clips" in Clip List (`ClipListViewModel.save()`)
   stages every non-trashed derived clip in a fresh `tmp/turnip-export-<uuid>/`
   scratch directory, hands each one to Photos through `ClipPhotosSaver`
   (add-only), and deletes the whole directory once the run ends — success or
@@ -112,8 +145,9 @@ require a manifest/signature. If a dependency is added, check both.
   `save()` call killed mid-run is swept by the next one
   (`sweepStaleExportDirectories`); the `turnip-export-` prefix is what makes
   the sweep recognize only our directories.
-- **Thumbnails** are in-memory only (`PHCachingImageManager`), in both
-  the Home grid and the clip-list work — there is no on-disk thumbnail
+- **Thumbnails** are in-memory only — `PHCachingImageManager` for the
+  Home grid (`ThumbnailLoader`) and `AVAssetImageGenerator` frames for
+  the clip list (`ClipThumbnailLoader`). There is no on-disk thumbnail
   cache. If one ever lands, it belongs in `Caches/`, never `Documents/`,
   so iOS can evict it and it isn't backed up.
 - **Logs** go to `os.Logger` only; nothing is written to log files.

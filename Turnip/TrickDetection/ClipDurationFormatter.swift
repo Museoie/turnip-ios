@@ -1,8 +1,8 @@
 import Foundation
 
-/// The one "2.4s"-style renderer for clip-window durations, shared by the triage card,
-/// the clip editor (its duration label and the trim timeline's timestamps), and the
-/// export confirmation row — one implementation so the three can't drift apart again.
+/// The one "2.4s"-style renderer for clip-window durations, shared by the clip list's tiles
+/// (duration and range timeline) and the clip editor (its duration label and the trim
+/// timeline's timestamps) — one implementation so the screens can't drift apart.
 ///
 /// Integer math pins exactly one decimal place: string-interpolating the `Double` would
 /// lean on `Double.description`'s shortest-round-trip rendering for the trailing `.0`,

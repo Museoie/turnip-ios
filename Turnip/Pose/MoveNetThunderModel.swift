@@ -14,10 +14,10 @@ import TensorFlowLite
 ///
 /// One consequence to keep in mind: `runInference` is synchronous compute (tens of ms per frame)
 /// running on a cooperative-pool thread, so it occupies one of the pool's threads (pool width ==
-/// core count) for the duration of each call. That is fine for the diagnostic, where there is
-/// exactly one caller and the sampler serializes frames anyway. If the pipeline later runs other
-/// async work concurrently with inference, the escape hatch is a custom `SerialExecutor` backed by
-/// a utility-QoS queue, or `Task.detached` for the compute — not more actors.
+/// core count) for the duration of each call. That is fine for its two callers — a camera session
+/// and a Processing run — each of which feeds one frame at a time. If the pipeline runs other async
+/// work concurrently with inference, the escape hatch is a custom `SerialExecutor` backed by a
+/// utility-QoS queue, or `Task.detached` for the compute — not more actors.
 ///
 /// Construct via `load()`, not `init`: an actor's synchronous `init` runs in the *caller's*
 /// context, so calling it from a `@MainActor` `Task` would put the model mmap + tensor allocation
@@ -31,8 +31,8 @@ actor MoveNetThunderModel {
 
     /// Loads the bundled model off the main thread. A `nonisolated async` function runs on the
     /// generic executor regardless of the caller's isolation, so the `Interpreter` construction and
-    /// `allocateTensors()` inside `init` happen there. This is paid once per diagnostic run, not
-    /// once per launch — every "Run diagnostic" tap builds a fresh model — so it must not block UI.
+    /// `allocateTensors()` inside `init` happen there. This is paid once per camera session and once
+    /// per Processing run, not once per launch — each builds a fresh model — so it must not block UI.
     nonisolated static func load() async throws -> MoveNetThunderModel {
         try MoveNetThunderModel()
     }
@@ -98,9 +98,9 @@ actor MoveNetThunderModel {
             preprocessor: try FramePreprocessor(inputShape: inputTensor.shape.dimensions))
     }
 
-    /// Preprocesses on the actor, then infers. The file-based callers (`ProcessingPipeline`, the
-    /// diagnostic run) hold a decoded pixel buffer and nothing else is contending for the actor,
-    /// so paying the letterbox here costs them nothing over doing it themselves.
+    /// Preprocesses on the actor, then infers. The file-based caller (`ProcessingPipeline`) holds a
+    /// decoded pixel buffer and nothing else is contending for the actor, so paying the letterbox
+    /// here costs it nothing over doing it itself.
     func runInference(on pixelBuffer: CVPixelBuffer) throws -> [PoseKeypoint] {
         try runInference(on: inputPreparer.prepare(pixelBuffer))
     }

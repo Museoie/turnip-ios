@@ -4,10 +4,11 @@ import Foundation
 ///
 /// The video data output hands over buffers in the sensor's own orientation (rotating them
 /// physically is expensive and reconfigures the capture pipeline), while the movie output writes
-/// its orientation as a track matrix and the file-based sampler renders through that matrix. So a
-/// live keypoint and a file keypoint for the same joint differ by the rotation between the two
-/// connections, and the live one is rotated here, at the consumer, so both reach the diagnostic in
-/// the file's display orientation.
+/// its orientation as a track matrix and the file-based sampler renders through that matrix.
+/// `relativeDegrees` gives the rotation between the two connections, which
+/// `PoseInputPreparer.prepare` applies to the frame before letterboxing, so scored keypoints
+/// already arrive in the file's display orientation. `rotated` takes them from there to
+/// capture-device space for the camera preview's overlay.
 ///
 /// Angles follow `AVCaptureConnection.videoRotationAngle`: degrees clockwise, a multiple of 90.
 /// An angle that is not a multiple of 90 leaves the keypoints untouched — no capture connection

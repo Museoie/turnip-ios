@@ -1,8 +1,10 @@
 import SwiftUI
 
 /// A circular icon button floating directly over media (video/photo content) — Processing's
-/// cancel and back chevron, Camera's cancel/exposure/flash/flip buttons (forced to `.scrim`;
-/// see `Style`). Real Liquid Glass on iOS 26 (`.glassEffect`) by default, same as the floating
+/// cancel and back chevron, the editor's and the clip list's back chevrons, Camera's
+/// cancel/exposure/flash/flip buttons (forced to `.scrim`; see `Style`). The one shape every
+/// screen's chevron takes, so the control reads the same across the flow's cross-fades.
+/// Real Liquid Glass on iOS 26 (`.glassEffect`) by default, same as the floating
 /// tab bar (`RootTabView`); a translucent dark scrim behind the glyph pre-26, where there's no
 /// system glass to render and contrast against an arbitrary frame still needs a fixed
 /// backing. One shared definition instead of each screen re-declaring the same background;
@@ -28,8 +30,8 @@ struct ScrimIconButton: View {
         Button(action: action) {
             glyph
                 // Touch-target floor (docs/ACCESSIBILITY.md's 44x44 pt minimum), applied
-                // on the label so it's part of the Button's own hit-testing region —
-                // same placement `BackChevronButton` uses. A no-op at the 44 pt default;
+                // on the label so it's part of the Button's own hit-testing region. A
+                // no-op at the 44 pt default;
                 // expands the tappable area around a smaller `diameter` without
                 // changing what's drawn.
                 .frame(minWidth: 44, minHeight: 44)

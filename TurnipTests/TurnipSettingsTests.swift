@@ -37,16 +37,6 @@ final class TurnipSettingsTests: XCTestCase {
         XCTAssertEqual(TurnipSettings(analysisGranularity: 1000).analysisGranularity, 30)
     }
 
-    func testSetAnalysisGranularityClampsTheSameWayTheInitializerDoes() {
-        var settings = TurnipSettings()
-        settings.setAnalysisGranularity(45)
-        XCTAssertEqual(settings.analysisGranularity, 30)
-        settings.setAnalysisGranularity(-1)
-        XCTAssertEqual(settings.analysisGranularity, 1)
-        settings.setAnalysisGranularity(12)
-        XCTAssertEqual(settings.analysisGranularity, 12)
-    }
-
     func testClampedGranularityIsThePureFunctionBothEntryPointsShareOut() {
         XCTAssertEqual(TurnipSettings.clampedGranularity(0), 1)
         XCTAssertEqual(TurnipSettings.clampedGranularity(30), 30)

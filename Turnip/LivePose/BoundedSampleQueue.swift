@@ -23,9 +23,6 @@ struct BoundedSampleQueue<Element> {
         self.capacity = capacity
     }
 
-    var count: Int { elements.count }
-    var isEmpty: Bool { elements.isEmpty }
-
     /// Appends `element`, evicting the oldest queued element first when the queue is full.
     /// Returns the evicted element so a caller can account for it.
     @discardableResult

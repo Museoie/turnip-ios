@@ -10,20 +10,22 @@ private enum DragAxis {
 
 /// The pipeline progress screen (`docs/UIUX.md` § "Processing").
 ///
-/// Pushed onto the flow's shared `NavigationStack` when a video is picked. It does *not*
+/// The root of Home's full-screen cover `NavigationStack` when a video is picked. It does *not*
 /// start the pipeline on appear: the idle state fills the screen with the picked video
 /// (no native playback chrome — a thin scrub bar draws over the bottom) and a manual
-/// "Start analysis" button — black background, no title, Photos-app look. Once started
+/// "Analyze clips" button — black background, no title, Photos-app look. Once started
 /// it shows real per-frame progress ("Analyzing frame 400 of 1,200"), and on success
 /// navigates to `destination` with the detected clips — including a run that detected
 /// zero tricks, which still navigates there rather than stopping on this screen; the
-/// clip list itself puts up the "no tricks found" notice. Only the error state stays on
-/// this screen, with a way back. Like the other pushed screens, it declares no
-/// `NavigationStack` of its own.
+/// clip list itself puts up the "no tricks found" notice. A "Clip manually" button under
+/// "Analyze clips" navigates to the same `destination` with an empty, `analysisSkipped`
+/// result instead of running the pipeline at all, for a user who wants to cut clips by
+/// hand. Only the error state stays on this screen, with a way back. It declares no
+/// `NavigationStack` of its own; Home's cover supplies it.
 ///
 /// The success destination is injected rather than hardcoded to the clip list, so
 /// `Processing` never depends on `ClipList`'s view type (`ClipListView`): the screen
-/// that pushes this one supplies `destination`. The destination also receives
+/// that presents this one supplies `destination`. The destination also receives
 /// `popToRoot` — the flow's "back to Home" action — so its back button can skip this
 /// screen instead of stepping back through the flow.
 struct ProcessingView<Destination: View>: View {
@@ -33,7 +35,7 @@ struct ProcessingView<Destination: View>: View {
     /// Home passes `false` too: analysis starts from the idle state's button, never
     /// automatically.
     let autostart: Bool
-    /// Pops the flow's navigation stack back to Home. Threaded into the success
+    /// Returns to Home (Home's cover passes its slide-close). Threaded into the success
     /// destination so its back button returns to the start of the flow.
     let popToRoot: () -> Void
     /// This video's own poster frame, drawn under the player until it has decoded a frame of
@@ -69,9 +71,9 @@ struct ProcessingView<Destination: View>: View {
     /// Hands a presenter this screen's own vertical drag, live, instead of this screen deciding
     /// commit/cancel itself: `HomeExpansionContainer` drives its flying card's geometry straight
     /// off `onChanged`'s translation, the same way `ClipExpansionContainer`'s own dismiss drag
-    /// does, and owns the "almost any downward release commits" rule — this screen's own
-    /// `BrowseSwipe.commitDistance`/`flickDistance` threshold stays as the fallback for any
-    /// caller that doesn't supply hooks (`ScreenshotHarness`, previews).
+    /// does, and owns the commit-or-spring-back rule (`ExpansionFlightGeometry.dismissCommits`)
+    /// — this screen's own `BrowseSwipe.commitDistance`/`flickDistance` threshold stays as the
+    /// fallback for any caller that doesn't supply hooks (`ScreenshotHarness`, previews).
     struct DismissGestureHooks {
         /// Called on every update while the vertical axis is locked in, with the drag's raw
         /// `translation.height`.
@@ -90,8 +92,7 @@ struct ProcessingView<Destination: View>: View {
     @State private var player: AVPlayer?
     /// The frame size as the player shows it (display orientation), loaded once in
     /// `.task` alongside the player — this view owns the player, so it owns the geometry
-    /// the pose overlay needs to land on it too. Same computation as
-    /// `ClipEditorViewModel.displayedSize`/`PoseDiagnosticViewModel.displaySize`.
+    /// the pose overlay needs to land on it too (`VideoTrackGeometry.displayedSize`).
     @State private var displaySize: CGSize?
     /// Seek coalescing for the progress-driven scrub: `ProgressReportClock` fires up to
     /// 10 times a second, and issuing an exact-tolerance seek per report would queue up
@@ -257,8 +258,8 @@ struct ProcessingView<Destination: View>: View {
                let track = try? await video.asset.loadTracks(withMediaType: .video).first,
                let naturalSize = try? await track.load(.naturalSize),
                let preferredTransform = try? await track.load(.preferredTransform) {
-                displaySize = ClipEditorViewModel.displayedSize(
-                    naturalSize: naturalSize, preferredTransform: preferredTransform)
+                displaySize = VideoTrackGeometry(
+                    naturalSize: naturalSize, preferredTransform: preferredTransform).displayedSize
             }
             if autostart {
                 viewModel.start(video: video)
@@ -291,7 +292,7 @@ struct ProcessingView<Destination: View>: View {
             // The system cancelled a vertical drag (incoming call, Control Center) before
             // `onEnded` could run `dismissGestureHooks.onEnded` — without this, a presenter
             // driving a live close flight off this screen's reports would stay stuck mid-close
-            // forever, the same failure mode `ClipExpansionContainer` hit before its own fix.
+            // forever. `ClipExpansionContainer` guards its own drag against the same cancellation.
             guard !isActive, isTrackingDismissDrag, let hooks = dismissGestureHooks else { return }
             isTrackingDismissDrag = false
             hooks.onCancelled()
@@ -329,7 +330,8 @@ struct ProcessingView<Destination: View>: View {
 
     /// Back to Home, or — while a run is in flight — cancel it, which also leaves. The same
     /// scrim-circle button the Camera page floats over its preview, since with no navigation
-    /// bar this screen's chrome sits over its media the same way. A sibling of the draggable
+    /// bar this screen's chrome sits over its media the same way, placed where a bar's own
+    /// leading item would sit so every screen's header lines up. A sibling of the draggable
     /// strip in `body`, so neither a horizontal browse-swipe nor a vertical dismiss-swipe
     /// carries it along.
     @ViewBuilder
@@ -338,12 +340,12 @@ struct ProcessingView<Destination: View>: View {
             ScrimIconButton(systemImage: "xmark", accessibilityLabel: "Cancel") {
                 handleBackAction()
             }
-            .padding()
+            .screenHeaderItemPlacement()
         } else {
             ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home") {
                 handleBackAction()
             }
-            .padding()
+            .screenHeaderItemPlacement()
         }
     }
 
@@ -390,7 +392,7 @@ struct ProcessingView<Destination: View>: View {
     }
 
     /// Back/Cancel track the *processing* state rather than `viewModel.isRunning`: idle is
-    /// this screen's resting state now (analysis starts manually), so it keeps the back
+    /// this screen's resting state (analysis starts from a button), so it keeps the back
     /// chevron to Home. `isRunning` still counts idle as running — the pipeline's tests
     /// lean on that — so it can't drive this.
     private var isAnalyzing: Bool {
@@ -499,7 +501,7 @@ struct ProcessingView<Destination: View>: View {
     /// then browses. The browse waits for the slide to finish: a local video resolves faster
     /// than the page moves, and landing mid-slide would cut the motion short. Stops the idle
     /// player first — nothing would call `pause()` on it once this screen's identity changes
-    /// underneath it, the same reason `idleControls`' "Start analysis" button pauses first.
+    /// underneath it, the same reason `idleControls`' "Analyze clips" button pauses first.
     private func commit(_ direction: BrowseSwipe.Direction) {
         committedDirection = direction
         player?.pause()
@@ -524,11 +526,15 @@ struct ProcessingView<Destination: View>: View {
     /// The full-window surface the swipe is measured and hit-tested against. A `.background`
     /// rather than an `.ignoresSafeArea()` on the screen's own content: that would also move
     /// what `videoStage`'s `.safeAreaInset` insets from, dropping the scrub bar and the
-    /// "Start analysis" button under the home indicator. Black, so it reads as the same
+    /// "Analyze clips" button under the home indicator. Black, so it reads as the same
     /// backdrop `videoStage` already draws.
     private var swipeBackdrop: some View {
         GeometryReader { proxy in
             Color.black
+                // Hidden while an expansion flight is in progress, like `videoStage`'s own
+                // backdrop: the presenting container's scrim stands in, and a black fill
+                // fading in here would dim the flying card underneath.
+                .expansionVideoSurface()
                 .onAppear { pageSize = proxy.size }
                 .onChange(of: proxy.size) { pageSize = $0 }
         }
@@ -544,7 +550,7 @@ struct ProcessingView<Destination: View>: View {
     /// here would double up rather than hand off. Inert: nothing here can be tapped, and
     /// nothing here is an accessibility element — the stand-in controls are replaced wholesale
     /// by an empty representation rather than merely hidden, since the real controls arrive
-    /// with the real screen and a second "Start analysis" a screen-width offstage would still
+    /// with the real screen and a second "Analyze clips" a screen-width offstage would still
     /// be found by anything walking the element tree.
     private func neighborPage(_ direction: BrowseSwipe.Direction) -> some View {
         ZStack {
@@ -561,7 +567,7 @@ struct ProcessingView<Destination: View>: View {
             VStack(spacing: 12) {
                 VideoScrubBar.Placeholder()
                     .padding(.horizontal)
-                PrimaryActionBar("Start analysis") {}
+                PrimaryActionBar("Analyze clips", secondary: .init("Clip manually") {}) {}
             }
         }
         .allowsHitTesting(false)
@@ -589,60 +595,50 @@ struct ProcessingView<Destination: View>: View {
         }
     }
 
-    /// Mirrors `ResolutionBanner`'s two-state rendering of the same `Resolution` type — an
-    /// iCloud download shows its real progress, a local/composition resolve shows an
-    /// indeterminate spinner — so a swipe-triggered browse reports the same way the grid's
-    /// own tile-tap resolution already does.
+    /// A swipe-triggered browse reports the same way Home's first resolve does
+    /// (`ResolutionProgressContent`), over a full-screen dim.
     private func browsingOverlay(_ resolution: VideoLibraryViewModel.Resolution) -> some View {
-        VStack(spacing: 12) {
-            if let progress = resolution.downloadProgress {
-                Text("Downloading from iCloud…")
-                    .font(.subheadline)
-                    .foregroundStyle(.white)
-                ProgressView(value: progress)
-                    .tint(.white)
-            } else {
-                Text("Preparing video…")
-                    .font(.subheadline)
-                    .foregroundStyle(.white)
-                ProgressView()
-                    .tint(.white)
-            }
-            if let cancelBrowsing {
-                Button("Cancel", role: .cancel, action: cancelBrowsing)
-                    .tint(.white)
-            }
-        }
-        .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.55).ignoresSafeArea())
-        .transition(.opacity)
+        ResolutionProgressContent(resolution: resolution, cancel: cancelBrowsing)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.opacity(0.55).ignoresSafeArea())
+            .transition(.opacity)
     }
 
     // MARK: - Video stage
 
     /// The video stage: the picked video fills the screen with no native playback
     /// chrome (`BareVideoPlayerView`) — Photos-app look, black background, no title, no
-    /// caption. This backs both `.idle` (scrub bar + "Start analysis" button over the
+    /// caption. This backs both `.idle` (scrub bar + "Analyze clips" button over the
     /// bottom) and `.processing` (progress overlay over the bottom instead) — the video
     /// stays on screen and paused behind the progress UI rather than the analysis
     /// replacing it with a separate page.
     private var videoStage: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-            // Under the player, which is transparent until it has decoded a frame: the same
-            // letterbox fit, so the first decoded frame lands exactly over it.
-            if let posterImage {
-                Image(uiImage: posterImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .ignoresSafeArea()
+            ZStack {
+                Color.black.ignoresSafeArea()
+                // Under the player, which is transparent until it has decoded a frame: the same
+                // letterbox fit, so the first decoded frame lands exactly over it.
+                if let posterImage {
+                    Image(uiImage: posterImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .ignoresSafeArea()
+                }
+                if let player {
+                    BareVideoPlayerView(player: player)
+                        .ignoresSafeArea()
+                        // Hands the player itself outward too, so the expansion transition's
+                        // card can draw the same frames this stage draws and scrub them on close.
+                        .preference(
+                            key: ProcessingPlayerPreferenceKey.self,
+                            value: ProcessingPlayerHandle(player: player))
+                }
             }
-            if let player {
-                BareVideoPlayerView(player: player)
-                    .ignoresSafeArea()
-            } else {
+            // The backdrop and the picture: an expansion flight's card draws both until it
+            // lands, so they stay hidden until then while the controls above fade in over it.
+            .expansionVideoSurface()
+            if player == nil {
                 ProgressView().tint(.white)
             }
             if let displaySize {
@@ -711,8 +707,16 @@ struct ProcessingView<Destination: View>: View {
             }
             // Pause the idle player before this state leaves the hierarchy:
             // nothing would call `pause()` on it afterwards, so its audio would
-            // keep playing behind the progress UI and the clip list.
-            PrimaryActionBar("Start analysis") {
+            // keep playing behind the progress UI and the clip list. The skip
+            // leaves the hierarchy the same way (the clip list pushes over this
+            // screen), so it pauses first for the same reason.
+            PrimaryActionBar(
+                "Analyze clips",
+                secondary: .init("Clip manually") {
+                    player?.pause()
+                    viewModel.skipAnalysis(video: video)
+                }
+            ) {
                 player?.pause()
                 viewModel.start(video: video)
             }
@@ -764,18 +768,35 @@ struct ProcessingView<Destination: View>: View {
     }
 }
 
-/// `videoStage`'s own letterboxed video rect (global space) — see that property's inline
-/// comment for why it's reported rather than drawn. Reduces to the latest non-zero value
-/// (matching `ClipEditorPreviewFramePreferenceKey`'s own `reduce`): `displaySize` is nil for
-/// the first render or two while the asset's track info loads, during which this view simply
-/// isn't in the tree yet, so the default `.zero` should never overwrite a real measurement.
-struct ProcessingVideoFramePreferenceKey: PreferenceKey {
-    static var defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+/// `videoStage`'s player, reported outward alongside its frame so a Photos-style expansion
+/// transition can render the same player in its flying card — see `HomeExpansionContainer`.
+/// Reduces to the latest non-nil value for the same reason `ProcessingVideoFramePreferenceKey`
+/// does: a state whose stage isn't in the tree reports nothing, and that shouldn't overwrite
+/// a real player.
+struct ProcessingPlayerPreferenceKey: PreferenceKey {
+    static var defaultValue = ProcessingPlayerHandle(player: nil)
+    static func reduce(value: inout ProcessingPlayerHandle, nextValue: () -> ProcessingPlayerHandle) {
         let next = nextValue()
-        if next != .zero { value = next }
+        if next.player != nil { value = next }
     }
 }
+
+/// `ProcessingPlayerPreferenceKey`'s value: a player compared by identity, since
+/// `onPreferenceChange` needs `Equatable` and `AVPlayer` isn't.
+struct ProcessingPlayerHandle: Equatable {
+    let player: AVPlayer?
+
+    static func == (lhs: ProcessingPlayerHandle, rhs: ProcessingPlayerHandle) -> Bool {
+        lhs.player === rhs.player
+    }
+}
+
+/// `videoStage`'s own letterboxed video rect (global space) — see that property's inline
+/// comment for why it's reported rather than drawn. Reduces to the latest non-zero value:
+/// `displaySize` is nil for the first render or two while the asset's track info loads,
+/// during which the stage isn't in the tree yet, so the default `.zero` must never overwrite
+/// a real measurement.
+struct ProcessingVideoFramePreferenceKey: NonZeroFramePreferenceKey {}
 
 #Preview {
     NavigationStack {

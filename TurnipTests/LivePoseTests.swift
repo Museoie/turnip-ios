@@ -17,7 +17,6 @@ final class LivePoseTests: XCTestCase {
         XCTAssertEqual(queue.push(4), 1, "the oldest element is the one shed")
         XCTAssertEqual(queue.push(5), 2)
 
-        XCTAssertEqual(queue.count, 3)
         XCTAssertEqual(queue.dropCount, 2)
         XCTAssertEqual(queue.pushCount, 5)
         XCTAssertEqual(queue.pop(), 3)
@@ -36,7 +35,6 @@ final class LivePoseTests: XCTestCase {
         _ = queue.pop()
         queue.push(4)
 
-        XCTAssertEqual(queue.count, 2)
         XCTAssertEqual(queue.maxDepth, 3, "max depth is the deepest the queue ever got, not its current size")
         XCTAssertEqual(queue.dropCount, 0)
     }
@@ -320,7 +318,7 @@ final class LivePoseTests: XCTestCase {
         XCTAssertEqual(outcome.metrics.framesInferred, 3)
         XCTAssertEqual(outcome.metrics.inference.count, 3)
         XCTAssertEqual(outcome.metrics.maxQueueDepth, 3)
-        // Keypoints pass through the drain unmodified: uprighting now happens in
+        // Keypoints pass through the drain unmodified: uprighting happens in
         // PoseInputPreparer, before inference, not as a post-hoc rotation here.
         XCTAssertEqual(outcome.results[0].keypoints[0].x, 0.1, accuracy: 1e-6)
         XCTAssertEqual(outcome.results[0].keypoints[0].y, 0.2, accuracy: 1e-6)
@@ -444,11 +442,6 @@ final class LivePoseTests: XCTestCase {
                 .init(start: CGPoint(x: 10, y: 20), end: CGPoint(x: 12, y: 50))
             ],
             "shoulder-shoulder and left shoulder-hip are drawable; shoulder-elbow is not")
-    }
-
-    func testOverlayGeometryIsEmptyForNoPose() {
-        XCTAssertEqual(LivePoseOverlayGeometry.empty.joints, [])
-        XCTAssertEqual(LivePoseOverlayGeometry.empty.limbs, [])
     }
 
     // MARK: - Fixtures

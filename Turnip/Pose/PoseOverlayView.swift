@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// One frame's 17 keypoints drawn over the video, so a row's numbers can be checked against
-/// what the frame actually shows. Joints above `PoseKeypoint.confidenceThreshold` draw filled,
+/// One frame's 17 keypoints drawn over the video, so the pose the model scored can be checked
+/// against what the frame actually shows. Joints above `PoseKeypoint.confidenceThreshold` draw filled,
 /// with the COCO skeleton between them; the rest draw hollow, so a low-confidence guess is
 /// visible as a guess rather than hidden.
 ///
 /// Keypoints are frame-normalized in display orientation (the sampler's render space), so the
 /// canvas must have the displayed video's aspect ratio for a plain multiply to land on the
-/// right pixel — `PoseDiagnosticView` sizes the player stack to `displaySize` for exactly that.
+/// right pixel — `ProcessingView` lays it out in the `AVMakeRect` of the displayed size.
 struct PoseOverlayView: View {
     let keypoints: [PoseKeypoint]
 
