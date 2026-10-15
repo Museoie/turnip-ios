@@ -12,8 +12,8 @@ import Foundation
 /// inert: `checkForUpdates` becomes a no-op with zero network traffic, keeping
 /// the v1 "nothing leaves the device" promise. When turnip-farm exists, set the
 /// key (e.g. via an xcconfig) and the service activates with no code change.
-/// https is enforced here *and* in the client: defense in depth for bytes the
-/// loader will mmap and execute.
+/// https is enforced here *and* in the client: defense in depth for model bytes
+/// the app will load and run.
 enum ModelUpdateConfiguration {
     /// The Info.plist key the endpoint is read from.
     static let infoPlistKey = "TURNIP_MODEL_UPDATE_ENDPOINT"

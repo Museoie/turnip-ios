@@ -1,18 +1,17 @@
 import CryptoKit
 import Foundation
 
-/// Polls for model updates and stages them for the *next* launch.
-///
-/// Not yet wired into app launch or model loading: nothing in the app builds this
-/// service, and `MoveNetThunderModel` loads only the bundled file. What follows is
-/// the contract the wiring is meant to honor.
+/// Polls for trick-detection model updates and stages them for a *later*
+/// launch. `ModelUpdateLifecycle` runs it on launch and on every foreground
+/// transition. Pose detection is not its concern: MoveNet always loads from the
+/// app bundle.
 ///
 /// The flow per check: fetch the manifest from
 /// `<baseURL>/api/models/current`; if it names a newer version than the staged
 /// one, download the bytes, verify their SHA-256 against the manifest, and
-/// atomically stage them. Staging never touches the model in use — a running
-/// session must not hot-swap models mid-inference — and a later launch is meant
-/// to load `ModelUpdateStore.activeModelURL()`.
+/// atomically stage them. Staging never touches a model in use — a running
+/// session must not hot-swap models mid-inference — so the trick-model loader,
+/// still to come, reads `ModelUpdateStore.activeModelURL()` at its own load.
 ///
 /// An actor for three reasons: the check is `async` throughout (network,
 /// disk), `lastError` is written from the check's continuation, and the
@@ -55,7 +54,7 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
         // didBecomeActive fires on every foreground transition and each
         // firing spawns its own detached task, so two firings in quick
         // succession (app-switcher bounce, notification shade) would each
-        // fetch the manifest and download the ~7MB model bytes — and two
+        // fetch the manifest and download the model bytes — and two
         // stages of different versions racing leave the loser's bytes
         // orphaned in Application Support. Try-acquire, not queued: the
         // in-flight check already covers what the duplicate wanted.
@@ -114,13 +113,11 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
     /// rule — so this pre-download gate and the store's write-time gate can
     /// never disagree on a name. Checked before any download, so hostile
     /// bytes never move.
-    /// The version check is load-bearing for the loader's version floor:
+    /// The version check guards the newer-than-staged comparison above:
     /// `ModelVersion`'s `Comparable` falls back to lexicographic order for
-    /// non-numeric components, so a malformed version (e.g. `"v2"`,
-    /// `"2026-09-10"`) would compare unpredictably against the bundled
-    /// version and could pin clients to a staged file the floor was meant to
-    /// reject. Rejecting the shape here keeps every version that can reach
-    /// the loader inside the ordering the floor guarantees.
+    /// non-numeric components, so a staged `"v2"` would out-sort every numeric
+    /// release and the client would never update again. Rejecting the shape
+    /// here keeps every staged version inside the numeric ordering.
     private static func validate(_ manifest: ModelUpdateManifest) throws {
         try ModelUpdateStore.validate(fileName: manifest.fileName)
         guard manifest.version.isWellFormed else {

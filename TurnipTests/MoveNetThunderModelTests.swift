@@ -8,9 +8,7 @@ final class MoveNetThunderModelTests: XCTestCase {
     /// The Thunder singlepose int8 variant's reported input shape is accepted.
     func testValidateInputShapeAcceptsThunderSingleposeInt8() throws {
         try MoveNetThunderModel.validateShape(
-            [1, 256, 256, 3], expected: MoveNetThunderModel.expectedInputShape,
-
-                named: "input", source: "Bundled model"
+            [1, 256, 256, 3], expected: MoveNetThunderModel.expectedInputShape, named: "input"
         )
     }
 
@@ -20,9 +18,7 @@ final class MoveNetThunderModelTests: XCTestCase {
     func testValidateInputShapeRejectsLightningVariant() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
-                [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape,
-
-                    named: "input", source: "Bundled model"
+                [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape, named: "input"
             )
         )
     }
@@ -30,9 +26,7 @@ final class MoveNetThunderModelTests: XCTestCase {
     func testValidateInputShapeRejectsWrongRank() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
-                [256, 256, 3], expected: MoveNetThunderModel.expectedInputShape,
-
-                    named: "input", source: "Bundled model"
+                [256, 256, 3], expected: MoveNetThunderModel.expectedInputShape, named: "input"
             )
         )
     }
@@ -40,9 +34,7 @@ final class MoveNetThunderModelTests: XCTestCase {
     func testValidateInputShapeRejectsWrongChannels() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
-                [1, 256, 256, 1], expected: MoveNetThunderModel.expectedInputShape,
-
-                    named: "input", source: "Bundled model"
+                [1, 256, 256, 1], expected: MoveNetThunderModel.expectedInputShape, named: "input"
             )
         )
     }
@@ -50,9 +42,7 @@ final class MoveNetThunderModelTests: XCTestCase {
     /// The Thunder singlepose int8 variant's reported output shape is accepted.
     func testValidateOutputShapeAcceptsThunderSingleposeInt8() throws {
         try MoveNetThunderModel.validateShape(
-            [1, 1, 17, 3], expected: MoveNetThunderModel.expectedOutputShape,
-
-                named: "output", source: "Bundled model"
+            [1, 1, 17, 3], expected: MoveNetThunderModel.expectedOutputShape, named: "output"
         )
     }
 
@@ -62,27 +52,21 @@ final class MoveNetThunderModelTests: XCTestCase {
     func testValidateOutputShapeRejectsWrongLayout() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
-                [1, 1, 17, 2], expected: MoveNetThunderModel.expectedOutputShape,
-
-                    named: "output", source: "Bundled model"
+                [1, 1, 17, 2], expected: MoveNetThunderModel.expectedOutputShape, named: "output"
             )
         )
     }
 
-    /// The failure must be the typed wrong-variant error naming the expected shape, so the
-    /// contributor sees *which* variant to fetch rather than a bare mismatch — and so
-    /// `load()` can evict a bad staged record without dropping a good one on a transient
-    /// load failure.
+    /// The failure must be the typed `PoseError` naming the expected shape, so the
+    /// contributor sees *which* variant to fetch rather than a bare mismatch.
     func testValidateInputShapeErrorNamesTheExpectedShape() {
         XCTAssertThrowsError(
             try MoveNetThunderModel.validateShape(
-                [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape,
-
-                    named: "input", source: "Bundled model"
+                [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape, named: "input"
             )
         ) { error in
-            guard case PoseError.wrongModelVariant(let message) = error else {
-                return XCTFail("expected PoseError.wrongModelVariant, got \(error)")
+            guard case PoseError.inferenceFailed(let message) = error else {
+                return XCTFail("expected PoseError.inferenceFailed, got \(error)")
             }
             XCTAssertTrue(
                 message.contains("[1, 256, 256, 3]"),
@@ -93,96 +77,5 @@ final class MoveNetThunderModelTests: XCTestCase {
                 "error should name the actual bundled shape: \(message)"
             )
         }
-    }
-
-    /// A wrong-variant staged OTA file must blame the OTA store, not the app
-    /// bundle — otherwise debugging goes to the wrong place when there is no
-    /// bundled model to fall back to.
-    func testValidateInputShapeErrorNamesStagedSource() {
-        XCTAssertThrowsError(
-            try MoveNetThunderModel.validateShape(
-                [1, 192, 192, 3], expected: MoveNetThunderModel.expectedInputShape,
-
-                    named: "input", source: "Staged OTA model"
-            )
-        ) { error in
-            guard case PoseError.wrongModelVariant(let message) = error else {
-                return XCTFail("expected PoseError.wrongModelVariant, got \(error)")
-            }
-            XCTAssertTrue(
-                message.contains("Staged OTA model"),
-                "error should name the staged source: \(message)"
-            )
-            XCTAssertFalse(
-                message.contains("Bundled model"),
-                "error must not blame the bundled model: \(message)"
-            )
-        }
-    }
-
-    // MARK: - resolveModelPath version floor
-
-    /// A malformed staged version must not shadow the bundled model, even when
-    /// `ModelVersion.<`'s lexicographic fallback would rank it newer than the
-    /// bundled `"1"` — this is the defense-in-depth gate the manifest-validation
-    /// service can't guarantee for store records written before it existed.
-    func testResolveModelPathRejectsMalformedStagedVersion() {
-        XCTAssertEqual(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: "/bundled/movenet.tflite",
-                stagedVersion: ModelVersion("v2"),
-                stagedPath: "/staged/movenet.tflite"
-            ),
-            "/bundled/movenet.tflite"
-        )
-    }
-
-    /// A malformed staged version with no bundled model to fall back to yields
-    /// no candidate — `load()` then reports `modelNotFound` instead of
-    /// pointing the loader at the untrusted file.
-    func testResolveModelPathRejectsMalformedStagedVersionWithoutBundled() {
-        XCTAssertNil(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: nil,
-                stagedVersion: ModelVersion("v2"),
-                stagedPath: "/staged/movenet.tflite"
-            )
-        )
-    }
-
-    /// A well-formed staged version newer than the bundled one still shadows it.
-    func testResolveModelPathPrefersNewerWellFormedStagedVersion() {
-        XCTAssertEqual(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: "/bundled/movenet.tflite",
-                stagedVersion: ModelVersion("2"),
-                stagedPath: "/staged/movenet.tflite"
-            ),
-            "/staged/movenet.tflite"
-        )
-    }
-
-    /// A well-formed but older-or-equal staged version doesn't shadow the bundled one.
-    func testResolveModelPathKeepsBundledWhenStagedVersionIsOlder() {
-        XCTAssertEqual(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: "/bundled/movenet.tflite",
-                stagedVersion: ModelVersion("0.9"),
-                stagedPath: "/staged/movenet.tflite"
-            ),
-            "/bundled/movenet.tflite"
-        )
-    }
-
-    /// No staged version leaves the bundled model as the candidate.
-    func testResolveModelPathKeepsBundledWithoutStagedVersion() {
-        XCTAssertEqual(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: "/bundled/movenet.tflite",
-                stagedVersion: nil,
-                stagedPath: nil
-            ),
-            "/bundled/movenet.tflite"
-        )
     }
 }

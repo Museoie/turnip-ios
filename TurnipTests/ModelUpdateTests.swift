@@ -116,8 +116,8 @@ final class ModelUpdateTests: XCTestCase {
     /// `isWellFormed` is the gate the service's manifest validation uses:
     /// only dotted-numeric versions with an optional `-N` build suffix order
     /// predictably under `<`. Anything else would fall back to lexicographic
-    /// comparison, so these shapes must be rejected before they can reach
-    /// the loader's version floor.
+    /// comparison, so these shapes must be rejected before they can be staged
+    /// and compared against later releases.
     func testVersionWellFormednessMatchesTheOrderingContract() {
         for wellFormed in ["1", "0", "2026.09.10", "2026.09.10-1", "10.0.0-12"] {
             XCTAssertTrue(
@@ -344,9 +344,8 @@ final class ModelUpdateTests: XCTestCase {
 
     /// A manifest with a malformed version must be rejected before anything
     /// is downloaded: `ModelVersion`'s `Comparable` falls back to
-    /// lexicographic order for non-numeric components, so e.g. `"v2"` would
-    /// beat the bundled `"1"` and pin the client to a staged file the
-    /// version floor was meant to reject.
+    /// lexicographic order for non-numeric components, so a staged `"v2"`
+    /// would out-sort every numeric release and block all later updates.
     func testMalformedVersionIsRejected() async throws {
         let store = makeStore()
         let client = MockModelUpdateClient()
@@ -413,70 +412,6 @@ final class ModelUpdateTests: XCTestCase {
             URL(string: "https://models.example.com"))
     }
 
-    // MARK: - Loader version floor
-
-    /// The staged model shadows the bundled one only when its version is
-    /// strictly newer — an older staged file must not pin the app to a worse
-    /// model, and a stale staged file must not shadow a newer app build's
-    /// bundled model. A staged version with no bytes on disk counts as no
-    /// staged model at all.
-    func testResolveModelPathPrefersStagedOnlyWhenNewer() {
-        let bundled = "/bundle/movenet_thunder_int8.tflite"
-        let staged = "/support/ModelUpdates/movenet_thunder_int8.tflite"
-        XCTAssertEqual(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: bundled,
-                stagedVersion: ModelVersion("2026.09.10-1"),
-                stagedPath: staged),
-            staged)
-        XCTAssertEqual(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: bundled,
-                stagedVersion: ModelVersion("0"),
-                stagedPath: staged),
-            bundled)
-        XCTAssertEqual(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: bundled,
-                stagedVersion: MoveNetThunderModel.bundledModelVersion,
-                stagedPath: staged),
-            bundled)
-        XCTAssertEqual(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: bundled, stagedVersion: nil, stagedPath: nil),
-            bundled)
-        XCTAssertEqual(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: bundled,
-                stagedVersion: ModelVersion("2026.09.10-1"),
-                stagedPath: nil),
-            bundled)
-    }
-
-    /// A missing bundled model doesn't abort resolution before the staged
-    /// file is consulted (inline review on #117): with no bundled path, a
-    /// newer staged model is still the candidate; with no staged model either,
-    /// resolution yields nil and the loader reports `modelNotFound`.
-    func testResolveModelPathWithMissingBundledModelConsultsStaged() {
-        let staged = "/support/ModelUpdates/movenet_thunder_int8.tflite"
-        XCTAssertEqual(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: nil,
-                stagedVersion: ModelVersion("2026.09.10-1"),
-                stagedPath: staged),
-            staged)
-        XCTAssertNil(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: nil, stagedVersion: nil, stagedPath: nil))
-        // A stale staged version still can't pin a missing bundle to a worse
-        // model: the version floor applies even with no bundled path.
-        XCTAssertNil(
-            MoveNetThunderModel.resolveModelPath(
-                bundledPath: nil,
-                stagedVersion: ModelVersion("0"),
-                stagedPath: staged))
-    }
-
     /// The documented allowlist is ASCII (`[A-Za-z0-9._-]`), but
     /// `CharacterSet.alphanumerics` is Unicode-wide: a Cyrillic lookalike
     /// (`"мodel.tflite"`, Cyrillic `м`) must be rejected at both gates — the
@@ -520,31 +455,6 @@ final class ModelUpdateTests: XCTestCase {
 
     // MARK: - Store
 
-    /// Staging a model under the store's own sidecar name must throw
-    /// `invalidManifest` and stage nothing — otherwise the metadata write
-    /// would overwrite the model bytes it just staged. Both the exact and an
-    /// uppercase spelling are exercised: the rejection is case-insensitive
-    /// because the iOS data volume is case-insensitive APFS.
-    func testStoreStageRejectsSidecarFileName() throws {
-        let version = ModelVersion("2026.09.10-1")
-        for fileName in ["active-model.json", "ACTIVE-MODEL.JSON"] {
-            let store = makeStore()
-            do {
-                try store.stage(
-                    modelData: Data("fake-model-bytes".utf8),
-                    version: version,
-                    fileName: fileName)
-                XCTFail("expected invalidManifest for '\(fileName)'")
-            } catch ModelUpdateError.invalidManifest {
-                // expected
-            } catch {
-                XCTFail("expected invalidManifest, got \(error)")
-            }
-            XCTAssertNil(store.activeVersion())
-            XCTAssertNil(store.activeModelURL())
-        }
-    }
-
     /// The store enforces the fileName allowlist itself: staging directly with
     /// a traversal name must throw `invalidManifest` and stage nothing, even
     /// without the service's manifest validation in the loop.
@@ -565,34 +475,6 @@ final class ModelUpdateTests: XCTestCase {
             XCTAssertNil(
                 store.activeVersion(), "nothing staged for '\(fileName)'")
         }
-    }
-
-    /// A staged record the loader proves wrong-variant must be evictable:
-    /// after `clearActive()` the store reports no staged version and no
-    /// staged file, so the next update check re-stages from the manifest
-    /// (the service short-circuits re-downloads while a record exists).
-    func testStoreClearActiveEvictsStagedRecord() throws {
-        let store = makeStore()
-        try store.stage(
-            modelData: Data("fake-model-bytes".utf8),
-            version: ModelVersion("2026.09.10-1"),
-            fileName: "model.tflite")
-        XCTAssertNotNil(store.activeVersion())
-        XCTAssertNotNil(store.activeModelURL())
-
-        store.clearActive()
-
-        XCTAssertNil(store.activeVersion())
-        XCTAssertNil(store.activeModelURL())
-    }
-
-    /// Evicting an empty store is a no-op, not an error — the loader calls it
-    /// defensively whenever a staged candidate fails the variant check.
-    func testStoreClearActiveOnEmptyStoreIsNoOp() {
-        let store = makeStore()
-        store.clearActive()
-        XCTAssertNil(store.activeVersion())
-        XCTAssertNil(store.activeModelURL())
     }
 
     /// The store's own metadata name is reserved: staging a model as

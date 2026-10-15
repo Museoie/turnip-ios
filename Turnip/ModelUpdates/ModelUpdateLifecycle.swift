@@ -1,6 +1,6 @@
 import Foundation
 
-/// Wires the OTA model-update service into the app lifecycle (issue #96).
+/// Wires the OTA model-update service into the app lifecycle.
 ///
 /// The whole flow is inert until `TURNIP_MODEL_UPDATE_ENDPOINT` is configured:
 /// with no endpoint `ModelUpdateConfiguration.endpoint` is nil and
@@ -21,12 +21,12 @@ enum ModelUpdateLifecycle {
         }
     }()
 
-    /// Runs one update check: fetch the manifest, and stage a newer model for
-    /// the *next* launch. The running session never hot-swaps models — the
-    /// loader picks the staged file up on the following launch.
+    /// Runs one update check: fetch the manifest, and stage a newer
+    /// trick-detection model for a *later* launch. The running session never
+    /// hot-swaps models.
     ///
-    /// Concurrent firings are coalesced: when a check is already running, this
-    /// returns immediately — the in-flight check already covers it.
+    /// Concurrent firings are coalesced: a check that starts while another is
+    /// in flight is dropped by the service — the in-flight check covers it.
     ///
     /// Synchronous and safe to call from the main actor: the detached
     /// utility-QoS task is spawned here, so the manifest fetch, hashing, and
@@ -34,8 +34,7 @@ enum ModelUpdateLifecycle {
     /// off-actor guarantee can't be lost by a future call site.
     static func checkForUpdates() {
         Task.detached(priority: .utility) {
-            // nil when there is no Application Support directory — the same
-            // no-op as before, now without allocating a service per firing.
+            // nil when there is no Application Support directory: nothing to do.
             await service?.checkForUpdates()
         }
     }

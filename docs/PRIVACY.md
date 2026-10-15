@@ -25,9 +25,11 @@ it's summarized from — keep both in sync when data handling changes.
   the only networking code in `Turnip/` — and it is inert: it refuses any scheme
   but `https`, it takes its endpoint as a parameter rather than holding one, and
   `ModelUpdateService.checkForUpdates` returns on a `nil` base URL before it
-  reaches the client. No app code constructs either type, so nothing supplies
-  that URL; the service's only callers are unit tests against a mock, and the
-  client's own test exercises the `https` guard without issuing a request.
+  reaches the client. The app runs that check on launch and on every
+  foreground, but the URL comes from the `TURNIP_MODEL_UPDATE_ENDPOINT`
+  Info.plist key, which is empty in the committed plist — so the base URL is
+  `nil` and no request is ever made. The client's own test exercises the
+  `https` guard without issuing a request.
   Bytes do cross the network when PhotoKit downloads an iCloud-only video
   (`isNetworkAccessAllowed` in `PhotoVideoResolver`/`ThumbnailLoader`) — from
   the user's own iCloud, through a system framework. Videos are read from the

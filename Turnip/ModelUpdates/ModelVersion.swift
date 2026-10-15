@@ -51,10 +51,9 @@ struct ModelVersion: Codable, Comparable, Hashable, Sendable {
     /// `<` implementation treats it numerically (`Int` parses it), so every
     /// version that passes this check compares without the lexicographic
     /// fallback. The service rejects malformed versions at
-    /// manifest-validation time; without that gate a typo'd `"2026-09-10"`
-    /// or `"v2"` would compare unpredictably against the bundled version
-    /// and could pin clients to a staged file the version floor was meant
-    /// to reject.
+    /// manifest-validation time; without that gate a staged `"v2"` would
+    /// out-sort every numeric release (`"2"` < `"v"`), so the newer-than-staged
+    /// check would turn down every later update.
     var isWellFormed: Bool {
         var rest = rawValue[...]
         if let dash = rest.lastIndex(of: "-") {
