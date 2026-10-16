@@ -351,9 +351,10 @@ accepted for v1).
 
 ### 7.1 Delivery (extends the existing OTA path)
 
-`Turnip/ModelUpdates/` already ships a manifest client and a version
-store with atomic replace. No app code constructs either; wiring them
-into launch/foreground polling is the subject of open PR #117. The trick
+`Turnip/ModelUpdates/` already ships a manifest client, a version
+store with atomic replace, and the launch/foreground poll, which stays a
+no-op until an endpoint is configured. Nothing loads the staged file
+yet: the trick-model loader (§7.2) is the missing consumer. The trick
 model rides the same mechanism: `GET /api/models/current` returns the
 trick-detection manifest — version, URL, checksum,
 `taxonomy_version`, and the `vocabulary` list. Download via background
@@ -442,9 +443,8 @@ DESIGN.md Rev 9 applies them:
    product decision, never convenience.
 5. **OTA models** → extended to the two-model story: bundled MoveNet
    (pose, unchanged) + OTA trick-detection model. The
-   `Turnip/ModelUpdates/` machinery, with the launch/foreground polling
-   proposed in open PR #117, is the delivery path; the old "pose+action
-   model" language is retired.
+   `Turnip/ModelUpdates/` machinery, with its launch/foreground polling,
+   is the delivery path; the old "pose+action model" language is retired.
 6. **Clip editor / labeling** → the label editor lives in the clip
    confirmation flow (§3–§4 of this doc). The v2 "Labeling UI" section
    (server pending-queue tab) is superseded — labeling happens
