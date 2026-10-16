@@ -1,22 +1,28 @@
 # Turnip iOS — Contribution Design
 
-*Draft · 2026-10-06*
+*Draft · 2026-10-06 · Revised 2026-10-15 for master plan Rev 5: naming
+moves to the core clip flow ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4)
+and contribution uploads clips already named there, from the on-device
+clip library; uploads carry label provenance.*
 
 **Scope.** This is a companion to `docs/DESIGN.md`, not a rewrite of it.
 `DESIGN.md` specifies the on-device pipeline (capture → pose → clip
 detection → crop → export) and the v1 screens; this doc specifies the v2
 contribution path layered on top: deterministic video identity, on-device
-pose extraction for upload, the clip confirmation + label editor flow, the
+pose extraction for upload, the clip confirmation step, the
 contribution upload protocol, reinstall reconciliation, and the OTA
-trick-detection model. It does not change the v1 screens or flows in
+trick-detection model. Naming clips, which this doc first placed in the
+confirmation flow, is now part of the core clip flow and specified in
+`docs/PROFILE_DESIGN.md` §4, together with the clip library contribution
+reads from. It does not change the v1 screens or flows in
 `docs/UIUX.md` — it names the exact screens and components it extends.
 
 **Authority.** The contract this doc implements is the
 [Turnip Farm + ML Master Plan](https://github.com/hoiekim/turnip-farm/blob/main/docs/MASTER_PLAN.md)
-(Rev 3). Companion docs: the farm's forthcoming `BACKEND_DESIGN.md` and
-`POSE_FORMAT.md` (the wire-format authority; until they land, master plan §3 is
-the pose format spec), and `turnip-ml`'s `MODEL_CONTRACT.md` (the trick-model
-input/output authority). Where this doc makes a call the master plan
+(Rev 5). Companion docs: the farm's `BACKEND_DESIGN.md` (the API
+authority) and `POSE_FORMAT.md` (the wire-format authority), and
+`turnip-ml`'s `MODEL_CONTRACT.md` (the trick-model input/output
+authority). Where this doc makes a call the master plan
 doesn't cover, it says so inline as *(judgment call)*.
 
 **Relationship to DESIGN.md.** Per master plan §8, this doc replaces
@@ -85,10 +91,11 @@ so every downstream screen can reference it without recomputing.
   feature.
 - **Cross-user collision on identical imports**: two users importing the
   byte-identical file compute the identical `source_id` (master plan §1
-  caveat). Farm writes are owner-scoped and source ownership is
-  first-writer-wins — a second user registering an already-claimed
-  `video_id` receives `409 SOURCE_ALREADY_CLAIMED`, so nobody can
-  overwrite another user's source row. The collision is what gives the
+  caveat). Farm writes require the source's key (§5.4) and source
+  ownership is first-writer-wins — a second user registering an
+  already-claimed `video_id` without its key receives
+  `409 SOURCE_ALREADY_CLAIMED`, so nobody can overwrite another user's
+  source row. The collision is what gives the
   dedup side-benefit on re-contribution.
 
 ---
@@ -103,7 +110,10 @@ the Settings **analysis granularity** (1–30 fps, default 10;
 `TurnipSettingsStore`). No second inference pass: the contribution blob
 is encoded from the frame results the analysis already produced. For
 camera takes where live inference covered the take (`LIVE_POSE.md`),
-those live results are the input — again, no re-decode.
+those live results are the input — again, no re-decode. The encoding
+happens once, when saving writes the source to the clip library
+(`PROFILE_DESIGN.md` §2.2), so a clip saved today can be contributed
+later even after Clip List has deleted its original from Photos.
 
 Keypoint order is MoveNet 17 in COCO order, exactly as the farm expects:
 `0 nose, 1 left_eye, 2 right_eye, 3 left_ear, 4 right_ear,
@@ -137,12 +147,12 @@ authority. iOS-side rules:
   should reflect what the model actually emitted; the farm's resampling
   owns interpolation, and gaps break interpolation by spec).*
 - **One blob per source video**: the full pose sequence, encoded once
-  per `source_id` into `tmp/turnip-pose-<source_id>.tkp1.gz`, reused
-  across re-contributions. Deleted on successful upload and by the
-  launch-time orphan sweep (same `tmp/` hygiene as `PRIVACY.md`), which
-  has to be extended to the `turnip-pose-` prefix:
-  `PhotoVideoResolver.deleteOrphanedTemporaryExports` matches only
-  `turnip-composition-export-`.
+  per source when saving writes it to the clip library
+  (`PROFILE_DESIGN.md` §2.2), stored there in `Application Support/`,
+  and uploaded from there on every (re-)contribution. No `tmp/` copy is
+  made, so there is nothing for the orphan sweep to learn. The library
+  deletes it when the source's last clip leaves the library — not on
+  upload, since the Profile and later re-contributions still need it.
 
 ### 2.3 Skeleton-fallback UX (pose failure)
 
@@ -171,10 +181,17 @@ The flow rides the existing screens from `UIUX.md`:
   List.
 - **Clip List (§3, triage)** — proposals appear as derived clip tiles
   exactly as the heuristic's do today. The "+" tile, trash toggles, and
-  read-only timelines are unchanged.
+  read-only timelines are unchanged, and no contribution control is
+  added: the screen is already full.
 - **Clip Detail / Editor (§4)** — window trimming via the scrub-bar
-  handles and crop editing are unchanged; this screen additionally
-  hosts the label editor (§4).
+  handles and crop editing are unchanged.
+- **Name Clips** (`UIUX.md` §3a, `PROFILE_DESIGN.md` §4) — the step
+  between Clip List and the save where clips are named, contributed or
+  not. Each clip there also carries its contribute toggle (§3.3).
+- **The Profile's Clip view** (`PROFILE_DESIGN.md` §5.2) — a saved
+  clip's contribute toggle, and a "Contribute named clips" action on
+  the Profile page, for clips saved before the user chose to
+  contribute.
 
 ### 3.2 Automatic detection, two generations
 
@@ -190,18 +207,39 @@ Confirmation is the farm boundary: **only confirmed clips + labels are
 uploaded; nothing else ever is.** Trashed clips and the original tile
 can never be confirmed.
 
-- Each derived tile in Clip List gains a **contribute toggle** (persisted
-  in the local clip store, default off). Toggling is per-clip opt-in.
-- A **"Contribute N clips"** action in Clip List's toolbar opens a
-  confirmation sheet listing the clips with their trick-name chips, the
-  payload summary ("pose keypoints, clip windows, labels — video never
-  leaves your device"), and a Confirm button. *(Judgment call on
-  placement: a sheet keeps the v1 Save Clips flow untouched — Save
-  Clips saves to Photos, Contribute sends to the farm. The exact
-  affordance is UI polish; the boundary semantics are not.)*
-- The label editor (§4) requires at least one trick name per contributed
-  clip; a clip with no names cannot be confirmed (inline hint in the
-  sheet).
+- Each clip on Name Clips, and each saved clip's Clip view in the
+  Profile, gains a **contribute toggle** ("Contribute this clip",
+  persisted in the clip library, default off, disabled until the clip
+  has a name). Toggling is per-clip opt-in. Clip List and the Clip
+  Editor get none.
+- The **confirmation sheet** opens in two ways: by itself when the user
+  finishes Name Clips with any clip toggled — once the save has
+  finished, so saving and contributing stay separate steps — or from
+  the Profile's **"Contribute named clips"**, a list of named clips not
+  yet contributed, each chosen individually. The sheet lists the clips
+  with their trick-name chips, the payload summary ("pose keypoints,
+  clip windows, labels — video never leaves your device"), and a
+  Confirm button. Cancelling sends nothing; the clips stay saved and
+  can be contributed later from the Profile. *(Judgment call on
+  placement: contribution never sits on Clip List or the editor, which
+  are already full. The exact affordance is UI polish; the boundary
+  semantics are not.)*
+- The sheet also carries the disclosure the farm requires
+  (`BACKEND_DESIGN.md` §7.1):
+  - contributions stay linked to the user's account for 30 days after
+    their last edit, then are kept without any link to it;
+  - deleting the account removes every contribution this app can still
+    find, and the rest can't be traced back to the user and remain in
+    the training data;
+  - contribute only clips of yourself, or of people who agreed: the
+    person in a clip may not be the account holder. A clip marked as
+    someone else (`PROFILE_DESIGN.md` §4.3) is flagged next to this
+    line.
+- A contributed clip needs at least one trick name, given in the core
+  flow (`PROFILE_DESIGN.md` §4); a clip with no names cannot be
+  confirmed (inline hint in the sheet).
+- Nothing in the app is gated on contributing, the Profile included
+  (`PROFILE_DESIGN.md` §1).
 
 ### 3.4 `auto_detected` semantics
 
@@ -212,26 +250,20 @@ training pipeline, not a user-facing badge.
 
 ---
 
-## 4. Label editor
+## 4. Labels in a contribution
 
-Lives in **Clip Detail / Editor** (`UIUX.md` §4), in a "Trick name"
-section below the player and trim controls.
+The label editor this section first specified — free-text chips,
+multiple names per clip, vocabulary suggestions — now lives in the core
+clip flow, because the Profile needs names on every saved clip,
+contributed or not: `PROFILE_DESIGN.md` §4 is its design. What stays
+here is what contribution adds:
 
-- **Free-text entry.** A text field prompting for the trick name
-  (placeholder: "What trick is this? e.g. cork"). Committing adds a
-  chip; chips are removable. No fixed vocabulary is enforced — free
-  text is the contract.
-- **Multiple names per clip.** A clip carries an ordered set of
-  trick-name chips. A combo is N chips on one clip — no
-  sub-segmentation for MVP, matching the farm's
-  `trick_names: [...]` / `is_combo` contract. The UI may render a
-  "combo" badge when chips > 1; it is cosmetic only.
-- **Taxonomy assist.** As the user types, the editor suggests canonical
-  names from the vocabulary in the last fetched model manifest
-  (`GET /api/models/current` → `vocabulary: [{canonical,
-  aliases[]}]`). Picking a suggestion stores the canonical name;
-  free-typing stores the raw string. Both are preserved; the farm's
-  `label_taxonomy` curates later.
+- **Free text is the contract.** No fixed vocabulary is enforced; the
+  farm stores raw strings and its `label_taxonomy` curates later.
+- **Origin.** Each name is sent with the `origin` the clip library
+  recorded when it was given: `typed`, `vocabulary` (picked from the
+  suggestions), or `model` (pre-filled by the trick model and kept)
+  (`BACKEND_DESIGN.md` §1.2.18).
 - **`taxonomy_version`.** Stamped server-side at contribution time
   from the farm's current taxonomy — the farm is the authority on which
   vocabulary was in effect when the label landed. The client does not
@@ -241,11 +273,14 @@ section below the player and trim controls.
   trick for the clip's whole window (`BACKEND_DESIGN.md` §1.1). The
   editor does not expose per-label window tightening; a later UI that
   wants it needs a farm schema change first.
+- **Never sent:** whether the clip shows the user (`is_me`), favorites,
+  spots, or anything else the Profile keeps (master plan §1).
 
-The iOS API payload per clip is `{clip_id, start_frame, end_frame,
-auto_detected, labels: ["cork", ...]}`; the farm stores one label row
-per `(clip_id, trick_name)` (`BACKEND_DESIGN.md` §1.1) — the wire
-shape (an array of names) is unchanged by that choice.
+The iOS API payload per clip is `{clip_id, source_id, source_key,
+start_frame, end_frame, auto_detected, proposal_model_version,
+suggested_names, suggestions_withheld, labels: [{name, origin}]}`; the
+farm stores one label row per `(clip_id, trick_name)`
+(`BACKEND_DESIGN.md` §1.1, §7.3).
 
 ---
 
@@ -253,31 +288,41 @@ shape (an array of names) is unchanged by that choice.
 
 ### 5.1 Payload and endpoints
 
-On Confirm (per-clip opt-in, §3.3), with Sign in with Apple session
-(the v1 export flow stays anonymous; contribution is the first
-authenticated action — the sheet prompts sign-in when needed):
+On Confirm (per-clip opt-in, §3.3), with a farm session (§5.4). The v1
+export flow and the Profile stay anonymous; contribution is the first
+authenticated action, and the sheet prompts sign-in when needed. Every
+contribution request also carries the source's key (§5.4).
 
-1. `POST /api/sources` with `{video_id, frame_count, sample_rate,
-   keypoint_format: "tkp1", sha256}` → `{source_id, r2_key,
-   upload_url, upload_expires_at, blob_present}`.
+1. `POST /api/sources` with `{video_id, source_key, frame_count,
+   sample_rate, keypoint_format: "tkp1"}` → `{source_id, r2_key,
+   upload_url, upload_expires_at, blob_present}`. The client never
+   sends a blob digest; the farm computes the stored digest at ingest.
+   `409 SOURCE_ALREADY_CLAIMED` means the video is already contributed
+   under another key (a byte-identical import from someone else, or
+   this app's key was lost); the clip stays local-only.
    - `frame_count` / `start_frame` / `end_frame` are indices into the
      **canonical 10 Hz** sequence. The client maps its analysis-rate
      indices through the POSE_FORMAT.md §6 resampling map — the same mapping §7.2
      uses to display inference segments — so storage, validation,
      training, and model output all share one coordinate space.
 2. `PUT` the pose-format blob to `upload_url` (full source pose sequence,
-   once per `source_id`; skipped when `blob_present` is true).
-3. `POST /api/clips` with `{clips: [{clip_id, source_id,
-   start_frame, end_frame, auto_detected, labels: [...]}]}` — batch
-   upsert. The farm verifies the blob SHA-256, upserts the clips, and
-   replaces each clip's label set atomically.
+   once per `source_id`, read from the clip library; skipped when
+   `blob_present` is true).
+3. `POST /api/clips` with `{clips: [{clip_id, source_id, source_key,
+   start_frame, end_frame, auto_detected, proposal_model_version,
+   suggested_names, suggestions_withheld, labels: [{name, origin}]}]}`
+   — batch upsert (§4). The farm verifies the blob SHA-256, upserts
+   the clips, and replaces each clip's label set atomically.
    - `clip_id` is a UUIDv4 minted once per clip at creation (derived
-     tile or "+" tile), persisted in the local clip store, reused on
+     tile or "+" tile), persisted in the clip library, reused on
      every re-contribution, and recovered from the server after
      reinstall (§6).
+   - The provenance fields come from the clip library as the naming
+     flow recorded them (`MODEL_CONTRACT.md` §3.3): `null`, `[]` and
+     `false` for a heuristic or manual clip.
 
-Label-only edits later use `POST /api/clips/:id/labels` — no blob
-re-upload.
+Label-only edits later use `POST /api/clips/:id/labels` with the
+source's key — no blob re-upload.
 
 ### 5.2 Upsert semantics
 
@@ -307,43 +352,92 @@ re-confirmation safe and idempotent.
   Whether the farm should add `DELETE /api/clips/:id` is an open
   question for the farm API doc.
 
+### 5.4 Sign-in, source keys, and account deletion
+
+The client half of `BACKEND_DESIGN.md` §7.1. Contributions are owned
+through keys, not through the account, so the farm keeps no lasting
+record of whose a contribution is.
+
+- **Sign-in.** Generate a random raw nonce per attempt, and set
+  `ASAuthorizationAppleIDRequest.nonce` to its lowercase hex SHA-256.
+  Send the raw nonce, `identityToken`, and `authorizationCode` to
+  `POST /api/auth/apple` right away (the code is single-use and valid
+  five minutes). Store the returned session token in the Keychain
+  (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, so background
+  uploads can read it) and send it as `Authorization: Bearer` on every
+  call.
+- **Session checks.** On launch, call `getCredentialState(forUserID:)`.
+  On `.revoked` or `.notFound`, call `POST /api/auth/signout`, delete
+  the session token, and show the signed-out state; also observe
+  `credentialRevokedNotification`. On any `401`, delete the token and
+  sign in again.
+- **Source keys.** The first time a source is contributed, generate 32
+  random bytes as its key and store it in the Keychain under its
+  `video_id`, with the same accessibility as the session token. The key
+  goes with every request about that source. Keychain items survive
+  app deletion and reinstall on current iOS, but Apple doesn't
+  guarantee it, so a missing key is an expected state: the source is
+  contributed but unmanageable from this install.
+- **Account deletion** (Settings): delete every source the app holds a
+  key for (`DELETE /api/sources/:id`), call `DELETE /api/account`, then
+  delete the local keys and session token. Before confirming, repeat the
+  §3.3 disclosure: contributions this app can no longer find stay in
+  the training data, unlinked from the account.
+
 ---
 
 ## 6. Reinstall reconciliation
 
 ### 6.1 Flow
 
+This restores **contributed** clips, and only on a device that still
+holds their source keys. It is not how the Profile's library comes
+back: the farm does not know whose clips are whose, and most saved
+clips are never contributed. The library restores from the device —
+device backups and the record in each exported clip file
+(`PROFILE_DESIGN.md` §3.2). When both run, a clip present in both is
+matched by `clip_id`, and the server's windows and labels win only for
+fields the library lost.
+
 On fresh install — auto-run once after Photos permission is granted,
 plus a "Restore contributions" row in Settings for later:
 
-1. Enumerate video `PHAsset`s (respecting limited-access grants) and
-   recompute `source_id` per §1.1.
-2. `GET /api/sources` — list my sources (id, frame_count, clip/label
-   counts, updated_at). Match by ID.
-3. For each match, `GET /api/sources/:id` — pull confirmed clips +
-   labels and **adopt the server's clip IDs** into the rebuilt local
-   store (clip IDs are recovered, never recomputed).
+1. Read the source keys left in the Keychain (§5.4); each is stored
+   under its `video_id`. The farm keeps no list of a user's sources,
+   so these keys are the record of what this app contributed.
+2. Enumerate video `PHAsset`s (respecting limited-access grants) and
+   recompute `source_id` per §1.1. Match against the keys by ID.
+3. For each match, `GET /api/sources/:id` with its key — pull confirmed
+   clips + labels and **adopt the server's clip IDs** into the rebuilt
+   local store (clip IDs are recovered, never recomputed).
 4. Rebuild local clip state (windows + labels). If the video is still
    in the library, pose can be re-derived locally on demand; if not,
    skeleton previews render from the pose blob via
    `GET /api/sources/:id/pose` (owner-only presigned R2 GET) —
    keypoints straight to screen, no video needed.
 
-Sign-in is required throughout (all endpoints are owner-scoped).
+A session and the source's key are required throughout
+(`BACKEND_DESIGN.md` §7.2).
 
 ### 6.2 Videos deleted from the library
 
 Their server data stays — it remains valid training data. The client
 cannot relink what it cannot see. *(Judgment call: the reconciliation
-UI lists matched sources normally, and groups unmatched server sources
-under "no longer on this device" with clip/label counts and a
-delete-from-server action (`DELETE /api/sources/:id`).)*
+UI lists matched sources normally. Keys whose video is no longer in
+the library are grouped under "no longer on this device"; their
+clip/label counts come from `GET /api/sources/:id` with the key, and
+each has a delete-from-server action (`DELETE /api/sources/:id`).)*
 
 ### 6.3 Multi-device
 
-Same Apple account on a second device runs the same flow; clips and
-labels restore, the video stays behind (master plan open question #2 —
-accepted for v1).
+Source keys stay on the device that contributed
+(`ThisDeviceOnly`), and a `video_id` from one device's Photos library
+doesn't resolve on another. A second device signed in to the same
+Apple account therefore restores nothing; contributions are managed
+from the device that made them (master plan open question #2 —
+accepted for v1). Whether `video_id` should derive from an identifier
+shared across the user's devices has to be settled before the first
+contribution ships, since changing it later orphans every source.
 
 ---
 
@@ -355,13 +449,15 @@ accepted for v1).
 store with atomic replace, and the launch/foreground poll, which stays a
 no-op until an endpoint is configured. Nothing loads the staged file
 yet: the trick-model loader (§7.2) is the missing consumer. The trick
-model rides the same mechanism: `GET /api/models/current` returns the
-trick-detection manifest — version, URL, checksum,
-`taxonomy_version`, and the `vocabulary` list. Download via background
-`URLSession`, verify SHA-256 against the manifest, atomic-replace into
-the version store; activate only after verification. The heuristic
-detector remains the offline fallback when no model is present (first
-launch, failed download) — the UI never distinguishes proposal sources.
+model rides the same mechanism: `GET /api/models/current` — public, so
+the app polls it signed in or not — returns the trick-detection manifest
+— version, URL, checksum, `taxonomy_version`, the `vocabulary` list, and
+`name_metrics` (the Profile's impact feedback, `PROFILE_DESIGN.md` §9).
+Download via background `URLSession`, verify SHA-256 against the
+manifest, atomic-replace into the version store; activate only after
+verification. The heuristic detector remains the offline fallback when
+no model is present (first launch, failed download) — the UI never
+distinguishes proposal sources.
 
 ### 7.2 On-device inference integration
 
@@ -372,16 +468,20 @@ launch, failed download) — the UI never distinguishes proposal sources.
   frame; thermal cost is bounded by construction).
 - **Output** (`MODEL_CONTRACT.md` authority): segments in
   **source-frame coordinates** (canonical 10 Hz indices) with
-  `trick_names` and `is_combo`.
+  `trick_names`, per-name `name_scores`, and `is_combo`.
 - **Mapping to the UI**: convert segment frames → seconds at canonical
   10 Hz, then onto the local analysis-rate timeline for Clip List tiles
-  *(judgment call)*. Suggested names arrive as **pre-filled chips** in
-  the label editor — editable and removable. **Labels are never
-  auto-confirmed**: a proposed name still requires the user's Confirm
-  (§3.3) before anything is uploaded.
-- The manifest's `vocabulary` feeds the label editor's suggestions
-  (§4); the manifest's `taxonomy_version` is what labels record at
-  label time.
+  *(judgment call)*. Names the model is confident in arrive as
+  **pre-filled chips** on Name Clips — editable and
+  removable, recorded as `origin: model` if kept — and a random tenth
+  of model-proposed clips get none: the blind sample. Both rules, and
+  the provenance the clip records, are `MODEL_CONTRACT.md` §3.3's.
+  **Labels are never auto-confirmed**: a proposed name still requires
+  the user's Confirm (§3.3) before anything is uploaded.
+- The manifest's `vocabulary` is one of the sources of the naming
+  suggestions (`PROFILE_DESIGN.md` §4.2), which use whichever
+  vocabulary the app holds is newest; the farm stamps
+  `taxonomy_version` at contribution time (§4).
 
 ---
 
@@ -403,18 +503,30 @@ confirmation, §3.3):
   no identity (residual honesty per the master plan: gait-from-keypoints
   re-identification is real research; minimization is the mitigation)
 - confirmed clip windows + free-text trick names
-- Sign in with Apple subject — per-app opaque pseudonym, for
-  attribution and quarantine
+- label provenance — each name's `origin`, and the proposing model
+  version, its pre-filled names, and the blind-sample flag per clip:
+  how a label was made, never who made it
+- Sign in with Apple subject — per-app opaque pseudonym, for sign-in,
+  rate limiting, and blocking. The farm links it to a contribution
+  only until 30 days after the contribution's last edit (anti-poisoning
+  attribution), then the contribution has no account link.
+- Source key — random per-source secret proving ownership; the farm
+  stores only its hash
 
-**Local hygiene** (extends `PRIVACY.md`'s temp-file rules):
-`tmp/turnip-pose-<source_id>.tkp1.gz` blobs are deleted after upload
-and swept at launch like other `tmp/` artifacts; thumbnails stay
+**Never leaves the device, even on opt-in** — the Profile: whether a
+clip shows the user, favorites, spots, achievements and progress
+(`PROFILE_DESIGN.md` §10).
+
+**Local hygiene** (extends `PRIVACY.md`'s rules): the pose blob is read
+from the clip library in `Application Support/` (§2.2) — no `tmp/` copy;
+source keys and the session token live in the Keychain; thumbnails stay
 in-memory only; nothing is written to `Documents/`.
 
 **Submission-time consequences** (open question): the v1 "Data Not
 Collected" nutrition label changes the moment contribution ships. The
-new disclosures must cover the Apple `sub` identifier and the pose
-keypoints; the precise App Store label taxonomy for pose keypoints
+new disclosures must cover the Apple `sub` identifier, its 30-day link
+to contributions, and the pose keypoints; the precise App Store label
+taxonomy for pose keypoints
 needs a call at submission time. `ITSAppUsesNonExemptEncryption` stays
 `NO` (HTTPS only, exempt).
 
@@ -448,7 +560,9 @@ DESIGN.md Rev 9 applies them:
 6. **Clip editor / labeling** → the label editor lives in the clip
    confirmation flow (§3–§4 of this doc). The v2 "Labeling UI" section
    (server pending-queue tab) is superseded — labeling happens
-   on-device by the clip owner.
+   on-device by the clip owner. *(Since DESIGN.md Rev 12: naming lives
+   in the core clip flow, `PROFILE_DESIGN.md` §4, and confirmation
+   uploads names already given.)*
 7. **New: video identity** → §1 of this doc; no local ID↔asset mapping
    to lose.
 8. **Social feed** → deferred. The planned Share Sheet (`DESIGN.md`
@@ -478,5 +592,7 @@ DESIGN.md Rev 9 applies them:
    storage, validation, training, and model output.
 5. **Contribution quality thresholds** (§2.3: block >60% gaps, warn
    >30%) are starting points — tune from real footage.
-6. **Multi-device video gap** (master plan open question #2): clips +
-   labels restore cross-device, video stays behind. Accepted for v1?
+6. **Multi-device** (master plan open question #2): source keys are
+   this-device-only, so contributions restore only on the device that
+   made them (§6.3), and the `video_id` derivation has to be settled
+   before the first contribution ships. Accepted for v1?

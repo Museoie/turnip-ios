@@ -81,7 +81,7 @@ Apple rejects undeclared usage, not an unused declaration.
 | UserDefaults | Yes — CA92.1 | `TurnipSettingsStore` reads four keys in `init` and writes through to `UserDefaults` on every published change; `TurnipSettingsStore.shared` takes the `.standard` suite. All four keys are app-local — no app group, no shared suite outside the screenshot and preview harnesses — which is what CA92.1 approves. |
 | File timestamps | Yes — C617.1 | `PhotoVideoResolver.deleteOrphanedTemporaryExports` reads `.creationDateKey` via `resourceValues(forKeys:)` on files in the app's own `tmp/` container — in-container metadata reads, declared with approved reason C617.1. (`PHAsset.creationDate` is PhotoKit metadata on user-granted assets, not a file-timestamp API.) |
 | System boot time | Yes — 35F9.1 | `ProgressReportClock.shouldReport` (in `ProcessingPipeline.swift`) defaults its clock to `ProcessInfo.processInfo.systemUptime` to measure elapsed time between in-app progress reports; `LivePoseRecording` and `LivePoseFrameTap` read the same clock for inference timing and thermal accounting. All in-app elapsed-time measurement — declared with approved reason 35F9.1. |
-| Disk space | No | No volume-capacity resource keys and no `statfs` family call sites. |
+| Disk space | No | No volume-capacity resource keys and no `statfs` family call sites. A free-space check before rendering a highlight or writing the planned clip library would change this row (see "Planned" below). |
 | Active keyboards | No | The category covers querying `UITextInputMode.activeInputModes`, which nothing does. `SettingsView` has one `TextField` for the album name; presenting a keyboard is not the declarable access. |
 
 Third-party SDKs: the only dependency is `TensorFlowLiteSwift`
@@ -164,11 +164,65 @@ The OTA model-update client now on `main` refuses any scheme but `https`, which
 is exempt as well, so the flag stays `NO` once an endpoint is configured.
 Revisit only if non-exempt encryption or non-HTTPS networking is introduced.
 
+## Planned: the clip library and the Profile (not built)
+
+The first v2 release (master plan Phase 2a; [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md))
+changes on-device data handling only. Nothing below is collected in the App
+Store sense: it is processed and stored on the device, and none of it is sent
+to a Turnip-controlled server.
+
+- **No network.** That release gets trick-name suggestions from a vocabulary
+  bundled with the app, so "no calls to any Turnip-controlled server" above
+  and the "Data Not Collected" label stay true. The vocabulary fetch
+  (`GET /api/taxonomy/current`) arrives with contribution: it carries no
+  identifier and no session, and the farm's access logs, kept 30 days at most
+  (`BACKEND_DESIGN.md` §8), are its only record. Revisit the label then, with
+  contribution's own changes (`CONTRIBUTION_DESIGN.md` §8).
+- **The first persistent user data.** The clip library — saved clips' trick
+  names, whether each shows the user, favorites, spot names, dates, a copy of
+  the source video's location when it has one, and each source's pose
+  keypoint sequence — lives in `Application Support/`: not `Documents/`,
+  which stays empty, and not `Caches/`, since the pose there is the only copy
+  once Clip List has deleted an original. It is in the user's iCloud and
+  Finder device backups, which is how it survives a reinstall.
+- **Data written into the user's own files.** Each clip Save Clips exports
+  carries a small Turnip metadata item (its clip ID, trick names, and whether
+  it shows the user) and is named `turnip-clip-<clip_id>.mov`, the same
+  pattern as the roll track in camera takes. A clip shared from the Photos
+  app carries both; Turnip's own Share action, when it lands, strips them. No
+  photo-library identifier, `source_id` or location is written into a file.
+- **New reads, no new prompt.** Under the existing Photos grant:
+  `PHAsset.creationDate`, `PHAsset.location`, `PHAsset.isFavorite`, and
+  `PHAssetResource.originalFilename`. No location permission is requested:
+  Turnip's own camera records no location, so its takes get a place only
+  when the user names one.
+- **Temp files.** Highlight videos render to `tmp/turnip-highlight-<uuid>.mov`
+  only for Save or Share and are deleted afterwards; the launch-time orphan
+  sweep (`PhotoVideoResolver.deleteOrphanedTemporaryExports`) has to learn
+  the prefix. No render cache; if one lands, it goes in `Caches/`.
+- **Required-reason APIs.** Recheck the audit table and
+  `ci_scripts/check-privacy-manifest.sh` when this lands. A free-space check
+  before rendering or writing the library is
+  `NSPrivacyAccessedAPICategoryDiskSpace` (approved reason E174.1) and needs a
+  manifest entry, or CI fails. Metadata reads on the library's own files fall
+  under the file-timestamp category already declared (C617.1 covers files in
+  the app's container).
+- **`site/privacy.html`** changes when this ships, not before: it describes
+  what the shipped app does.
+
 ## Deferred to v2 / later
 
 - Server-side data handling for uploaded clips (retention, deletion
   requests, GDPR/CCPA) — belongs to `turnip-farm`; see `docs/DESIGN.md`
-  decision #4 (retention: keep forever, user-deletable).
+  decision #4 (retention: keep forever, user-deletable). In outline:
+  - Contributions are linked to the account only until 30 days after
+    their last edit, then kept with no account link.
+  - The account can be deleted in-app; that removes every contribution
+    the app still holds a key for.
+  - The contribution sheet discloses both, and asks users to contribute
+    only clips of themselves or of people who agreed (`turnip-farm`
+    `BACKEND_DESIGN.md` §1.2.17, §7.1, §8; `CONTRIBUTION_DESIGN.md` §5.4).
+  - `site/privacy.html` needs the same update when contribution ships.
 - Analytics / crash-reporting consent — `docs/DESIGN.md` decision #7:
   none in v1; crash/hang metrics arrive Apple-mediated under the user's
   own opt-in.

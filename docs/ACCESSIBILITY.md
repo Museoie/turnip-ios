@@ -101,6 +101,40 @@ screen's PR rather than retrofitting later.
   as the spinner leaving. **Not yet met:** a failure raises the "Couldn't save clips" alert,
   but a successful save is not announced.
 
+### Name Clips (planned — UIUX §3a, `PROFILE_DESIGN.md` §4)
+
+- Clip List's "Next: name clips" and "Save without names" are both labeled buttons; the
+  secondary keeps `PrimaryActionBar`'s plain-text style, so it must still meet the 44 pt
+  target.
+- The counter is read with the clip ("Clip 2 of 4"), and paging has buttons ("Next" /
+  "Skip", "Save Clips" on the last clip, "Save now"), so moving between clips never
+  depends on the swipe.
+- The trick-name field is labeled "Trick name"; each chip is one element with a "Remove"
+  action (`accessibilityAction(named:)`), not a tiny × target; suggestions are buttons
+  announced with their position ("gainer, suggestion 1 of 3").
+- The me / someone-else control announces its state as a value ("Who's in this clip: me"),
+  never color alone.
+- The contribute toggle is a labeled switch ("Contribute this clip"); while disabled it says
+  why ("Name the clip first") rather than only dimming.
+- The looping clip follows Clip List's rule: no auto-playing loop under Reduce Motion or
+  with video autoplay off.
+
+### Profile (planned — `PROFILE_DESIGN.md` §5–§8)
+
+- Reached by the floating bar's profile icon (`accessibilityLabel` "Profile") as well as
+  the page swipe, so it never depends on a gesture.
+- Each achievement card is one element: "Gainer, level 2, 7 of 10 sessions to level 3",
+  `.isButton`. Progress bars carry the same figures as `accessibilityValue`; the bar's fill
+  is never the only signal.
+- An achievement reached is announced once, when it is earned, not on every visit.
+- Gallery tiles follow Clip List's rules: one element per tile, no auto-playing loops under
+  Reduce Motion or with video autoplay off.
+- Highlights: no autoplay under Reduce Motion; a side-by-side "then and now" reads as one
+  element naming both dates ("Gainer, March 2025 and September 2026"); locked highlights
+  read what they are missing ("Locked: name one more gainer from before April").
+- Stable identifiers: `profile-tab`, `needs-a-name`, `achievement-<trick>-<kind>`,
+  `gallery-trick-<trick>`, `highlight-<kind>`, `clip-view`.
+
 ## Cross-cutting rules (every v1 screen)
 
 - **Dynamic Type**: all text uses text styles (`.body`, `.caption`, …), no fixed point
