@@ -59,9 +59,9 @@ so the take lands on `ClipList` straight from Stop, with no second decode
 (`Turnip/LivePose/`, per [`docs/LIVE_POSE.md`](docs/LIVE_POSE.md)). A take
 it could not cover end to end goes through `Processing` like a tapped tile.
 
-One directory sits outside that flow: `ModelUpdates` holds an OTA model
-client that no app code constructs. Read it as a tested component, not as
-a feature you can run.
+One directory sits outside that flow: `ModelUpdates` checks for an OTA
+trick-detection model on launch and foreground. No endpoint is configured,
+so the check does nothing yet, and nothing loads a staged model.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full architecture plan
 including the on-device labeling + continuous ML training that will

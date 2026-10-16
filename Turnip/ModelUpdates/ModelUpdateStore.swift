@@ -1,10 +1,12 @@
 import Foundation
 
-/// On-disk home for staged OTA models. Not yet read by model loading (see
-/// `ModelUpdateService`); this is the contract that loading is meant to use.
+/// On-disk home for the staged OTA trick-detection model. The app's update
+/// check writes here (see `ModelUpdateLifecycle`); nothing reads it yet — the
+/// trick-model loader that will call `activeModelURL()` is still to come.
+/// Pose detection never comes through here: MoveNet is always the bundled file.
 ///
-/// Layout inside `baseURL` (meant to be Application Support in the app, a temp
-/// dir in tests):
+/// Layout inside `baseURL` (`production`'s Application Support directory in
+/// the app, a temp dir in tests):
 /// - `<fileName>` — the staged model bytes, written atomically.
 /// - `active-model.json` — `{ "version": "...", "fileName": "..." }`, written
 ///   atomically *after* the bytes, so a crash between the two leaves the
@@ -127,4 +129,22 @@ struct ModelUpdateStore: Sendable {
 private struct StoredModel: Codable {
     var version: String
     var fileName: String
+}
+
+extension ModelUpdateStore {
+    /// The store the app wires: `<Application Support>/ModelUpdates`. The
+    /// directory is not created until the first stage — a device that never
+    /// receives an update leaves no trace on disk.
+    ///
+    /// Optional because `urls(for:in:)` can in principle return nothing; the
+    /// lifecycle hook treats a missing directory as nothing to do.
+    static var production: ModelUpdateStore? {
+        FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first.map {
+            ModelUpdateStore(
+                baseURL: $0.appendingPathComponent(
+                    "ModelUpdates", isDirectory: true))
+        }
+    }
 }

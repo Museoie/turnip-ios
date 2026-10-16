@@ -1,22 +1,22 @@
 import CryptoKit
 import Foundation
 
-/// Polls for model updates and stages them for the *next* launch.
-///
-/// Not yet wired into app launch or model loading: nothing in the app builds this
-/// service, and `MoveNetThunderModel` loads only the bundled file. What follows is
-/// the contract the wiring is meant to honor.
+/// Polls for trick-detection model updates and stages them for a *later*
+/// launch. `ModelUpdateLifecycle` runs it on launch and on every foreground
+/// transition. Pose detection is not its concern: MoveNet always loads from the
+/// app bundle.
 ///
 /// The flow per check: fetch the manifest from
 /// `<baseURL>/api/models/current`; if it names a newer version than the staged
 /// one, download the bytes, verify their SHA-256 against the manifest, and
-/// atomically stage them. Staging never touches the model in use — a running
-/// session must not hot-swap models mid-inference — and a later launch is meant
-/// to load `ModelUpdateStore.activeModelURL()`.
+/// atomically stage them. Staging never touches a model in use — a running
+/// session must not hot-swap models mid-inference — so the trick-model loader,
+/// still to come, reads `ModelUpdateStore.activeModelURL()` at its own load.
 ///
-/// An actor for two reasons: the check is `async` throughout (network, disk),
-/// and `lastError` is written from the check's continuation, so actor
-/// isolation keeps the read in tests data-race-free without manual locking.
+/// An actor for three reasons: the check is `async` throughout (network,
+/// disk), `lastError` is written from the check's continuation, and the
+/// single-flight guard needs its try-acquire to be atomic. Actor isolation
+/// keeps all three data-race-free without manual locking.
 ///
 /// The service never throws: every failure is recorded on `lastError` and the
 /// staged model is left as it was. A failed update must be silent to
@@ -38,6 +38,12 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
     /// boxed at the catch site.
     private(set) var lastError: ModelUpdateError?
 
+    /// Whether a check is currently in flight. Set before the first await and
+    /// cleared in `defer`, so the try-acquire in `checkForUpdates` is atomic
+    /// under actor isolation: the first caller wins and every overlapping
+    /// caller is suppressed rather than queued.
+    private var isChecking = false
+
     init(baseURL: URL?, client: Client, store: ModelUpdateStore) {
         self.baseURL = baseURL
         self.client = client
@@ -45,6 +51,17 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
     }
 
     func checkForUpdates() async {
+        // didBecomeActive fires on every foreground transition and each
+        // firing spawns its own detached task, so two firings in quick
+        // succession (app-switcher bounce, notification shade) would each
+        // fetch the manifest and download the model bytes — and two
+        // stages of different versions racing leave the loser's bytes
+        // orphaned in Application Support. Try-acquire, not queued: the
+        // in-flight check already covers what the duplicate wanted.
+        guard !isChecking else { return }
+        isChecking = true
+        defer { isChecking = false }
+
         lastError = nil
         guard let baseURL else { return }
 
@@ -90,13 +107,22 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
         }
     }
 
-    /// Rejects a manifest whose `fileName` could escape the OTA directory.
-    /// Delegates to `ModelUpdateStore.validate(fileName:)` — one owner, one
+    /// Rejects a manifest whose `fileName` could escape the OTA directory, or
+    /// whose `version` is not well-formed dotted-numeric.
+    /// Delegates filename validation to `ModelUpdateStore.validate(fileName:)` — one owner, one
     /// rule — so this pre-download gate and the store's write-time gate can
     /// never disagree on a name. Checked before any download, so hostile
     /// bytes never move.
+    /// The version check guards the newer-than-staged comparison above:
+    /// `ModelVersion`'s `Comparable` falls back to lexicographic order for
+    /// non-numeric components, so a staged `"v2"` would out-sort every numeric
+    /// release and the client would never update again. Rejecting the shape
+    /// here keeps every staged version inside the numeric ordering.
     private static func validate(_ manifest: ModelUpdateManifest) throws {
         try ModelUpdateStore.validate(fileName: manifest.fileName)
+        guard manifest.version.isWellFormed else {
+            throw ModelUpdateError.invalidManifest
+        }
     }
 
     private func sha256Hex(_ data: Data) -> String {

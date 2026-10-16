@@ -542,10 +542,10 @@ One feature this doc scoped as v2 is on `main` already, so a contributor
 should start from that code rather than design it again:
 
 - **OTA model updates** — `Turnip/ModelUpdates/`: a manifest client, a version
-  store with atomic replace, and a service that no-ops when no endpoint is
-  configured, which is the case today. No screen this doc specifies surfaces
-  it, no app code constructs it, and the doc does not yet say where one would
-  go.
+  store with atomic replace, and a service the app runs on launch and
+  foreground, which no-ops when no endpoint is configured — the case today.
+  No screen this doc specifies surfaces it, and the doc does not yet say where
+  one would go.
 
 A Share Sheet action lived briefly on the Export Confirmation screen this doc
 used to specify as §5, retired 2026-09-22 (see decision 6 below). It went with

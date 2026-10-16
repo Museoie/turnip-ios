@@ -58,6 +58,17 @@ struct TurnipApp: App {
                 ContentView()
                 #endif
             }
+            // OTA model-update poll: didBecomeActive fires on launch and on
+            // every foreground transition. checkForUpdates dispatches itself to
+            // a detached utility-QoS task, so the manifest fetch, hashing, and
+            // atomic stage stay off the main actor. Inert until
+            // TURNIP_MODEL_UPDATE_ENDPOINT is set — see ModelUpdateLifecycle.
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: UIApplication.didBecomeActiveNotification)
+            ) { _ in
+                ModelUpdateLifecycle.checkForUpdates()
+            }
             // Forced here, not just in `ContentView`, so the DEBUG-only screenshot
             // harnesses above — which never mount `ContentView` — render dark too.
             // The app is black-on-dark throughout; CI's PR screenshots are only
