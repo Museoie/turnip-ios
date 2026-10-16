@@ -509,9 +509,8 @@ final class ModelUpdateTests: XCTestCase {
 
     /// Staging a new model under a new fileName must delete the file the
     /// previous record pointed at: Application Support is never purged by
-    /// iOS, so every versioned update would otherwise leak ~12 MB of dead
-    /// weights. This test fails against the old implementation, which never
-    /// removed the previous file.
+    /// iOS, so every versioned update would otherwise leave a whole model's
+    /// dead weights behind.
     func testStoreStageDeletesPreviousStagedFileOnRename() throws {
         let store = makeStore()
         let oldName = "movenet_thunder_2026.09.10.tflite"
@@ -558,28 +557,28 @@ final class ModelUpdateTests: XCTestCase {
 
     // MARK: - Client
 
-   /// Model bytes are trust material: the client refuses to fetch or download
-   /// over plain http, before any bytes move.
-   func testClientRequiresHTTPS() async {
-       let client = URLSessionModelUpdateClient()
-       do {
-           _ = try await client.fetchManifest(
-               from: URL(string: "http://models.example.com/api/models/current")!)
-           XCTFail("expected endpointNotHTTPS")
-       } catch ModelUpdateError.endpointNotHTTPS {
-           // expected
-       } catch {
-           XCTFail("expected endpointNotHTTPS, got \(error)")
-       }
-       do {
-           _ = try await client.downloadModel(from: URL(string: "http://models.example.com/m.tflite")!)
-           XCTFail("expected endpointNotHTTPS")
-       } catch ModelUpdateError.endpointNotHTTPS {
-           // expected
-       } catch {
-           XCTFail("expected endpointNotHTTPS, got \(error)")
-       }
-   }
+    /// Model bytes are trust material: the client refuses to fetch or download
+    /// over plain http, before any bytes move.
+    func testClientRequiresHTTPS() async {
+        let client = URLSessionModelUpdateClient()
+        do {
+            _ = try await client.fetchManifest(
+                from: URL(string: "http://models.example.com/api/models/current")!)
+            XCTFail("expected endpointNotHTTPS")
+        } catch ModelUpdateError.endpointNotHTTPS {
+            // expected
+        } catch {
+            XCTFail("expected endpointNotHTTPS, got \(error)")
+        }
+        do {
+            _ = try await client.downloadModel(from: URL(string: "http://models.example.com/m.tflite")!)
+            XCTFail("expected endpointNotHTTPS")
+        } catch ModelUpdateError.endpointNotHTTPS {
+            // expected
+        } catch {
+            XCTFail("expected endpointNotHTTPS, got \(error)")
+        }
+    }
 }
 
 // MARK: - Mock configuration

@@ -82,6 +82,9 @@ struct ModelUpdateStore: Sendable {
     /// second (see the layout note above); once the metadata names the new
     /// file, the file the previous record pointed at is deleted, so versioned
     /// file names don't leave dead weights behind in Application Support.
+    /// A consumer must therefore load the model it reads from
+    /// `activeModelURL()` and keep it: the path can be gone after the next
+    /// stage, even within the same session.
     func stage(modelData: Data, version: ModelVersion, fileName: String) throws {
         // The write-time gate (one shared predicate, see validate(fileName:) above): rejects
         // hostile names, the reserved metadata name, and non-ASCII names
