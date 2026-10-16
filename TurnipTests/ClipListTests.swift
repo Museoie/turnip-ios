@@ -58,6 +58,10 @@ final class ClipListTests: XCTestCase {
         XCTAssertFalse(makeItem().isTrashed)
     }
 
+    func testNewItemsStartUnsaved() {
+        XCTAssertFalse(makeItem().isSaved)
+    }
+
     func testDurationLabelShowsOneDecimalSecond() {
         XCTAssertEqual(makeItem().durationLabel, "3.0s")
     }
@@ -214,6 +218,102 @@ final class ClipListTests: XCTestCase {
             to: makeItem().id)
 
         XCTAssertEqual(viewModel.items[1], item)
+    }
+
+    /// A clip the user retrimmed or recropped is not the clip that landed in Photos, so the
+    /// editor's commit has to put it back in Save Clips' queue. Without this, an edit made after a
+    /// partial failure would be silently dropped on the retry: the tile would show the new
+    /// geometry while the library kept only the pre-edit video.
+    @MainActor
+    func testApplyEditorResultClearsTheSavedFlag() async {
+        let viewModel = makeViewModel(items: [makeItem()])
+        let result = await viewModel.save()
+        XCTAssertTrue(result)
+        XCTAssertTrue(viewModel.items[1].isSaved)
+
+        viewModel.applyEditorResult(
+            ClipEditorResult(
+                window: TrickWindow(startTime: 1, endTime: 4),
+                cropRect: fullFrame,
+                cropAdjustment: .identity),
+            to: viewModel.items[1].id)
+
+        XCTAssertFalse(viewModel.items[1].isSaved)
+    }
+
+    /// The editor commits on every close, including one where nothing changed. Opening a saved
+    /// clip just to watch it must leave it saved, or the retry writes it to Photos a second time.
+    @MainActor
+    func testApplyEditorResultKeepsTheSavedFlagWhenNothingChanged() async {
+        let viewModel = makeViewModel(items: [makeItem()])
+        let result = await viewModel.save()
+        XCTAssertTrue(result)
+
+        viewModel.applyEditorResult(
+            ClipEditorResult(window: window, cropRect: fullFrame, cropAdjustment: .identity),
+            to: viewModel.items[1].id)
+
+        XCTAssertTrue(viewModel.items[1].isSaved)
+    }
+
+    /// The editor clamps a window that runs past the video's end as it loads, against the
+    /// `AVAsset`'s own duration, so an untouched clip like that comes back with a shorter window.
+    /// The list is handed the Photos duration, which can differ — here half a second longer —
+    /// so the comparison has to clamp against the asset's duration too.
+    @MainActor
+    func testApplyEditorResultKeepsTheSavedFlagWhenOnlyTheLoadClampMovedTheWindow() async throws {
+        let url = try await TestVideoWriter.writeTestVideo(frameCount: 60, width: 64, height: 64, fps: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let overrunning = ClipListItem(
+            window: TrickWindow(startTime: 1, endTime: 4), cropRect: fullFrame)
+        let viewModel = makeViewModel(items: [overrunning], asset: AVURLAsset(url: url), duration: 2.5)
+        let loaded = await viewModel.assetDuration()
+        let assetDuration = try XCTUnwrap(loaded)
+        let result = await viewModel.save()
+        XCTAssertTrue(result)
+
+        viewModel.applyEditorResult(
+            ClipEditorResult(
+                window: ClipEditorViewModel.clamped(window: overrunning.window, to: assetDuration),
+                cropRect: fullFrame,
+                cropAdjustment: .identity),
+            to: viewModel.items[1].id)
+
+        XCTAssertTrue(viewModel.items[1].isSaved)
+    }
+
+    /// A crop rect change alone — what Auto crop moves — is an edit too.
+    @MainActor
+    func testApplyEditorResultClearsTheSavedFlagOnACropRectChange() async {
+        let viewModel = makeViewModel(items: [makeItem()])
+        let result = await viewModel.save()
+        XCTAssertTrue(result)
+
+        viewModel.applyEditorResult(
+            ClipEditorResult(
+                window: window,
+                cropRect: NormalizedRect(minX: 0.1, maxX: 0.9, minY: 0.1, maxY: 0.9),
+                cropAdjustment: .identity),
+            to: viewModel.items[1].id)
+
+        XCTAssertFalse(viewModel.items[1].isSaved)
+    }
+
+    /// A crop adjustment change alone is an edit too.
+    @MainActor
+    func testApplyEditorResultClearsTheSavedFlagOnACropAdjustmentChange() async {
+        let viewModel = makeViewModel(items: [makeItem()])
+        let result = await viewModel.save()
+        XCTAssertTrue(result)
+
+        viewModel.applyEditorResult(
+            ClipEditorResult(
+                window: window,
+                cropRect: fullFrame,
+                cropAdjustment: CropAdjustment(scale: 2, rotationRadians: 0, offset: .zero)),
+            to: viewModel.items[1].id)
+
+        XCTAssertFalse(viewModel.items[1].isSaved)
     }
 
     /// No stale thumbnail after an edit: `thumbnail(for:)` decodes through the real
@@ -612,6 +712,127 @@ final class ClipListTests: XCTestCase {
         // original in place, which is the safe outcome — not a reportable failure.
         XCTAssertTrue(result)
         XCTAssertNil(viewModel.saveFailureMessage)
+    }
+
+    /// A retried Save Clips must not duplicate any healthy clip: `save()` selects by a
+    /// predicate over `items`, so without a record of what already landed, the second tap
+    /// would re-export and re-write the clips that had succeeded — one extra copy of each per
+    /// attempt, and a Photos asset the app wrote is not one it can take back. The middle clip
+    /// fails on every attempt, which is the case the docstring's retry advice invites.
+    @MainActor
+    func testRetriedSaveNeverWritesAnAlreadyLandedClipToPhotosTwice() async {
+        actor Recorder {
+            var exportedWindows: [TrickWindow] = []
+            var savedNames: [String] = []
+            func recordExport(_ window: TrickWindow) { exportedWindows.append(window) }
+            func recordSave(_ name: String) { savedNames.append(name) }
+        }
+        let recorder = Recorder()
+        let doomed = TrickWindow(startTime: 5, endTime: 7)
+        let viewModel = makeViewModel(
+            items: [
+                ClipListItem(window: TrickWindow(startTime: 0, endTime: 2), cropRect: fullFrame),
+                ClipListItem(window: doomed, cropRect: fullFrame),
+                ClipListItem(window: TrickWindow(startTime: 10, endTime: 12), cropRect: fullFrame)
+            ],
+            exportClip: { spec, _, directory, _ in
+                await recorder.recordExport(spec.window)
+                if spec.window == doomed {
+                    throw ClipSaveError.exportFailed(reason: "always")
+                }
+                return directory.appendingPathComponent("clip-\(Int(spec.window.startTime)).mp4")
+            },
+            saveToPhotos: { url, _ in await recorder.recordSave(url.lastPathComponent) })
+
+        let first = await viewModel.save()
+        XCTAssertFalse(first)
+        // What the screen's alert does on OK; `save()` itself never reads it.
+        viewModel.saveFailureMessage = nil
+        let second = await viewModel.save()
+
+        XCTAssertFalse(second)
+        let savedNames = await recorder.savedNames
+        XCTAssertEqual(savedNames, ["clip-0.mp4", "clip-10.mp4"])
+        // The retry re-attempts only the clip still missing from the library — the healthy
+        // two are not even re-exported, so the retry costs one export instead of three.
+        let exportedWindows = await recorder.exportedWindows
+        XCTAssertEqual(exportedWindows.filter { $0 == doomed }.count, 2)
+        XCTAssertEqual(exportedWindows.count, 4)
+    }
+
+    @MainActor
+    func testSaveMarksTheClipsThatLandedAndLeavesTheFailedOneUnmarked() async {
+        let doomed = TrickWindow(startTime: 5, endTime: 7)
+        let viewModel = makeViewModel(
+            items: [
+                ClipListItem(window: TrickWindow(startTime: 0, endTime: 2), cropRect: fullFrame),
+                ClipListItem(window: doomed, cropRect: fullFrame)
+            ],
+            exportClip: { spec, _, directory, _ in
+                if spec.window == doomed { throw ClipSaveError.exportFailed(reason: "always") }
+                return directory.appendingPathComponent("clip.mp4")
+            })
+
+        let result = await viewModel.save()
+
+        XCTAssertFalse(result)
+        XCTAssertTrue(viewModel.items[1].isSaved)
+        XCTAssertFalse(viewModel.items[2].isSaved)
+        // The original is never exported as a clip, so it never carries the flag either.
+        XCTAssertFalse(viewModel.items[0].isSaved)
+    }
+
+    /// Skipping the already-landed clips must not cost the retry its own success: once the
+    /// last missing clip lands, `failures` is empty and the run has to behave exactly like a
+    /// clean first Save Clips — pop to Home, and delete the trashed original.
+    @MainActor
+    func testRetriedSaveSucceedsAndDeletesTheTrashedOriginalOnceTheLastClipLands() async {
+        actor Flake {
+            private var failuresLeft: Int
+            init(failuresLeft: Int) { self.failuresLeft = failuresLeft }
+            func shouldFail() -> Bool {
+                guard failuresLeft > 0 else { return false }
+                failuresLeft -= 1
+                return true
+            }
+        }
+        actor Recorder {
+            var savedNames: [String] = []
+            var deleteCount = 0
+            func recordSave(_ name: String) { savedNames.append(name) }
+            func recordDelete() { deleteCount += 1 }
+        }
+        let flake = Flake(failuresLeft: 1)
+        let recorder = Recorder()
+        let flaky = TrickWindow(startTime: 5, endTime: 7)
+        let viewModel = makeViewModel(
+            items: [
+                ClipListItem(window: TrickWindow(startTime: 0, endTime: 2), cropRect: fullFrame),
+                ClipListItem(window: flaky, cropRect: fullFrame)
+            ],
+            exportClip: { spec, _, directory, _ in
+                if spec.window == flaky, await flake.shouldFail() {
+                    throw ClipSaveError.exportFailed(reason: "once")
+                }
+                return directory.appendingPathComponent("clip-\(Int(spec.window.startTime)).mp4")
+            },
+            saveToPhotos: { url, _ in await recorder.recordSave(url.lastPathComponent) },
+            deleteOriginalAsset: { _ in await recorder.recordDelete() })
+        viewModel.toggleTrash(viewModel.items[0])
+
+        let first = await viewModel.save()
+        XCTAssertFalse(first)
+        let deletesAfterTheFailure = await recorder.deleteCount
+        XCTAssertEqual(deletesAfterTheFailure, 0)
+
+        viewModel.saveFailureMessage = nil
+        let second = await viewModel.save()
+
+        XCTAssertTrue(second)
+        let savedNames = await recorder.savedNames
+        XCTAssertEqual(savedNames, ["clip-0.mp4", "clip-5.mp4"])
+        let deleteCount = await recorder.deleteCount
+        XCTAssertEqual(deleteCount, 1)
     }
 
     @MainActor

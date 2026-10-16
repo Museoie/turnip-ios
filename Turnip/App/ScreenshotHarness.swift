@@ -103,6 +103,13 @@ struct ScreenshotClipListHarness: View {
 /// asset — the asset duration actually loads and each tile's range timeline
 /// renders instead of staying hidden behind its `if let duration` guard. Shares
 /// `ScreenshotClipEditorHarness`'s sample-movie writer and warm-up.
+///
+/// The first clip is seeded as already saved, which is the state the grid is left in by
+/// a Save Clips that partially failed: it is the only way the saved badge reaches a rendered
+/// screen, since nothing a UI test can drive from a cold launch performs a real Photos
+/// write. This harness rather than `-screenshotClipList` because the editor needs real
+/// media to open, and opening it from the badge's own corner is what proves the badge
+/// does not shadow the tile's tap.
 struct ScreenshotClipListMediaHarness: View {
     var body: some View {
         NavigationStack {
@@ -110,7 +117,8 @@ struct ScreenshotClipListMediaHarness: View {
                 items: [
                     ClipListItem(
                         window: TrickWindow(startTime: 0.5, endTime: 2),
-                        cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)),
+                        cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+                        isSaved: true),
                     ClipListItem(
                         window: TrickWindow(startTime: 3, endTime: 4.5),
                         cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1))

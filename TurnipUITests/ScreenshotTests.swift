@@ -244,6 +244,26 @@ final class ScreenshotTests: XCTestCase {
         addScreenshot(named: "clip-list-expand-to-editor")
     }
 
+    /// A tile whose video is already in Photos draws the saved badge, and tapping the badge
+    /// still opens the editor. Both halves need the badge on screen:
+    /// `testClipListTapOpensEditor` above taps the tile's centre, so it cannot see a dead
+    /// zone in a 28pt corner — and a decorative overlay sibling is hit-testable by default,
+    /// which is what would create one. The tap lands on the badge's own centre rather than
+    /// an offset into the tile, so it hits the point the badge covers whatever area the
+    /// tile's accessibility frame spans.
+    func testSavedBadgeRendersAndLeavesItsCornerTappable() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipListMedia"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        let badge = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Saved to Photos'"))
+            .firstMatch
+        XCTAssertTrue(badge.waitForExistence(timeout: 15))
+        badge.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
+    }
+
     /// Clip editor over a generated sample movie: the preview with the live crop
     /// rect and the trim slider. The trim range's accessibility
     /// label ("Trim range 2.0s to 5.0s") only appears once the movie's duration

@@ -170,6 +170,9 @@ final class ClipListViewModel: ObservableObject {
     /// card's range timeline, its loop's window clamp, and `addClip()`. `nil` when the
     /// asset can't be read — the timeline then hides itself rather than guessing a scale.
     private var durationTask: Task<TimeInterval?, Never>?
+    /// `assetDuration()`'s result once it has resolved: the same `AVAsset` duration the
+    /// editor clamps a window to, which can differ from the Photos duration `items[0]` carries.
+    private var loadedAssetDuration: TimeInterval?
 
     /// The video track and its geometry, loaded once per asset and shared by every
     /// card's live preview composition (`videoComposition(cropRect:cropAdjustment:)`).
@@ -236,15 +239,32 @@ final class ClipListViewModel: ObservableObject {
     /// and crop adjustment the user left the editor with replace the list entry's, so
     /// trim/crop edits commit on back-navigation (docs/UIUX.md § "Clip Detail / Editor").
     /// The item's `isTrashed` carries over unchanged — the editor doesn't own that decision.
-    /// A no-op for unknown ids.
+    /// `isSaved` carries over only while the result still describes the video that landed:
+    /// a clip the user retrimmed or recropped is not the one in Photos, so Save Clips has to
+    /// export and save it again. A no-op for unknown ids.
     func applyEditorResult(_ result: ClipEditorResult, to id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let item = items[index]
         items[index] = ClipListItem(
             id: id,
             window: result.window,
             cropRect: result.cropRect,
             cropAdjustment: result.cropAdjustment,
-            isTrashed: items[index].isTrashed)
+            isTrashed: item.isTrashed,
+            isSaved: item.isSaved && describesTheSameVideo(result, as: item))
+    }
+
+    /// Whether `result` would export the same video as `item`. The editor commits on every
+    /// close, so opening a clip only to watch it must not read as an edit. It also clamps a
+    /// window that runs past the video's end when it loads, which changes the window without
+    /// changing what an export of it contains. That clamp uses the asset's own duration, so the
+    /// comparison does too; until the cards have loaded it, only an identical window matches.
+    private func describesTheSameVideo(_ result: ClipEditorResult, as item: ClipListItem) -> Bool {
+        var sameWindow = result.window == item.window
+        if !sameWindow, let loadedAssetDuration {
+            sameWindow = result.window == ClipEditorViewModel.clamped(window: item.window, to: loadedAssetDuration)
+        }
+        return sameWindow && result.cropRect == item.cropRect && result.cropAdjustment == item.cropAdjustment
     }
 
     /// Removes the item with the given id entirely: the editor's Delete action, and
@@ -307,7 +327,9 @@ final class ClipListViewModel: ObservableObject {
             }
         }
         guard let durationTask else { return nil }
-        return await durationTask.value
+        let duration = await durationTask.value
+        loadedAssetDuration = duration
+        return duration
     }
 
     /// Loads the source video track's natural size, preferred transform, and nominal
@@ -399,11 +421,17 @@ final class ClipListViewModel: ObservableObject {
         return image
     }
 
-    /// The "Save Clips" action: exports and saves every non-trashed derived clip to
-    /// Photos, then — only once every one of them has succeeded — deletes the
-    /// original video from Photos if its tile was trashed. Returns `true` when the
-    /// screen should pop to Home; `false` when a clip failed, in which case
+    /// The "Save Clips" action: exports and saves every non-trashed derived clip that has not
+    /// already landed in Photos, then — only once every one of them has succeeded —
+    /// deletes the original video from Photos if its tile was trashed. Returns `true`
+    /// when the screen should pop to Home; `false` when a clip failed, in which case
     /// `saveFailureMessage` is set and the screen stays up so Save Clips can be retried.
+    ///
+    /// Each clip is marked `isSaved` the moment its Photos write returns, and the loop
+    /// skips the ones already marked. That is what makes the retry above safe: a clip
+    /// that fails deterministically would otherwise cost the user one extra copy of
+    /// every healthy clip per attempt, and a Photos asset the app wrote is not
+    /// something the app can take back.
     ///
     /// The original is never deleted if any clip failed: deleting the source before
     /// every derived clip has confirmed safely landed in Photos would risk losing
@@ -426,12 +454,13 @@ final class ClipListViewModel: ObservableObject {
         // albums.
         let albumTitle = settingsProvider().albumDestination
         var failures: [String] = []
-        for item in items where !item.isOriginal && !item.isTrashed {
+        for item in items where !item.isOriginal && !item.isTrashed && !item.isSaved {
             do {
                 let spec = ClipSpec(
                     window: item.window, cropRect: item.cropRect, cropAdjustment: item.cropAdjustment)
                 let fileURL = try await exportClip(spec, asset, directory) { _ in }
                 try await saveToPhotos(fileURL, albumTitle)
+                markSaved(item.id)
             } catch {
                 failures.append(Self.reason(for: error))
             }
@@ -445,6 +474,14 @@ final class ClipListViewModel: ObservableObject {
             try? await deleteOriginalAsset(assetIdentifier)
         }
         return true
+    }
+
+    /// Records that one clip's video is now in Photos. Resolved by id rather than
+    /// written through the loop's own value copy of the item, which no longer refers to
+    /// anything stored once it has been read out of `items`.
+    private func markSaved(_ id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].isSaved = true
     }
 
     /// The failure message for one clip. Adapters throw `ClipSaveError` to get the

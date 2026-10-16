@@ -11,6 +11,15 @@ import Foundation
 /// stable `id` (not the window times) so view state survives an edit that changes
 /// the window.
 ///
+/// `isSaved` records that this clip's video has already been written to Photos by
+/// `ClipListViewModel.save()`. It exists so that a Save Clips retried after a partial
+/// failure re-exports only the clips still missing from the library: without it the
+/// save loop's predicate matches every clip again and the ones that already landed
+/// get written a second time, which nothing in the app can undo. It resets when the
+/// editor commits different geometry (`ClipListViewModel.applyEditorResult(_:to:)`),
+/// since an edited clip is no longer the one that was saved; opening a clip and closing
+/// it unchanged leaves it set.
+///
 /// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
 /// stands for the source video already in Photos rather than a derived clip: it
 /// carries the full-video window and full-frame crop, is never opened in the
@@ -24,6 +33,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     /// it survives a re-open of the editor and reaches export.
     var cropAdjustment: CropAdjustment
     var isTrashed: Bool
+    var isSaved: Bool
     let isOriginal: Bool
 
     init(
@@ -32,6 +42,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         cropRect: NormalizedRect,
         cropAdjustment: CropAdjustment = .identity,
         isTrashed: Bool = false,
+        isSaved: Bool = false,
         isOriginal: Bool = false
     ) {
         self.id = id
@@ -39,6 +50,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.cropRect = cropRect
         self.cropAdjustment = cropAdjustment
         self.isTrashed = isTrashed
+        self.isSaved = isSaved
         self.isOriginal = isOriginal
     }
 
