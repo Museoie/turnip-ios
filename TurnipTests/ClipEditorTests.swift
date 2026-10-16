@@ -42,6 +42,38 @@ final class ClipEditorTests: XCTestCase {
         return viewModel
     }
 
+    // MARK: - Auto-play gate
+
+    /// Reduce Motion and Auto-Play Video Previews are what the checklist requires the preview
+    /// to respect. Gated, the preview parks on the window's first frame and Play starts it.
+    @MainActor
+    func testPreviewDoesNotAutoPlayWhenTheSystemSaysNotTo() {
+        let viewModel = ClipEditorViewModel(
+            source: makeSource(frames: twoPositionFrames()),
+            mayAutoplayLoops: { false })
+        viewModel.setMediaInfo(
+            duration: duration, naturalSize: naturalSize, preferredTransform: .identity)
+
+        viewModel.startPreview()
+
+        XCTAssertFalse(viewModel.isPlaying)
+        viewModel.togglePlayback()
+        XCTAssertTrue(viewModel.isPlaying, "Play must still start a gated preview on request")
+    }
+
+    @MainActor
+    func testPreviewAutoPlaysWhenTheSystemAllowsIt() {
+        let viewModel = ClipEditorViewModel(
+            source: makeSource(frames: twoPositionFrames()),
+            mayAutoplayLoops: { true })
+        viewModel.setMediaInfo(
+            duration: duration, naturalSize: naturalSize, preferredTransform: .identity)
+
+        viewModel.startPreview()
+
+        XCTAssertTrue(viewModel.isPlaying)
+    }
+
     // MARK: - Trimming leaves the framing alone
 
     /// The framing is what the user last set, and a handle drag is a trim, not a re-crop:
@@ -410,6 +442,49 @@ final class ClipEditorTests: XCTestCase {
             PoseFixture.frame(index: 20, hip: (x: 0.65, y: 0.7), upperBody: (x: 0.35, y: 0.3)),
             PoseFixture.frame(index: 21, hip: (x: 0.35, y: 0.7), upperBody: (x: 0.65, y: 0.3))
         ]
+    }
+
+    /// The editor's VoiceOver actions nudge in displayed-pixel space directly, since there is
+    /// no gesture translation to convert — the drag path's `previewScale` division must not
+    /// silently apply to them.
+    @MainActor
+    func testOffsetCropAccumulatesDisplayedPixels() {
+        let viewModel = makeViewModel()
+
+        viewModel.offsetCrop(byDisplayedPixels: CGSize(width: 24, height: -8))
+        viewModel.offsetCrop(byDisplayedPixels: CGSize(width: -4, height: 2))
+
+        XCTAssertEqual(viewModel.cropAdjustment.offset, CGSize(width: 20, height: -6))
+    }
+
+    @MainActor
+    func testOffsetCropRejectsANonFiniteDelta() {
+        let viewModel = makeViewModel()
+
+        viewModel.offsetCrop(byDisplayedPixels: CGSize(width: 10, height: 4))
+        // `CGFloat.nan` spelled out: `CGSize.init` is overloaded on CGFloat, Double and Int,
+        // and a bare `.nan` gives the compiler no way to choose between them.
+        viewModel.offsetCrop(byDisplayedPixels: CGSize(width: CGFloat.nan, height: 1))
+        viewModel.offsetCrop(byDisplayedPixels: CGSize(width: 1, height: CGFloat.infinity))
+
+        XCTAssertEqual(viewModel.cropAdjustment.offset, CGSize(width: 10, height: 4))
+    }
+
+    /// A zoom action is the gesture's own multiply, so the two paths land on the same framing
+    /// and the clamp that protects the gesture protects the action too.
+    @MainActor
+    func testZoomActionStepsThroughTheSameClampedScale() {
+        let viewModel = makeViewModel()
+
+        viewModel.applyCropScale(CropAdjustmentStep.zoomFactor)
+
+        XCTAssertEqual(viewModel.cropAdjustment.scale, CropAdjustmentStep.zoomFactor, accuracy: 1e-9)
+
+        for _ in 0..<40 {
+            viewModel.applyCropScale(CropAdjustmentStep.zoomFactor)
+        }
+
+        XCTAssertEqual(viewModel.cropAdjustment.scale, 8, "repeated zoom-in must stop at the clamp")
     }
 
     /// The video point a position relative to the marker's center shows, under

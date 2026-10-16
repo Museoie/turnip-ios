@@ -34,14 +34,23 @@ final class ProcessingViewModel: ObservableObject {
     }
 
     private let runner: any ProcessingRunning
+    private let announce: AccessibilityAnnouncing
     private var runTask: Task<Void, Never>?
     /// Identifies the run each callback belongs to. A cancelled run keeps decoding its
     /// in-flight frame and reports progress afterwards; without this, that report would drive
     /// the state machine back to `.processing` behind a screen that has no run.
     private var runGeneration = 0
+    /// The quarter of the run already spoken, `nil` before a run's first report. Reset with
+    /// the state machine so a retry speaks its own progress from the start rather than
+    /// resuming the previous attempt's position.
+    private var lastAnnouncedMilestone: Int?
 
-    init(runner: any ProcessingRunning = ProcessingPipeline()) {
+    init(
+        runner: any ProcessingRunning = ProcessingPipeline(),
+        announce: @escaping AccessibilityAnnouncing = postAccessibilityAnnouncement
+    ) {
         self.runner = runner
+        self.announce = announce
     }
 
     /// Starts the pipeline. Only a fresh view model starts: ignored unless the state is
@@ -99,6 +108,7 @@ final class ProcessingViewModel: ObservableObject {
         runTask?.cancel()
         runTask = nil
         runGeneration += 1
+        lastAnnouncedMilestone = nil
         guard isRunning else { return }
         state = .idle
         result = nil
@@ -111,6 +121,7 @@ final class ProcessingViewModel: ObservableObject {
         runTask?.cancel()
         runTask = nil
         runGeneration += 1
+        lastAnnouncedMilestone = nil
         state = .idle
         result = nil
         isShowingClips = false
@@ -120,6 +131,11 @@ final class ProcessingViewModel: ObservableObject {
     private func apply(_ progress: ProcessingProgress, from generation: Int) {
         guard generation == runGeneration else { return }
         state = .processing(progress)
+        guard let spoken = ProcessingAnnouncements.progressAnnouncement(
+            for: progress, lastAnnounced: lastAnnouncedMilestone)
+        else { return }
+        lastAnnouncedMilestone = spoken.milestone
+        announce(spoken.message)
     }
 
     private func finish(with result: ProcessingResult, from generation: Int) {
@@ -132,5 +148,6 @@ final class ProcessingViewModel: ObservableObject {
     private func fail(with message: String, from generation: Int) {
         guard generation == runGeneration else { return }
         state = .failed(message: message)
+        announce(ProcessingAnnouncements.failureAnnouncement(message: message))
     }
 }

@@ -340,11 +340,13 @@ struct ProcessingView<Destination: View>: View {
             ScrimIconButton(systemImage: "xmark", accessibilityLabel: "Cancel") {
                 handleBackAction()
             }
+            .accessibilityIdentifier("processing-cancel")
             .screenHeaderItemPlacement()
         } else {
             ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home") {
                 handleBackAction()
             }
+            .accessibilityIdentifier("processing-back")
             .screenHeaderItemPlacement()
         }
     }
@@ -598,7 +600,8 @@ struct ProcessingView<Destination: View>: View {
     /// A swipe-triggered browse reports the same way Home's first resolve does
     /// (`ResolutionProgressContent`), over a full-screen dim.
     private func browsingOverlay(_ resolution: VideoLibraryViewModel.Resolution) -> some View {
-        ResolutionProgressContent(resolution: resolution, cancel: cancelBrowsing)
+        ResolutionProgressContent(
+            resolution: resolution, cancel: cancelBrowsing, cancelIdentifier: "cancel-browsing")
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.black.opacity(0.55).ignoresSafeArea())
             .transition(.opacity)
@@ -720,6 +723,7 @@ struct ProcessingView<Destination: View>: View {
                 player?.pause()
                 viewModel.start(video: video)
             }
+            .accessibilityIdentifier("start-analysis")
         }
     }
 
@@ -732,10 +736,14 @@ struct ProcessingView<Destination: View>: View {
                 ProgressView(value: fraction)
                     .tint(.white)
                     .accessibilityLabel("Analysis progress")
+                    .accessibilityValue(progress.label)
+                    .accessibilityIdentifier("analysis-progress")
             } else {
                 ProgressView()
                     .tint(.white)
                     .accessibilityLabel("Analyzing video")
+                    .accessibilityValue(progress.label)
+                    .accessibilityIdentifier("analysis-progress")
             }
             Text(progress.label)
                 .font(.headline)
@@ -761,7 +769,9 @@ struct ProcessingView<Destination: View>: View {
             VStack(spacing: 12) {
                 Button("Retry") { viewModel.retry(video: video) }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("processing-retry")
                 Button("Back to Home", role: .cancel) { close() }
+                    .accessibilityIdentifier("processing-back-home")
             }
             .padding(.top, 8)
         }

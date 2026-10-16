@@ -25,6 +25,17 @@ final class ProcessingProgressTests: XCTestCase {
         )
     }
 
+    /// Four-digit counts must render bare. Localizing the sentence is required, but handing the
+    /// counts to the localization machinery as integers formats them for the device locale, and
+    /// every other case here is under 1000 and so cannot tell the two apart.
+    func testLabelDoesNotGroupThousands() {
+        let label = ProcessingProgress(frame: 1200, totalFrames: 9600).label
+
+        XCTAssertEqual(label, "Analyzing frame 1200 of 9600")
+        XCTAssertFalse(label.contains(","), "a locale separator reached a count: \(label)")
+        XCTAssertFalse(label.contains("."), "a locale separator reached a count: \(label)")
+    }
+
     func testLabelDropsTheTotalWhenItIsUnknown() {
         XCTAssertEqual(ProcessingProgress(frame: 400, totalFrames: nil).label, "Analyzing frame 400…")
     }
@@ -534,6 +545,105 @@ final class ProcessingViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.result)
     }
 
+    /// The pipeline reports once per processed frame. The throttle itself is asserted in
+    /// `ProcessingAnnouncementsTests`; this is the wiring that proves the state machine
+    /// consults it rather than speaking every report it renders.
+    func testProgressSpeaksOnlyTheQuartersTheRunCrosses() async {
+        let relay = ProgressRelay()
+        let spoken = SpokenAnnouncements()
+        let viewModel = ProcessingViewModel(
+            runner: ScriptedRunner(behavior: .relayProgress(relay)),
+            announce: { spoken.messages.append($0) }
+        )
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntil { await relay.isReady }
+        for frame in [1, 150, 299, 300, 450, 600, 900, 1200] {
+            await relay.report(ProcessingProgress(frame: frame, totalFrames: 1200))
+        }
+
+        XCTAssertEqual(
+            spoken.messages,
+            [
+                "Analyzing frame 1 of 1200",
+                "Analyzing frame 300 of 1200",
+                "Analyzing frame 600 of 1200",
+                "Analyzing frame 900 of 1200"
+            ]
+        )
+        viewModel.cancel()
+    }
+
+    /// The failed state stays on the Processing screen — no push, so no screen-change
+    /// notification — which makes the announcement the only thing a listener gets.
+    func testFailureSpeaksTheReasonTheScreenShows() async {
+        let spoken = SpokenAnnouncements()
+        let viewModel = ProcessingViewModel(
+            runner: ScriptedRunner(behavior: .fail(TestError.boom)),
+            announce: { spoken.messages.append($0) }
+        )
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntilNotRunning(viewModel)
+
+        XCTAssertEqual(spoken.messages, ["Analysis failed. kaput"])
+    }
+
+    /// Cancel returns the screen to `.idle`, so the next run speaks its own first report.
+    /// Carrying the abandoned run's position forward would silence the restarted run until it
+    /// passed wherever the old one stopped.
+    func testARestartedRunSpeaksItsOwnProgressFromTheStart() async {
+        let cancelled = ProgressRelay()
+        let restarted = ProgressRelay()
+        let spoken = SpokenAnnouncements()
+        let runner = ScriptedRunner(behavior: .relayProgress(cancelled))
+        let viewModel = ProcessingViewModel(
+            runner: runner, announce: { spoken.messages.append($0) })
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntil { await cancelled.isReady }
+        await cancelled.report(ProcessingProgress(frame: 900, totalFrames: 1200))
+        viewModel.cancel()
+
+        runner.behavior = .relayProgress(restarted)
+        viewModel.start(video: Self.video)
+        await Self.waitUntil { await restarted.isReady }
+        await restarted.report(ProcessingProgress(frame: 1, totalFrames: 1200))
+
+        XCTAssertEqual(
+            spoken.messages, ["Analyzing frame 900 of 1200", "Analyzing frame 1 of 1200"])
+        viewModel.cancel()
+    }
+
+    /// Same contract through `retry`, which is the button the failed state actually offers.
+    func testRetrySpeaksTheNewRunsProgressFromTheStart() async {
+        let restarted = ProgressRelay()
+        let spoken = SpokenAnnouncements()
+        let runner = ScriptedRunner(
+            behavior: .reportThenFail(
+                ProcessingProgress(frame: 900, totalFrames: 1200), TestError.boom))
+        let viewModel = ProcessingViewModel(
+            runner: runner, announce: { spoken.messages.append($0) })
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntilNotRunning(viewModel)
+
+        runner.behavior = .relayProgress(restarted)
+        viewModel.retry(video: Self.video)
+        await Self.waitUntil { await restarted.isReady }
+        await restarted.report(ProcessingProgress(frame: 1, totalFrames: 1200))
+
+        XCTAssertEqual(
+            spoken.messages,
+            [
+                "Analyzing frame 900 of 1200",
+                "Analysis failed. kaput",
+                "Analyzing frame 1 of 1200"
+            ]
+        )
+        viewModel.cancel()
+    }
+
     private static func waitUntilNotRunning(_ viewModel: ProcessingViewModel) async {
         await waitUntil { !viewModel.isRunning }
     }
@@ -551,6 +661,13 @@ final class ProcessingViewModelTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 5_000_000)
         }
     }
+}
+
+/// Collects what the view model handed to VoiceOver, in order. The order is the assertion:
+/// the throttle is only observable as "these reports spoke and those did not".
+@MainActor
+private final class SpokenAnnouncements {
+    var messages: [String] = []
 }
 
 private enum TestError: LocalizedError {
@@ -593,6 +710,9 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
         case reportThenHang(CancelFlag)
         /// Hands `onProgress` to the relay and sleeps, so the test drives the reporting.
         case relayProgress(ProgressRelay)
+        /// Reports one progress update and then fails, so a retry runs with a run's worth of
+        /// announcement state already behind it.
+        case reportThenFail(ProcessingProgress, Error)
     }
 
     /// Tests swap this between runs, sometimes while the previous run is still draining its
@@ -627,6 +747,9 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
                 throw error
             }
             return ProcessingResult(detection: DetectedClips(clips: [], poseFrames: []), asset: video.asset)
+        case .reportThenFail(let progress, let error):
+            await onProgress(progress)
+            throw error
         case .relayProgress(let relay):
             await relay.capture(onProgress)
             try await Task.sleep(nanoseconds: 30_000_000_000)

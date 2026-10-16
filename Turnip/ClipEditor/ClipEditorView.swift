@@ -204,6 +204,7 @@ struct ClipEditorView: View {
             onCommit(viewModel.result)
             close()
         }
+        .accessibilityIdentifier("clip-editor-back")
     }
 
     private var deleteButton: some View {
@@ -214,6 +215,7 @@ struct ClipEditorView: View {
             Text("Delete")
         }
         .accessibilityLabel("Delete clip")
+        .accessibilityIdentifier("clip-editor-delete")
         return Group {
             if #available(iOS 26.0, *) {
                 button.buttonStyle(.glass)
@@ -281,6 +283,9 @@ struct ClipEditorView: View {
                     .gesture(cropGesture(previewScale: placement?.pointsPerDisplayedPixel ?? 0))
                     .accessibilityLabel("Clip preview with crop area")
                     .accessibilityHint("Pinch to zoom, rotate with two fingers, or drag to reposition")
+                    .accessibilityIdentifier("clip-editor-crop-surface")
+                    .modifier(CropAdjustmentActions(
+                        viewModel: viewModel, videoSize: viewModel.previewOverlay?.videoSize ?? .zero))
                 playbackControls
                     .frame(width: marker.width, height: marker.height, alignment: .bottom)
                     .position(x: marker.midX, y: marker.midY)
@@ -510,3 +515,46 @@ private struct CropOverlayShape: Shape {
         .preferredColorScheme(.dark)
 }
 #endif
+
+/// The non-visual path to the crop adjustment. Framing a clip is pinch, two-finger rotate and
+/// drag — three gestures a VoiceOver user cannot perform, which would leave the editor's whole
+/// purpose unreachable without sight. Each action drives the same view-model call the matching
+/// gesture commits, so the two paths cannot diverge.
+private struct CropAdjustmentActions: ViewModifier {
+    let viewModel: ClipEditorViewModel
+    let videoSize: CGSize
+
+    func body(content: Content) -> some View {
+        let step = CGSize(
+            width: videoSize.width * CropAdjustmentStep.offsetFraction,
+            height: videoSize.height * CropAdjustmentStep.offsetFraction)
+        return content
+            .accessibilityAction(named: "Zoom in") {
+                viewModel.applyCropScale(CropAdjustmentStep.zoomFactor)
+            }
+            .accessibilityAction(named: "Zoom out") {
+                viewModel.applyCropScale(1 / CropAdjustmentStep.zoomFactor)
+            }
+            .accessibilityAction(named: "Rotate clockwise") {
+                viewModel.applyCropRotation(CropAdjustmentStep.rotationRadians)
+            }
+            .accessibilityAction(named: "Rotate counterclockwise") {
+                viewModel.applyCropRotation(-CropAdjustmentStep.rotationRadians)
+            }
+            .accessibilityAction(named: "Move left") {
+                viewModel.offsetCrop(byDisplayedPixels: CGSize(width: -step.width, height: 0))
+            }
+            .accessibilityAction(named: "Move right") {
+                viewModel.offsetCrop(byDisplayedPixels: CGSize(width: step.width, height: 0))
+            }
+            .accessibilityAction(named: "Move up") {
+                viewModel.offsetCrop(byDisplayedPixels: CGSize(width: 0, height: -step.height))
+            }
+            .accessibilityAction(named: "Move down") {
+                viewModel.offsetCrop(byDisplayedPixels: CGSize(width: 0, height: step.height))
+            }
+            .accessibilityAction(named: "Reset crop") {
+                viewModel.resetCrop()
+            }
+    }
+}

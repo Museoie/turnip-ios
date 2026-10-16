@@ -4,6 +4,12 @@ import SwiftUI
 import XCTest
 @testable import Turnip
 
+/// Collects what the view model handed to VoiceOver, in order — the order is the assertion.
+@MainActor
+private final class SpokenAnnouncements {
+    var messages: [String] = []
+}
+
 final class ClipListTests: XCTestCase {
     private let window = TrickWindow(startTime: 2, endTime: 5)
     private let fullFrame = NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
@@ -34,7 +40,9 @@ final class ClipListTests: XCTestCase {
         exportClip: @escaping ExportOneClip = { _, _, _, _ in URL(fileURLWithPath: "/tmp/fake.mp4") },
         saveToPhotos: @escaping SaveOneClipToPhotos = { _, _ in },
         deleteOriginalAsset: @escaping DeleteOriginalAsset = { _ in },
-        settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettings() }
+        settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettings() },
+        announce: @escaping AccessibilityAnnouncing = { _ in },
+        announceAfterScreenChange: AccessibilityAnnouncing? = nil
     ) -> ClipListViewModel {
         ClipListViewModel(
             items: items,
@@ -49,7 +57,9 @@ final class ClipListTests: XCTestCase {
                 FileManager.default.temporaryDirectory
                     .appendingPathComponent("turnip-test-\(UUID().uuidString)", isDirectory: true)
             },
-            settingsProvider: settingsProvider)
+            settingsProvider: settingsProvider,
+            announce: announce,
+            announceAfterScreenChange: announceAfterScreenChange ?? announce)
     }
 
     // MARK: - ClipListItem
@@ -696,6 +706,166 @@ final class ClipListTests: XCTestCase {
 
         XCTAssertFalse(result)
         XCTAssertEqual(viewModel.saveFailureMessage, "Couldn't save to Photos — denied")
+    }
+
+    // MARK: - Accessibility
+
+    /// The card label counts off detected clips, and the original is not one of them — an
+    /// off-by-one here reads as "Clip 2 of 3" on the third clip and nothing crashes.
+    @MainActor
+    func testClipPositionCountsOnlyTheDetectedClips() {
+        let clips = [makeItem(), makeItem(), makeItem()]
+        let viewModel = makeViewModel(items: clips)
+
+        XCTAssertNil(viewModel.clipPosition(of: viewModel.items[0]), "the original has no position")
+        XCTAssertEqual(viewModel.clipPosition(of: viewModel.items[1])?.number, 1)
+        XCTAssertEqual(viewModel.clipPosition(of: viewModel.items[3])?.number, 3)
+        XCTAssertEqual(viewModel.clipPosition(of: viewModel.items[2])?.count, 3)
+    }
+
+    /// What Save Clips announces and what it does read off the same scope, so a trashed clip that
+    /// still counted would promise a save that never happens.
+    @MainActor
+    func testSaveScopeSkipsTrashedClipsAndReportsTheOriginal() {
+        let viewModel = makeViewModel(items: [makeItem(), makeItem(isTrashed: true), makeItem()])
+
+        XCTAssertEqual(viewModel.saveScope.clipCount, 2)
+        XCTAssertFalse(viewModel.saveScope.deletesOriginal)
+
+        viewModel.toggleTrash(viewModel.items[0])
+
+        XCTAssertTrue(viewModel.saveScope.deletesOriginal)
+        XCTAssertEqual(viewModel.saveScope.clipCount, 2, "the original is not one of the clips")
+    }
+
+    /// A retry writes only the clips still missing from Photos, so the button's count and the
+    /// spoken start describe that run, while a failure keeps the number of the card it names.
+    @MainActor
+    func testARetryCountsOnlyTheClipsStillMissingFromPhotos() async {
+        let spoken = SpokenAnnouncements()
+        let doomed = TrickWindow(startTime: 5, endTime: 7)
+        let viewModel = makeViewModel(
+            items: [
+                ClipListItem(window: TrickWindow(startTime: 0, endTime: 2), cropRect: fullFrame),
+                ClipListItem(window: doomed, cropRect: fullFrame),
+                ClipListItem(window: TrickWindow(startTime: 10, endTime: 12), cropRect: fullFrame)
+            ],
+            exportClip: { spec, _, directory, _ in
+                if spec.window == doomed {
+                    throw ClipSaveError.exportFailed(reason: "always")
+                }
+                return directory.appendingPathComponent("clip-\(Int(spec.window.startTime)).mp4")
+            },
+            announce: { spoken.messages.append($0) })
+
+        let first = await viewModel.save()
+        XCTAssertFalse(first)
+        XCTAssertEqual(viewModel.saveFailureMessage, "Clip 2 of 3: Export failed — always")
+        XCTAssertEqual(viewModel.saveScope.clipCount, 1)
+
+        viewModel.saveFailureMessage = nil
+        let second = await viewModel.save()
+
+        XCTAssertFalse(second)
+        XCTAssertEqual(
+            viewModel.saveFailureMessage, "Clip 2 of 3: Export failed — always",
+            "the number is the failed card's, which the retry's own count of one would lose")
+        XCTAssertEqual(spoken.messages, ["Saving 3 clips to Photos", "Saving 1 clip to Photos"])
+    }
+
+    /// The saving overlay is a spinner over a disabled grid and the screen then pops to Home,
+    /// so without these two announcements a listener gets no signal that Save Clips did anything.
+    @MainActor
+    func testSaveSpeaksItsStartAndItsCompletionWithTheCount() async {
+        let spoken = SpokenAnnouncements()
+        let viewModel = makeViewModel(
+            items: [makeItem(), makeItem()],
+            announce: { spoken.messages.append($0) })
+
+        let result = await viewModel.save()
+
+        XCTAssertTrue(result)
+        XCTAssertEqual(
+            spoken.messages, ["Saving 2 clips to Photos", "Saved 2 clips to Photos"])
+    }
+
+    /// The start is spoken in place, but the completion lands as the screen pops to Home, which
+    /// is when VoiceOver drops an announcement — so it goes out once the screen has settled.
+    @MainActor
+    func testSaveCompletionWaitsOutTheScreenChange() async {
+        let spokenNow = SpokenAnnouncements()
+        let spokenAfter = SpokenAnnouncements()
+        let viewModel = makeViewModel(
+            items: [makeItem()],
+            announce: { spokenNow.messages.append($0) },
+            announceAfterScreenChange: { spokenAfter.messages.append($0) })
+
+        let result = await viewModel.save()
+
+        XCTAssertTrue(result)
+        XCTAssertEqual(spokenNow.messages, ["Saving 1 clip to Photos"])
+        XCTAssertEqual(spokenAfter.messages, ["Saved 1 clip to Photos"])
+    }
+
+    /// The zero-tricks notice appears as the Clip List is pushed, so it is spoken after the push.
+    @MainActor
+    func testNoTricksNoticeIsSpokenAfterTheScreenChange() {
+        let spokenNow = SpokenAnnouncements()
+        let spokenAfter = SpokenAnnouncements()
+        let viewModel = makeViewModel(
+            items: [],
+            announce: { spokenNow.messages.append($0) },
+            announceAfterScreenChange: { spokenAfter.messages.append($0) })
+
+        viewModel.announceNoTricksFound()
+
+        XCTAssertEqual(spokenNow.messages, [])
+        XCTAssertEqual(spokenAfter.messages, ["No tricks found"])
+    }
+
+    /// A run with nothing to write — no tricks found, or every clip discarded — still pops to
+    /// Home, and "Saving 0 clips to Photos" would announce work that is not happening.
+    @MainActor
+    func testASaveWithNoClipsSpeaksNothing() async {
+        let spoken = SpokenAnnouncements()
+        let viewModel = makeViewModel(items: [], announce: { spoken.messages.append($0) })
+
+        let result = await viewModel.save()
+
+        XCTAssertTrue(result)
+        XCTAssertEqual(spoken.messages, [])
+    }
+
+    /// A failed run must not claim it saved anything — the alert carries the reason, and the
+    /// completion announcement is what would otherwise contradict it.
+    @MainActor
+    func testAFailedSaveNeverSpeaksCompletion() async {
+        let spoken = SpokenAnnouncements()
+        let viewModel = makeViewModel(
+            items: [makeItem()],
+            exportClip: { _, _, _, _ in throw ClipSaveError.exportFailed(reason: "boom") },
+            announce: { spoken.messages.append($0) })
+
+        let result = await viewModel.save()
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(spoken.messages, ["Saving 1 clip to Photos"])
+    }
+
+    /// Failures from one run arrive together, so each names the clip it belongs to once the
+    /// run holds more than one.
+    @MainActor
+    func testFailuresFromAMultiClipRunNameTheirClip() async {
+        let viewModel = makeViewModel(
+            items: [makeItem(), makeItem()],
+            exportClip: { _, _, _, _ in throw ClipSaveError.exportFailed(reason: "boom") })
+
+        let result = await viewModel.save()
+
+        XCTAssertFalse(result)
+        XCTAssertEqual(
+            viewModel.saveFailureMessage,
+            "Clip 1 of 2: Export failed — boom\nClip 2 of 2: Export failed — boom")
     }
 
     @MainActor

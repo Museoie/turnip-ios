@@ -75,13 +75,13 @@ final class ClipCardPlaybackTests: XCTestCase {
     /// a real loop over it.
     ///
     /// The gate closure runs the production rule over the recorder's settings rather than
-    /// restating `&&` here, so dropping either condition from `clipCardMayAutoplayLoops`
+    /// restating `&&` here, so dropping either condition from `mayAutoplayVideoLoops`
     /// fails the tests below instead of only the truth table.
     private func makePlayback(_ recorder: LoopRecorder) -> ClipCardPlayback {
         ClipCardPlayback(
             asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
             mayAutoplayLoops: {
-                clipCardMayAutoplayLoops(
+                mayAutoplayVideoLoops(
                     isVideoAutoplayEnabled: recorder.isVideoAutoplayEnabled,
                     isReduceMotionEnabled: recorder.isReduceMotionEnabled)
             },
@@ -110,13 +110,13 @@ final class ClipCardPlaybackTests: XCTestCase {
 
     func testTheGateWantsBothSettingsToAllowLooping() {
         XCTAssertTrue(
-            clipCardMayAutoplayLoops(isVideoAutoplayEnabled: true, isReduceMotionEnabled: false))
+            mayAutoplayVideoLoops(isVideoAutoplayEnabled: true, isReduceMotionEnabled: false))
         XCTAssertFalse(
-            clipCardMayAutoplayLoops(isVideoAutoplayEnabled: false, isReduceMotionEnabled: false))
+            mayAutoplayVideoLoops(isVideoAutoplayEnabled: false, isReduceMotionEnabled: false))
         XCTAssertFalse(
-            clipCardMayAutoplayLoops(isVideoAutoplayEnabled: true, isReduceMotionEnabled: true))
+            mayAutoplayVideoLoops(isVideoAutoplayEnabled: true, isReduceMotionEnabled: true))
         XCTAssertFalse(
-            clipCardMayAutoplayLoops(isVideoAutoplayEnabled: false, isReduceMotionEnabled: true))
+            mayAutoplayVideoLoops(isVideoAutoplayEnabled: false, isReduceMotionEnabled: true))
     }
 
     /// Nothing is built and nothing is even loaded: the composition load is the expensive

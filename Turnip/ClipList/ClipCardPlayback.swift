@@ -113,7 +113,7 @@ final class ClipCardPlayback: ObservableObject {
     init(
         asset: AVAsset,
         mayAutoplayLoops: @escaping @MainActor () -> Bool = {
-            clipCardMayAutoplayLoops(
+            mayAutoplayVideoLoops(
                 isVideoAutoplayEnabled: UIAccessibility.isVideoAutoplayEnabled,
                 isReduceMotionEnabled: UIAccessibility.isReduceMotionEnabled)
         },
@@ -270,14 +270,6 @@ struct ClipCardPlaybackGeometry: Equatable {
     let window: TrickWindow
     let cropRect: NormalizedRect
     let cropAdjustment: CropAdjustment
-}
-
-/// Whether a tile may auto-play its loop at all, from the two system settings the Clip
-/// List checklist names. They are independent switches — Reduce Motion covers motion in
-/// general, Auto-Play Video Previews only video previews — so either one set against
-/// looping is enough to rule it out.
-func clipCardMayAutoplayLoops(isVideoAutoplayEnabled: Bool, isReduceMotionEnabled: Bool) -> Bool {
-    isVideoAutoplayEnabled && !isReduceMotionEnabled
 }
 
 /// Whether a mounted loop has to be replaced to show `target`: `builtFor` is `nil` when

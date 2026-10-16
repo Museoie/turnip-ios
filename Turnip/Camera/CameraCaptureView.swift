@@ -72,6 +72,7 @@ struct CameraCaptureView: View {
     private var cancelButton: some View {
         ScrimIconButton(
             systemImage: "xmark", accessibilityLabel: "Cancel", style: .scrim, action: onCancel)
+            .accessibilityIdentifier("camera-cancel")
             .screenHeaderItemPlacement()
     }
 
@@ -110,6 +111,7 @@ struct CameraCaptureView: View {
         .opacity(viewModel.isFinishingRecording ? 0.4 : 1)
         .disabled(viewModel.isFinishingRecording)
         .accessibilityLabel(viewModel.isRecording ? "Stop recording" : "Start recording")
+        .accessibilityIdentifier("camera-record")
     }
 
     // MARK: - Lens / zoom
@@ -131,8 +133,15 @@ struct CameraCaptureView: View {
                                     ? Color.yellow.opacity(0.9)
                                     : Color.black.opacity(0.4))
                         )
+                        // A footnote pill is about 30 pt tall.
+                        .touchTarget(insetBy: 7)
                 }
                 .buttonStyle(.plain)
+                // The active lens is otherwise marked only by the yellow fill, which a
+                // listener never sees; the trait is what makes "selected" audible.
+                .accessibilityAddTraits(
+                    option.zoomFactor == viewModel.activeLensZoomFactor ? .isSelected : [])
+                .accessibilityIdentifier("camera-lens-\(option.label)")
             }
         }
         .opacity(viewModel.isRecording ? 0.4 : 1)
@@ -172,6 +181,7 @@ struct CameraCaptureView: View {
             accessibilityLabel: "Exposure",
             style: .scrim,
             action: { showExposureSlider.toggle() })
+            .accessibilityIdentifier("camera-exposure-toggle")
     }
 
     private var flashButton: some View {
@@ -180,6 +190,7 @@ struct CameraCaptureView: View {
             accessibilityLabel: viewModel.isTorchOn ? "Turn off flash" : "Turn on flash",
             style: .scrim,
             action: viewModel.toggleTorch)
+            .accessibilityIdentifier("camera-flash")
     }
 
     private var flipButton: some View {
@@ -190,6 +201,7 @@ struct CameraCaptureView: View {
             action: viewModel.switchCamera)
             .opacity(viewModel.isRecording ? 0.4 : 1)
             .disabled(viewModel.isRecording)
+            .accessibilityIdentifier("camera-flip")
     }
 
     /// Not `ScrimIconButton` here: `Menu`'s `label` closure needs a bare glyph, and
@@ -218,6 +230,7 @@ struct CameraCaptureView: View {
         .opacity(viewModel.isRecording ? 0.4 : 1)
         .disabled(viewModel.isRecording)
         .accessibilityLabel("Resolution and frame rate")
+        .accessibilityIdentifier("camera-format-menu")
     }
 
     // MARK: - Exposure
@@ -232,6 +245,7 @@ struct CameraCaptureView: View {
         .tint(.yellow)
         .padding(.horizontal, 40)
         .accessibilityLabel("Exposure bias")
+        .accessibilityIdentifier("camera-exposure-slider")
     }
 
 }
@@ -246,6 +260,7 @@ private struct CameraAccessDeniedView: View {
             message: restricted
                 ? "Camera access is restricted on this device."
                 : "Allow camera and microphone access in Settings to record a trick.",
-            restricted: restricted)
+            restricted: restricted,
+            openSettingsIdentifier: "camera-open-settings")
     }
 }

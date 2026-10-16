@@ -40,11 +40,15 @@ struct ProcessingProgress: Sendable {
     /// dropped when the track reports no frame rate, and also when the count has overrun it:
     /// the estimate comes from an average frame rate, which variable-frame-rate capture beats,
     /// and "frame 412 of 400" reads as a bug where a bare counter reads as an unknown length.
+    /// The counts are interpolated as already-rendered strings, not as `Int`s: interpolating an
+    /// integer into a `String.LocalizationValue` formats it for the current locale, which turns
+    /// "1200" into "1,200" — or "1.200" elsewhere — where `docs/UIUX.md` asks for "400/1200" and
+    /// `ClipDurationFormatter` makes the same call about its own separator.
     var label: String {
         guard let totalFrames, frame <= totalFrames else {
-            return "Analyzing frame \(frame)…"
+            return String(localized: "Analyzing frame \(String(frame))…")
         }
-        return "Analyzing frame \(frame) of \(totalFrames)"
+        return String(localized: "Analyzing frame \(String(frame)) of \(String(totalFrames))")
     }
 }
 

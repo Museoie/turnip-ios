@@ -7,6 +7,11 @@ struct GlassNoticeView: View {
     let message: String
     @Binding var isPresented: Bool
     var autoDismissAfter: TimeInterval = 5
+    /// Reads whether a screen reader is driving the screen. A notice on a timer can expire
+    /// before VoiceOver has worked its way over to read it, so under a screen reader the
+    /// notice waits to be dismissed instead of dismissing itself. Injected rather than read
+    /// inline so the branch is reachable without a running screen reader.
+    var isScreenReaderRunning: () -> Bool = { UIAccessibility.isVoiceOverRunning }
 
     var body: some View {
         Button(action: dismiss) {
@@ -23,6 +28,7 @@ struct GlassNoticeView: View {
         }
         .buttonStyle(.plain)
         .task {
+            guard !isScreenReaderRunning() else { return }
             try? await Task.sleep(for: .seconds(autoDismissAfter))
             guard !Task.isCancelled else { return }
             dismiss()

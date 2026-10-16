@@ -83,8 +83,8 @@ final class ScreenshotTests: XCTestCase {
 
     /// Clip list triage: three detected windows, one trashed, thumbnails as
     /// placeholder tiles (the /dev/null asset decodes nothing; the loader falls
-    /// back to the placeholder — the test waits for the placeholder's
-    /// accessibility element, so it guards the fallback and not just the
+    /// back to the placeholder — the test waits for the placeholder clause of a
+    /// card's accessibility label, so it guards the fallback and not just the
     /// navigation bar appearing).
     func testClipListTriage() throws {
         let app = XCUIApplication()
@@ -92,7 +92,7 @@ final class ScreenshotTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
         let placeholder = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Thumbnail placeholder'"))
+            .matching(NSPredicate(format: "label CONTAINS 'thumbnail placeholder'"))
             .firstMatch
         XCTAssertTrue(placeholder.waitForExistence(timeout: 15))
         addScreenshot(named: "clip-list-triage")
@@ -202,7 +202,7 @@ final class ScreenshotTests: XCTestCase {
     /// failing fast with a reason if its sample movie failed to encode — see `testClipEditor`.
     private func waitForClipEditorToLoad(_ app: XCUIApplication) {
         let trimRange = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Trim range 2.0s to 5.0s'"))
+            .matching(NSPredicate(format: "label == 'Trim range 2 seconds to 5 seconds'"))
             .firstMatch
         let loadFailure = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label BEGINSWITH %@", "Couldn't load this clip"))
@@ -229,14 +229,15 @@ final class ScreenshotTests: XCTestCase {
 
     /// Tapping a tile opens the full `ClipEditorView` directly — the tile itself is
     /// the single entry point into detail/editing, not a separate expand icon and not
-    /// an intermediate full-screen viewer.
+    /// an intermediate full-screen viewer. Reached by identifier rather than by label,
+    /// since a card's label counts off its position and duration.
     func testClipListTapOpensEditor() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
         let tile = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Open clip'"))
+            .matching(NSPredicate(format: "identifier == 'clip-card-1'"))
             .firstMatch
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
@@ -266,7 +267,7 @@ final class ScreenshotTests: XCTestCase {
 
     /// Clip editor over a generated sample movie: the preview with the live crop
     /// rect and the trim slider. The trim range's accessibility
-    /// label ("Trim range 2.0s to 5.0s") only appears once the movie's duration
+    /// label ("Trim range 2 seconds to 5 seconds") only appears once the movie's duration
     /// loads, so it also proves the editor reached its loaded state.
     ///
     /// The wait is longer than this file's usual 15s: unlike every other wait
@@ -279,7 +280,7 @@ final class ScreenshotTests: XCTestCase {
         app.launchArguments = ["-screenshotClipEditor"]
         app.launch()
         let trimRange = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Trim range 2.0s to 5.0s'"))
+            .matching(NSPredicate(format: "label == 'Trim range 2 seconds to 5 seconds'"))
             .firstMatch
         // Fail fast, and with a reason, if the harness degraded to its load-failure
         // fallback: without this, a sample-movie encode that failed on a loaded CI

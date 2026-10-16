@@ -20,6 +20,9 @@ struct ResolutionProgressContent: View {
     let resolution: VideoLibraryViewModel.Resolution?
     /// `nil` hides the Cancel button.
     let cancel: (() -> Void)?
+    /// The Cancel button's accessibility identifier, for screens a UI test drives; `nil`
+    /// leaves it unset, so two mounted surfaces never expose the same identifier.
+    var cancelIdentifier: String?
 
     var body: some View {
         VStack(spacing: 12) {
@@ -34,8 +37,13 @@ struct ResolutionProgressContent: View {
                     .tint(.white)
             }
             if let cancel {
-                Button("Cancel", role: .cancel, action: cancel)
+                let button = Button("Cancel", role: .cancel, action: cancel)
                     .tint(.white)
+                if let cancelIdentifier {
+                    button.accessibilityIdentifier(cancelIdentifier)
+                } else {
+                    button
+                }
             }
         }
         .padding(32)

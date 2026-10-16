@@ -102,8 +102,17 @@ struct ClipListView: View {
                     .transition(Self.removalTransition)
                 }
                 AddClipTile { Task { await viewModel.addClip() } }
+                    .accessibilityIdentifier("add-clip")
             }
             .padding()
+            // The grid states its count when VoiceOver enters it, which is how a run's
+            // result reaches a listener: the completion of a run that found clips is
+            // otherwise only the screen change, with the count left to be counted. The
+            // ScrollView must be declared an accessibility container, as on Home — a label
+            // on a non-element container is never announced on entry.
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(gridAccessibilityLabel)
+            .accessibilityIdentifier("clip-grid")
         }
         .disabled(viewModel.isSaving)
         .navigationTitle("Clips")
@@ -134,6 +143,8 @@ struct ClipListView: View {
                     }
                 }
             }
+            .accessibilityValue(saveClipsAccessibilityValue)
+            .accessibilityIdentifier("save-clips")
         }
         .overlay {
             if viewModel.isSaving {
@@ -146,9 +157,12 @@ struct ClipListView: View {
         })
         .overlay(alignment: .top) {
             if isShowingNoTricksNotice {
-                GlassNoticeView(message: "No tricks found", isPresented: $isShowingNoTricksNotice)
+                GlassNoticeView(
+                    message: ClipListAccessibility.noTricksFound,
+                    isPresented: $isShowingNoTricksNotice)
                     .padding(.top, 8)
                     .accessibilityIdentifier("no-tricks-notice")
+                    .onAppear { viewModel.announceNoTricksFound() }
             }
         }
     }
@@ -156,6 +170,22 @@ struct ClipListView: View {
     private var backButton: some View {
         ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home", action: popToRoot)
             .disabled(viewModel.isSaving)
+            .accessibilityIdentifier("clip-list-back")
+    }
+
+    /// "1 clip" / "N clips", read on entering the grid. Counts detected clips, so the
+    /// original video's own card is not one of them.
+    private var gridAccessibilityLabel: String {
+        ClipListAccessibility.gridLabel(
+            clipCount: viewModel.items.filter { !$0.isOriginal }.count)
+    }
+
+    /// What Save Clips commits to, read after its label. The button names the gesture; the
+    /// count and the original's fate are the part a listener cannot otherwise reach.
+    private var saveClipsAccessibilityValue: String {
+        let scope = viewModel.saveScope
+        return ClipListAccessibility.saveClipsValue(
+            clipCount: scope.clipCount, deletesOriginal: scope.deletesOriginal)
     }
 
     private var savingOverlay: some View {
@@ -316,6 +346,9 @@ private struct ClipCardView: View {
             Text(item.isOriginal ? "Original video" : item.durationLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                // The card's own label already states which clip this is and how long it
+                // runs, so leaving the caption in the tree makes a listener hear it twice.
+                .accessibilityHidden(true)
         }
         .opacity(isHidden ? 0 : 1)
         .task(id: item) {
@@ -362,10 +395,13 @@ private struct ClipCardView: View {
                 .clipped()
                 .contentShape(Rectangle())
                 .onTapGesture { open(frame: proxy.frame(in: .global)) }
-                // The UI-test screenshot harness waits on this label to prove the
-                // thumbnail fallback actually engaged.
-                .accessibilityLabel(tileAccessibilityLabel)
+                .accessibilityElement(children: .ignore)
+                // The UI-test screenshot harness waits on this label's placeholder clause to
+                // prove the thumbnail fallback actually engaged.
+                .accessibilityLabel(cardAccessibilityLabel)
                 .accessibilityAddTraits(onOpen == nil ? [] : .isButton)
+                .accessibilityIdentifier(cardAccessibilityIdentifier)
+                .accessibilityAction(named: trashActionName, trash)
         }
         .aspectRatio(1, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -406,9 +442,35 @@ private struct ClipCardView: View {
         onOpen(frame, thumbnail, loopTime.flatMap { $0.isNumeric ? $0.seconds : nil })
     }
 
-    private var tileAccessibilityLabel: String {
-        guard thumbnail != nil else { return "Thumbnail placeholder" }
-        return item.isOriginal ? "Original video" : "Open clip"
+    /// Everything one card conveys visually — which clip it is, how long it runs, and which
+    /// way its trash toggle is set — as the single element a listener lands on.
+    private var cardAccessibilityLabel: String {
+        let position = viewModel.clipPosition(of: item)
+        return ClipListAccessibility.cardLabel(
+            clipNumber: position?.number,
+            clipCount: position?.count ?? 0,
+            spokenDuration: spokenDuration,
+            isTrashed: item.isTrashed,
+            hasThumbnail: thumbnail != nil)
+    }
+
+    /// The original stands for the whole source video, so it speaks a whole-video duration;
+    /// a detected clip runs seconds and speaks the tenth of a second its trim carries.
+    private var spokenDuration: String {
+        let seconds = item.window.endTime - item.window.startTime
+        return item.isOriginal
+            ? VideoDurationFormatter.accessibilityString(from: seconds)
+            : ClipDurationFormatter.accessibilityString(from: seconds)
+    }
+
+    private var cardAccessibilityIdentifier: String {
+        guard let position = viewModel.clipPosition(of: item) else { return "clip-card-original" }
+        return "clip-card-\(position.number)"
+    }
+
+    private var trashActionName: String {
+        ClipListAccessibility.trashActionName(
+            isTrashed: item.isTrashed, isOriginal: item.isOriginal)
     }
 
     @ViewBuilder
@@ -487,10 +549,13 @@ private struct ClipCardView: View {
                     .foregroundStyle(.white)
             }
             .frame(width: Self.iconButtonDiameter, height: Self.iconButtonDiameter)
+            // From the drawn 28 pt circle out to the 44 pt floor.
+            .touchTarget(insetBy: 8)
         }
         .buttonStyle(.plain)
         .padding(6)
         .accessibilityLabel(item.isTrashed ? "Restore clip" : "Trash clip")
+        .accessibilityIdentifier("clip-trash-toggle")
     }
 
     /// A derived clip's removal reflows the grid on `ClipListView.removalAnimation`; the

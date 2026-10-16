@@ -11,6 +11,15 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// The first detected clip's card, once its thumbnail has decoded: a tap hands the flight
+    /// that thumbnail as its starting picture.
+    private func firstClipCard(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "identifier == 'clip-card-1' AND NOT (label CONTAINS 'thumbnail placeholder')"))
+            .firstMatch
+    }
+
     /// Polls `element.frame` until two consecutive reads agree, rather than a fixed sleep —
     /// the flight settles in well under a second, but a fixed sleep risks sampling mid-flight
     /// on a loaded CI runner.
@@ -59,9 +68,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
-        let tile = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Open clip'"))
-            .firstMatch
+        let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
         XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
@@ -111,9 +118,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
         let listBack = settledFrame(of: app.buttons["Back to Home"].firstMatch)
         let listTitle = settledFrame(of: app.navigationBars["Clips"].staticTexts["Clips"].firstMatch)
-        let tile = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Open clip'"))
-            .firstMatch
+        let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
         let editorTitle = app.staticTexts["clip-editor-title"]
@@ -142,9 +147,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.staticTexts["1.5s"].firstMatch.waitForExistence(timeout: 15))
-        let tile = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Open clip'"))
-            .firstMatch
+        let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
         XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
@@ -164,7 +167,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
             .matching(NSPredicate(format: "label BEGINSWITH 'Trim range'"))
             .firstMatch
         XCTAssertTrue(trimmed.waitForExistence(timeout: 5))
-        XCTAssertNotEqual(trimmed.label, "Trim range 0.5s to 2.0s", "the drag didn't move the end handle")
+        XCTAssertNotEqual(trimmed.label, "Trim range 0.5 seconds to 2 seconds", "the drag didn't move the end handle")
 
         // Down from the title itself — the top row's band, which the dismiss gesture owns
         // (the video surface keeps a downward drag for its own crop gesture) — so the
@@ -192,9 +195,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
-        let tile = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Open clip'"))
-            .firstMatch
+        let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
         let title = app.staticTexts["clip-editor-title"]

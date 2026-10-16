@@ -28,6 +28,10 @@ struct StatusStateView<Actions: View>: View {
             Image(systemName: systemImage)
                 .font(.system(size: 44))
                 .foregroundStyle(.secondary)
+                // The title below says in words what the glyph says in a picture, so leaving
+                // it in the tree makes a listener sit through "exclamation mark triangle"
+                // before reaching the sentence that matters.
+                .accessibilityHidden(true)
             Text(title)
                 .font(.title3.weight(.semibold))
                 .multilineTextAlignment(.center)

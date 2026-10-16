@@ -49,7 +49,20 @@ struct VideoScrubBar: View {
                 Capsule().fill(.white.opacity(0.3))
                 Capsule().fill(.white).frame(width: width * fraction)
             }
-            .contentShape(Rectangle().inset(by: -10)) // Widens the drag target past the thin visual track.
+            // Past the 3 pt visual track to the 44 pt floor, vertically only: sideways it would
+            // reach over the Play/Pause glyph 12 pt away and take its taps as scrubs.
+            .touchTarget(insetBy: 21, axes: .vertical)
+            // Without an adjustable action the track is a pure drag surface: a listener can
+            // hear where playback stands but has no way to move it.
+            .accessibilityElement()
+            .accessibilityLabel("Playback position")
+            .accessibilityValue(VideoDurationFormatter.accessibilityString(from: currentTime))
+            .accessibilityIdentifier("playback-position")
+            .accessibilityAdjustableAction { direction in
+                let step: TimeInterval = direction == .increment ? 1 : -1
+                currentTime = min(max(currentTime + step, 0), duration)
+                seek(to: currentTime)
+            }
             // `.highPriorityGesture`, not `.gesture`: this needs to fire regardless of
             // `ProcessingView`'s own swipe gesture on an ancestor, which runs simultaneously
             // with this one rather than competing for it (see that gesture's own doc comment).

@@ -78,9 +78,7 @@ struct TrimSliderView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(
-                    "Trim range \(ClipDurationFormatter.string(from: viewModel.window.startTime)) to "
-                        + ClipDurationFormatter.string(from: viewModel.window.endTime))
+                .accessibilityLabel(trimRangeLabel)
             }
         } else {
             ProgressView()
@@ -196,6 +194,14 @@ struct TrimSliderView: View {
         return abs(time - window.startTime) <= abs(time - window.endTime) ? .start : .end
     }
 
+    /// The window the two handles currently bracket, read as one element rather than as two
+    /// unlabeled timestamps.
+    private var trimRangeLabel: String {
+        let start = ClipDurationFormatter.accessibilityString(from: viewModel.window.startTime)
+        let end = ClipDurationFormatter.accessibilityString(from: viewModel.window.endTime)
+        return String(localized: "Trim range \(start) to \(end)")
+    }
+
     private func handle(
         _ which: ActiveHandle,
         at time: TimeInterval,
@@ -206,11 +212,15 @@ struct TrimSliderView: View {
         let capCenter = position(of: time, in: range, width: width)
             + (which == .start ? -Self.capWidth : Self.capWidth) / 2
         return TrimHandleGlyphView(direction: which == .start ? .leading : .trailing)
-            .frame(width: 32, height: Self.rowHeight)
+            // 44 pt wide, the touch-target floor and also the frame VoiceOver draws its
+            // focus ring on; the offset re-centers it on the cap.
+            .frame(width: 44, height: Self.rowHeight)
             .contentShape(Rectangle())
-            .offset(x: capCenter - 16)
-            .accessibilityLabel(which == .start ? "Trim start" : "Trim end")
-            .accessibilityValue(ClipDurationFormatter.string(from: time))
+            .offset(x: capCenter - 22)
+            .accessibilityLabel(
+                which == .start ? String(localized: "Trim start") : String(localized: "Trim end"))
+            .accessibilityValue(ClipDurationFormatter.accessibilityString(from: time))
+            .accessibilityIdentifier(which == .start ? "trim-start-handle" : "trim-end-handle")
             .accessibilityAdjustableAction { direction in
                 // Tenth-second steps for VoiceOver.
                 apply(time + (direction == .increment ? 0.1 : -0.1), to: which)

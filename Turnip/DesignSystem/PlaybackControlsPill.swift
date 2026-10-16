@@ -27,8 +27,10 @@ struct PlayPauseButton: View {
         Button(action: action) {
             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                 .foregroundStyle(.white)
+                .playbackControlTouchTarget()
         }
         .accessibilityLabel(isPlaying ? "Pause" : "Play")
+        .accessibilityIdentifier("playback-play-pause")
     }
 }
 
@@ -42,7 +44,17 @@ struct MuteButton: View {
         Button(action: action) {
             Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
                 .foregroundStyle(.white)
+                .playbackControlTouchTarget()
         }
         .accessibilityLabel(isMuted ? "Unmute" : "Mute")
+        .accessibilityIdentifier("playback-mute")
+    }
+}
+
+private extension View {
+    /// A body-sized glyph is about 20 pt, and the pill's padding sits outside its buttons
+    /// rather than around each one, so the glyphs are what need widening.
+    func playbackControlTouchTarget() -> some View {
+        touchTarget(insetBy: 12)
     }
 }
