@@ -9,9 +9,11 @@ import Foundation
 /// The flow per check: fetch the manifest from
 /// `<baseURL>/api/models/current`; if it names a newer version than the staged
 /// one, download the bytes, verify their SHA-256 against the manifest, and
-/// atomically stage them. Staging never touches a model in use — a running
-/// session must not hot-swap models mid-inference — so the trick-model loader,
-/// still to come, reads `ModelUpdateStore.activeModelURL()` at its own load.
+/// atomically stage them. Staging never swaps the model a running session is
+/// using — a session must not hot-swap models mid-inference — but it does
+/// delete the previously staged file, so the trick-model loader, still to come,
+/// must load `ModelUpdateStore.activeModelURL()` once at its own load and not
+/// reopen that path later in the session.
 ///
 /// An actor for three reasons: the check is `async` throughout (network,
 /// disk), `lastError` is written from the check's continuation, and the
