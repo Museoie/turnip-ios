@@ -139,7 +139,15 @@ Output: list of `(start_time, end_time)` in seconds.
 - Slide back inside `[0, 1]` if expansion pushes past a frame edge, which keeps the ratio; an axis longer than the frame first shrinks the rect uniformly about its center until it fits, then slides. The rect is always the target ratio — the editor's fixed crop marker and the export's output size both rely on that — and it never reaches past the frame: the crop shows video in every part of it (UIUX.md § "Clip Detail / Editor"), so an athlete crossing more of a landscape frame than a 9:16 crop of its height can hold is cut rather than letterboxed
 - Denormalize by multiplying by source video's pixel dimensions → final `(min_x, max_x, min_y, max_y)`
 
-Static crop (one rect per clip) is Rev 1's choice — simpler, works well when the athlete stays roughly in one area. Dynamic crop (Ken Burns-style, rect changes per frame) is a v2 nice-to-have.
+Static crop (one rect per clip) is Rev 1's choice — simpler, works well when the athlete stays roughly in one area.
+
+**Follow crop (computed, not yet rendered):** `CropPathCalculator` turns the same window into a crop that moves with the athlete — one keyframe per pose sample, all the same size, so the clip never zooms:
+- Size: the largest rect the static calculator would draw around any single sample (same floor, padding and ratio), shrunk to fit the frame
+- Center: each sample's athlete center from a line fitted through its neighbours by least squares, weighted by a Gaussian of 0.4 s standard deviation. The whole window is known up front, so the fit looks ahead as far as it looks back and the crop moves with the athlete instead of trailing them; a line rather than an average follows steady motion exactly at the window's ends. The width is in seconds, so the analysis granularity changes how often the athlete is sampled, not how the crop moves
+- Still unless moving: when the smoothed centers stay within 10% of the crop's size on both axes, every keyframe takes the static crop's center — keypoint jitter on a standing athlete would otherwise read as camera shake
+- A sample with no located keypoint still gets a keyframe, placed by its neighbours; before the first located sample or after the last — the window's lead-in and trailing buffers often hold these — it holds that end's keyframe exactly, since extending the fitted line would turn the last samples' jitter into a pan
+- Each keyframe then shifts just far enough to hold that sample's located joints, and slides inside the frame, which wins if the two disagree
+- Between keyframes the crop moves in a straight line, which is what a video composition's transform ramp draws. Export, the Clip List preview and the editor still use the static rect.
 
 Everything above is ~400 lines of Swift on top of the pose output. The pose model does the heavy lifting; this code just interprets it.
 
