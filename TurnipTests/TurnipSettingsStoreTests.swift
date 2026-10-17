@@ -21,13 +21,15 @@ final class TurnipSettingsStoreTests: XCTestCase {
     }
 
     @MainActor
-    func testAFreshSuiteLoadsAllFourDefaults() {
+    func testAFreshSuiteLoadsEveryDefault() {
         let store = TurnipSettingsStore(defaults: defaults)
 
         XCTAssertEqual(store.analysisMode, .realTime)
         XCTAssertFalse(store.autoAddToAlbum)
         XCTAssertEqual(store.albumName, TurnipSettings.defaultAlbumName)
         XCTAssertEqual(store.analysisGranularity, 10)
+        XCTAssertFalse(store.followAthlete)
+        XCTAssertFalse(store.current.followAthlete)
     }
 
     @MainActor
@@ -37,6 +39,7 @@ final class TurnipSettingsStoreTests: XCTestCase {
         first.autoAddToAlbum = true
         first.albumName = "Tricking Sessions"
         first.setAnalysisGranularity(24)
+        first.followAthlete = true
 
         let second = TurnipSettingsStore(defaults: defaults)
 
@@ -44,6 +47,8 @@ final class TurnipSettingsStoreTests: XCTestCase {
         XCTAssertTrue(second.autoAddToAlbum)
         XCTAssertEqual(second.albumName, "Tricking Sessions")
         XCTAssertEqual(second.analysisGranularity, 24)
+        XCTAssertTrue(second.followAthlete)
+        XCTAssertTrue(second.current.followAthlete)
     }
 
     @MainActor

@@ -58,7 +58,8 @@ struct ProcessingProgress: Sendable {
 /// This is the processing screen's output contract. It deliberately mirrors — rather than
 /// reuses — `ClipListItem` (Turnip/ClipList/ClipListItem.swift): a screen's output contract
 /// should not be its neighbour's view model, so the home flow maps each clip with
-/// `ClipListItem(window: clip.window, cropRect: clip.cropRect)` when it wires the two.
+/// `ClipListItem(window: clip.window, cropRect: clip.cropRect, isFramedByDetection: true)` when
+/// it wires the two.
 struct ProcessedClip: Hashable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect

@@ -178,6 +178,126 @@ final class ClipExporterTests: XCTestCase {
         assertPoint(CGPoint(x: 0, y: 0), mapsTo: .zero, by: transform.layerTransform)
     }
 
+    // MARK: - A moving crop
+
+    private let movingPath = CropPath(keyframes: [
+        CropKeyframe(time: 2, rect: NormalizedRect(minX: 0.1, maxX: 0.3, minY: 0.2, maxY: 0.8)),
+        CropKeyframe(time: 3, rect: NormalizedRect(minX: 0.4, maxX: 0.6, minY: 0.2, maxY: 0.8)),
+        CropKeyframe(time: 4, rect: NormalizedRect(minX: 0.7, maxX: 0.9, minY: 0.2, maxY: 0.8))
+    ])
+
+    private func staticTransform(at time: TimeInterval) throws -> CGAffineTransform {
+        try XCTUnwrap(ClipExportTransform.make(
+            cropRect: movingPath.rect(at: time), naturalSize: landscape, preferredTransform: .identity)
+        ).layerTransform
+    }
+
+    /// The span's start is composition time zero; between it, each keyframe inside it and its
+    /// end, the transform ramps from what a static crop on the path's rect would use at one
+    /// end to what it would use at the other.
+    func testAMovingCropRampsBetweenItsKeyframesInCompositionTime() throws {
+        let transform = try XCTUnwrap(ClipExportTransform.make(
+            cropPath: movingPath, over: 1...5, naturalSize: landscape, preferredTransform: .identity))
+
+        // A path never zooms, so the whole clip renders at the size a static crop on any one of
+        // its rects would — computed rather than written out, since 0.2 of 1920 in Float rounds
+        // up to the next even pixel.
+        let firstRect = try XCTUnwrap(ClipExportTransform.make(
+            cropRect: movingPath.keyframes[0].rect, naturalSize: landscape, preferredTransform: .identity))
+        XCTAssertEqual(transform.renderSize, firstRect.renderSize)
+        let stops: [TimeInterval] = [1, 2, 3, 4, 5]
+        XCTAssertEqual(transform.ramps.count, stops.count - 1)
+        for (ramp, (earlier, later)) in zip(transform.ramps, zip(stops, stops.dropFirst())) {
+            assertRange(ramp.timeRange, start: earlier - 1, end: later - 1)
+            XCTAssertEqual(ramp.start, try staticTransform(at: earlier), "from \(earlier)")
+            XCTAssertEqual(ramp.end, try staticTransform(at: later), "to \(later)")
+        }
+        XCTAssertEqual(transform.layerTransform, try staticTransform(at: 1))
+    }
+
+    /// A trimmed clip starts and ends between keyframes: its ramps are cut at its own ends, at
+    /// the path's rect there, and the keyframes outside it play no part.
+    func testAMovingCropCutsItsRampsAtTheSpansEnds() throws {
+        let transform = try XCTUnwrap(ClipExportTransform.make(
+            cropPath: movingPath, over: 2.5...3.5, naturalSize: landscape, preferredTransform: .identity))
+
+        XCTAssertEqual(transform.ramps.count, 2)
+        assertRange(transform.ramps[0].timeRange, start: 0, end: 0.5)
+        assertRange(transform.ramps[1].timeRange, start: 0.5, end: 1)
+        // Halfway between the first two keyframes the crop's left edge is at 0.25 of 1920.
+        XCTAssertEqual(transform.layerTransform.tx, -480, accuracy: 0.001)
+        XCTAssertEqual(transform.ramps[1].end, try staticTransform(at: 3.5))
+    }
+
+    func testAMovingCropIsNilForAnUnknownSourceSize() {
+        XCTAssertNil(ClipExportTransform.make(
+            cropPath: movingPath, over: 1...5, naturalSize: .zero, preferredTransform: .identity))
+    }
+
+    func testAnExportWithoutAPathKeepsTheStaticCrop() throws {
+        let still = try XCTUnwrap(ClipExportTransform.make(
+            cropRect: NormalizedRect(minX: 0.2, maxX: 0.4, minY: 0, maxY: 1),
+            naturalSize: landscape, preferredTransform: .identity))
+        let spec = ClipSpec(
+            window: TrickWindow(startTime: 1, endTime: 5),
+            cropRect: NormalizedRect(minX: 0.2, maxX: 0.4, minY: 0, maxY: 1))
+
+        let transform = try ClipExporter.renderTransform(
+            for: spec, staticTransform: still, videoRange: secondsRange(1, 5),
+            naturalSize: landscape, preferredTransform: .identity)
+
+        XCTAssertEqual(transform.layerTransform, still.layerTransform)
+        XCTAssertTrue(transform.ramps.isEmpty)
+    }
+
+    /// The trimmed composition starts where the trimmed video range does, which is where the
+    /// ramps have to be timed from — not the trick window's own start.
+    func testAnExportWithAPathTimesItsRampsFromTheTrimmedVideoRange() throws {
+        let still = try XCTUnwrap(ClipExportTransform.make(
+            cropRect: movingPath.keyframes[0].rect, naturalSize: landscape, preferredTransform: .identity))
+        let spec = ClipSpec(
+            window: TrickWindow(startTime: 1, endTime: 5), cropRect: movingPath.keyframes[0].rect,
+            cropPath: movingPath)
+
+        let transform = try ClipExporter.renderTransform(
+            for: spec, staticTransform: still, videoRange: secondsRange(1.5, 4.5),
+            naturalSize: landscape, preferredTransform: .identity)
+
+        XCTAssertEqual(transform.ramps.count, 4)
+        assertRange(transform.ramps[0].timeRange, start: 0, end: 0.5)
+        XCTAssertEqual(transform.layerTransform, try staticTransform(at: 1.5))
+        assertRange(transform.ramps[3].timeRange, start: 2.5, end: 3)
+    }
+
+    /// The ramps have to reach the layer instruction: a composition that dropped them would
+    /// still render at the right size and hold the first frame's crop for the whole clip.
+    func testTheVideoCompositionCarriesEachRamp() async throws {
+        let url = try await TestVideoWriter.writeTestVideo(frameCount: 150, width: 64, height: 36, fps: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let track = try await AVURLAsset(url: url).loadTracks(withMediaType: .video)[0]
+        let transform = try XCTUnwrap(ClipExportTransform.make(
+            cropPath: movingPath, over: 1...5, naturalSize: CGSize(width: 64, height: 36),
+            preferredTransform: .identity))
+
+        let composition = transform.makeVideoComposition(
+            for: track, duration: CMTime(seconds: 4, preferredTimescale: 600), frameRate: 30)
+
+        let instruction = try XCTUnwrap(
+            composition.instructions.first as? AVMutableVideoCompositionInstruction)
+        let layerInstruction = try XCTUnwrap(instruction.layerInstructions.first)
+        for expected in transform.ramps {
+            let midpoint = CMTimeAdd(expected.timeRange.start, CMTimeMultiplyByRatio(expected.timeRange.duration,
+                                                                                    multiplier: 1, divisor: 2))
+            var start = CGAffineTransform.identity
+            var end = CGAffineTransform.identity
+            var range = CMTimeRange(start: .zero, duration: .zero)
+            XCTAssertTrue(layerInstruction.getTransformRamp(for: midpoint, start: &start, end: &end, timeRange: &range))
+            XCTAssertEqual(start, expected.start)
+            XCTAssertEqual(end, expected.end)
+            XCTAssertEqual(range, expected.timeRange)
+        }
+    }
+
     // MARK: - insertRanges
 
     /// Builds a CMTimeRange from seconds; the export path uses timescale 600.

@@ -1,11 +1,11 @@
 import SwiftUI
 
-/// Configuration screen (`docs/UIUX.md` § "Settings"): the four preferences the app exposes,
+/// Configuration screen (`docs/UIUX.md` § "Settings"): the five preferences the app exposes,
 /// each taking effect the next time its integration point runs rather than needing a restart —
-/// analysis mode on the next Record tap, the album on the next save, granularity on the next
-/// analysis run. Presented as a sheet from Home's gear button rather than pushed onto the main
-/// flow's `NavigationStack`, since it isn't part of "pick a video, get clips" and has nothing to
-/// hand back to that flow.
+/// analysis mode on the next Record tap, the album on the next save, follow crop on the next
+/// Clip List, granularity on the next analysis run. Presented as a sheet from Home's gear button
+/// rather than pushed onto the main flow's `NavigationStack`, since it isn't part of "pick a
+/// video, get clips" and has nothing to hand back to that flow.
 struct SettingsView: View {
     @ObservedObject var settings: TurnipSettingsStore
     @Environment(\.dismiss) private var dismiss
@@ -42,6 +42,18 @@ struct SettingsView: View {
                     Text("Saved clips")
                 } footer: {
                     Text("Off saves clips the way Photos saves any new video, with no album.")
+                }
+
+                Section {
+                    Toggle("Follow the athlete", isOn: $settings.followAthlete)
+                        .accessibilityIdentifier("settings-follow-athlete")
+                } header: {
+                    Text("Crop")
+                } footer: {
+                    Text("""
+                        Moves each clip's crop with the athlete instead of holding one frame. \
+                        A clip you reframe in the editor keeps the crop you set.
+                        """)
                 }
 
                 Section {

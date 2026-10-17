@@ -30,7 +30,7 @@ control:
   affordance needed since it isn't decorative.
 - Every control carries a stable `accessibilityIdentifier`: `settings-analysis-mode` (the
   segmented picker), `settings-auto-add-album`, `settings-album-name` (only present while the
-  toggle above is on), `settings-granularity`, `settings-done`.
+  toggle above is on), `settings-follow-athlete`, `settings-granularity`, `settings-done`.
 - The granularity `Stepper` exposes the `.adjustable` trait natively (SwiftUI's `Stepper`
   already does — no extra work), so VoiceOver can change it with increment/decrement gestures
   without a drag.

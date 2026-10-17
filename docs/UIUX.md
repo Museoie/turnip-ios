@@ -21,7 +21,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -292,7 +292,7 @@ default empty state, so it never reads as "your library is empty."
   and the gear is a `ScrimIconButton` (`HomeSettingsButton`) in a corner overlay row, level with
   the wordmark. Presented as a sheet, not pushed onto the flow's `NavigationStack`: it has nothing
   to hand back to Home and isn't part of "pick a video, get clips."
-- Four preferences, `UserDefaults`-backed (`Turnip/Settings/TurnipSettingsStore.swift`), each
+- Five preferences, `UserDefaults`-backed (`Turnip/Settings/TurnipSettingsStore.swift`), each
   taking effect at its own integration point rather than needing a restart:
   - **Analysis mode** (segmented Real-time / Offline) — whether the camera scores pose live while
     recording (§1b below) or always defers to Processing (§2). Real-time is the default.
@@ -303,7 +303,14 @@ default empty state, so it never reads as "your library is empty."
   - **Analysis granularity** (stepper, 1-30, default 10) — frames sampled per second of footage,
     replacing the fixed rate `docs/DESIGN.md`'s "Performance targets" describes; both the file
     path and the live path (§1b) sample at this rate.
-- Further settings beyond these four are out of scope for this doc's current revision.
+  - **Follow the athlete** (toggle, off by default) — whether each clip's crop moves with the
+    athlete through the trick instead of holding one frame (`docs/DESIGN.md` pipeline step 6,
+    "Follow crop"). It applies to the Clip List's tiles, their looping previews and Save Clips,
+    read once when the Clip List opens. Only a detected clip follows, while its crop is still the
+    one detection computed: the original tile, a "+" clip and a clip the user reframes in the
+    editor keep their static crop, since the editor shows only the static crop for now. So does
+    a clip whose athlete stays put.
+- Further settings beyond these five are out of scope for this doc's current revision.
 
 ### 1b. Camera
 
@@ -642,7 +649,7 @@ default empty state, so it never reads as "your library is empty."
   trick, highlights, the Clip view — live in
   [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5–§8; this doc carries only the
   changes to the v1 flow marked *Planned*, Name Clips (§3a) among them.
-- Further Settings options beyond the four §1a covers — aspect ratio, buffer
+- Further Settings options beyond the five §1a covers — aspect ratio, buffer
   duration, and whatever else a future issue asks for stay out of scope until
   one does; the per-clip crop/trim adjustment in Clip Detail's drag handles
   already covers per-clip framing without a setting.

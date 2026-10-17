@@ -333,9 +333,10 @@ private struct ClipCardView: View {
         _playback = StateObject(
             wrappedValue: ClipCardPlayback(
                 asset: viewModel.sourceAsset,
-                loadComposition: { [viewModel] cropRect, cropAdjustment in
+                loadComposition: { [viewModel] geometry in
                     await viewModel.videoComposition(
-                        cropRect: cropRect, cropAdjustment: cropAdjustment)
+                        cropRect: geometry.cropRect, cropAdjustment: geometry.cropAdjustment,
+                        followingWindow: geometry.followingWindow)
                 },
                 loadDuration: { [viewModel] in await viewModel.assetDuration() }))
     }
@@ -385,7 +386,8 @@ private struct ClipCardView: View {
     /// never from an `.onChange` action closure.
     private func currentPlaybackGeometry() -> ClipCardPlaybackGeometry {
         ClipCardPlaybackGeometry(
-            window: item.window, cropRect: item.cropRect, cropAdjustment: item.cropAdjustment)
+            window: item.window, cropRect: item.cropRect, cropAdjustment: item.cropAdjustment,
+            isFramedByDetection: item.isFramedByDetection)
     }
 
     private var tile: some View {

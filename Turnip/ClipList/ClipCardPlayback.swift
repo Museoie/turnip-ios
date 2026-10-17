@@ -70,9 +70,11 @@ final class AVPlayerLoop: ClipLooping {
 /// rebuilding over the pre-edit range.
 @MainActor
 final class ClipCardPlayback: ObservableObject {
-    /// Loads the `videoComposition` a loop over this framing has to render through.
+    /// Loads the `videoComposition` a loop over this geometry has to render through. Takes
+    /// the window as well as the framing: a crop that follows the athlete moves along a path
+    /// fitted to the frames inside it.
     typealias LoadComposition = @MainActor (
-        _ cropRect: NormalizedRect, _ cropAdjustment: CropAdjustment
+        _ geometry: ClipCardPlaybackGeometry
     ) async -> AVVideoComposition?
     /// Loads the source asset's real duration, for clamping a window before it reaches the
     /// looper. `nil` when it can't be read — the window then builds unclamped.
@@ -175,7 +177,8 @@ final class ClipCardPlayback: ObservableObject {
     func windowChanged(to window: TrickWindow) {
         guard let current = geometry else { return }
         geometry = ClipCardPlaybackGeometry(
-            window: window, cropRect: current.cropRect, cropAdjustment: current.cropAdjustment)
+            window: window, cropRect: current.cropRect, cropAdjustment: current.cropAdjustment,
+            isFramedByDetection: current.isFramedByDetection)
         teardown()
         resume()
     }
@@ -210,7 +213,7 @@ final class ClipCardPlayback: ObservableObject {
         let token = UUID()
         buildToken = token
         buildTask = Task { @MainActor [self] in
-            async let compositionLoad = loadComposition(target.cropRect, target.cropAdjustment)
+            async let compositionLoad = loadComposition(target)
             async let durationLoad = loadDuration()
             let composition = await compositionLoad
             let duration = await durationLoad
@@ -248,7 +251,8 @@ final class ClipCardPlayback: ObservableObject {
         let clampedWindow = ClipEditorViewModel.clamped(window: target.window, to: duration)
         guard clampedWindow != target.window else { return target }
         return ClipCardPlaybackGeometry(
-            window: clampedWindow, cropRect: target.cropRect, cropAdjustment: target.cropAdjustment)
+            window: clampedWindow, cropRect: target.cropRect, cropAdjustment: target.cropAdjustment,
+            isFramedByDetection: target.isFramedByDetection)
     }
 
     /// Clears the in-flight slot only if `token` still owns it: a later attempt for the
@@ -270,6 +274,11 @@ struct ClipCardPlaybackGeometry: Equatable {
     let window: TrickWindow
     let cropRect: NormalizedRect
     let cropAdjustment: CropAdjustment
+    var isFramedByDetection = false
+
+    /// The window a crop that follows the athlete is fitted to, or `nil` for a clip whose crop
+    /// isn't detection's and so never follows.
+    var followingWindow: TrickWindow? { isFramedByDetection ? window : nil }
 }
 
 /// Whether a mounted loop has to be replaced to show `target`: `builtFor` is `nil` when

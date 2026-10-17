@@ -117,7 +117,9 @@ struct HomeView: View {
         popToRoot: @escaping () -> Void
     ) -> ClipListView {
         ClipListView(
-            items: detection.clips.map { ClipListItem(window: $0.window, cropRect: $0.cropRect) },
+            items: detection.clips.map {
+                ClipListItem(window: $0.window, cropRect: $0.cropRect, isFramedByDetection: true)
+            },
             poseFrames: detection.poseFrames,
             asset: asset,
             assetIdentifier: video.assetIdentifier,

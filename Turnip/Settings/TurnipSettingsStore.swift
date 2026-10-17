@@ -18,6 +18,7 @@ final class TurnipSettingsStore: ObservableObject {
         static let autoAddToAlbum = "settings.autoAddToAlbum"
         static let albumName = "settings.albumName"
         static let analysisGranularity = "settings.analysisGranularity"
+        static let followAthlete = "settings.followAthlete"
     }
 
     private let defaults: UserDefaults
@@ -32,6 +33,9 @@ final class TurnipSettingsStore: ObservableObject {
         didSet { defaults.set(albumName, forKey: Key.albumName) }
     }
     @Published private(set) var analysisGranularity: Int
+    @Published var followAthlete: Bool {
+        didSet { defaults.set(followAthlete, forKey: Key.followAthlete) }
+    }
 
     /// `defaults` is injectable so tests exercise a real round trip against an isolated
     /// `UserDefaults` suite rather than the app's shared one.
@@ -43,11 +47,13 @@ final class TurnipSettingsStore: ObservableObject {
             analysisMode: storedMode ?? .realTime,
             autoAddToAlbum: defaults.object(forKey: Key.autoAddToAlbum) as? Bool ?? false,
             albumName: defaults.string(forKey: Key.albumName) ?? TurnipSettings.defaultAlbumName,
-            analysisGranularity: storedGranularity ?? TurnipSettings.defaultGranularity)
+            analysisGranularity: storedGranularity ?? TurnipSettings.defaultGranularity,
+            followAthlete: defaults.object(forKey: Key.followAthlete) as? Bool ?? false)
         analysisMode = loaded.analysisMode
         autoAddToAlbum = loaded.autoAddToAlbum
         albumName = loaded.albumName
         analysisGranularity = loaded.analysisGranularity
+        followAthlete = loaded.followAthlete
     }
 
     /// The Settings screen's stepper goes through this rather than a plain `@Published` setter,
@@ -69,6 +75,7 @@ final class TurnipSettingsStore: ObservableObject {
             analysisMode: analysisMode,
             autoAddToAlbum: autoAddToAlbum,
             albumName: albumName,
-            analysisGranularity: analysisGranularity)
+            analysisGranularity: analysisGranularity,
+            followAthlete: followAthlete)
     }
 }

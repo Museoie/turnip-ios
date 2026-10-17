@@ -32,17 +32,22 @@ struct TurnipSettings: Equatable, Sendable {
     var autoAddToAlbum: Bool
     var albumName: String
     private(set) var analysisGranularity: Int
+    /// Whether a saved clip's crop moves with the athlete (`CropPathCalculator`) instead of
+    /// holding the one rect the editor shows.
+    var followAthlete: Bool
 
     init(
         analysisMode: AnalysisMode = .realTime,
         autoAddToAlbum: Bool = false,
         albumName: String = TurnipSettings.defaultAlbumName,
-        analysisGranularity: Int = TurnipSettings.defaultGranularity
+        analysisGranularity: Int = TurnipSettings.defaultGranularity,
+        followAthlete: Bool = false
     ) {
         self.analysisMode = analysisMode
         self.autoAddToAlbum = autoAddToAlbum
         self.albumName = albumName
         self.analysisGranularity = Self.clampedGranularity(analysisGranularity)
+        self.followAthlete = followAthlete
     }
 
     /// Clamps to `granularityRange` so a corrupt or out-of-range stored value, or a future

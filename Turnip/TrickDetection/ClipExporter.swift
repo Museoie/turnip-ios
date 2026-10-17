@@ -9,15 +9,23 @@ import Foundation
 /// matching the pose keypoints it is computed from (`VideoFrameSampler` applies the track's
 /// `preferredTransform` when sampling, so keypoints are measured upright). Pass
 /// `SampledFrame.renderSize` (not `track.naturalSize`) when denormalizing it.
+///
+/// `cropPath`, when set, replaces `cropRect`: the crop follows the athlete along it instead of
+/// holding one rect (`CropPathCalculator`).
 struct ClipSpec: Equatable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
     let cropAdjustment: CropAdjustment
+    let cropPath: CropPath?
 
-    init(window: TrickWindow, cropRect: NormalizedRect, cropAdjustment: CropAdjustment = .identity) {
+    init(
+        window: TrickWindow, cropRect: NormalizedRect, cropAdjustment: CropAdjustment = .identity,
+        cropPath: CropPath? = nil
+    ) {
         self.window = window
         self.cropRect = cropRect
         self.cropAdjustment = cropAdjustment
+        self.cropPath = cropPath
     }
 }
 
@@ -58,13 +66,25 @@ enum ClipExportError: LocalizedError, Equatable {
     }
 }
 
+/// One stretch of a moving crop: across `timeRange` the layer transform slides linearly from
+/// `start` to `end`, which is what `setTransformRamp` draws.
+struct ClipTransformRamp: Equatable {
+    let timeRange: CMTimeRange
+    let start: CGAffineTransform
+    let end: CGAffineTransform
+}
+
 /// The render geometry for one exported clip, computed from pure inputs — no AVFoundation
 /// session required, so it is unit-testable.
 struct ClipExportTransform {
     /// Output frame size in pixels.
     let renderSize: CGSize
-    /// Maps the source video track's coordinates onto the composition's render space.
+    /// Maps the source video track's coordinates onto the composition's render space: for the
+    /// whole clip when `ramps` is empty, and at time zero when it isn't.
     let layerTransform: CGAffineTransform
+    /// A moving crop's transform over time, in composition time and in order, the first
+    /// starting at zero. Empty for a static crop.
+    var ramps: [ClipTransformRamp] = []
 
     /// Builds the crop transform for `cropRect`.
     ///
@@ -129,6 +149,45 @@ struct ClipExportTransform {
         return ClipExportTransform(renderSize: renderSize, layerTransform: layerTransform)
     }
 
+    /// The transform for a crop that moves along `cropPath` over `span`, a range of source
+    /// time that composition time zero sits at the start of — the trimmed clip's range for an
+    /// export, `0...duration` for a player over the untrimmed source. One ramp per stretch
+    /// between the path's keyframes inside `span`, each built from `make(cropRect:...)` at its
+    /// ends, so every moment renders the same way a static crop on that rect would.
+    /// `cropAdjustment` applies about the moving crop's center.
+    ///
+    /// `nil` when the source dimensions are unknown or a keyframe's rect is degenerate.
+    static func make(
+        cropPath: CropPath,
+        over span: ClosedRange<TimeInterval>,
+        naturalSize: CGSize,
+        preferredTransform: CGAffineTransform,
+        cropAdjustment: CropAdjustment = .identity
+    ) -> ClipExportTransform? {
+        let inside = cropPath.keyframes.map(\.time).filter { $0 > span.lowerBound && $0 < span.upperBound }
+        let times = [span.lowerBound] + inside + (span.upperBound > span.lowerBound ? [span.upperBound] : [])
+        var stops: [(time: TimeInterval, transform: ClipExportTransform)] = []
+        for time in times {
+            guard let transform = make(
+                cropRect: cropPath.rect(at: time), naturalSize: naturalSize,
+                preferredTransform: preferredTransform, cropAdjustment: cropAdjustment)
+            else { return nil }
+            stops.append((time, transform))
+        }
+        guard let first = stops.first else { return nil }
+        let ramps = zip(stops, stops.dropFirst()).map { earlier, later in
+            ClipTransformRamp(
+                timeRange: CMTimeRange(
+                    start: CMTime(seconds: earlier.time - span.lowerBound, preferredTimescale: 600),
+                    end: CMTime(seconds: later.time - span.lowerBound, preferredTimescale: 600)),
+                start: earlier.transform.layerTransform,
+                end: later.transform.layerTransform)
+        }
+        return ClipExportTransform(
+            renderSize: first.transform.renderSize, layerTransform: first.transform.layerTransform,
+            ramps: ramps)
+    }
+
     /// Builds an `AVMutableVideoComposition` applying this transform to `track`, covering
     /// `duration` from the start with a single instruction — shared by `ClipExporter`
     /// (over a trimmed composition track) and the clip list's live preview player (over
@@ -146,7 +205,14 @@ struct ClipExportTransform {
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-        layerInstruction.setTransform(layerTransform, at: .zero)
+        // A moving crop's first ramp starts at zero, and a fixed transform set at the same time
+        // would compete with it.
+        if ramps.isEmpty {
+            layerInstruction.setTransform(layerTransform, at: .zero)
+        }
+        for ramp in ramps {
+            layerInstruction.setTransformRamp(fromStart: ramp.start, toEnd: ramp.end, timeRange: ramp.timeRange)
+        }
         instruction.layerInstructions = [layerInstruction]
         videoComposition.instructions = [instruction]
         return videoComposition
@@ -277,7 +343,7 @@ actor ClipExporter {
         }
         let naturalSize = try await videoTrack.load(.naturalSize)
         let preferredTransform = try await videoTrack.load(.preferredTransform)
-        guard let transform = ClipExportTransform.make(
+        guard let staticTransform = ClipExportTransform.make(
             cropRect: spec.cropRect, naturalSize: naturalSize, preferredTransform: preferredTransform,
             cropAdjustment: spec.cropAdjustment
         ) else {
@@ -298,6 +364,9 @@ actor ClipExporter {
         else {
             throw ClipExportError.invalidTimeRange(window: spec.window)
         }
+        let transform = try Self.renderTransform(
+            for: spec, staticTransform: staticTransform, videoRange: ranges.video,
+            naturalSize: naturalSize, preferredTransform: preferredTransform)
         let composition = try makeComposition(
             videoTrack: videoTrack, audioTrack: audioTrack, ranges: ranges)
         let videoComposition = try await makeVideoComposition(
@@ -318,6 +387,23 @@ actor ClipExporter {
 
         try await runExport(session, progress: progress)
         return ExportedClip(fileURL: outputURL)
+    }
+
+    /// The static crop's transform, or — for a spec with a crop path — the moving crop's, timed
+    /// against the composition, which starts where the trimmed video range does.
+    static func renderTransform(
+        for spec: ClipSpec, staticTransform: ClipExportTransform, videoRange: CMTimeRange,
+        naturalSize: CGSize, preferredTransform: CGAffineTransform
+    ) throws -> ClipExportTransform {
+        guard let path = spec.cropPath else { return staticTransform }
+        guard let moving = ClipExportTransform.make(
+            cropPath: path, over: videoRange.start.seconds...videoRange.end.seconds,
+            naturalSize: naturalSize, preferredTransform: preferredTransform,
+            cropAdjustment: spec.cropAdjustment)
+        else {
+            throw ClipExportError.invalidCropRect(window: spec.window)
+        }
+        return moving
     }
 
     /// Deletes any file already at `url`. Export sessions refuse to write over an
@@ -364,8 +450,9 @@ actor ClipExporter {
     }
 
     /// The crop: one instruction covering the whole composition, applying the render
-    /// transform at time zero. The instruction's range is the composition's full duration —
-    /// the composition holds exactly one trimmed clip, so there is nothing else to cover.
+    /// transform at time zero, or a moving crop's ramps from there. The instruction's range is
+    /// the composition's full duration — the composition holds exactly one trimmed clip, so
+    /// there is nothing else to cover.
     private func makeVideoComposition(
         for videoTrack: AVAssetTrack,
         in composition: AVMutableComposition,

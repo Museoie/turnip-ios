@@ -20,6 +20,11 @@ import Foundation
 /// since an edited clip is no longer the one that was saved; opening a clip and closing
 /// it unchanged leaves it set.
 ///
+/// `isFramedByDetection` is true while the crop is still the one detection computed from the
+/// athlete's pose: only such a clip can follow the athlete (`ClipListViewModel.cropPath`). The
+/// original, a hand-added clip and a clip whose framing the editor changed all start or end up
+/// `false`; a trim alone keeps it.
+///
 /// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
 /// stands for the source video already in Photos rather than a derived clip: it
 /// carries the full-video window and full-frame crop, is never opened in the
@@ -34,6 +39,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     var cropAdjustment: CropAdjustment
     var isTrashed: Bool
     var isSaved: Bool
+    var isFramedByDetection: Bool
     let isOriginal: Bool
 
     init(
@@ -43,6 +49,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         cropAdjustment: CropAdjustment = .identity,
         isTrashed: Bool = false,
         isSaved: Bool = false,
+        isFramedByDetection: Bool = false,
         isOriginal: Bool = false
     ) {
         self.id = id
@@ -51,6 +58,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.cropAdjustment = cropAdjustment
         self.isTrashed = isTrashed
         self.isSaved = isSaved
+        self.isFramedByDetection = isFramedByDetection
         self.isOriginal = isOriginal
     }
 

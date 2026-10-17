@@ -13,7 +13,8 @@ import Foundation
 /// main-actor view; the crossing is narrow and read-only — the generator seeks and copies
 /// one frame, and the asset is never mutated or stored.
 actor ClipThumbnailLoader {
-    /// Loads the thumbnail for `item` from `asset`.
+    /// Loads the thumbnail for `item` from `asset` — cropped, for a clip that follows the
+    /// athlete, to where `cropPath` has the crop at the thumbnail's own moment.
     ///
     /// The generator returns the raw, un-uprighted frame: `ClipExportTransform.make`
     /// already composes `preferredTransform` into `layerTransform`, the same as the
@@ -27,7 +28,9 @@ actor ClipThumbnailLoader {
     /// `copyCGImage` blocks and is not cancellable, so a later checkpoint cannot save
     /// the expensive work, it can only discard a result another card may be waiting on
     /// (cards share one in-flight decode per id through the view model's dedup).
-    func thumbnail(for item: ClipListItem, in asset: AVAsset) async -> CGImage? {
+    func thumbnail(
+        for item: ClipListItem, following cropPath: CropPath? = nil, in asset: AVAsset
+    ) async -> CGImage? {
         do {
             // Fail fast on assets with no video track: seeking a frame that can't exist
             // is wasted work, and the placeholder tile is the honest fallback.
@@ -57,7 +60,7 @@ actor ClipThumbnailLoader {
                 from: image,
                 naturalSize: naturalSize,
                 preferredTransform: preferredTransform,
-                cropRect: item.cropRect,
+                cropRect: cropPath?.rect(at: midpoint) ?? item.cropRect,
                 cropAdjustment: item.cropAdjustment,
                 maxPixelSize: Self.defaultMaxPixelSize
             )
