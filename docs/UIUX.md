@@ -1,5 +1,15 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 16 · 2026-10-19 · Planned, not built: the Clip Editor gets two framing
+modes, Still and Follow, switched by a segmented control in the header's
+title slot (§4). Still mode is today's editor, with the switch in its
+header. In Follow mode the crop
+moves with the athlete: Auto follow writes a few keyframes, a drag on the
+video at any moment adds or moves one, and a follow lane scaled to the trim
+window shows them and scrubs between them. Keyframes hold position only;
+zoom and level stay the whole clip's. Settings' Follow the athlete becomes
+the mode a detected clip starts in (§1a). Decision 8 records why.*
+
 *Rev 14 · 2026-10-15 · Planned, not built: the root pager gains a third
 page, Profile ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md)), reached by
 swiping left from Home or by a third icon on the floating bar. Clip List's
@@ -21,7 +31,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 plans Still and Follow framing modes in the Clip Editor.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -125,6 +135,8 @@ Where it applies today:
 |---|---|---|---|
 | Clip Editor crop fit (§4) | Pinch / rotate / drag the video under the marker | "Auto crop" | The video's scale, rotation and offset about the crop center, eased over 0.4 s |
 | Clip Editor leveling (§4) | Two-finger rotate | "Auto rotate" | The video's rotation about the crop center, eased over 0.4 s |
+| *Planned:* Clip Editor follow fit (§4) | Drag the video at a few moments in Follow mode | "Auto follow", and an untouched Auto follow re-tracking a trimmed window | The video's scale and offset eased over 0.4 s to the path at the playhead, then the path plays |
+| *Planned:* Clip Editor framing mode (§4) | Pinch, rotate and drag | The "Still \| Follow" switch | The video's scale, rotation and offset moving from one mode's framing to the other's, eased over 0.4 s |
 
 This is the companion of the principle above: that one says a button plays
 the gesture's *transition*; this one says an automatic change plays the
@@ -309,7 +321,12 @@ default empty state, so it never reads as "your library is empty."
     read once when the Clip List opens. Only a detected clip follows, while its crop is still the
     one detection computed: the original tile, a "+" clip and a clip the user reframes in the
     editor keep their static crop, since the editor shows only the static crop for now. So does
-    a clip whose athlete stays put.
+    a clip whose athlete stays put. *Planned (Rev 16):* it becomes the framing mode a detected
+    clip starts in (§4): off starts it in Still, today's behavior; on starts it in Follow with
+    Auto follow applied. The editor then keeps either mode, so the exception for a clip
+    reframed in the editor goes away: a clip adjusted in Follow mode still follows. The
+    original tile and a "+" clip still start in Still, and a clip whose path never moves plays
+    as a still crop in either mode.
 - Further settings beyond these five are out of scope for this doc's current revision.
 
 ### 1b. Camera
@@ -533,7 +550,9 @@ default empty state, so it never reads as "your library is empty."
   clip at a time:
   - Video player showing the trimmed clip looping under the crop marker: one
     rectangle of the export's aspect ratio, the same size at the same place on screen
-    for every clip, centered in the band between the header row and the controls.
+    for every clip, centered in the band between the header row and the controls
+    (*planned, Rev 16:* for every clip in the same framing mode, since Follow mode's
+    lane makes its marker shorter; see "Two framing modes" below).
     The video is laid out so the clip's crop rect fills the marker exactly — a
     different clip, or an adjustment to the framing, moves and scales the video,
     never the marker — and the rest of the frame shows around it through frosted
@@ -637,7 +656,115 @@ default empty state, so it never reads as "your library is empty."
     out in the band a bar would occupy, with the chevron and title at the same
     positions as Clip List's, so the two headers line up through the
     cross-fade (`ScreenHeaderBand`; every bar-less screen's corner controls
-    share the same placement).
+    share the same placement). *Planned (Rev 16):* the title's slot holds the
+    Still | Follow switch instead (below).
+  - *Planned (Rev 16):* **Two framing modes, Still and Follow.** A clip's crop
+    either holds one framing for the whole clip (Still: everything above) or
+    moves with the athlete (Follow). The UI presents them as two modes, not as
+    an effect switched on and off:
+    - **The switch.** A segmented control, "Still | Follow", takes the title's
+      slot in the top row; the chevron and Delete stay where they are. Naming
+      both sides is what makes it read as a choice between two modes. It costs
+      two things, both accepted: the control claims a touch that starts on it,
+      so a swipe down from there doesn't dismiss (one that starts anywhere else
+      in the band still does); and through the expansion cross-fade it fades in
+      at the title's slot rather than lining up with Clip List's title. The
+      screen keeps "Edit clip" as its VoiceOver header. A clip opens in the mode
+      it was last committed in. A detected clip that hasn't been opened yet
+      starts in the mode Settings' Follow the athlete gives it (§1a); a "+" clip
+      starts in Still. Rejected: a mode row above the crop buttons, which would
+      shorten every clip's marker, Still mode's included.
+    - **What a follow crop is.** A few keyframes, each a moment of the source
+      (in seconds, not frame numbers) and where the video sits under the marker
+      at that moment. Zoom and level belong to the whole clip: a zoom per
+      keyframe would make the clip breathe in and out, and a turn per keyframe
+      would tilt the horizon partway through. Between keyframes the crop moves
+      on one smooth curve through all of them. It eases out of the first
+      keyframe and into the last, and passes through the ones between without
+      stopping. Easing each stretch between two keyframes separately would stop
+      the crop at every keyframe while the athlete keeps moving; with two
+      keyframes the two are the same ease-in-out. The curve never swings past a
+      keyframe (`DESIGN.md` step 6). Before the first keyframe and after the
+      last, the crop holds still.
+    - **Layout.** The crop button becomes "Auto follow" / "Reset follow", next
+      to an unchanged Auto rotate. A follow lane appears between the buttons and
+      the trim timeline, which still spans the whole video and works as above.
+      The lane takes about 44 pt from the stage, so Follow mode's marker is that
+      much shorter (about 7% on a 6.9" iPhone), and switching modes animates the
+      marker and the video to their new size. The marker is the same size at
+      the same place for every clip in the same mode, and the expansion flight
+      lands on whichever marker the editor reports.
+    - **The follow lane.** It spans the trim window, not the video, so a
+      4-second clip from a 3-minute take still gets the lane's whole width. A
+      drag anywhere on it scrubs, with the trim timeline's vertical
+      drag-to-slow precision, and pauses playback. Each keyframe is a diamond:
+      hollow when Auto follow wrote it, filled yellow once the user set or
+      moved it. That is the split Photos' Cinematic editor draws between
+      automatic and manual focus points, and it shows what tapping Auto follow
+      again would replace. Tapping a diamond jumps to it. A button at the
+      lane's trailing end adds a keyframe at the playhead, or removes the one
+      under it; a long press on a diamond does the same. Removing a keyframe
+      Auto follow wrote and the user moved puts it back where Auto follow had
+      it, hollow again; removing one the user added deletes it. A keyframe a
+      trim left outside the window shows as a marker at that end of the lane
+      and still shapes the curve at the boundary, so widening the trim again
+      finds it where it was.
+    - **Gestures.** A one-finger drag places the video at the playhead's
+      moment: within 0.1 s of a keyframe it moves that keyframe, anywhere else
+      it adds one that starts from where the curve already is, so nothing
+      jumps. Touch-down pauses playback, and the clip stays paused on release,
+      showing where it landed, until play is tapped. Pinch and two-finger
+      rotate change the whole clip's zoom and level exactly as in Still mode;
+      their slide doesn't set a keyframe.
+    - **Auto follow.** Frames the athlete through the window at the current
+      rotation: the pipeline's follow path for the window (`DESIGN.md` step 6),
+      reduced to a few keyframes, at the zoom that holds the athlete at every
+      moment. Like Auto crop, it keeps the rotation, replaces the zoom and the
+      positions, and discards keyframes the user set. The video moves to the
+      path at the playhead over the same 0.4 s ease and then follows it.
+      Switching a detected clip to Follow when it has no follow crop yet runs
+      Auto follow at once: Follow means following the athlete, and waiting for
+      a second tap would show a still crop under a Follow label. The button then
+      reads "Reset follow", and the toggle rules are Auto crop's: any manual
+      pinch, rotate, drag or keyframe change returns it and Auto rotate to
+      offering their fits; a trim does not.
+    - **Reset follow.** Returns to the whole source frame centered in the
+      marker with no keyframes, so the crop holds still, and stays in Follow
+      mode; the button then offers Auto follow again. From there a manual
+      follow is a few drags at a few moments. A clip with no pose analysis has
+      Reset follow alone, disabled while the framing is the whole frame with no
+      keyframes and enabled once a pinch, a drag or a keyframe has moved it (a
+      turn alone doesn't count), as Rev 13's Reset crop is; Follow mode is
+      entirely manual there.
+    - **Nothing to follow.** When the path Auto follow finds doesn't move,
+      because the athlete stays put or a portrait take leaves a 9:16 crop no
+      room at the fitted zoom, it frames the athlete with one keyframe, as Auto
+      crop would, and says "Nothing to follow" in a notice where "No horizon
+      found" appears. Follow stays usable by hand: pinch in, then drag at a few
+      moments.
+    - **Switching back and forth.** Each mode keeps its own framing for the
+      editor session, so Still → Follow → Still lands on the same still
+      framing, and the switch moves the video from one framing to the other
+      over the 0.4 s ease. Back (the chevron or the swipe) commits the active
+      mode, and the clip keeps the other mode's framing too, so a later switch
+      finds it.
+    - **Trim.** A trim never moves a keyframe the user set or moved: a trim is
+      not a re-crop (Rev 8). One deliberate exception: a follow crop that is
+      still entirely Auto follow's, every diamond hollow, re-tracks the new
+      window when the handle is released, positions only and at the same zoom,
+      moving there the way Auto follow does. Rev 15's Clip List refit also
+      resized the crop, and resizing on a trim is what Rev 8 removed: it made
+      the video shrink under the marker as the window grew. Still mode is
+      unchanged: its framing never follows a trim.
+    - **Playback and export.** The editor plays the follow crop as it loops,
+      pauses and scrubs, and the expansion flight's card shows it too, since
+      the card is the editor's own player. Save Clips, the tile's loop and its
+      poster draw the same curve (`DESIGN.md` step 6), so what the editor shows
+      is what export writes.
+    - **VoiceOver.** The switch is a standard segmented control. In Follow mode
+      the crop area adds Previous keyframe, Next keyframe, Add keyframe and
+      Remove keyframe to its actions, and the lane is adjustable: swiping up or
+      down scrubs a tenth of a second, the trim handles' step.
 
 ## Out of scope for this doc
 
@@ -729,3 +856,26 @@ Resolved 2026-09-04.
    (model still loading, device throttling, samples shed) still lands on
    Processing's idle state, so the fallback is never worse than before.
    Tapped gallery tiles are unchanged.
+8. **Follow crop in the editor → A second framing mode, edited by keyframes.**
+   Recorded 2026-10-19 (Rev 16, planned): the editor has to show and keep the
+   follow crop Rev 15 added, offer it both automatically and by hand, let an
+   automatic follow be adjusted with the same controls a manual one is built
+   with, and present Still and Follow as two modes, without changing the
+   framing controls or the marker for someone who never follows. A follow crop is a few keyframes, written by
+   Auto follow and by the user's drags alike, so adjusting an automatic follow
+   and building a manual one are the same act; Final Cut Pro for iPad's Auto
+   Crop works the same way. The pipeline's one-keyframe-per-sample path is
+   reduced before it is shown: editors that expose dense generated keyframes
+   (Premiere's Auto Reframe, Resolve's Smart Reframe) are known for
+   corrections that take longer than starting over. The keyframes sit on one
+   curve rather than an ease per stretch, which stops the crop at every
+   keyframe (After Effects' Easy Ease and Final Cut's Smooth draw the same
+   complaint). Keyframes hold position only; zoom and level stay the whole
+   clip's. Four calls, each made against an alternative that would have
+   changed Still mode's marker or cost an extra step: the switch takes the header's
+   title slot rather than a new row, which would shorten every clip's marker;
+   Follow mode's marker is shorter by the lane, rather than one size reserved
+   for both modes, which would shorten Still's too; switching a detected clip
+   to Follow runs Auto follow at once rather than waiting for a tap; and an
+   Auto follow nobody has touched re-tracks a trimmed window, positions only,
+   while a touched one stays put.
