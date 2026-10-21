@@ -261,8 +261,7 @@ struct ClipExpansionContainer: View {
                 geometry: viewModel.previewOverlay,
                 marker: focus,
                 framing: viewModel.framing,
-                duration: viewModel.duration,
-                isSynchronized: !hasLanded,
+                padding: viewModel.previewPadding,
                 onReadyForDisplay: surfaceDidBecomeReady)
             .opacity(isSeekedToSource ? 1 : 0)
         }

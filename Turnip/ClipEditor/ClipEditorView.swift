@@ -312,11 +312,10 @@ struct ClipEditorView: View {
                     marker: marker,
                     layoutMarker: layoutMarker,
                     framing: viewModel.framing,
-                    duration: viewModel.duration,
+                    padding: viewModel.previewPadding,
                     gestureScale: gestureScale,
                     gestureRotation: gestureRotation,
-                    gestureOffset: gestureOffset,
-                    isSynchronized: expansionHasLanded)
+                    gestureOffset: gestureOffset)
                 // Hidden until an expansion flight's card — the same player, same
                 // placement — has landed here; the marker and controls fade in over it.
                 .expansionVideoSurface()
@@ -409,15 +408,24 @@ struct ClipEditorView: View {
         let follows = viewModel.framingMode == .follow
         switch phase {
         case .changed(let translation):
-            gestureOffset = follows && isFollowDragDropped ? .zero : translation
+            if follows {
+                // In Follow the move is drawn into the frames with the pan, so the keyframe set
+                // as the finger lifts lands on the very picture on screen.
+                viewModel.previewFollowDrag(isFollowDragDropped ? .zero : translation, previewScale: previewScale)
+            } else {
+                gestureOffset = translation
+            }
         case .ended(let translation):
             if !follows {
                 viewModel.applyCropOffset(translation, previewScale: previewScale)
             } else if !isFollowDragDropped {
                 viewModel.applyFollowDrag(translation, previewScale: previewScale)
+            } else {
+                viewModel.previewFollowDrag(.zero, previewScale: previewScale)
             }
             gestureOffset = .zero
         case .cancelled:
+            viewModel.previewFollowDrag(.zero, previewScale: previewScale)
             gestureOffset = .zero
         }
     }
@@ -454,6 +462,7 @@ struct ClipEditorView: View {
         guard viewModel.framingMode == .follow, !isFollowDragDropped else { return }
         isFollowDragDropped = true
         gestureOffset = .zero
+        viewModel.previewFollowDrag(.zero, previewScale: 1)
     }
 
     /// Stands in for the default player chrome this editor doesn't show: play/pause and
@@ -613,14 +622,11 @@ struct ClipEditorVideoSurface: View {
     let marker: CGRect
     var layoutMarker: CGRect?
     let framing: EditorFraming
-    /// The item's duration, which the follow pan is timed against.
-    var duration: TimeInterval?
+    /// The follow preview composition's canvas padding (`FollowPreviewComposition.padding`).
+    var padding: CGSize = .zero
     var gestureScale: CGFloat = 1
     var gestureRotation: Angle = .zero
     var gestureOffset: CGSize = .zero
-    /// Whether this is the surface on screen, which runs the follow pan
-    /// (`EditorPlayerView.isSynchronized`).
-    var isSynchronized = true
     var onReadyForDisplay: (() -> Void)?
 
     var body: some View {
@@ -639,8 +645,8 @@ struct ClipEditorVideoSurface: View {
         let markerScale = base.width > 0 ? marker.width / base.width : 1
         let adjustment = framing.adjustment
         EditorPlayerView(
-            player: player, videoSize: geometry?.videoSize ?? .zero, pan: framing.pan, duration: duration,
-            transition: framing.transition, isSynchronized: isSynchronized, onReadyForDisplay: onReadyForDisplay)
+            player: player, videoSize: geometry?.videoSize ?? .zero, padding: padding,
+            onReadyForDisplay: onReadyForDisplay)
             .frame(width: frame.width, height: frame.height)
             .scaleEffect(adjustment.scale * gestureScale, anchor: cropCenter)
             .rotationEffect(Angle(radians: adjustment.rotationRadians) + gestureRotation, anchor: cropCenter)

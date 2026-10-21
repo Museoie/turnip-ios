@@ -47,13 +47,11 @@ enum CropAdjustmentDescription {
     }
 }
 
-/// What the editor's preview draws for the active framing mode: the zoom, turn and on-screen
-/// offset (`CropAdjustment`'s terms; a follow crop has no offset), and in Follow the pan that
-/// moves the crop's center through the clip, with the transition it eases in on.
+/// What the editor's preview draws over the frames for the active framing mode: the zoom, turn
+/// and on-screen offset (`CropAdjustment`'s terms; a follow crop has no offset). Follow's pan is
+/// in the frames themselves (`PreviewPan`).
 struct EditorFraming: Equatable {
     var adjustment: CropAdjustment
-    var pan: FollowPan?
-    var transition = FollowPanTransition()
 }
 
 /// The clip editor's state (`docs/UIUX.md` § "Clip Detail / Editor").
@@ -114,16 +112,34 @@ final class ClipEditorViewModel: ObservableObject {
     /// Which framing the clip shows (`docs/UIUX.md` § "Two framing modes, Still and Follow").
     /// Still's is `cropAdjustment`, Follow's `followCrop`; each mode keeps its own, so a
     /// switch back finds it where it was.
-    @Published private(set) var framingMode: FramingMode
+    @Published private(set) var framingMode: FramingMode {
+        didSet { requestPreviewComposition() }
+    }
     /// Follow mode's framing: `nil` until the clip has been in Follow. Its zoom and turn are
     /// drawn the way Still's are; its keyframes move the picture through `followPan`.
     @Published private(set) var followCrop: FollowCrop? {
         didSet { rebuildFollowPan() }
     }
     /// The follow crop's movement, one step per source frame, for the preview to play.
-    @Published private(set) var followPan: FollowPan?
-    /// Bumped by every change that should ease the picture onto a new pan rather than cut.
-    @Published private(set) var followPanTransition = FollowPanTransition()
+    @Published private(set) var followPan: FollowPan? {
+        didSet { requestPreviewComposition() }
+    }
+    /// The canvas padding of the composition the preview plays through
+    /// (`FollowPreviewComposition`). Grows, never shrinks, so a pan change never re-lays the
+    /// video out.
+    @Published private(set) var previewPadding: CGSize = .zero
+    /// What the preview composition draws now.
+    private var previewPan: PreviewPan = .steady(nil)
+    /// Where a paused ease is on the wall clock: its progress at `wall`.
+    private var previewEaseClock: (wall: CFTimeInterval, progress: Double) = (0, 0)
+    private var previewEaseLink: CADisplayLink?
+    private var isPreviewCompositionRequested = false
+    /// Whether the item has a composition for `previewPan` on it.
+    private var isPreviewComposed = false
+    /// Set by `easePan()`: the pan change in the same update eases in rather than cutting.
+    private var isPreviewEaseRequested = false
+    /// A Follow drag's live move, in displayed pixels (`previewFollowDrag`).
+    private var followDragShift: CGPoint = .zero
     /// Set when Auto follow found nothing that moves, so the view can say why the crop holds
     /// still. Cleared by the notice itself.
     @Published var isShowingNothingToFollowNotice = false
@@ -165,6 +181,8 @@ final class ClipEditorViewModel: ObservableObject {
     /// paused player — the preview would stop at the end of the clip instead of looping.
     private var didPlayToEndObserver: NSObjectProtocol?
     private var trackGeometry: VideoTrackGeometry?
+    private var videoTrackID: CMPersistentTrackID?
+    private var assetDuration: CMTime?
     /// The in-flight Auto rotate detection, kept so `teardown()` can cancel it: the
     /// decode outlives a closed editor otherwise.
     private var horizonTask: Task<Void, Never>?
@@ -260,20 +278,17 @@ final class ClipEditorViewModel: ObservableObject {
         CropAdjustmentDescription.text(for: framing.adjustment, videoSize: previewOverlay?.videoSize ?? .zero)
     }
 
-    /// What the preview draws: the active mode's zoom, turn and on-screen offset, and in
-    /// Follow the pan that moves the crop's center through the clip.
+    /// What the preview draws over the frames: the active mode's zoom, turn and on-screen offset.
     var framing: EditorFraming {
         switch framingMode {
         case .still:
-            return EditorFraming(adjustment: cropAdjustment, pan: nil, transition: followPanTransition)
+            return EditorFraming(adjustment: cropAdjustment)
         case .follow:
             guard let followCrop else {
-                return EditorFraming(adjustment: cropAdjustment, pan: nil, transition: followPanTransition)
+                return EditorFraming(adjustment: cropAdjustment)
             }
-            return EditorFraming(
-                adjustment: CropAdjustment(
-                    scale: followCrop.scale, rotationRadians: followCrop.rotationRadians, offset: .zero),
-                pan: followPan, transition: followPanTransition)
+            return EditorFraming(adjustment: CropAdjustment(
+                scale: followCrop.scale, rotationRadians: followCrop.rotationRadians, offset: .zero))
         }
     }
 
@@ -304,6 +319,8 @@ final class ClipEditorViewModel: ObservableObject {
             return
         }
         let frameRate = (try? await track.load(.nominalFrameRate)).map(Double.init) ?? 0
+        videoTrackID = track.trackID
+        self.assetDuration = assetDuration
         setMediaInfo(
             duration: assetDuration.seconds,
             naturalSize: naturalSize,
@@ -365,6 +382,7 @@ final class ClipEditorViewModel: ObservableObject {
 
     /// Seeks exactly to `time` and returns once the player has that frame.
     func scrub(to time: TimeInterval) async {
+        settlePreviewEase()
         let target = CMTime(seconds: time, preferredTimescale: 600)
         _ = await player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
         playbackTime = time
@@ -380,6 +398,7 @@ final class ClipEditorViewModel: ObservableObject {
         isDetectingHorizon = false
         frameTimesTask?.cancel()
         frameTimesTask = nil
+        stopPreviewEaseLink()
         if let timeObserver {
             player.removeTimeObserver(timeObserver)
             self.timeObserver = nil
@@ -761,7 +780,7 @@ final class ClipEditorViewModel: ObservableObject {
         }
         withAnimation(Self.fitAnimation) {
             framingMode = mode
-            easePan(at: currentTime)
+            easePan()
         }
         if framing.adjustment.rotationRadians != rotationBefore {
             isAutoRotateApplied = false
@@ -792,7 +811,7 @@ final class ClipEditorViewModel: ObservableObject {
         }
         withAnimation(Self.fitAnimation) {
             followCrop = fit.crop
-            easePan(at: currentTime)
+            easePan()
         }
         if !fit.moves {
             withAnimation(Self.fitAnimation) { isShowingNothingToFollowNotice = true }
@@ -811,14 +830,14 @@ final class ClipEditorViewModel: ObservableObject {
             followCrop = FollowCrop.wholeFrame(
                 cropRect: overlay.cropRect, videoSize: overlay.videoSize, rotationRadians: rotation,
                 aspectRatio: targetAspectRatio)
-            easePan(at: currentTime)
+            easePan()
         }
     }
 
     /// Marks the pan change made in the same update as one the preview eases into from where
-    /// the picture is at `time`, instead of cutting to it.
-    private func easePan(at time: TimeInterval) {
-        followPanTransition = FollowPanTransition(id: followPanTransition.id + 1, time: time)
+    /// the picture is, instead of cutting to it.
+    private func easePan() {
+        isPreviewEaseRequested = true
     }
 
     /// The follow crop's keyframes, for the lane: in time order.
@@ -863,6 +882,8 @@ final class ClipEditorViewModel: ObservableObject {
     /// A one-finger drag in Follow, committed as it lifts: `screenPoints` is its translation and
     /// `previewScale` the stage's points per displayed pixel, as for `applyCropOffset`.
     func applyFollowDrag(_ screenPoints: CGSize, previewScale: CGFloat) {
+        followDragShift = .zero
+        requestPreviewComposition()
         guard previewScale.isFinite, previewScale > 0 else { return }
         moveFollow(byDisplayedPixels: CGSize(
             width: screenPoints.width / previewScale, height: screenPoints.height / previewScale))
@@ -934,7 +955,7 @@ final class ClipEditorViewModel: ObservableObject {
         clearAutoFits()
         withAnimation(Self.fitAnimation) {
             followCrop = crop
-            easePan(at: currentTime)
+            easePan()
         }
     }
 
@@ -969,6 +990,172 @@ final class ClipEditorViewModel: ObservableObject {
         if frameTimes?.frames(across: span) == nil {
             loadFrameTimes(covering: span)
         }
+    }
+
+    /// Brings the preview composition up to date after the current update: one composition for
+    /// everything that changed in it, eased if any of it asked to be (`easePan()`).
+    private func requestPreviewComposition() {
+        guard !isPreviewCompositionRequested else { return }
+        isPreviewCompositionRequested = true
+        Task { @MainActor [weak self] in
+            self?.applyPreviewComposition()
+        }
+    }
+
+    /// Follow's pan (`nil` in Still), with a Follow drag's live move on it.
+    private var previewTarget: FollowPan? {
+        guard framingMode == .follow, let followPan else { return nil }
+        return followDragShift == .zero ? followPan : followPan.moved(by: followDragShift)
+    }
+
+    private func applyPreviewComposition() {
+        isPreviewCompositionRequested = false
+        let target = previewTarget
+        let eases = isPreviewEaseRequested
+        isPreviewEaseRequested = false
+        guard isPreviewComposable else {
+            previewPan = .steady(target)
+            isPreviewComposed = false
+            return
+        }
+        if eases, isPreviewComposed, target != previewPan.target, player.currentItem?.status == .readyToPlay {
+            // From whatever the frames show now, at the frame on screen.
+            previewPan = .easing(from: previewPan, target: target, anchor: displayedFrameTime, progress: 0)
+            previewEaseClock = (wall: CACurrentMediaTime(), progress: 0)
+            startPreviewEaseLink()
+            composePreview(flush: player.rate != 0)
+        } else if case let .easing(from, _, anchor, progress) = previewPan, isPreviewComposed {
+            // A change that doesn't ease of its own, mid-ease (the source's real frame times
+            // arriving, say): the ease carries on, onto the new target.
+            let retargeted = PreviewPan.easing(from: from, target: target, anchor: anchor, progress: progress)
+            guard retargeted != previewPan else { return }
+            previewPan = retargeted
+            composePreview(flush: false)
+        } else if previewPan != .steady(target) || !isPreviewComposed {
+            previewPan = .steady(target)
+            stopPreviewEaseLink()
+            composePreview(flush: false)
+        }
+    }
+
+    private var isPreviewComposable: Bool {
+        trackGeometry != nil && videoTrackID != nil && assetDuration != nil && previewOverlay != nil
+            && player.currentItem != nil
+    }
+
+    /// Puts `previewPan` on the item. A paused player redraws the frame on screen with it by
+    /// itself; a playing one has frames drawn ahead with the previous composition, which `flush`
+    /// drops by seeking to where the player is. A presenter's scrub draws with its own seeks.
+    private func composePreview(flush: Bool) {
+        guard let trackGeometry, let videoTrackID, let assetDuration, let overlay = previewOverlay,
+              let item = player.currentItem
+        else { return }
+        let cropCenter = CGPoint(x: overlay.cropRect.midX, y: overlay.cropRect.midY)
+        let padding = FollowPreviewComposition.padding(
+            videoSize: overlay.videoSize, cropCenter: cropCenter, pans: previewPan.pans)
+        if padding.width > previewPadding.width || padding.height > previewPadding.height {
+            previewPadding = CGSize(
+                width: max(padding.width, previewPadding.width), height: max(padding.height, previewPadding.height))
+        }
+        let frames = previewPan.easingSpans.flatMap { span in
+            frameTimes?.frames(across: span) ?? VideoFrameTimes.nominalFrames(across: span, frameRate: nominalFrameRate)
+        }
+        item.videoComposition = FollowPreviewComposition(
+            pan: previewPan, frames: frames, padding: previewPadding, geometry: trackGeometry,
+            trackID: videoTrackID, duration: assetDuration, frameRate: nominalFrameRate
+        ).videoComposition
+        isPreviewComposed = true
+        if flush, !isPresenterScrubbing, item.status == .readyToPlay {
+            player.seek(to: player.currentTime(), toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+    }
+
+    /// The presentation time of the frame on screen: the last source frame at or before the
+    /// player's time.
+    private var displayedFrameTime: TimeInterval {
+        let time = currentTime
+        let frames = frameTimes?.frames(across: max(time - 0.5, 0)...time)
+            ?? VideoFrameTimes.nominalFrames(across: max(time - 0.5, 0)...time, frameRate: nominalFrameRate)
+        return frames.last { $0 <= time + 1e-6 } ?? time
+    }
+
+    /// Drives an ease while the player is paused, when the item's clock that carries it stands
+    /// still: each display refresh puts the ease further along on the wall clock on the frame on
+    /// screen, which the paused player redraws. While playing, the composition carries the ease
+    /// itself; once it has arrived, a steady composition takes over, the same frames.
+    private func previewEaseStep() {
+        guard case let .easing(from, target, _, _) = previewPan else {
+            stopPreviewEaseLink()
+            return
+        }
+        let now = CACurrentMediaTime()
+        if player.rate == 0 {
+            let progress = min(
+                previewEaseClock.progress + (now - previewEaseClock.wall) / PreviewPan.easeDuration, 1)
+            previewEaseClock = (wall: now, progress: progress)
+            if progress >= 1 {
+                previewPan = .steady(target)
+                stopPreviewEaseLink()
+            } else {
+                previewPan = .easing(from: from, target: target, anchor: displayedFrameTime, progress: progress)
+            }
+            composePreview(flush: false)
+        } else if let progress = previewPan.progress(at: currentTime) {
+            previewEaseClock = (wall: now, progress: min(progress, 1))
+            if progress >= 1 + Self.previewEaseSettleMargin {
+                previewPan = .steady(target)
+                stopPreviewEaseLink()
+                composePreview(flush: false)
+            }
+        }
+    }
+
+    /// How far past its end, as a fraction of the ease, playback runs before the steady
+    /// composition replaces the eased one: by then every frame drawn ahead is past the ease too.
+    private static let previewEaseSettleMargin = 0.5
+
+    /// Ends an ease on its target ahead of a seek: the seek redraws anyway, and the frames it
+    /// lands on are past the ease's anchor or before it.
+    private func settlePreviewEase() {
+        guard previewPan.isEasing else { return }
+        previewPan = .steady(previewPan.target)
+        stopPreviewEaseLink()
+        composePreview(flush: false)
+    }
+
+    private func startPreviewEaseLink() {
+        guard previewEaseLink == nil else { return }
+        let link = CADisplayLink(target: DisplayLinkTarget { [weak self] in self?.previewEaseStep() },
+                                 selector: #selector(DisplayLinkTarget.fire))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        previewEaseLink = link
+    }
+
+    private func stopPreviewEaseLink() {
+        previewEaseLink?.invalidate()
+        previewEaseLink = nil
+    }
+
+    /// A Follow drag's move while the finger is down, drawn into the frames like the pan, so the
+    /// keyframe it sets as it lifts lands on the very picture on screen. `screenPoints` and
+    /// `previewScale` are as for `applyFollowDrag`; `.zero` takes the move off.
+    func previewFollowDrag(_ screenPoints: CGSize, previewScale: CGFloat) {
+        let shift = followShift(forScreenPoints: screenPoints, previewScale: previewScale) ?? .zero
+        guard shift != followDragShift else { return }
+        followDragShift = shift
+        requestPreviewComposition()
+    }
+
+    /// How far a drag of `screenPoints` moves the picture in displayed pixels, before the zoom
+    /// and turn: the move on screen with the turn undone and the zoom divided out.
+    private func followShift(forScreenPoints screenPoints: CGSize, previewScale: CGFloat) -> CGPoint? {
+        guard let crop = followCrop, crop.scale > 0, previewScale.isFinite, previewScale > 0,
+              screenPoints.width.isFinite, screenPoints.height.isFinite
+        else { return nil }
+        let unturned = CGPoint(x: screenPoints.width / previewScale, y: screenPoints.height / previewScale)
+            .applying(CGAffineTransform(rotationAngle: -crop.rotationRadians))
+        return CGPoint(x: unturned.x / crop.scale, y: unturned.y / crop.scale)
     }
 
     private func loadFrameTimes(covering span: ClosedRange<TimeInterval>) {
@@ -1060,7 +1247,7 @@ final class ClipEditorViewModel: ObservableObject {
         guard retracked != followCrop else { return }
         withAnimation(Self.fitAnimation) {
             self.followCrop = retracked
-            easePan(at: window.startTime)
+            easePan()
         }
     }
 
@@ -1147,6 +1334,8 @@ final class ClipEditorViewModel: ObservableObject {
     private func armPlayer() {
         if player.currentItem == nil {
             player.replaceCurrentItem(with: AVPlayerItem(sdrAsset: source.asset))
+            isPreviewComposed = false
+            requestPreviewComposition()
         }
         if timeObserver == nil {
             let interval = CMTime(seconds: 1.0 / 15.0, preferredTimescale: 600)
@@ -1201,9 +1390,24 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     private func seek(to time: TimeInterval) {
+        settlePreviewEase()
         player.seek(
             to: CMTime(seconds: time, preferredTimescale: 600),
             toleranceBefore: .zero, toleranceAfter: .zero)
         playbackTime = time
+    }
+}
+
+/// A display link's target that runs a closure on each refresh.
+@MainActor
+private final class DisplayLinkTarget: NSObject {
+    private let action: () -> Void
+
+    init(_ action: @escaping () -> Void) {
+        self.action = action
+    }
+
+    @objc func fire() {
+        action()
     }
 }
