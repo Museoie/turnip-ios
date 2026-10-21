@@ -838,6 +838,118 @@ final class ClipEditorViewModel: ObservableObject {
         seek(to: min(max(time, window.startTime), window.endTime))
     }
 
+    // MARK: - Keyframes by hand
+
+    /// How near the playhead a keyframe has to be for a drag, the lane's button or Remove
+    /// keyframe to act on it rather than add one.
+    nonisolated static let keyframeReach: TimeInterval = 0.1
+
+    /// The keyframe within `keyframeReach` of the playhead, the nearest one if several are.
+    var keyframeAtPlayhead: FollowKeyframe? {
+        let time = currentTime
+        return followKeyframes
+            .filter { abs($0.time - time) <= Self.keyframeReach }
+            .min { abs($0.time - time) < abs($1.time - time) }
+    }
+
+    /// Touch-down on the crop area in Follow: the drag sets the framing at this moment, so the
+    /// clip stops here and stays stopped on release, until Play.
+    func beginFollowTouch() {
+        guard framingMode == .follow, isPlaying else { return }
+        player.pause()
+        isPlaying = false
+    }
+
+    /// A one-finger drag in Follow, committed as it lifts: `screenPoints` is its translation and
+    /// `previewScale` the stage's points per displayed pixel, as for `applyCropOffset`.
+    func applyFollowDrag(_ screenPoints: CGSize, previewScale: CGFloat) {
+        guard previewScale.isFinite, previewScale > 0 else { return }
+        moveFollow(byDisplayedPixels: CGSize(
+            width: screenPoints.width / previewScale, height: screenPoints.height / previewScale))
+    }
+
+    /// Places the video at the playhead's moment, `delta` further across the screen in
+    /// displayed pixels — what a drag commits and what VoiceOver's moves step. Within
+    /// `keyframeReach` of a keyframe it moves that keyframe; anywhere else it adds one that
+    /// starts from where the curve already is, so the picture at the playhead is exactly where
+    /// the finger left it. Any keyframe change hands Auto follow's button back.
+    func moveFollow(byDisplayedPixels delta: CGSize) {
+        guard framingMode == .follow, var crop = followCrop,
+              delta.width.isFinite, delta.height.isFinite, delta != .zero, crop.scale > 0
+        else { return }
+        // The video moved `delta` on screen, after the zoom and turn; the source point at the
+        // marker's center moved the other way by that much undone.
+        let unturned = CGPoint(x: delta.width, y: delta.height)
+            .applying(CGAffineTransform(rotationAngle: -crop.rotationRadians))
+        let shift = CGPoint(x: -unturned.x / crop.scale, y: -unturned.y / crop.scale)
+        let time = currentTime
+        if let nearest = keyframeAtPlayhead, let index = crop.keyframes.firstIndex(of: nearest) {
+            crop.keyframes[index].center.x += shift.x
+            crop.keyframes[index].center.y += shift.y
+        } else {
+            let center = crop.path.center(at: time)
+            crop.keyframes.append(FollowKeyframe(
+                time: time, center: CGPoint(x: center.x + shift.x, y: center.y + shift.y)))
+            crop.keyframes.sort { $0.time < $1.time }
+        }
+        crop.isAutoFollow = false
+        clearAutoFits()
+        followCrop = crop
+    }
+
+    /// The lane's trailing button, and a long press on a diamond: adds a keyframe at the
+    /// playhead where the curve already is — the picture doesn't move — or, with one within
+    /// `keyframeReach`, removes that one.
+    func toggleKeyframeAtPlayhead() {
+        if let keyframe = keyframeAtPlayhead {
+            removeKeyframe(keyframe)
+        } else {
+            addKeyframeAtPlayhead()
+        }
+    }
+
+    func addKeyframeAtPlayhead() {
+        guard framingMode == .follow, var crop = followCrop, keyframeAtPlayhead == nil else { return }
+        let time = currentTime
+        crop.keyframes.append(FollowKeyframe(time: time, center: crop.path.center(at: time)))
+        crop.keyframes.sort { $0.time < $1.time }
+        crop.isAutoFollow = false
+        clearAutoFits()
+        followCrop = crop
+    }
+
+    /// Removes `keyframe`: one Auto follow wrote and the user moved goes back where Auto follow
+    /// had it, hollow again; any other is deleted. The picture moves to the new curve the way an
+    /// automatic change does, since the curve at the playhead can change.
+    func removeKeyframe(_ keyframe: FollowKeyframe) {
+        guard framingMode == .follow, var crop = followCrop,
+              let index = crop.keyframes.firstIndex(of: keyframe)
+        else { return }
+        if let autoCenter = keyframe.autoCenter, autoCenter != keyframe.center {
+            crop.keyframes[index].center = autoCenter
+        } else {
+            crop.keyframes.remove(at: index)
+        }
+        crop.isAutoFollow = false
+        clearAutoFits()
+        withAnimation(Self.fitAnimation) {
+            followCrop = crop
+            easePan(at: currentTime)
+        }
+    }
+
+    /// VoiceOver's Previous keyframe and Next keyframe: the playhead jumps to the nearest
+    /// keyframe before or after it, pausing, as a tap on its diamond does.
+    func seekToKeyframe(after: Bool) {
+        let time = currentTime
+        let inWindow = followKeyframes.filter { $0.time >= window.startTime && $0.time <= window.endTime }
+        let target = after
+            ? inWindow.first { $0.time > time + 0.001 }
+            : inWindow.last { $0.time < time - 0.001 }
+        guard let target else { return }
+        scrubFollowLane(to: target.time)
+    }
+
     /// Rebuilds the preview's pan from the follow crop and the source's frame times, reading
     /// the real times for the span the crop moves over when they aren't in hand yet; until
     /// then the frames are on the track's nominal grid.

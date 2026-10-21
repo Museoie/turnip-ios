@@ -4,10 +4,14 @@ import SwiftUI
 /// crop's keyframes over the trim window, between the crop buttons and the trim timeline.
 ///
 /// It spans the window rather than the whole video, so a 4-second clip from a 3-minute take
-/// still gets the lane's whole width. Each keyframe is a diamond; one a trim has left outside
-/// the window is a marker at that end, since it still shapes the curve there. A drag anywhere
+/// still gets the lane's whole width. Each keyframe is a diamond, hollow while it is where Auto
+/// follow put it and filled once the user set or moved it; one a trim has left outside the
+/// window is a marker at that end, since it still shapes the curve there. A drag anywhere
 /// scrubs the playhead through the window with the trim timeline's vertical drag-to-slow
-/// precision (`ScrubCalculator`), and pauses playback; tapping a diamond jumps to it.
+/// precision (`ScrubCalculator`), and pauses playback; tapping a diamond jumps to it. The
+/// button at the trailing end adds a keyframe at the playhead or removes the one under it, and
+/// a long press on a diamond removes that one. For VoiceOver the lane is adjustable, a tenth
+/// of a second a swipe, the trim handles' step.
 struct FollowLaneView: View {
     @ObservedObject var viewModel: ClipEditorViewModel
 
@@ -26,8 +30,23 @@ struct FollowLaneView: View {
     }
 
     @State private var drag: LaneDrag?
+    /// Waits out a still press on a diamond; cancelled when the finger moves or lifts first.
+    @State private var longPress: Task<Void, Never>?
+    /// Set once a press has acted as a long press, so lifting doesn't also jump the playhead.
+    @State private var didLongPress = false
+    private static let longPressDuration: TimeInterval = 0.5
+    /// How far a touch may sit from a diamond's center and still be on it.
+    private static let diamondReach: CGFloat = 22
 
     var body: some View {
+        HStack(spacing: 4) {
+            track
+            keyframeButton
+        }
+        .frame(height: Self.height)
+    }
+
+    private var track: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
             let window = drag?.window ?? viewModel.window
@@ -56,6 +75,27 @@ struct FollowLaneView: View {
         .accessibilityLabel("Follow keyframes")
         .accessibilityValue(accessibilityValue)
         .accessibilityIdentifier("follow-lane")
+        .accessibilityAdjustableAction { direction in
+            viewModel.scrubFollowLane(to: viewModel.currentTime + (direction == .increment ? 0.1 : -0.1))
+        }
+    }
+
+    /// Adds a keyframe at the playhead, or removes the one under it
+    /// (`ClipEditorViewModel.keyframeReach`).
+    private var keyframeButton: some View {
+        let removes = viewModel.keyframeAtPlayhead != nil
+        return Button {
+            viewModel.toggleKeyframeAtPlayhead()
+        } label: {
+            Image(systemName: removes ? "minus.diamond" : "plus.diamond")
+                .font(.title3)
+                .frame(width: Self.height, height: Self.height)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.yellow)
+        .accessibilityLabel(removes ? "Remove keyframe" : "Add keyframe")
+        .accessibilityIdentifier("follow-keyframe-button")
     }
 
     /// A diamond inside the window; past an end, a smaller one at that end with a chevron
@@ -87,8 +127,14 @@ struct FollowLaneView: View {
                     viewModel.scrubFollowLane(to: touched)
                     self.drag = LaneDrag(
                         window: window, width: width, startTime: touched, startTranslation: value.translation)
+                    didLongPress = false
+                    armLongPress(at: value.startLocation.x, in: window, width: width)
                     return
                 }
+                if hypot(value.translation.width, value.translation.height) >= 6 {
+                    longPress?.cancel()
+                }
+                guard !didLongPress else { return }
                 let moved = CGSize(
                     width: value.translation.width - drag.startTranslation.width,
                     height: value.translation.height - drag.startTranslation.height)
@@ -99,17 +145,39 @@ struct FollowLaneView: View {
                 viewModel.scrubFollowLane(to: drag.startTime + result.timelineDelta / 2 * span)
             }
             .onEnded { value in
+                longPress?.cancel()
                 defer { drag = nil }
-                guard let drag, hypot(value.translation.width, value.translation.height) < 6 else { return }
+                guard let drag, !didLongPress, hypot(value.translation.width, value.translation.height) < 6
+                else { return }
                 // A tap on a diamond lands on its keyframe exactly.
-                let nearest = viewModel.followKeyframes
-                    .filter { $0.time >= drag.window.startTime && $0.time <= drag.window.endTime }
-                    .min { abs(x(of: $0.time, in: drag.window, width: width) - value.startLocation.x)
-                        < abs(x(of: $1.time, in: drag.window, width: width) - value.startLocation.x) }
-                if let nearest, abs(x(of: nearest.time, in: drag.window, width: width) - value.startLocation.x) <= 22 {
-                    viewModel.scrubFollowLane(to: nearest.time)
+                if let keyframe = diamond(at: value.startLocation.x, in: drag.window, width: width) {
+                    viewModel.scrubFollowLane(to: keyframe.time)
                 }
             }
+    }
+
+    /// A still press on a diamond, held: the playhead goes to its keyframe and the keyframe
+    /// is removed, as the trailing button would remove it there.
+    private func armLongPress(at locationX: CGFloat, in window: TrickWindow, width: CGFloat) {
+        longPress?.cancel()
+        guard let keyframe = diamond(at: locationX, in: window, width: width) else { return }
+        longPress = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(Self.longPressDuration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            didLongPress = true
+            viewModel.scrubFollowLane(to: keyframe.time)
+            viewModel.removeKeyframe(keyframe)
+        }
+    }
+
+    /// The keyframe whose diamond is under `locationX`, the nearest if two are.
+    private func diamond(at locationX: CGFloat, in window: TrickWindow, width: CGFloat) -> FollowKeyframe? {
+        viewModel.followKeyframes
+            .filter { $0.time >= window.startTime && $0.time <= window.endTime }
+            .map { (keyframe: $0, distance: abs(x(of: $0.time, in: window, width: width) - locationX)) }
+            .filter { $0.distance <= Self.diamondReach }
+            .min { $0.distance < $1.distance }?
+            .keyframe
     }
 
     private func x(of time: TimeInterval, in window: TrickWindow, width: CGFloat) -> CGFloat {

@@ -168,12 +168,16 @@ control:
   they step by (`CropAdjustmentDescription`), so a press is heard to have done something.
 - **Still and Follow** (UIUX §4, Rev 16): the mode switch is a standard segmented control,
   and "Edit clip" stays the screen's header, drawn clear in the switch's slot. In Follow the
-  crop area keeps Zoom and Rotate, and its four moves give way to Reset follow, since the
-  position belongs to the keyframes. Its value reads the active mode's zoom and turn. The
-  follow lane is one element labeled "Follow keyframes" whose value counts them and says
-  where the playhead is. "Nothing to follow" uses the same notice as "No horizon found".
-  *Planned with hand-set keyframes:* Previous, Next, Add and Remove keyframe actions on the
-  crop area, and an adjustable lane scrubbing a tenth of a second per swipe.
+  crop area's four moves set or move the keyframe at the playhead, as a one-finger drag does
+  there, and it adds Previous keyframe, Next keyframe, Add keyframe and Remove keyframe;
+  Reset follow stands in for Reset crop. Its value reads the active mode's zoom and turn.
+  The follow lane is one adjustable element labeled "Follow keyframes": its value counts the
+  keyframes and says where the playhead is, and a swipe up or down scrubs a tenth of a
+  second, the trim handles' step — without it the lane is a pure drag surface. The lane's
+  trailing button reads "Add keyframe" or "Remove keyframe" for what a tap does at the
+  playhead, so the long press on a diamond, a gesture VoiceOver can't aim, has a reachable
+  twin. Hollow and filled diamonds differ in fill, not only color. "Nothing to follow" uses
+  the same notice as "No horizon found".
 - Player controls labeled. The scrub track carries a label, its position as a value, and an
   adjustable action seeking ±1 s: without one it is a pure drag surface, where a listener can
   hear where playback stands but has no way to move it.
@@ -185,7 +189,7 @@ control:
 - Identifiers: `clip-editor-back`, `clip-editor-delete`, `clip-editor-crop-surface`,
   `auto-crop-button`, `reset-crop-button`, `auto-rotate-button`, `trim-start-handle`, `trim-end-handle`, `playback-play-pause`,
   `playback-mute`, `playback-position`, `framing-mode-switch`, `auto-follow-button`, `reset-follow-button`,
-  `follow-lane`, `nothing-to-follow-notice`.
+  `follow-lane`, `follow-keyframe-button`, `nothing-to-follow-notice`.
 - **Still owed:** a real VoiceOver pass on device, plus Accessibility Inspector's audit.
   Everything above is verified by CI and by unit tests over the spoken strings and the gates,
   which is not the same as having listened to the screen — a focus order that reads badly, or

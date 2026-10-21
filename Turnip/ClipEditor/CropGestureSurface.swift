@@ -29,14 +29,18 @@ struct CropGestureSurface: UIViewRepresentable {
     /// The turn in radians, clockwise positive — the sense `rotationEffect` and
     /// `CGAffineTransform(rotationAngle:)` both draw in a y-down space.
     var onRotate: (Phase<Double>) -> Void
+    /// The first finger landing, before any of the three has recognized anything: where a
+    /// gesture that has to know about every finger it saw starts counting.
+    var onTouchDown: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(surface: self)
     }
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
+    func makeUIView(context: Context) -> TouchView {
+        let view = TouchView()
         view.backgroundColor = .clear
+        view.onTouchDown = onTouchDown
         let coordinator = context.coordinator
         let pan = UIPanGestureRecognizer(target: coordinator, action: #selector(Coordinator.pan(_:)))
         pan.maximumNumberOfTouches = 1
@@ -44,13 +48,36 @@ struct CropGestureSurface: UIViewRepresentable {
         let rotation = UIRotationGestureRecognizer(target: coordinator, action: #selector(Coordinator.rotate(_:)))
         for recognizer in [pan, pinch, rotation] as [UIGestureRecognizer] {
             recognizer.delegate = coordinator
+            // The view keeps seeing the touches the recognizers take, so its count of
+            // fingers down stays right.
+            recognizer.cancelsTouchesInView = false
             view.addGestureRecognizer(recognizer)
         }
         return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
+    func updateUIView(_ uiView: TouchView, context: Context) {
         context.coordinator.surface = self
+        uiView.onTouchDown = onTouchDown
+    }
+
+    /// Counts the fingers down, to report the first one landing.
+    final class TouchView: UIView {
+        var onTouchDown: () -> Void = {}
+        private var touchesDown = 0
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            if touchesDown == 0 { onTouchDown() }
+            touchesDown += touches.count
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+            touchesDown = max(touchesDown - touches.count, 0)
+        }
+
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            touchesDown = max(touchesDown - touches.count, 0)
+        }
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {

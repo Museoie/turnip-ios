@@ -47,6 +47,10 @@ struct ClipEditorView: View {
     @State private var gestureScale: CGFloat = 1
     @State private var gestureRotation: Angle = .zero
     @State private var gestureOffset: CGSize = .zero
+    /// Set when a pinch or turn reports during the gesture the drag is part of, in Follow:
+    /// the drag then sets no keyframe, so a two-finger gesture never leaves one behind.
+    /// Cleared as the first finger of the next gesture lands.
+    @State private var isFollowDragDropped = false
     /// Where the layout placeholder in `chrome` sits (global space), and whether the follow
     /// lane was in the layout it was measured in: the stage band of the mode it was measured
     /// in, from which both modes' bands are derived (`stillStage`, `followStage`). Fixed per
@@ -386,46 +390,70 @@ struct ClipEditorView: View {
     /// doesn't move at the hand-over; a cancelled gesture leaves nothing behind.
     /// `previewScale` (on-screen points per displayed pixel) only matters to the drag —
     /// scale and rotation are unit-agnostic.
+    ///
+    /// In Follow a drag places the video at the playhead's moment instead of moving it for the
+    /// whole clip: touch-down pauses, and the drag sets or moves a keyframe there as it lifts
+    /// (`ClipEditorViewModel.moveFollow`), unless a pinch or turn reported during it.
     private func cropGestureSurface(previewScale: CGFloat) -> some View {
         CropGestureSurface(
-            onDrag: { phase in
-                // Follow mode's position lives in its keyframes, which a drag doesn't set yet.
-                guard viewModel.framingMode == .still else {
-                    gestureOffset = .zero
-                    return
-                }
-                switch phase {
-                case .changed(let translation):
-                    gestureOffset = translation
-                case .ended(let translation):
-                    viewModel.applyCropOffset(translation, previewScale: previewScale)
-                    gestureOffset = .zero
-                case .cancelled:
-                    gestureOffset = .zero
-                }
-            },
-            onPinch: { phase in
-                switch phase {
-                case .changed(let scale):
-                    gestureScale = scale
-                case .ended(let scale):
-                    viewModel.applyCropScale(scale)
-                    gestureScale = 1
-                case .cancelled:
-                    gestureScale = 1
-                }
-            },
-            onRotate: { phase in
-                switch phase {
-                case .changed(let radians):
-                    gestureRotation = .radians(radians)
-                case .ended(let radians):
-                    viewModel.applyCropRotation(radians)
-                    gestureRotation = .zero
-                case .cancelled:
-                    gestureRotation = .zero
-                }
+            onDrag: { handleDrag($0, previewScale: previewScale) },
+            onPinch: handlePinch,
+            onRotate: handleRotate,
+            onTouchDown: {
+                isFollowDragDropped = false
+                viewModel.beginFollowTouch()
             })
+    }
+
+    private func handleDrag(_ phase: CropGestureSurface.Phase<CGSize>, previewScale: CGFloat) {
+        let follows = viewModel.framingMode == .follow
+        switch phase {
+        case .changed(let translation):
+            gestureOffset = follows && isFollowDragDropped ? .zero : translation
+        case .ended(let translation):
+            if !follows {
+                viewModel.applyCropOffset(translation, previewScale: previewScale)
+            } else if !isFollowDragDropped {
+                viewModel.applyFollowDrag(translation, previewScale: previewScale)
+            }
+            gestureOffset = .zero
+        case .cancelled:
+            gestureOffset = .zero
+        }
+    }
+
+    private func handlePinch(_ phase: CropGestureSurface.Phase<CGFloat>) {
+        switch phase {
+        case .changed(let scale):
+            dropFollowDrag()
+            gestureScale = scale
+        case .ended(let scale):
+            viewModel.applyCropScale(scale)
+            gestureScale = 1
+        case .cancelled:
+            gestureScale = 1
+        }
+    }
+
+    private func handleRotate(_ phase: CropGestureSurface.Phase<Double>) {
+        switch phase {
+        case .changed(let radians):
+            dropFollowDrag()
+            gestureRotation = .radians(radians)
+        case .ended(let radians):
+            viewModel.applyCropRotation(radians)
+            gestureRotation = .zero
+        case .cancelled:
+            gestureRotation = .zero
+        }
+    }
+
+    /// In Follow, a pinch or turn during a drag drops the drag's keyframe and takes its live
+    /// offset off the picture, so the preview never shows a move that won't be kept.
+    private func dropFollowDrag() {
+        guard viewModel.framingMode == .follow, !isFollowDragDropped else { return }
+        isFollowDragDropped = true
+        gestureOffset = .zero
     }
 
     /// Stands in for the default player chrome this editor doesn't show: play/pause and
@@ -694,8 +722,9 @@ private struct CropOverlayShape: Shape {
 /// purpose unreachable without sight. Each action drives the same view-model call the matching
 /// gesture commits, so the two paths cannot diverge.
 ///
-/// In Follow the position belongs to the keyframes, so the four moves and Reset crop give way
-/// to Reset follow.
+/// In Follow the moves set or move the keyframe at the playhead, as a drag does there, and
+/// the keyframe actions step the playhead between keyframes and add or remove the one at it;
+/// Reset follow stands in for Reset crop.
 private struct CropAdjustmentActions: ViewModifier {
     let viewModel: ClipEditorViewModel
     let framingMode: FramingMode
@@ -703,7 +732,14 @@ private struct CropAdjustmentActions: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        let turns = content
+        let step = CGSize(
+            width: videoSize.width * CropAdjustmentStep.offsetFraction,
+            height: videoSize.height * CropAdjustmentStep.offsetFraction)
+        let follows = framingMode == .follow
+        let move: (CGSize) -> Void = follows
+            ? { viewModel.moveFollow(byDisplayedPixels: $0) }
+            : { viewModel.offsetCrop(byDisplayedPixels: $0) }
+        let framed = content
             .accessibilityAction(named: "Zoom in") {
                 viewModel.applyCropScale(CropAdjustmentStep.zoomFactor)
             }
@@ -716,32 +752,23 @@ private struct CropAdjustmentActions: ViewModifier {
             .accessibilityAction(named: "Rotate counterclockwise") {
                 viewModel.applyCropRotation(-CropAdjustmentStep.rotationRadians)
             }
-        if framingMode == .follow {
-            turns.accessibilityAction(named: "Reset follow") { viewModel.resetFollow() }
+            .accessibilityAction(named: "Move left") { move(CGSize(width: -step.width, height: 0)) }
+            .accessibilityAction(named: "Move right") { move(CGSize(width: step.width, height: 0)) }
+            .accessibilityAction(named: "Move up") { move(CGSize(width: 0, height: -step.height)) }
+            .accessibilityAction(named: "Move down") { move(CGSize(width: 0, height: step.height)) }
+        if follows {
+            framed
+                .accessibilityAction(named: "Previous keyframe") { viewModel.seekToKeyframe(after: false) }
+                .accessibilityAction(named: "Next keyframe") { viewModel.seekToKeyframe(after: true) }
+                .accessibilityAction(named: "Add keyframe") { viewModel.addKeyframeAtPlayhead() }
+                .accessibilityAction(named: "Remove keyframe") {
+                    if let keyframe = viewModel.keyframeAtPlayhead {
+                        viewModel.removeKeyframe(keyframe)
+                    }
+                }
+                .accessibilityAction(named: "Reset follow") { viewModel.resetFollow() }
         } else {
-            moves(turns)
+            framed.accessibilityAction(named: "Reset crop") { viewModel.resetCrop() }
         }
-    }
-
-    private func moves(_ content: some View) -> some View {
-        let step = CGSize(
-            width: videoSize.width * CropAdjustmentStep.offsetFraction,
-            height: videoSize.height * CropAdjustmentStep.offsetFraction)
-        return content
-            .accessibilityAction(named: "Move left") {
-                viewModel.offsetCrop(byDisplayedPixels: CGSize(width: -step.width, height: 0))
-            }
-            .accessibilityAction(named: "Move right") {
-                viewModel.offsetCrop(byDisplayedPixels: CGSize(width: step.width, height: 0))
-            }
-            .accessibilityAction(named: "Move up") {
-                viewModel.offsetCrop(byDisplayedPixels: CGSize(width: 0, height: -step.height))
-            }
-            .accessibilityAction(named: "Move down") {
-                viewModel.offsetCrop(byDisplayedPixels: CGSize(width: 0, height: step.height))
-            }
-            .accessibilityAction(named: "Reset crop") {
-                viewModel.resetCrop()
-            }
     }
 }

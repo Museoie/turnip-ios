@@ -1164,6 +1164,8 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertTrue(viewModel.isFollowAdjusted)
         viewModel.resetFollow()
         XCTAssertFalse(viewModel.isFollowAdjusted)
+        viewModel.moveFollow(byDisplayedPixels: CGSize(width: 10, height: 0))
+        XCTAssertTrue(viewModel.isFollowAdjusted, "a drag's keyframe enables Reset follow too")
     }
 
     /// A still athlete leaves nothing to follow: one keyframe and the notice.
@@ -1224,6 +1226,103 @@ final class ClipEditorTests: XCTestCase {
         viewModel2.trimEnd(to: 3.5)
         viewModel2.finishTrim()
         XCTAssertEqual(viewModel2.followCrop, handSet)
+    }
+
+    // MARK: - Keyframes by hand
+
+    /// A crop at zoom 2 with one keyframe Auto follow wrote at the window's start, where these
+    /// tests' playhead sits (the player has no item, so it reads as the window's start).
+    private func handFollowCrop(rotationRadians: Double = 0) -> FollowCrop {
+        FollowCrop(
+            scale: 2, rotationRadians: rotationRadians,
+            keyframes: [
+                FollowKeyframe(time: 0, center: CGPoint(x: 60, y: 50), autoCenter: CGPoint(x: 60, y: 50)),
+                FollowKeyframe(time: 3, center: CGPoint(x: 140, y: 50), autoCenter: CGPoint(x: 140, y: 50))
+            ],
+            restingCenter: CGPoint(x: 100, y: 50), isAutoFollow: true)
+    }
+
+    /// Within reach of a keyframe a drag moves that keyframe: the video moved right on screen,
+    /// so the crop's center moved left in the source, by the move undone through the zoom.
+    @MainActor
+    func testADragNearAKeyframeMovesIt() throws {
+        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+
+        viewModel.moveFollow(byDisplayedPixels: CGSize(width: 20, height: -10))
+
+        let crop = try XCTUnwrap(viewModel.followCrop)
+        XCTAssertEqual(crop.keyframes.count, 2)
+        XCTAssertEqual(crop.keyframes[0].center.x, 50, accuracy: 1e-9)
+        XCTAssertEqual(crop.keyframes[0].center.y, 55, accuracy: 1e-9)
+        XCTAssertFalse(crop.keyframes[0].isAutoFollows, "a moved keyframe draws filled")
+        XCTAssertFalse(viewModel.isAutoFollowApplied, "a keyframe change hands Auto follow's button back")
+    }
+
+    /// Turned, a drag across the screen is a drag along the turned frame's axes in the source.
+    @MainActor
+    func testADragOnATurnedCropMovesAlongTheTurn() throws {
+        let viewModel = makeFollowViewModel(
+            framingMode: .follow, followCrop: handFollowCrop(rotationRadians: .pi / 2))
+
+        viewModel.moveFollow(byDisplayedPixels: CGSize(width: 20, height: 0))
+
+        let center = try XCTUnwrap(viewModel.followCrop?.keyframes.first?.center)
+        XCTAssertEqual(center.x, 60, accuracy: 1e-9)
+        XCTAssertEqual(center.y, 60, accuracy: 1e-9)
+    }
+
+    /// Away from every keyframe a drag adds one, starting from where the curve already is, so
+    /// the picture at the playhead is exactly where the finger left it.
+    @MainActor
+    func testADragAwayFromKeyframesAddsOneFromTheCurve() throws {
+        var crop = handFollowCrop()
+        crop.keyframes = crop.keyframes.map {
+            FollowKeyframe(time: $0.time + 1, center: $0.center, autoCenter: $0.autoCenter)
+        }
+        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: crop)
+        let before = crop.path.center(at: 0)
+
+        viewModel.moveFollow(byDisplayedPixels: CGSize(width: -8, height: 0))
+
+        let after = try XCTUnwrap(viewModel.followCrop)
+        XCTAssertEqual(after.keyframes.count, 3)
+        let added = try XCTUnwrap(after.keyframes.first { $0.time == 0 })
+        XCTAssertNil(added.autoCenter)
+        XCTAssertEqual(added.center.x, before.x + 4, accuracy: 1e-9)
+        XCTAssertEqual(after.path.center(at: 0).x, before.x + 4, accuracy: 1e-9)
+    }
+
+    /// Removing a keyframe Auto follow wrote and the user moved puts it back; removing one the
+    /// user added, or one never moved, deletes it.
+    @MainActor
+    func testRemovingAKeyframeRevertsAMovedOneAndDeletesTheRest() throws {
+        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+        viewModel.moveFollow(byDisplayedPixels: CGSize(width: 20, height: 0))
+        let moved = try XCTUnwrap(viewModel.keyframeAtPlayhead)
+
+        viewModel.removeKeyframe(moved)
+
+        let reverted = try XCTUnwrap(viewModel.followCrop?.keyframes.first)
+        XCTAssertEqual(reverted.center, CGPoint(x: 60, y: 50))
+        XCTAssertTrue(reverted.isAutoFollows)
+
+        viewModel.toggleKeyframeAtPlayhead()
+
+        XCTAssertEqual(viewModel.followCrop?.keyframes.map(\.time), [3])
+        viewModel.toggleKeyframeAtPlayhead()
+        let added = try XCTUnwrap(viewModel.followCrop?.keyframes.first { $0.time == 0 })
+        XCTAssertNil(added.autoCenter, "the button adds a hand-set keyframe where the curve is")
+        XCTAssertEqual(added.center, CGPoint(x: 140, y: 50))
+    }
+
+    /// In Still a drag moves the whole clip and sets no keyframe.
+    @MainActor
+    func testFollowDragsDoNothingInStill() {
+        let viewModel = makeFollowViewModel(framingMode: .still, followCrop: handFollowCrop())
+
+        viewModel.moveFollow(byDisplayedPixels: CGSize(width: 20, height: 0))
+
+        XCTAssertEqual(viewModel.followCrop, handFollowCrop())
     }
 
     /// The crop area's value reads the active mode's zoom and turn.

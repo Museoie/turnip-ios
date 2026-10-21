@@ -111,6 +111,52 @@ final class FollowModeTests: XCTestCase {
         XCTAssertNotEqual(lane.value as? String, before)
     }
 
+    private func keyframeCount(in lane: XCUIElement) -> Int {
+        Int((lane.value as? String ?? "").prefix { $0.isNumber }) ?? -1
+    }
+
+    /// A one-finger drag in Follow pauses at touch-down and sets the framing at that moment:
+    /// the clip stays paused, and the keyframe it set or moved hands Auto follow's button back.
+    func testADragInFollowSetsTheFramingAtThePlayhead() throws {
+        let app = launchEditor(["-screenshotClipEditorFollow", "-follow"])
+        let follow = app.buttons["auto-follow-button"]
+        XCTAssertTrue(follow.waitForExistence(timeout: 10))
+        XCTAssertEqual(follow.label, "Reset follow")
+        let playPause = app.buttons["playback-play-pause"]
+        XCTAssertTrue(waitUntil { playPause.label == "Pause" })
+
+        let surface = element("clip-editor-crop-surface", in: app)
+        let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        start.press(
+            forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 60, dy: 0)),
+            withVelocity: XCUIGestureVelocity(300), thenHoldForDuration: 0.05)
+
+        XCTAssertTrue(waitUntil { playPause.label == "Play" }, "touch-down in Follow didn't pause")
+        XCTAssertTrue(waitUntil { follow.label == "Auto follow" }, "the drag set no keyframe")
+    }
+
+    /// The lane's button adds a keyframe at the playhead and then, with one there, removes it.
+    /// From Reset follow's empty lane, so the playhead can't already sit on a keyframe.
+    func testTheLaneButtonAddsAndRemovesAKeyframe() throws {
+        let app = launchEditor(["-screenshotClipEditorFollow", "-follow"])
+        let lane = element("follow-lane", in: app)
+        XCTAssertTrue(lane.waitForExistence(timeout: 10))
+        let follow = app.buttons["auto-follow-button"]
+        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        follow.tap()
+        XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
+        lane.coordinate(withNormalizedOffset: CGVector(dx: 0.33, dy: 0.5)).tap()
+        let button = app.buttons["follow-keyframe-button"]
+        XCTAssertTrue(waitUntil { button.label == "Add keyframe" })
+
+        button.tap()
+
+        XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 1 })
+        XCTAssertTrue(waitUntil { button.label == "Remove keyframe" })
+        button.tap()
+        XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
+    }
+
     /// Following an athlete who stays put leaves one keyframe and says so.
     func testAnAthleteWhoStaysPutHasNothingToFollow() throws {
         let app = launchEditor(["-screenshotClipEditor"])
