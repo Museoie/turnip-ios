@@ -208,7 +208,6 @@ extension LivePoseFrameTap: AVCaptureVideoDataOutputSampleBufferDelegate {
             let timestamp = current.anchor.fileRelative(presentationTime)
             current.metrics.recordingDuration = timestamp
             guard current.gate.admits(presentationTime: timestamp) else { return nil }
-            current.metrics.framesKept += 1
             return Admission(
                 recording: current.recording,
                 preparer: current.preparer,

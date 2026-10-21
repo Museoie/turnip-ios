@@ -301,7 +301,6 @@ final class LivePoseTests: XCTestCase {
             channel: channel,
             onResult: { result in streamed.append(result) })
         var producer = LivePoseMetrics()
-        producer.framesKept = 3
         producer.recordingDuration = 0.3
         recording.finish(producer: producer)
 
@@ -314,7 +313,8 @@ final class LivePoseTests: XCTestCase {
         XCTAssertEqual(outcome.results.map(\.timestamp), [0, 0.1, 0.2])
         XCTAssertNil(outcome.errorMessage)
         XCTAssertFalse(outcome.metrics.wasCancelled)
-        XCTAssertEqual(outcome.metrics.framesKept, 3, "the capture side's figures survive the merge")
+        XCTAssertEqual(outcome.metrics.recordingDuration, 0.3, "the capture side's figures survive the merge")
+        XCTAssertEqual(outcome.metrics.framesKept, 3, "kept is what the queue accepted")
         XCTAssertEqual(outcome.metrics.framesInferred, 3)
         XCTAssertEqual(outcome.metrics.inference.count, 3)
         XCTAssertEqual(outcome.metrics.maxQueueDepth, 3)
@@ -352,15 +352,39 @@ final class LivePoseTests: XCTestCase {
         let channel = LivePoseSampleChannel(capacity: 10)
         let recording = LivePoseRecording(inference: { _ in [] }, channel: channel)
         var producer = LivePoseMetrics()
-        producer.framesKept = 5
+        producer.framesDelivered = 5
         recording.cancel(producer: producer)
 
         let outcome = await recording.outcome()
 
         XCTAssertTrue(outcome.metrics.wasCancelled)
         XCTAssertNil(outcome.errorMessage)
-        XCTAssertEqual(outcome.metrics.framesKept, 5, "what the capture side measured is kept")
+        XCTAssertEqual(outcome.metrics.framesDelivered, 5, "what the capture side measured is kept")
         XCTAssertTrue(outcome.results.isEmpty)
+    }
+
+    /// Stop can land while the capture queue is still letterboxing a frame the gate admitted: the
+    /// queue closes first and that frame's push is refused. It was never queued, so it must not
+    /// count as a kept sample the model failed to score, or a fully scored take falls back to
+    /// Processing.
+    func testASampleRefusedAfterStopDoesNotCountAgainstCoverage() async {
+        let channel = LivePoseSampleChannel(capacity: 10)
+        let recording = LivePoseRecording(inference: { _ in [] }, channel: channel)
+        for index in 0..<3 {
+            channel.push(sample(index))
+        }
+        var producer = LivePoseMetrics()
+        producer.framesDelivered = 3
+        producer.recordingDuration = 0.2
+        recording.finish(producer: producer)
+        channel.push(sample(3))
+
+        let outcome = await recording.outcome()
+
+        XCTAssertEqual(outcome.results.map(\.frameIndex), [0, 1, 2])
+        XCTAssertEqual(outcome.metrics.framesKept, 3, "the refused push is not a kept sample")
+        XCTAssertEqual(outcome.metrics.framesInferred, 3)
+        XCTAssertTrue(LivePoseCoverage.isComplete(outcome), "every sample the queue accepted was scored")
     }
 
     // MARK: - Coverage

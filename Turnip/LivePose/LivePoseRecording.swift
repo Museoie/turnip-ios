@@ -84,6 +84,7 @@ final class LivePoseRecording: Sendable {
         }
         var metrics = producerMetrics.withLock { $0 } ?? LivePoseMetrics()
         let stats = channel.stats
+        metrics.framesKept = stats.pushCount
         metrics.framesInferred = results.count
         metrics.inference = inferenceStats
         metrics.queueDrops = stats.dropCount

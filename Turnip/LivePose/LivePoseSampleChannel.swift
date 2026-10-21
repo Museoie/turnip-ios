@@ -61,7 +61,8 @@ final class LivePoseSampleChannel: Sendable {
         state.withLock { $0.isCancelled }
     }
 
-    /// Producer side. A push after `finish()` or `cancel()` is dropped silently: the recording it
+    /// Producer side. A push after `finish()` or `cancel()` is dropped silently and left out of
+    /// `stats.pushCount`, which the recording reports as its kept count: the recording it
     /// belonged to is over.
     func push(_ sample: LivePoseSample) {
         let handoff: (CheckedContinuation<LivePoseSample?, Never>, LivePoseSample)? = state.withLock { state in

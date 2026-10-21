@@ -30,7 +30,10 @@ struct DurationStats: Equatable, Sendable {
 struct LivePoseMetrics: Equatable, Sendable {
     /// Data-output callbacks received while the movie output was recording.
     var framesDelivered = 0
-    /// Frames the gate admitted and the capture queue reduced to tensors.
+    /// Samples the queue accepted: frames the gate admitted, reduced to tensors, and pushed before
+    /// Stop closed the queue. Counted by the channel, not at admission: a frame admitted just as
+    /// Stop lands is still being letterboxed when the queue closes, so its push is refused, and
+    /// counting it at admission would leave a sample "kept" that nothing could ever score.
     var framesKept = 0
     /// Frames the model actually scored. Below `framesKept` when the queue overflowed.
     var framesInferred = 0
