@@ -45,7 +45,7 @@ private final class LoopRecorder {
     var loops: [FakeLoop] = []
     var compositionRequests: [CompositionRequest] = []
     var compositionWindows: [TrickWindow] = []
-    var compositionFollowingWindows: [TrickWindow?] = []
+    var compositionFramingModes: [FramingMode] = []
 }
 
 @MainActor
@@ -65,13 +65,13 @@ final class ClipCardPlaybackTests: XCTestCase {
         window: TrickWindow? = nil,
         cropRect: NormalizedRect? = nil,
         cropAdjustment: CropAdjustment = .identity,
-        isFramedByDetection: Bool = false
+        framingMode: FramingMode = .still
     ) -> ClipCardPlaybackGeometry {
         ClipCardPlaybackGeometry(
             window: window ?? self.window,
             cropRect: cropRect ?? self.cropRect,
             cropAdjustment: cropAdjustment,
-            isFramedByDetection: isFramedByDetection)
+            framingMode: framingMode)
     }
 
     /// `AVAsset` is abstract and throws at runtime, so this uses the concrete
@@ -94,7 +94,7 @@ final class ClipCardPlaybackTests: XCTestCase {
                     LoopRecorder.CompositionRequest(
                         cropRect: geometry.cropRect, cropAdjustment: geometry.cropAdjustment))
                 recorder.compositionWindows.append(geometry.window)
-                recorder.compositionFollowingWindows.append(geometry.followingWindow)
+                recorder.compositionFramingModes.append(geometry.framingMode)
                 return nil
             },
             loadDuration: { recorder.duration },
@@ -432,27 +432,19 @@ final class ClipCardPlaybackTests: XCTestCase {
         XCTAssertEqual(recorder.compositionWindows, [window, editedWindow])
     }
 
-    /// A clip still framed by detection follows the athlete over its window, so a window change
-    /// has to keep that flag: dropping it would rebuild the loop on the static crop.
-    func testWindowChangeKeepsAClipFramedByDetectionFollowingOverTheNewWindow() async {
+    /// A clip in Follow draws its follow crop over its window, so a window change has to keep
+    /// the mode: dropping it would rebuild the loop on the still crop.
+    func testWindowChangeKeepsAClipInFollowFollowingOverTheNewWindow() async {
         let recorder = LoopRecorder()
         let playback = makePlayback(recorder)
-        playback.start(geometry: geometry(isFramedByDetection: true), isSuspended: false)
+        playback.start(geometry: geometry(framingMode: .follow), isSuspended: false)
         await settle(playback)
 
         playback.windowChanged(to: editedWindow)
         await settle(playback)
 
-        XCTAssertEqual(recorder.compositionFollowingWindows, [window, editedWindow])
-    }
-
-    func testAClipNotFramedByDetectionLoadsNoFollowingWindow() async {
-        let recorder = LoopRecorder()
-        let playback = makePlayback(recorder)
-        playback.start(geometry: geometry(), isSuspended: false)
-        await settle(playback)
-
-        XCTAssertEqual(recorder.compositionFollowingWindows, [nil])
+        XCTAssertEqual(recorder.compositionFramingModes, [.follow, .follow])
+        XCTAssertEqual(recorder.compositionWindows, [window, editedWindow])
     }
 
     /// The window arrives through an `.onChange` closure that carries no framing, so the

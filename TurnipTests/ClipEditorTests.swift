@@ -1054,6 +1054,190 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertTrue(viewModel.isMuted)
     }
 
+    // MARK: - Follow mode
+
+    /// A clip over the athlete's whole move, from x≈0.3 to x≈0.7.
+    @MainActor
+    private func makeFollowViewModel(
+        framingMode: FramingMode = .still, followCrop: FollowCrop? = nil, frames: [PoseFrameResult]? = nil
+    ) -> ClipEditorViewModel {
+        let viewModel = ClipEditorViewModel(source: ClipEditorSource(
+            window: TrickWindow(startTime: 0, endTime: 4),
+            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+            framingMode: framingMode,
+            followCrop: followCrop,
+            asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
+            poseFrames: frames ?? twoPositionFrames()))
+        viewModel.setMediaInfo(duration: duration, naturalSize: naturalSize, preferredTransform: .identity)
+        return viewModel
+    }
+
+    /// Switching a clip with pose analysis to Follow runs Auto follow at once, and the button
+    /// then offers Reset follow; Still's framing is left as it was.
+    @MainActor
+    func testSwitchingToFollowRunsAutoFollow() throws {
+        let viewModel = makeFollowViewModel()
+        viewModel.applyCropScale(1.5)
+        let still = viewModel.cropAdjustment
+
+        viewModel.setFramingMode(.follow)
+
+        XCTAssertEqual(viewModel.framingMode, .follow)
+        let crop = try XCTUnwrap(viewModel.followCrop)
+        XCTAssertTrue(viewModel.isAutoFollowApplied)
+        XCTAssertGreaterThanOrEqual(crop.keyframes.count, 2)
+        XCTAssertLessThan(crop.keyframes[0].center.x, crop.keyframes[crop.keyframes.count - 1].center.x)
+        XCTAssertEqual(viewModel.cropAdjustment, still)
+        XCTAssertNotNil(viewModel.followPan)
+    }
+
+    /// Each mode keeps its own framing: Still → Follow → Still lands on the same still framing,
+    /// and Follow again finds its follow crop where it left it.
+    @MainActor
+    func testEachModeKeepsItsOwnFraming() throws {
+        let viewModel = makeFollowViewModel()
+        viewModel.applyCropScale(1.5)
+        let still = viewModel.cropAdjustment
+        viewModel.setFramingMode(.follow)
+        viewModel.applyCropScale(2)
+        let follow = try XCTUnwrap(viewModel.followCrop)
+
+        viewModel.setFramingMode(.still)
+        XCTAssertEqual(viewModel.cropAdjustment, still)
+        viewModel.setFramingMode(.follow)
+
+        XCTAssertEqual(viewModel.followCrop, follow)
+        XCTAssertEqual(viewModel.result.followCrop, follow)
+        XCTAssertEqual(viewModel.result.cropAdjustment, still)
+        XCTAssertEqual(viewModel.result.framingMode, .follow)
+    }
+
+    /// A pinch in Follow zooms the follow crop and hands Auto follow's button back; Still's
+    /// zoom and its Auto crop stay as they were.
+    @MainActor
+    func testAPinchInFollowZoomsTheFollowCropOnly() throws {
+        let viewModel = makeFollowViewModel()
+        viewModel.autoCrop()
+        viewModel.setFramingMode(.follow)
+        let before = try XCTUnwrap(viewModel.followCrop)
+        let still = viewModel.cropAdjustment
+
+        viewModel.applyCropScale(0.5)
+
+        XCTAssertEqual(viewModel.followCrop?.scale ?? 0, before.scale * 0.5, accuracy: 1e-9)
+        XCTAssertEqual(viewModel.followCrop?.keyframes, before.keyframes)
+        XCTAssertFalse(viewModel.isAutoFollowApplied)
+        XCTAssertEqual(viewModel.cropAdjustment, still)
+        XCTAssertTrue(viewModel.isAutoCropApplied)
+    }
+
+    @MainActor
+    func testResetFollowReturnsToTheWholeFrameWithNoKeyframes() throws {
+        let viewModel = makeFollowViewModel()
+        viewModel.setFramingMode(.follow)
+
+        viewModel.resetFollow()
+
+        let crop = try XCTUnwrap(viewModel.followCrop)
+        XCTAssertTrue(crop.keyframes.isEmpty)
+        XCTAssertEqual(crop.restingCenter, CGPoint(x: 100, y: 50))
+        XCTAssertFalse(viewModel.isAutoFollowApplied)
+        XCTAssertEqual(viewModel.framingMode, .follow)
+        viewModel.autoFollow()
+        XCTAssertTrue(viewModel.isAutoFollowApplied)
+    }
+
+    /// Without pose analysis Follow starts from the whole frame, and Reset follow is enabled
+    /// only once a pinch has moved it.
+    @MainActor
+    func testAClipWithoutPoseFramesFollowsByHandOnly() throws {
+        let viewModel = makeFollowViewModel(frames: [])
+
+        viewModel.setFramingMode(.follow)
+
+        XCTAssertFalse(viewModel.supportsAutoFollow)
+        XCTAssertEqual(viewModel.followCrop?.keyframes, [])
+        XCTAssertFalse(viewModel.isFollowAdjusted)
+        viewModel.applyCropRotation(0.1)
+        XCTAssertFalse(viewModel.isFollowAdjusted, "a turn alone is Reset rotate's")
+        viewModel.applyCropScale(1.5)
+        XCTAssertTrue(viewModel.isFollowAdjusted)
+        viewModel.resetFollow()
+        XCTAssertFalse(viewModel.isFollowAdjusted)
+    }
+
+    /// A still athlete leaves nothing to follow: one keyframe and the notice.
+    @MainActor
+    func testFollowingAStandingAthleteSaysThereIsNothingToFollow() {
+        let standing = PoseFixture.frames(hipXPositions: Array(repeating: 0.5, count: 40))
+        let viewModel = makeFollowViewModel(frames: standing)
+
+        viewModel.setFramingMode(.follow)
+
+        XCTAssertEqual(viewModel.followCrop?.keyframes.count, 1)
+        XCTAssertTrue(viewModel.isShowingNothingToFollowNotice)
+    }
+
+    /// A clip that opens in Follow without a follow crop shows Auto follow's from its first
+    /// layout, and goes back without one if nothing changed it.
+    @MainActor
+    func testAClipOpeningInFollowWithoutACropShowsAutoFollows() throws {
+        let viewModel = makeFollowViewModel(framingMode: .follow)
+
+        XCTAssertNotNil(viewModel.followCrop)
+        XCTAssertTrue(viewModel.isAutoFollowApplied)
+        XCTAssertNil(viewModel.result.followCrop)
+
+        viewModel.applyCropScale(1.2)
+
+        XCTAssertNotNil(viewModel.result.followCrop)
+
+        // A trim changes the window the Clip List would fit an unset crop to, zoom and all,
+        // so even an untouched crop goes back set.
+        let trimmed = makeFollowViewModel(framingMode: .follow, frames: PoseFixture.frames(
+            hipXPositions: Array(repeating: 0.5, count: 40)))
+        trimmed.trimEnd(to: 3)
+        trimmed.finishTrim()
+        XCTAssertNotNil(trimmed.result.followCrop)
+    }
+
+    /// A follow crop still all Auto follow's re-tracks a trimmed window, positions only, at the
+    /// same zoom; one with a keyframe the user set stays put.
+    @MainActor
+    func testATrimRetracksOnlyAnUntouchedAutoFollow() throws {
+        let viewModel = makeFollowViewModel()
+        viewModel.setFramingMode(.follow)
+        viewModel.applyCropScale(1.3)
+        let zoomed = try XCTUnwrap(viewModel.followCrop)
+
+        viewModel.trimEnd(to: 2.2)
+        viewModel.finishTrim()
+
+        let retracked = try XCTUnwrap(viewModel.followCrop)
+        XCTAssertEqual(retracked.scale, zoomed.scale)
+        XCTAssertNotEqual(retracked.keyframes, zoomed.keyframes)
+        XCTAssertTrue(retracked.isUntouchedAutoFollow)
+
+        var handSet = retracked
+        handSet.keyframes.append(FollowKeyframe(time: 3, center: CGPoint(x: 120, y: 50)))
+        let viewModel2 = makeFollowViewModel(framingMode: .follow, followCrop: handSet)
+        viewModel2.trimEnd(to: 3.5)
+        viewModel2.finishTrim()
+        XCTAssertEqual(viewModel2.followCrop, handSet)
+    }
+
+    /// The crop area's value reads the active mode's zoom and turn.
+    @MainActor
+    func testTheCropDescriptionReadsTheActiveMode() {
+        let viewModel = makeFollowViewModel()
+        viewModel.setFramingMode(.follow)
+        viewModel.applyCropRotation(.pi / 18)
+
+        XCTAssertTrue(viewModel.cropAdjustmentDescription.contains("turned 10° clockwise"))
+        viewModel.setFramingMode(.still)
+        XCTAssertTrue(viewModel.cropAdjustmentDescription.contains("not turned"))
+    }
+
     // MARK: - Commit
 
     @MainActor

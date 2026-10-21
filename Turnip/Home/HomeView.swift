@@ -118,7 +118,7 @@ struct HomeView: View {
     ) -> ClipListView {
         ClipListView(
             items: detection.clips.map {
-                ClipListItem(window: $0.window, cropRect: $0.cropRect, isFramedByDetection: true)
+                ClipListItem(window: $0.window, cropRect: $0.cropRect)
             },
             poseFrames: detection.poseFrames,
             asset: asset,

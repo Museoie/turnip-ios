@@ -32,8 +32,8 @@ struct TurnipSettings: Equatable, Sendable {
     var autoAddToAlbum: Bool
     var albumName: String
     private(set) var analysisGranularity: Int
-    /// Whether a saved clip's crop moves with the athlete (`CropPathCalculator`) instead of
-    /// holding the one rect the editor shows.
+    /// Whether a detected clip starts in the editor's Follow mode, its crop moving with the
+    /// athlete (`AutoFollow`), rather than in Still.
     var followAthlete: Bool
 
     init(

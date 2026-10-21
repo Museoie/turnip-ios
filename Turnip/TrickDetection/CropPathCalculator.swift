@@ -7,9 +7,10 @@ struct CropKeyframe: Hashable, Sendable {
     let rect: NormalizedRect
 }
 
-/// A crop that moves over a trick window to follow the athlete. Every keyframe holds a rect of
-/// the same size, so the clip never zooms partway through; between keyframes the crop moves in a
-/// straight line, which is what an `AVVideoCompositionLayerInstruction` transform ramp draws.
+/// A crop that moves over a trick window to follow the athlete, one keyframe per pose sample.
+/// Every keyframe holds a rect of the same size, so the clip never zooms partway through. It is
+/// analysis output: Auto follow reduces it to the few keyframes a follow crop is drawn from
+/// (`AutoFollow`).
 struct CropPath: Hashable, Sendable {
     /// In time order; never empty.
     let keyframes: [CropKeyframe]

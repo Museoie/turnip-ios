@@ -392,7 +392,7 @@ struct ScreenshotProcessingPoseHarness: View {
 /// Scripted `ProcessingRunning` for `-screenshotProcessingPose`: one mid-run report
 /// with a stick-figure's worth of keypoints at a fixed timestamp, then holds — same
 /// hold-and-let-the-UI-test-kill-it shape as `ScreenshotProcessingRunner`.
-private struct ScreenshotProcessingPoseRunner: ProcessingRunning {
+struct ScreenshotProcessingPoseRunner: ProcessingRunning {
     func run(
         video: SelectedVideo,
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void

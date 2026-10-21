@@ -61,9 +61,10 @@ struct ClipExpansionContainer: View {
     @State private var measuredMarker: CGRect?
     /// Gates `measuredMarker` updates: `true` through the opening flight, `false`
     /// from the first touch-move of an interactive drag, or from the moment
-    /// `close()`/`closeForDelete()` runs, whichever comes first — for the rest of this
-    /// container's life. Once the user could be leaving, the flight's endpoint shouldn't
-    /// keep tracking a value that could still move underneath it.
+    /// `close()`/`closeForDelete()` runs, whichever comes first. Once the user could be
+    /// leaving, the flight's endpoint shouldn't keep tracking a value that could still move
+    /// underneath it. A drag that springs back reopens it once the card has landed again: the
+    /// editor's marker changes with its framing mode, and the next close has to aim there.
     @State private var acceptsDestinationUpdates = true
     /// The live drag, via `@GestureState` rather than a plain `@State` flag: a system
     /// cancellation (an incoming call, Control Center, the home-indicator swipe-up
@@ -259,17 +260,25 @@ struct ClipExpansionContainer: View {
                 player: viewModel.player,
                 geometry: viewModel.previewOverlay,
                 marker: focus,
-                adjustment: viewModel.cropAdjustment,
+                framing: viewModel.framing,
+                duration: viewModel.duration,
+                isSynchronized: !hasLanded,
                 onReadyForDisplay: surfaceDidBecomeReady)
             .opacity(isSeekedToSource ? 1 : 0)
         }
         .frame(width: destination.width, height: destination.height)
+        .accessibilityHidden(true)
         // Lets a UI test read this layer's laid-out (pre-transform, i.e. settled)
         // frame — accessibility reports geometry independent of opacity — to verify it
         // tracks the real destination rather than a placeholder. It cannot see the live
-        // transform.
-        .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier("expansion-card")
+        // transform. An overlay of the card's own size rather than the card itself: the
+        // video inside lays the whole frame out past the card's bounds, and an element
+        // made of it reports that whole frame.
+        .overlay {
+            Color.clear
+                .accessibilityElement()
+                .accessibilityIdentifier("expansion-card")
+        }
         .position(x: destination.midX, y: destination.midY)
     }
 
@@ -315,9 +324,12 @@ struct ClipExpansionContainer: View {
         let originalWindow = viewModel.duration.map {
             ClipEditorViewModel.clamped(window: source.window, to: $0)
         } ?? source.window
-        let isUnchanged = viewModel.window == originalWindow
-            && viewModel.cropRect == source.cropRect
-            && viewModel.cropAdjustment == source.cropAdjustment
+        let result = viewModel.result
+        let isUnchanged = result.window == originalWindow
+            && result.cropRect == source.cropRect
+            && result.cropAdjustment == source.cropAdjustment
+            && result.framingMode == source.framingMode
+            && result.followCrop == source.followCrop
         return isUnchanged ? sourceTime : (viewModel.window.startTime + viewModel.window.endTime) / 2
     }
 
@@ -403,11 +415,13 @@ struct ClipExpansionContainer: View {
                 // Not if another drag has started, or a close, while this snap-back ran.
                 guard dragTranslation == nil, !isClosing else { return }
                 setLanded(true)
+                acceptsDestinationUpdates = true
             })
         } else {
             // The drag never moved the card (it only ever went up), so there is nothing to
             // animate and no completion to wait for.
             setLanded(true)
+            acceptsDestinationUpdates = true
         }
         guard let origin = dragScrubOrigin else { return }
         dragScrubOrigin = nil

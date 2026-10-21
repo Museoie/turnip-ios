@@ -71,8 +71,8 @@ final class AVPlayerLoop: ClipLooping {
 @MainActor
 final class ClipCardPlayback: ObservableObject {
     /// Loads the `videoComposition` a loop over this geometry has to render through. Takes
-    /// the window as well as the framing: a crop that follows the athlete moves along a path
-    /// fitted to the frames inside it.
+    /// the window as well as the framing: a clip in Follow that has no follow crop of its own
+    /// draws Auto follow's for the frames inside it.
     typealias LoadComposition = @MainActor (
         _ geometry: ClipCardPlaybackGeometry
     ) async -> AVVideoComposition?
@@ -178,7 +178,7 @@ final class ClipCardPlayback: ObservableObject {
         guard let current = geometry else { return }
         geometry = ClipCardPlaybackGeometry(
             window: window, cropRect: current.cropRect, cropAdjustment: current.cropAdjustment,
-            isFramedByDetection: current.isFramedByDetection)
+            framingMode: current.framingMode, followCrop: current.followCrop)
         teardown()
         resume()
     }
@@ -252,7 +252,7 @@ final class ClipCardPlayback: ObservableObject {
         guard clampedWindow != target.window else { return target }
         return ClipCardPlaybackGeometry(
             window: clampedWindow, cropRect: target.cropRect, cropAdjustment: target.cropAdjustment,
-            isFramedByDetection: target.isFramedByDetection)
+            framingMode: target.framingMode, followCrop: target.followCrop)
     }
 
     /// Clears the in-flight slot only if `token` still owns it: a later attempt for the
@@ -269,16 +269,13 @@ final class ClipCardPlayback: ObservableObject {
 /// window change alone needs a rebuild (a different `AVPlayerLooper` time range), and so
 /// does a crop-rect or crop-adjustment change alone (a different `videoComposition`) —
 /// trimming never touches `cropAdjustment` and an editor commit can change any subset of
-/// the three.
+/// them. A clip in Follow without a follow crop of its own draws Auto follow's for `window`.
 struct ClipCardPlaybackGeometry: Equatable {
     let window: TrickWindow
     let cropRect: NormalizedRect
     let cropAdjustment: CropAdjustment
-    var isFramedByDetection = false
-
-    /// The window a crop that follows the athlete is fitted to, or `nil` for a clip whose crop
-    /// isn't detection's and so never follows.
-    var followingWindow: TrickWindow? { isFramedByDetection ? window : nil }
+    var framingMode: FramingMode = .still
+    var followCrop: FollowCrop?
 }
 
 /// Whether a mounted loop has to be replaced to show `target`: `builtFor` is `nil` when

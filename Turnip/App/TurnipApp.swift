@@ -22,6 +22,10 @@ struct TurnipApp: App {
             // same generated movie.
             ScreenshotClipEditorHarness.warmUpSampleMovie()
         }
+        if CommandLine.arguments.contains("-screenshotClipEditorFollow")
+            || CommandLine.arguments.contains("-screenshotClipListFollow") {
+            FollowHarness.warmUp()
+        }
         #endif
     }
 
@@ -33,6 +37,10 @@ struct TurnipApp: App {
                     ScreenshotHomeHarness()
                 } else if CommandLine.arguments.contains("-screenshotGalleryFilter") {
                     ScreenshotGalleryFilterHarness()
+                } else if CommandLine.arguments.contains("-screenshotClipEditorFollow") {
+                    ScreenshotFollowEditorHarness()
+                } else if CommandLine.arguments.contains("-screenshotClipListFollow") {
+                    ScreenshotFollowClipListHarness()
                 } else if CommandLine.arguments.contains("-screenshotClipListMedia") {
                     ScreenshotClipListMediaHarness()
                 } else if CommandLine.arguments.contains("-screenshotClipList") {

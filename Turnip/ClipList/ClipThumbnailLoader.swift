@@ -13,8 +13,8 @@ import Foundation
 /// main-actor view; the crossing is narrow and read-only — the generator seeks and copies
 /// one frame, and the asset is never mutated or stored.
 actor ClipThumbnailLoader {
-    /// Loads the thumbnail for `item` from `asset` — cropped, for a clip that follows the
-    /// athlete, to where `cropPath` has the crop at the thumbnail's own moment.
+    /// Loads the thumbnail for `item` from `asset` — cropped, for a clip in Follow, to where
+    /// `followCrop` has the crop at the thumbnail's own moment, zoomed and turned about it.
     ///
     /// The generator returns the raw, un-uprighted frame: `ClipExportTransform.make`
     /// already composes `preferredTransform` into `layerTransform`, the same as the
@@ -29,7 +29,7 @@ actor ClipThumbnailLoader {
     /// the expensive work, it can only discard a result another card may be waiting on
     /// (cards share one in-flight decode per id through the view model's dedup).
     func thumbnail(
-        for item: ClipListItem, following cropPath: CropPath? = nil, in asset: AVAsset
+        for item: ClipListItem, following followCrop: FollowCrop? = nil, in asset: AVAsset
     ) async -> CGImage? {
         do {
             // Fail fast on assets with no video track: seeking a frame that can't exist
@@ -56,17 +56,46 @@ actor ClipThumbnailLoader {
                 at: CMTime(seconds: midpoint, preferredTimescale: 600),
                 actualTime: nil
             )
+            var cropRect = item.cropRect
+            var cropAdjustment = item.cropAdjustment
+            if let followCrop, let rect = Self.followRect(
+                followCrop, at: midpoint, cropRect: item.cropRect,
+                naturalSize: naturalSize, preferredTransform: preferredTransform) {
+                cropRect = rect
+                cropAdjustment = CropAdjustment(
+                    scale: followCrop.scale, rotationRadians: followCrop.rotationRadians, offset: .zero)
+            }
             return Self.adjustedThumbnail(
                 from: image,
                 naturalSize: naturalSize,
                 preferredTransform: preferredTransform,
-                cropRect: cropPath?.rect(at: midpoint) ?? item.cropRect,
-                cropAdjustment: item.cropAdjustment,
+                cropRect: cropRect,
+                cropAdjustment: cropAdjustment,
                 maxPixelSize: Self.defaultMaxPixelSize
             )
         } catch {
             return nil
         }
+    }
+
+    /// A follow crop's box at `time`, normalized: the marker's size around `cropRect`, centered
+    /// where the crop's center is then — the rect `ClipExportTransform.make(followCrop:…)`
+    /// renders that frame through.
+    static func followRect(
+        _ followCrop: FollowCrop, at time: TimeInterval, cropRect: NormalizedRect,
+        naturalSize: CGSize, preferredTransform: CGAffineTransform
+    ) -> NormalizedRect? {
+        let geometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
+        guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
+        let size = geometry.displayedSize
+        let box = ClipEditorViewModel.markerBox(
+            around: crop, aspectRatio: CGFloat(CropRectCalculator().targetAspectRatio)).size
+        let center = followCrop.path.center(at: time)
+        return NormalizedRect(
+            minX: Float((center.x - box.width / 2) / size.width),
+            maxX: Float((center.x + box.width / 2) / size.width),
+            minY: Float((center.y - box.height / 2) / size.height),
+            maxY: Float((center.y + box.height / 2) / size.height))
     }
 
     /// Decoded-frame bound for card thumbnails: the two-column triage grid gives ~170pt

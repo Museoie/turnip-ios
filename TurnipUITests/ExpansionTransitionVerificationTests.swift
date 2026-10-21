@@ -107,10 +107,12 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
     }
 
     /// The editor's own top row (`ScreenHeaderBand`) against the clip list's titled bar it
-    /// flies open from: the back chevron and the title cross-fade over the list's through
-    /// the flight, so they have to sit at the same height, with the title at the same
-    /// center, or the header visibly jumps at the cut. Compares the two screens' element
-    /// frames in one flow, on whichever OS the run is on — the band's metrics branch per OS.
+    /// flies open from: the back chevron cross-fades over the list's through the flight, so
+    /// it has to sit at the same place or the header visibly jumps at the cut. The Still |
+    /// Follow switch takes the title's slot — it fades in there rather than lining up with
+    /// the list's title, but it is centered on the same line. Compares the two screens'
+    /// element frames in one flow, on whichever OS the run is on — the band's metrics branch
+    /// per OS.
     func testClipEditorHeaderLinesUpWithTheClipListsBar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
@@ -121,20 +123,55 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
-        let editorTitle = app.staticTexts["clip-editor-title"]
-        XCTAssertTrue(editorTitle.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
+        let modeSwitch = app.segmentedControls["framing-mode-switch"]
+        XCTAssertTrue(modeSwitch.waitForExistence(timeout: 5))
         let editorBack = settledFrame(of: app.buttons["Back to clips"].firstMatch)
-        let editorTitleFrame = settledFrame(of: editorTitle)
+        let switchFrame = settledFrame(of: modeSwitch)
         print("VERIFY_LIST_BACK:\(listBack) VERIFY_EDITOR_BACK:\(editorBack)")
-        print("VERIFY_LIST_TITLE:\(listTitle) VERIFY_EDITOR_TITLE:\(editorTitleFrame)")
+        print("VERIFY_LIST_TITLE:\(listTitle) VERIFY_EDITOR_SWITCH:\(switchFrame)")
         XCTAssertEqual(editorBack.midY, listBack.midY, accuracy: 1)
-        XCTAssertEqual(editorTitleFrame.midY, listTitle.midY, accuracy: 1)
-        XCTAssertEqual(editorTitleFrame.midX, listTitle.midX, accuracy: 1)
+        XCTAssertEqual(switchFrame.midY, listTitle.midY, accuracy: 1)
+        XCTAssertEqual(switchFrame.midX, listTitle.midX, accuracy: 1)
         // Both are the same `ScrimIconButton` circle, the list's with the bar's own wider
         // pill hidden under it, so the frames match outright, not just the glyph.
         XCTAssertEqual(editorBack.midX, listBack.midX, accuracy: 1)
         XCTAssertEqual(editorBack.size.width, listBack.size.width, accuracy: 1)
         XCTAssertEqual(editorBack.size.height, listBack.size.height, accuracy: 1)
+    }
+
+    /// Where a swipe-to-dismiss starts: in the top row's band, which the dismiss gesture owns
+    /// (the video surface keeps a downward drag for its own crop gesture), between the back
+    /// chevron and the Still | Follow switch — the switch claims a touch that starts on it.
+    /// Read off the controls, so it doesn't depend on the device's status-bar height.
+    private func headerSwipeStart(in app: XCUIApplication) -> XCUICoordinate {
+        let back = settledFrame(of: app.buttons["Back to clips"].firstMatch)
+        let modeSwitch = settledFrame(of: app.segmentedControls["framing-mode-switch"])
+        return app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: (back.maxX + modeSwitch.minX) / 2, dy: back.midY))
+    }
+
+    /// The flight lands on whichever marker the editor reports, and a clip that opens in
+    /// Follow reports Follow's, shorter by the lane: the card has to land on that one.
+    func testAClipInFollowFliesOntoFollowsShorterMarker() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipListFollow"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        let tile = firstClipCard(in: app)
+        XCTAssertTrue(tile.waitForExistence(timeout: 15))
+        tile.tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "follow-lane").firstMatch
+            .waitForExistence(timeout: 15))
+        let card = app.descendants(matching: .any).matching(identifier: "expansion-card").firstMatch
+        let marker = app.descendants(matching: .any).matching(identifier: "crop-marker").firstMatch
+        XCTAssertTrue(marker.waitForExistence(timeout: 5))
+        let cardFrame = settledFrame(of: card)
+        let markerFrame = settledFrame(of: marker)
+        print("VERIFY_FOLLOW_CARD_FRAME:\(cardFrame) VERIFY_FOLLOW_MARKER_FRAME:\(markerFrame)")
+        XCTAssertEqual(cardFrame.minY, markerFrame.minY, accuracy: 3)
+        XCTAssertEqual(cardFrame.height, markerFrame.height, accuracy: 3)
+        XCTAssertEqual(cardFrame.width, markerFrame.width, accuracy: 3)
     }
 
     /// Swipe-to-dismiss is the editor's back-navigation by another route, so it has to hand
@@ -169,10 +206,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         XCTAssertTrue(trimmed.waitForExistence(timeout: 5))
         XCTAssertNotEqual(trimmed.label, "Trim range 0.5 seconds to 2 seconds", "the drag didn't move the end handle")
 
-        // Down from the title itself — the top row's band, which the dismiss gesture owns
-        // (the video surface keeps a downward drag for its own crop gesture) — so the
-        // start point doesn't depend on the device's status-bar height.
-        let start = app.staticTexts["clip-editor-title"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let start = headerSwipeStart(in: app)
         start.press(
             forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 550)),
             withVelocity: XCUIGestureVelocity(900), thenHoldForDuration: 0.05)
@@ -202,12 +236,13 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 15))
         Thread.sleep(forTimeInterval: 1)
 
-        let start = title.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let start = headerSwipeStart(in: app)
         start.press(
             forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 60)),
             withVelocity: XCUIGestureVelocity(300), thenHoldForDuration: 0.4)
         Thread.sleep(forTimeInterval: 2)
-        XCTAssertTrue(title.exists && title.isHittable, "a short swipe closed the editor")
+        let back = app.buttons["Back to clips"].firstMatch
+        XCTAssertTrue(back.exists && back.isHittable, "a short swipe closed the editor")
     }
 
     // No close-direction counterpart (sampling the card mid-flight after tapping "Back to

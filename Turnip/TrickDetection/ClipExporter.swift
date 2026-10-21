@@ -10,22 +10,23 @@ import Foundation
 /// `preferredTransform` when sampling, so keypoints are measured upright). Pass
 /// `SampledFrame.renderSize` (not `track.naturalSize`) when denormalizing it.
 ///
-/// `cropPath`, when set, replaces `cropRect`: the crop follows the athlete along it instead of
-/// holding one rect (`CropPathCalculator`).
+/// `followCrop`, when set, replaces `cropAdjustment`: the crop moves with the athlete along
+/// it (`docs/DESIGN.md` step 6, "Follow crop in the editor"), with `cropRect` setting only the
+/// crop's size, the marker's.
 struct ClipSpec: Equatable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
     let cropAdjustment: CropAdjustment
-    let cropPath: CropPath?
+    let followCrop: FollowCrop?
 
     init(
         window: TrickWindow, cropRect: NormalizedRect, cropAdjustment: CropAdjustment = .identity,
-        cropPath: CropPath? = nil
+        followCrop: FollowCrop? = nil
     ) {
         self.window = window
         self.cropRect = cropRect
         self.cropAdjustment = cropAdjustment
-        self.cropPath = cropPath
+        self.followCrop = followCrop
     }
 }
 
@@ -121,7 +122,14 @@ struct ClipExportTransform {
         // transform its top-left subtracts directly — no second trip through preferredTransform.
         let geometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
         guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
+        return make(displayedCrop: crop, geometry: geometry, cropAdjustment: cropAdjustment)
+    }
 
+    /// `make(cropRect:…)` for a crop already in displayed pixels.
+    private static func make(
+        displayedCrop crop: CGRect, geometry: VideoTrackGeometry, cropAdjustment: CropAdjustment
+    ) -> ClipExportTransform? {
+        guard crop.width > 0, crop.height > 0 else { return nil }
         // Maps upright displayed-space points into the crop's render space, anchored on
         // the crop rect's own center so the preview's fixed marker rectangle and this
         // export transform agree: un-anchor, apply the user's scale/rotation about the
@@ -149,43 +157,80 @@ struct ClipExportTransform {
         return ClipExportTransform(renderSize: renderSize, layerTransform: layerTransform)
     }
 
-    /// The transform for a crop that moves along `cropPath` over `span`, a range of source
-    /// time that composition time zero sits at the start of — the trimmed clip's range for an
-    /// export, `0...duration` for a player over the untrimmed source. One ramp per stretch
-    /// between the path's keyframes inside `span`, each built from `make(cropRect:...)` at its
-    /// ends, so every moment renders the same way a static crop on that rect would.
-    /// `cropAdjustment` applies about the moving crop's center.
+    // swiftlint:disable function_parameter_count
+    /// The transform for a follow crop over `span`, a range of source time that composition
+    /// time zero sits at the start of — the trimmed clip's range for an export, `0...duration`
+    /// for a player over the untrimmed source.
     ///
-    /// `nil` when the source dimensions are unknown or a keyframe's rect is degenerate.
+    /// At every moment the crop is a box of the marker's size (`cropRect`'s marker box)
+    /// centered on the follow crop's center then, zoomed and turned about that center — the
+    /// order the editor's preview draws. The curve is sampled once per frame of `frameRate`
+    /// wherever the center moves, one ramp per frame: the zoom and turn are the same at every
+    /// sample, so only the translation changes within a ramp and the composition's linear
+    /// interpolation between its two ends is exact at the frames it renders. Where the
+    /// center holds, one ramp covers the hold.
+    ///
+    /// `nil` when the source dimensions are unknown or the crop rect is degenerate.
     static func make(
-        cropPath: CropPath,
+        followCrop: FollowCrop,
+        cropRect: NormalizedRect,
         over span: ClosedRange<TimeInterval>,
+        frameRate: Float,
         naturalSize: CGSize,
-        preferredTransform: CGAffineTransform,
-        cropAdjustment: CropAdjustment = .identity
+        preferredTransform: CGAffineTransform
     ) -> ClipExportTransform? {
-        let inside = cropPath.keyframes.map(\.time).filter { $0 > span.lowerBound && $0 < span.upperBound }
-        let times = [span.lowerBound] + inside + (span.upperBound > span.lowerBound ? [span.upperBound] : [])
+        // swiftlint:enable function_parameter_count
+        let geometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
+        guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
+        let box = ClipEditorViewModel.markerBox(
+            around: crop, aspectRatio: CGFloat(CropRectCalculator().targetAspectRatio)).size
+        let path = followCrop.path
+        let adjustment = CropAdjustment(
+            scale: followCrop.scale, rotationRadians: followCrop.rotationRadians, offset: .zero)
         var stops: [(time: TimeInterval, transform: ClipExportTransform)] = []
-        for time in times {
-            guard let transform = make(
-                cropRect: cropPath.rect(at: time), naturalSize: naturalSize,
-                preferredTransform: preferredTransform, cropAdjustment: cropAdjustment)
+        for time in sampleTimes(over: span, moving: path.movingSpan, frameRate: frameRate) {
+            let center = path.center(at: time)
+            let rect = CGRect(
+                x: center.x - box.width / 2, y: center.y - box.height / 2, width: box.width, height: box.height)
+            guard let transform = make(displayedCrop: rect, geometry: geometry, cropAdjustment: adjustment)
             else { return nil }
             stops.append((time, transform))
         }
         guard let first = stops.first else { return nil }
+        // Rounded to the timescale rather than through `CMTime(seconds:preferredTimescale:)`,
+        // which truncates: a frame at 1/15 s would start its ramp a 600th of a second early.
+        func compositionTime(_ time: TimeInterval) -> CMTime {
+            CMTime(value: CMTimeValue(((time - span.lowerBound) * 600).rounded()), timescale: 600)
+        }
         let ramps = zip(stops, stops.dropFirst()).map { earlier, later in
             ClipTransformRamp(
-                timeRange: CMTimeRange(
-                    start: CMTime(seconds: earlier.time - span.lowerBound, preferredTimescale: 600),
-                    end: CMTime(seconds: later.time - span.lowerBound, preferredTimescale: 600)),
+                timeRange: CMTimeRange(start: compositionTime(earlier.time), end: compositionTime(later.time)),
                 start: earlier.transform.layerTransform,
                 end: later.transform.layerTransform)
         }
         return ClipExportTransform(
             renderSize: first.transform.renderSize, layerTransform: first.transform.layerTransform,
             ramps: ramps)
+    }
+
+    /// Where a follow crop is sampled: the span's two ends, plus every frame of the span — on
+    /// the composition's own frame grid, counted from the span's start — from the last frame
+    /// before the center starts moving to the first after it stops.
+    static func sampleTimes(
+        over span: ClosedRange<TimeInterval>, moving: ClosedRange<TimeInterval>?, frameRate: Float
+    ) -> [TimeInterval] {
+        var times = [span.lowerBound]
+        if let moving, frameRate > 0 {
+            let frame = 1 / TimeInterval(frameRate)
+            let firstIndex = Int(((moving.lowerBound - span.lowerBound) / frame).rounded(.down))
+            let lastIndex = Int(((moving.upperBound - span.lowerBound) / frame).rounded(.up))
+            for index in max(firstIndex, 1)...max(lastIndex, 1) {
+                let time = span.lowerBound + TimeInterval(index) * frame
+                if time < span.upperBound - 1e-9 { times.append(time) }
+            }
+        }
+        if span.upperBound > span.lowerBound { times.append(span.upperBound) }
+        return times
     }
 
     /// Builds an `AVMutableVideoComposition` applying this transform to `track`, covering
@@ -364,13 +409,14 @@ actor ClipExporter {
         else {
             throw ClipExportError.invalidTimeRange(window: spec.window)
         }
+        let frameRate = try await videoTrack.load(.nominalFrameRate)
         let transform = try Self.renderTransform(
-            for: spec, staticTransform: staticTransform, videoRange: ranges.video,
+            for: spec, staticTransform: staticTransform, videoRange: ranges.video, frameRate: frameRate,
             naturalSize: naturalSize, preferredTransform: preferredTransform)
         let composition = try makeComposition(
             videoTrack: videoTrack, audioTrack: audioTrack, ranges: ranges)
-        let videoComposition = try await makeVideoComposition(
-            for: videoTrack, in: composition, transform: transform)
+        let videoComposition = try makeVideoComposition(
+            in: composition, transform: transform, frameRate: frameRate)
 
         guard let session = AVAssetExportSession(
             asset: composition, presetName: AVAssetExportPresetHighestQuality)
@@ -389,17 +435,19 @@ actor ClipExporter {
         return ExportedClip(fileURL: outputURL)
     }
 
-    /// The static crop's transform, or — for a spec with a crop path — the moving crop's, timed
-    /// against the composition, which starts where the trimmed video range does.
+    // swiftlint:disable function_parameter_count
+    /// The static crop's transform, or — for a spec with a follow crop — the moving crop's,
+    /// timed against the composition, which starts where the trimmed video range does.
     static func renderTransform(
-        for spec: ClipSpec, staticTransform: ClipExportTransform, videoRange: CMTimeRange,
+        for spec: ClipSpec, staticTransform: ClipExportTransform, videoRange: CMTimeRange, frameRate: Float,
         naturalSize: CGSize, preferredTransform: CGAffineTransform
     ) throws -> ClipExportTransform {
-        guard let path = spec.cropPath else { return staticTransform }
+        // swiftlint:enable function_parameter_count
+        guard let followCrop = spec.followCrop else { return staticTransform }
         guard let moving = ClipExportTransform.make(
-            cropPath: path, over: videoRange.start.seconds...videoRange.end.seconds,
-            naturalSize: naturalSize, preferredTransform: preferredTransform,
-            cropAdjustment: spec.cropAdjustment)
+            followCrop: followCrop, cropRect: spec.cropRect,
+            over: videoRange.start.seconds...videoRange.end.seconds, frameRate: frameRate,
+            naturalSize: naturalSize, preferredTransform: preferredTransform)
         else {
             throw ClipExportError.invalidCropRect(window: spec.window)
         }
@@ -454,11 +502,10 @@ actor ClipExporter {
     /// the composition's full duration — the composition holds exactly one trimmed clip, so
     /// there is nothing else to cover.
     private func makeVideoComposition(
-        for videoTrack: AVAssetTrack,
         in composition: AVMutableComposition,
-        transform: ClipExportTransform
-    ) async throws -> AVMutableVideoComposition {
-        let frameRate = try await videoTrack.load(.nominalFrameRate)
+        transform: ClipExportTransform,
+        frameRate: Float
+    ) throws -> AVMutableVideoComposition {
         guard let compositionTrack = composition.tracks(withMediaType: .video).first else {
             throw ClipExportError.exportFailed(reason: "composition lost its video track")
         }

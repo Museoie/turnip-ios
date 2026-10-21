@@ -23,10 +23,15 @@ struct CropAdjustment: Hashable, Sendable {
 /// `poseFrames` carries *every* sampled frame, not just the window's: dragging a handle
 /// outward pulls new frames into the window, and Auto crop fits whichever frames the
 /// trimmed window holds.
+///
+/// `framingMode` and `followCrop` are the clip's as `ClipListItem` carries them: a clip in
+/// Follow with no follow crop yet opens on Auto follow's.
 struct ClipEditorSource {
     let window: TrickWindow
     let cropRect: NormalizedRect
     let cropAdjustment: CropAdjustment
+    let framingMode: FramingMode
+    let followCrop: FollowCrop?
     let asset: AVAsset
     let poseFrames: [PoseFrameResult]
 
@@ -34,12 +39,16 @@ struct ClipEditorSource {
         window: TrickWindow,
         cropRect: NormalizedRect,
         cropAdjustment: CropAdjustment = .identity,
+        framingMode: FramingMode = .still,
+        followCrop: FollowCrop? = nil,
         asset: AVAsset,
         poseFrames: [PoseFrameResult]
     ) {
         self.window = window
         self.cropRect = cropRect
         self.cropAdjustment = cropAdjustment
+        self.framingMode = framingMode
+        self.followCrop = followCrop
         self.asset = asset
         self.poseFrames = poseFrames
     }
@@ -50,8 +59,14 @@ struct ClipEditorSource {
 /// the clip list applies it to its item. Trashing isn't the editor's decision — the list's
 /// own trash button owns it — so the clip list preserves the item's existing `isTrashed`
 /// when applying a result.
+///
+/// It carries both modes' framings, whichever is active: the clip keeps the other for a later
+/// switch. A `followCrop` the editor only ever showed as Auto follow's for the window it opened
+/// with comes back `nil`, as it went in.
 struct ClipEditorResult: Equatable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
     let cropAdjustment: CropAdjustment
+    var framingMode: FramingMode = .still
+    var followCrop: FollowCrop?
 }

@@ -20,10 +20,12 @@ import Foundation
 /// since an edited clip is no longer the one that was saved; opening a clip and closing
 /// it unchanged leaves it set.
 ///
-/// `isFramedByDetection` is true while the crop is still the one detection computed from the
-/// athlete's pose: only such a clip can follow the athlete (`ClipListViewModel.cropPath`). The
-/// original, a hand-added clip and a clip whose framing the editor changed all start or end up
-/// `false`; a trim alone keeps it.
+/// `framingMode` is which of the editor's two framings the clip shows (`docs/UIUX.md` § "Two
+/// framing modes, Still and Follow"): `cropAdjustment` is Still's, `followCrop` Follow's. The
+/// clip keeps both, so the editor's switch can go back to either. A clip in Follow whose
+/// `followCrop` is still `nil` shows Auto follow's crop for its window, worked out where it is
+/// drawn (`ClipListViewModel.followCrop(for:)`): a detected clip starts that way when Settings'
+/// Follow the athlete is on.
 ///
 /// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
 /// stands for the source video already in Photos rather than a derived clip: it
@@ -37,9 +39,10 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     /// The editor's manual pinch/rotate/drag adjustment on top of `cropRect`, carried so
     /// it survives a re-open of the editor and reaches export.
     var cropAdjustment: CropAdjustment
+    var framingMode: FramingMode
+    var followCrop: FollowCrop?
     var isTrashed: Bool
     var isSaved: Bool
-    var isFramedByDetection: Bool
     let isOriginal: Bool
 
     init(
@@ -47,18 +50,20 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         window: TrickWindow,
         cropRect: NormalizedRect,
         cropAdjustment: CropAdjustment = .identity,
+        framingMode: FramingMode = .still,
+        followCrop: FollowCrop? = nil,
         isTrashed: Bool = false,
         isSaved: Bool = false,
-        isFramedByDetection: Bool = false,
         isOriginal: Bool = false
     ) {
         self.id = id
         self.window = window
         self.cropRect = cropRect
         self.cropAdjustment = cropAdjustment
+        self.framingMode = framingMode
+        self.followCrop = followCrop
         self.isTrashed = isTrashed
         self.isSaved = isSaved
-        self.isFramedByDetection = isFramedByDetection
         self.isOriginal = isOriginal
     }
 

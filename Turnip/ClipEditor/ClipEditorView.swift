@@ -47,10 +47,11 @@ struct ClipEditorView: View {
     @State private var gestureScale: CGFloat = 1
     @State private var gestureRotation: Angle = .zero
     @State private var gestureOffset: CGSize = .zero
-    /// The stage's on-screen frame (global space): the band between the header row and
-    /// the bottom controls, which the crop marker is centered in. Reported by the layout
-    /// placeholder in `chrome` and fixed per device — it never depends on the clip.
-    @State private var stageFrame: CGRect = .zero
+    /// Where the layout placeholder in `chrome` sits (global space), and whether the follow
+    /// lane was in the layout it was measured in: the stage band of the mode it was measured
+    /// in, from which both modes' bands are derived (`stillStage`, `followStage`). Fixed per
+    /// device — it never depends on the clip.
+    @State private var stageMeasurement = ClipEditorStageMeasurement()
 
     init(
         source: ClipEditorSource,
@@ -122,10 +123,42 @@ struct ClipEditorView: View {
     }
 
     /// The crop marker's frame, in global space: one fixed rectangle of the crop rect's
-    /// aspect ratio centered in the stage. Reported to a presenting `ClipExpansionContainer`
-    /// as the part of the screen its flying card's window starts on.
+    /// aspect ratio centered in the stage, the same for every clip in the same framing mode —
+    /// Follow's is shorter by the lane. Reported to a presenting `ClipExpansionContainer` as
+    /// the part of the screen its flying card's window starts on.
     private var markerFrame: CGRect {
-        ClipEditorStage.markerRect(in: stageFrame, aspectRatio: viewModel.targetAspectRatio)
+        viewModel.framingMode == .follow ? followMarker : stillMarker
+    }
+
+    private var stillMarker: CGRect {
+        ClipEditorStage.markerRect(in: stillStage, aspectRatio: viewModel.targetAspectRatio)
+    }
+
+    private var followMarker: CGRect {
+        ClipEditorStage.markerRect(in: followStage, aspectRatio: viewModel.targetAspectRatio)
+    }
+
+    /// The band between the header row and the bottom controls in the active mode, where the
+    /// crop gestures are taken.
+    private var stageFrame: CGRect {
+        viewModel.framingMode == .follow ? followStage : stillStage
+    }
+
+    /// The vertical space the follow lane takes from the stage: its own height and the gap
+    /// above the trim timeline.
+    private static let laneSlot = FollowLaneView.height + laneSpacing
+    private static let laneSpacing: CGFloat = 4
+
+    private var stillStage: CGRect {
+        var frame = stageMeasurement.frame
+        if stageMeasurement.showsLane { frame.size.height += Self.laneSlot }
+        return frame
+    }
+
+    private var followStage: CGRect {
+        var frame = stageMeasurement.frame
+        if !stageMeasurement.showsLane { frame.size.height = max(frame.height - Self.laneSlot, 0) }
+        return frame
     }
 
     var body: some View {
@@ -161,40 +194,66 @@ struct ClipEditorView: View {
     /// and the crop/trim controls at the bottom. The placeholder passes touches through to
     /// the stage's crop gesture beneath it.
     private var chrome: some View {
-        VStack(spacing: 0) {
+        let showsLane = viewModel.framingMode == .follow
+        return VStack(spacing: 0) {
             ScreenHeaderBand { topRow }
             GeometryReader { proxy in
                 Color.clear.preference(
-                    key: ClipEditorStageFramePreferenceKey.self, value: proxy.frame(in: .global))
+                    key: ClipEditorStageFramePreferenceKey.self,
+                    value: ClipEditorStageMeasurement(frame: proxy.frame(in: .global), showsLane: showsLane))
             }
             .allowsHitTesting(false)
             // Over the placeholder, not inside it: the placeholder passes touches through,
             // and the notice has to keep its own tap-to-dismiss.
-            .overlay(alignment: .top) { noHorizonNotice }
+            .overlay(alignment: .top) { notices }
             VStack(spacing: 16) {
                 autoFramingButtons
-                TrimSliderView(viewModel: viewModel)
+                VStack(spacing: Self.laneSpacing) {
+                    if showsLane {
+                        FollowLaneView(viewModel: viewModel)
+                            .transition(.opacity)
+                    }
+                    TrimSliderView(viewModel: viewModel)
+                }
             }
             .padding()
         }
-        .onPreferenceChange(ClipEditorStageFramePreferenceKey.self) { stageFrame = $0 }
+        .onPreferenceChange(ClipEditorStageFramePreferenceKey.self) { stageMeasurement = $0 }
     }
 
     /// The screen's own top row in place of a navigation bar (see `body`): the back chevron
-    /// leading, the title centered, Delete trailing — the same arrangement, at the same
-    /// positions, as the clip list's titled bar this screen flies open from.
+    /// leading, the Still | Follow switch in the title's slot, Delete trailing — the
+    /// chevron and Delete at the same positions as the clip list's titled bar this screen
+    /// flies open from. The title stays as the screen's VoiceOver header, drawn clear.
     private var topRow: some View {
         ZStack {
             Text("Edit clip")
                 .font(.headline)
+                .foregroundStyle(.clear)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("clip-editor-title")
+            framingSwitch
             HStack {
                 backButton
                 Spacer()
                 deleteButton
             }
         }
+    }
+
+    /// The two framing modes, named both ways so it reads as a choice of mode rather than an
+    /// effect switched on and off. Waits for media info, as the crop buttons do.
+    private var framingSwitch: some View {
+        Picker("Framing", selection: Binding(
+            get: { viewModel.framingMode },
+            set: { viewModel.setFramingMode($0) })) {
+            Text("Still").tag(FramingMode.still)
+            Text("Follow").tag(FramingMode.follow)
+        }
+        .pickerStyle(.segmented)
+        .frame(width: 168)
+        .disabled(viewModel.previewOverlay == nil)
+        .accessibilityIdentifier("framing-mode-switch")
     }
 
     /// Commits the current edits and closes — the back chevron's action. Runs
@@ -237,6 +296,7 @@ struct ClipEditorView: View {
         GeometryReader { proxy in
             let origin = proxy.frame(in: .global).origin
             let marker = markerFrame.offsetBy(dx: -origin.x, dy: -origin.y)
+            let layoutMarker = stillMarker.offsetBy(dx: -origin.x, dy: -origin.y)
             let band = stageFrame.offsetBy(dx: -origin.x, dy: -origin.y)
             let placement = viewModel.previewOverlay.flatMap {
                 ClipEditorStage.videoPlacement(videoSize: $0.videoSize, cropRect: $0.cropRect, marker: marker)
@@ -246,10 +306,13 @@ struct ClipEditorView: View {
                     player: viewModel.player,
                     geometry: viewModel.previewOverlay,
                     marker: marker,
-                    adjustment: viewModel.cropAdjustment,
+                    layoutMarker: layoutMarker,
+                    framing: viewModel.framing,
+                    duration: viewModel.duration,
                     gestureScale: gestureScale,
                     gestureRotation: gestureRotation,
-                    gestureOffset: gestureOffset)
+                    gestureOffset: gestureOffset,
+                    isSynchronized: expansionHasLanded)
                 // Hidden until an expansion flight's card — the same player, same
                 // placement — has landed here; the marker and controls fade in over it.
                 .expansionVideoSurface()
@@ -287,7 +350,8 @@ struct ClipEditorView: View {
                     .accessibilityHint("Pinch to zoom, rotate with two fingers, or drag to reposition")
                     .accessibilityIdentifier("clip-editor-crop-surface")
                     .modifier(CropAdjustmentActions(
-                        viewModel: viewModel, videoSize: viewModel.previewOverlay?.videoSize ?? .zero))
+                        viewModel: viewModel, framingMode: viewModel.framingMode,
+                        videoSize: viewModel.previewOverlay?.videoSize ?? .zero))
                 playbackControls
                     .frame(width: marker.width, height: marker.height, alignment: .bottom)
                     .position(x: marker.midX, y: marker.midY)
@@ -325,6 +389,11 @@ struct ClipEditorView: View {
     private func cropGestureSurface(previewScale: CGFloat) -> some View {
         CropGestureSurface(
             onDrag: { phase in
+                // Follow mode's position lives in its keyframes, which a drag doesn't set yet.
+                guard viewModel.framingMode == .still else {
+                    gestureOffset = .zero
+                    return
+                }
                 switch phase {
                 case .changed(let translation):
                     gestureOffset = translation
@@ -385,7 +454,9 @@ struct ClipEditorView: View {
     /// is the whole source video, enabled once a pinch or drag has moved it.
     private var autoFramingButtons: some View {
         HStack(spacing: 12) {
-            if viewModel.supportsAutoCrop {
+            if viewModel.framingMode == .follow {
+                followButton
+            } else if viewModel.supportsAutoCrop {
                 Button {
                     if viewModel.isAutoCropApplied {
                         viewModel.resetCrop()
@@ -438,72 +509,148 @@ struct ClipEditorView: View {
         // clip while the button changes width. The video moves; the words don't.
         .animation(nil, value: viewModel.isAutoCropApplied)
         .animation(nil, value: viewModel.isAutoRotateApplied)
+        .animation(nil, value: viewModel.isAutoFollowApplied)
+        .animation(nil, value: viewModel.framingMode)
     }
 
-    /// Auto rotate's answer when the window shows no horizon the detector can find: the
-    /// rotation stays as it was, and the notice says why.
+    /// Follow mode's counterpart of the crop button: Auto follow ↔ Reset follow, with Auto
+    /// crop's toggle rules. A clip without pose analysis has Reset follow alone, enabled once
+    /// a pinch has moved its framing off the whole frame.
     @ViewBuilder
-    private var noHorizonNotice: some View {
+    private var followButton: some View {
+        if viewModel.supportsAutoFollow {
+            Button {
+                if viewModel.isAutoFollowApplied {
+                    viewModel.resetFollow()
+                } else {
+                    viewModel.autoFollow()
+                }
+            } label: {
+                if viewModel.isAutoFollowApplied {
+                    Label("Reset follow", systemImage: "arrow.uturn.backward")
+                } else {
+                    Label("Auto follow", systemImage: "figure.run")
+                }
+            }
+            .accessibilityIdentifier("auto-follow-button")
+        } else {
+            Button {
+                viewModel.resetFollow()
+            } label: {
+                Label("Reset follow", systemImage: "arrow.uturn.backward")
+            }
+            .disabled(!viewModel.isFollowAdjusted)
+            .accessibilityIdentifier("reset-follow-button")
+        }
+    }
+
+    /// The automatic fits' answers when there was nothing to fit, at the top of the stage:
+    /// Auto rotate found no horizon in the window (the rotation stays as it was), or Auto
+    /// follow found an athlete who stays put (the crop holds one framing).
+    @ViewBuilder
+    private var notices: some View {
         if viewModel.isShowingNoHorizonNotice {
             GlassNoticeView(message: "No horizon found", isPresented: $viewModel.isShowingNoHorizonNotice)
                 .padding(.top, 8)
                 .accessibilityIdentifier("no-horizon-notice")
+        } else if viewModel.isShowingNothingToFollowNotice {
+            GlassNoticeView(message: "Nothing to follow", isPresented: $viewModel.isShowingNothingToFollowNotice)
+                .padding(.top, 8)
+                .accessibilityIdentifier("nothing-to-follow-notice")
         }
     }
 }
 
 /// The video under the editor's crop marker: the player laid out at
 /// `ClipEditorStage.videoPlacement`'s frame — the whole displayed frame, placed so the
-/// crop rect fills `marker` — and transformed by the user's crop adjustment about the
-/// crop rect's center. Never clipped: whatever the adjustment pushes outside the frame's
-/// own rect stays visible, the way the export and the tile show it. Shared by the editor's
-/// stage and by `ClipExpansionContainer`'s flying card, so the card shows exactly the
-/// picture the editor will show — the same player, the same placement — and the cut
-/// between the two is invisible. Lays out to whatever size it is given; `marker` is in
-/// that space. Until `geometry` is known the player sits hidden at the marker: it has to
-/// exist for its first frame to decode (`onReadyForDisplay`), but has no right place yet.
+/// crop rect fills the marker — and transformed by the active framing about the crop rect's
+/// center: Still's zoom, turn and offset, or Follow's zoom and turn about a center the pan
+/// moves through the clip (`EditorPlayerView`). Never clipped: whatever the framing pushes
+/// outside the frame's own rect stays visible, the way the export and the tile show it.
+/// Shared by the editor's stage and by `ClipExpansionContainer`'s flying card, so the card
+/// shows exactly the picture the editor will show — the same player, the same placement —
+/// and the cut between the two is invisible. Lays out to whatever size it is given; `marker`
+/// is in that space. Until `geometry` is known the player sits hidden at the marker: it has
+/// to exist for its first frame to decode (`onReadyForDisplay`), but has no right place yet.
+///
+/// `layoutMarker` is the marker the video is laid out from, when that differs from the one the
+/// crop shows in: the editor lays the video out from Still's marker in both modes and scales
+/// the whole picture onto Follow's shorter one, so a mode switch animates as a transform — a
+/// player view's frame doesn't animate.
 struct ClipEditorVideoSurface: View {
     let player: AVPlayer
     /// `ClipEditorViewModel.previewOverlay`: the displayed frame's size and the crop rect in
     /// it, both in displayed pixels. `nil` until media info has loaded.
     let geometry: (videoSize: CGSize, cropRect: CGRect)?
     let marker: CGRect
-    let adjustment: CropAdjustment
+    var layoutMarker: CGRect?
+    let framing: EditorFraming
+    /// The item's duration, which the follow pan is timed against.
+    var duration: TimeInterval?
     var gestureScale: CGFloat = 1
     var gestureRotation: Angle = .zero
     var gestureOffset: CGSize = .zero
+    /// Whether this is the surface on screen, which runs the follow pan
+    /// (`EditorPlayerView.isSynchronized`).
+    var isSynchronized = true
     var onReadyForDisplay: (() -> Void)?
 
     var body: some View {
+        let base = layoutMarker ?? marker
         let placement = geometry.flatMap {
-            ClipEditorStage.videoPlacement(videoSize: $0.videoSize, cropRect: $0.cropRect, marker: marker)
+            ClipEditorStage.videoPlacement(videoSize: $0.videoSize, cropRect: $0.cropRect, marker: base)
         }
-        let frame = placement?.frame ?? marker
-        // The committed offset is in displayed pixels (`applyCropOffset`'s contract); the
-        // in-flight gesture offset is already in points.
+        let frame = placement?.frame ?? base
+        // The committed offset is in displayed pixels (`applyCropOffset`'s contract).
         let pointsPerDisplayedPixel = placement?.pointsPerDisplayedPixel ?? 0
         // The crop rect's center as a fraction of the frame — resolution-independent, so the
         // gesture's anchor matches `ClipExportTransform.make`'s anchor at any on-screen size.
         let cropCenter = geometry.map {
             UnitPoint(x: $0.cropRect.midX / $0.videoSize.width, y: $0.cropRect.midY / $0.videoSize.height)
         } ?? .center
-        BareVideoPlayerView(player: player, onReadyForDisplay: onReadyForDisplay)
+        let markerScale = base.width > 0 ? marker.width / base.width : 1
+        let adjustment = framing.adjustment
+        EditorPlayerView(
+            player: player, videoSize: geometry?.videoSize ?? .zero, pan: framing.pan, duration: duration,
+            transition: framing.transition, isSynchronized: isSynchronized, onReadyForDisplay: onReadyForDisplay)
             .frame(width: frame.width, height: frame.height)
             .scaleEffect(adjustment.scale * gestureScale, anchor: cropCenter)
             .rotationEffect(Angle(radians: adjustment.rotationRadians) + gestureRotation, anchor: cropCenter)
             .offset(
-                x: adjustment.offset.width * pointsPerDisplayedPixel + gestureOffset.width,
-                y: adjustment.offset.height * pointsPerDisplayedPixel + gestureOffset.height)
+                x: adjustment.offset.width * pointsPerDisplayedPixel,
+                y: adjustment.offset.height * pointsPerDisplayedPixel)
             .position(x: frame.midX, y: frame.midY)
+            // Onto the marker the crop shows in: about the space's origin, then across, so the
+            // layout marker's center lands on the marker's.
+            .scaleEffect(markerScale, anchor: .topLeading)
+            .offset(
+                x: marker.midX - base.midX * markerScale + gestureOffset.width,
+                y: marker.midY - base.midY * markerScale + gestureOffset.height)
             .opacity(placement == nil ? 0 : 1)
     }
 }
 
-/// The stage's own on-screen frame (global space), climbing from the layout placeholder in
-/// `ClipEditorView.chrome` to the view that derives the marker from it. Reduces to the
+/// The stage placeholder's on-screen frame (global space), and whether the follow lane was
+/// laid out with it — the lane takes its height from the stage.
+struct ClipEditorStageMeasurement: Equatable {
+    var frame: CGRect = .zero
+    var showsLane = false
+}
+
+/// `ClipEditorStageMeasurement`, climbing from the layout placeholder in
+/// `ClipEditorView.chrome` to the view that derives the markers from it. Reduces to the
 /// latest non-zero report: the placeholder's siblings in the chrome column contribute the
 /// zero default, and the last of them would otherwise win the reduction.
-private struct ClipEditorStageFramePreferenceKey: NonZeroFramePreferenceKey {}
+private struct ClipEditorStageFramePreferenceKey: PreferenceKey {
+    static let defaultValue = ClipEditorStageMeasurement()
+
+    static func reduce(value: inout ClipEditorStageMeasurement, nextValue: () -> ClipEditorStageMeasurement) {
+        let next = nextValue()
+        if next.frame != .zero {
+            value = next
+        }
+    }
+}
 
 /// The crop marker's on-screen frame (global space), read by a Photos-style expansion
 /// transition presenting this view: the part of the screen the tile's picture lands on,
@@ -511,9 +658,19 @@ private struct ClipEditorStageFramePreferenceKey: NonZeroFramePreferenceKey {}
 /// the frame this view first mounts, a stale zero default can still be in flight.
 struct ClipEditorCropMarkerFramePreferenceKey: NonZeroFramePreferenceKey {}
 
-/// The surround with a hole at the crop marker, for the editor's stage.
+/// The surround with a hole at the crop marker, for the editor's stage. The hole animates, so
+/// the frost follows the marker through a mode switch.
 private struct CropOverlayShape: Shape {
-    let hole: CGRect
+    var hole: CGRect
+
+    var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<CGFloat, CGFloat>> {
+        get { AnimatablePair(AnimatablePair(hole.minX, hole.minY), AnimatablePair(hole.width, hole.height)) }
+        set {
+            hole = CGRect(
+                x: newValue.first.first, y: newValue.first.second,
+                width: newValue.second.first, height: newValue.second.second)
+        }
+    }
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
@@ -536,15 +693,17 @@ private struct CropOverlayShape: Shape {
 /// drag — three gestures a VoiceOver user cannot perform, which would leave the editor's whole
 /// purpose unreachable without sight. Each action drives the same view-model call the matching
 /// gesture commits, so the two paths cannot diverge.
+///
+/// In Follow the position belongs to the keyframes, so the four moves and Reset crop give way
+/// to Reset follow.
 private struct CropAdjustmentActions: ViewModifier {
     let viewModel: ClipEditorViewModel
+    let framingMode: FramingMode
     let videoSize: CGSize
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        let step = CGSize(
-            width: videoSize.width * CropAdjustmentStep.offsetFraction,
-            height: videoSize.height * CropAdjustmentStep.offsetFraction)
-        return content
+        let turns = content
             .accessibilityAction(named: "Zoom in") {
                 viewModel.applyCropScale(CropAdjustmentStep.zoomFactor)
             }
@@ -557,6 +716,18 @@ private struct CropAdjustmentActions: ViewModifier {
             .accessibilityAction(named: "Rotate counterclockwise") {
                 viewModel.applyCropRotation(-CropAdjustmentStep.rotationRadians)
             }
+        if framingMode == .follow {
+            turns.accessibilityAction(named: "Reset follow") { viewModel.resetFollow() }
+        } else {
+            moves(turns)
+        }
+    }
+
+    private func moves(_ content: some View) -> some View {
+        let step = CGSize(
+            width: videoSize.width * CropAdjustmentStep.offsetFraction,
+            height: videoSize.height * CropAdjustmentStep.offsetFraction)
+        return content
             .accessibilityAction(named: "Move left") {
                 viewModel.offsetCrop(byDisplayedPixels: CGSize(width: -step.width, height: 0))
             }

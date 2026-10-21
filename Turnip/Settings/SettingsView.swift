@@ -51,8 +51,8 @@ struct SettingsView: View {
                     Text("Crop")
                 } footer: {
                     Text("""
-                        Moves each clip's crop with the athlete instead of holding one frame. \
-                        A clip you reframe in the editor keeps the crop you set.
+                        Starts each detected clip in Follow, its crop moving with the athlete, \
+                        instead of Still. Any clip can switch between the two in the editor.
                         """)
                 }
 

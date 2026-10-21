@@ -166,6 +166,14 @@ control:
   cannot diverge. Steps live in `CropAdjustmentStep`. The crop area's value spells out the
   framing those actions leave ("Zoom 125%, turned 3° clockwise, moved 5% left"), in the units
   they step by (`CropAdjustmentDescription`), so a press is heard to have done something.
+- **Still and Follow** (UIUX §4, Rev 16): the mode switch is a standard segmented control,
+  and "Edit clip" stays the screen's header, drawn clear in the switch's slot. In Follow the
+  crop area keeps Zoom and Rotate, and its four moves give way to Reset follow, since the
+  position belongs to the keyframes. Its value reads the active mode's zoom and turn. The
+  follow lane is one element labeled "Follow keyframes" whose value counts them and says
+  where the playhead is. "Nothing to follow" uses the same notice as "No horizon found".
+  *Planned with hand-set keyframes:* Previous, Next, Add and Remove keyframe actions on the
+  crop area, and an adjustable lane scrubbing a tenth of a second per swipe.
 - Player controls labeled. The scrub track carries a label, its position as a value, and an
   adjustable action seeking ±1 s: without one it is a pure drag surface, where a listener can
   hear where playback stands but has no way to move it.
@@ -176,7 +184,8 @@ control:
   first frame and Play starts it on request.
 - Identifiers: `clip-editor-back`, `clip-editor-delete`, `clip-editor-crop-surface`,
   `auto-crop-button`, `reset-crop-button`, `auto-rotate-button`, `trim-start-handle`, `trim-end-handle`, `playback-play-pause`,
-  `playback-mute`, `playback-position`.
+  `playback-mute`, `playback-position`, `framing-mode-switch`, `auto-follow-button`, `reset-follow-button`,
+  `follow-lane`, `nothing-to-follow-notice`.
 - **Still owed:** a real VoiceOver pass on device, plus Accessibility Inspector's audit.
   Everything above is verified by CI and by unit tests over the spoken strings and the gates,
   which is not the same as having listened to the screen — a focus order that reads badly, or
