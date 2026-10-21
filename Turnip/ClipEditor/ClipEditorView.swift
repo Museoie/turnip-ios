@@ -42,9 +42,11 @@ struct ClipEditorView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.expansionHasLanded) private var expansionHasLanded
-    @GestureState private var gestureScale: CGFloat = 1
-    @GestureState private var gestureRotation: Angle = .zero
-    @GestureState private var gestureOffset: CGSize = .zero
+    /// The crop gestures' in-flight deltas, drawn on top of the committed adjustment until
+    /// each gesture ends and commits into the view model (`CropGestureSurface`).
+    @State private var gestureScale: CGFloat = 1
+    @State private var gestureRotation: Angle = .zero
+    @State private var gestureOffset: CGSize = .zero
     /// The stage's on-screen frame (global space): the band between the header row and
     /// the bottom controls, which the crop marker is centered in. Reported by the layout
     /// placeholder in `chrome` and fixed per device — it never depends on the clip.
@@ -276,12 +278,12 @@ struct ClipEditorView: View {
                         .accessibilityIdentifier("crop-marker")
                 }
                 loadingState(in: marker)
-                Color.clear
-                    .contentShape(Rectangle())
+                cropGestureSurface(previewScale: placement?.pointsPerDisplayedPixel ?? 0)
                     .frame(width: band.width, height: band.height)
                     .position(x: band.midX, y: band.midY)
-                    .gesture(cropGesture(previewScale: placement?.pointsPerDisplayedPixel ?? 0))
+                    .accessibilityElement()
                     .accessibilityLabel("Clip preview with crop area")
+                    .accessibilityValue(viewModel.cropAdjustmentDescription)
                     .accessibilityHint("Pinch to zoom, rotate with two fingers, or drag to reposition")
                     .accessibilityIdentifier("clip-editor-crop-surface")
                     .modifier(CropAdjustmentActions(
@@ -314,33 +316,47 @@ struct ClipEditorView: View {
         }
     }
 
-    /// The pinch (zoom), two-finger rotate, and one-finger drag gestures, composed so
-    /// all three can run at once. Each commits its cumulative delta into the view model
-    /// on end; `@GestureState` supplies the live in-flight delta for rendering.
+    /// The pinch (zoom), two-finger rotate, and one-finger drag gestures, all able to run at
+    /// once. Each draws its live delta over the committed adjustment while the fingers move,
+    /// then commits it into the view model as they lift, in the same update, so the picture
+    /// doesn't move at the hand-over; a cancelled gesture leaves nothing behind.
     /// `previewScale` (on-screen points per displayed pixel) only matters to the drag —
     /// scale and rotation are unit-agnostic.
-    private func cropGesture(previewScale: CGFloat) -> some Gesture {
-        SimultaneousGesture(
-            SimultaneousGesture(magnificationGesture, rotationGesture),
-            dragGesture(previewScale: previewScale))
-    }
-
-    private var magnificationGesture: some Gesture {
-        MagnificationGesture()
-            .updating($gestureScale) { value, state, _ in state = value }
-            .onEnded { value in viewModel.applyCropScale(value) }
-    }
-
-    private var rotationGesture: some Gesture {
-        RotationGesture()
-            .updating($gestureRotation) { value, state, _ in state = value }
-            .onEnded { value in viewModel.applyCropRotation(value.radians) }
-    }
-
-    private func dragGesture(previewScale: CGFloat) -> some Gesture {
-        DragGesture()
-            .updating($gestureOffset) { value, state, _ in state = value.translation }
-            .onEnded { value in viewModel.applyCropOffset(value.translation, previewScale: previewScale) }
+    private func cropGestureSurface(previewScale: CGFloat) -> some View {
+        CropGestureSurface(
+            onDrag: { phase in
+                switch phase {
+                case .changed(let translation):
+                    gestureOffset = translation
+                case .ended(let translation):
+                    viewModel.applyCropOffset(translation, previewScale: previewScale)
+                    gestureOffset = .zero
+                case .cancelled:
+                    gestureOffset = .zero
+                }
+            },
+            onPinch: { phase in
+                switch phase {
+                case .changed(let scale):
+                    gestureScale = scale
+                case .ended(let scale):
+                    viewModel.applyCropScale(scale)
+                    gestureScale = 1
+                case .cancelled:
+                    gestureScale = 1
+                }
+            },
+            onRotate: { phase in
+                switch phase {
+                case .changed(let radians):
+                    gestureRotation = .radians(radians)
+                case .ended(let radians):
+                    viewModel.applyCropRotation(radians)
+                    gestureRotation = .zero
+                case .cancelled:
+                    gestureRotation = .zero
+                }
+            })
     }
 
     /// Stands in for the default player chrome this editor doesn't show: play/pause and

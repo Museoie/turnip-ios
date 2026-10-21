@@ -163,7 +163,9 @@ control:
   and drag, none of which a VoiceOver user can perform, which would leave the editor's whole
   purpose unreachable. Nine named actions — zoom in/out, rotate either way, move in four
   directions, Reset crop — drive the same view-model calls the gestures commit, so the two paths
-  cannot diverge. Steps live in `CropAdjustmentStep`.
+  cannot diverge. Steps live in `CropAdjustmentStep`. The crop area's value spells out the
+  framing those actions leave ("Zoom 125%, turned 3° clockwise, moved 5% left"), in the units
+  they step by (`CropAdjustmentDescription`), so a press is heard to have done something.
 - Player controls labeled. The scrub track carries a label, its position as a value, and an
   adjustable action seeking ±1 s: without one it is a pure drag surface, where a listener can
   hear where playback stands but has no way to move it.

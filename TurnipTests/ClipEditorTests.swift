@@ -470,6 +470,24 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(viewModel.cropAdjustment.offset, CGSize(width: 10, height: 4))
     }
 
+    /// The crop area's value names what changed in the units the actions step by, so a press
+    /// of Move left reads back as a 5% move.
+    func testCropDescriptionSpellsOutZoomTurnAndMove() {
+        let videoSize = CGSize(width: 200, height: 100)
+        XCTAssertEqual(
+            CropAdjustmentDescription.text(for: .identity, videoSize: videoSize),
+            "Zoom 100%, not turned, not moved")
+        let adjusted = CropAdjustment(
+            scale: 1.25, rotationRadians: -3 * .pi / 180, offset: CGSize(width: -10, height: 30))
+        XCTAssertEqual(
+            CropAdjustmentDescription.text(for: adjusted, videoSize: videoSize),
+            "Zoom 125%, turned 3° counterclockwise, moved 5% left and 30% down")
+        let turned = CropAdjustment(scale: 0.5, rotationRadians: .pi / 2, offset: CGSize(width: 0, height: -5))
+        XCTAssertEqual(
+            CropAdjustmentDescription.text(for: turned, videoSize: videoSize),
+            "Zoom 50%, turned 90° clockwise, moved 5% up")
+    }
+
     /// A zoom action is the gesture's own multiply, so the two paths land on the same framing
     /// and the clamp that protects the gesture protects the action too.
     @MainActor

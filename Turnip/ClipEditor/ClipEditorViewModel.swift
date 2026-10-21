@@ -15,6 +15,38 @@ enum CropAdjustmentStep {
     static let offsetFraction: CGFloat = 0.05
 }
 
+/// The crop area's framing in words, its accessibility value: what a VoiceOver user's zoom,
+/// rotate and move actions changed, and what a pinch, turn or drag left behind. Each part is
+/// measured the way its action steps it — the zoom against the clip's own crop, the turn in
+/// whole degrees, the move as a share of the video's width and height (`CropAdjustmentStep`).
+enum CropAdjustmentDescription {
+    static func text(for adjustment: CropAdjustment, videoSize: CGSize) -> String {
+        let zoom = Int((adjustment.scale * 100).rounded())
+        let degrees = Int((adjustment.rotationRadians * 180 / .pi).rounded())
+        let turn: String
+        if degrees > 0 {
+            turn = String(localized: "turned \(degrees)° clockwise")
+        } else if degrees < 0 {
+            turn = String(localized: "turned \(-degrees)° counterclockwise")
+        } else {
+            turn = String(localized: "not turned")
+        }
+        let across = videoSize.width > 0 ? Int((adjustment.offset.width / videoSize.width * 100).rounded()) : 0
+        let down = videoSize.height > 0 ? Int((adjustment.offset.height / videoSize.height * 100).rounded()) : 0
+        var moves: [String] = []
+        if across != 0 {
+            moves.append(across > 0 ? String(localized: "\(across)% right") : String(localized: "\(-across)% left"))
+        }
+        if down != 0 {
+            moves.append(down > 0 ? String(localized: "\(down)% down") : String(localized: "\(-down)% up"))
+        }
+        let move = moves.isEmpty
+            ? String(localized: "not moved")
+            : String(localized: "moved \(moves.joined(separator: String(localized: " and ")))")
+        return String(localized: "Zoom \(zoom)%, \(turn), \(move)")
+    }
+}
+
 /// The clip editor's state (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
 /// Holds the draft trim window, the crop rect the clip opened with, and the crop adjustment
@@ -173,6 +205,11 @@ final class ClipEditorViewModel: ObservableObject {
     /// shape and the video maps onto it by one uniform scale (`ClipEditorStage`).
     var targetAspectRatio: CGFloat {
         CGFloat(calculator.targetAspectRatio)
+    }
+
+    /// The crop area's accessibility value (`CropAdjustmentDescription`).
+    var cropAdjustmentDescription: String {
+        CropAdjustmentDescription.text(for: cropAdjustment, videoSize: previewOverlay?.videoSize ?? .zero)
     }
 
     /// The stage geometry in one value: the displayed (upright) frame size plus the crop
