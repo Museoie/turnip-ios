@@ -64,6 +64,10 @@ struct CropPath: Hashable, Sendable {
 /// Two corrections then apply to each keyframe, in this order: the crop shifts just far enough to
 /// keep that sample's located joints inside it, and then slides inside the frame, which wins
 /// when the two disagree.
+///
+/// Before any of it, each sample's joint box is de-spiked (`despikeSamples`): a misplaced joint
+/// or a second person's limb widens one detection's box, and a path that followed it would
+/// jerk toward it for one sample and back.
 struct CropPathCalculator: Sendable {
     /// Draws the per-sample rect whose size and center the path is built from, so a path frames
     /// the athlete with the same padding, floor and aspect ratio as a static crop.
@@ -76,14 +80,21 @@ struct CropPathCalculator: Sendable {
     /// before the crop follows it. Below this the athlete is standing still and the movement is
     /// keypoint jitter, which a moving crop would turn into camera shake.
     let stillnessFraction: Float
+    /// How many located samples' joint boxes each one's box is the median of, edge by edge,
+    /// centered on it. Counted in samples rather than seconds, unlike the smoothing: what it
+    /// removes is a single bad detection, whatever the analysis granularity. A median rather
+    /// than an average, so one outlier moves nothing at all. 1 leaves the boxes as detected.
+    let despikeSamples: Int
 
     init(rectCalculator: CropRectCalculator = CropRectCalculator(), smoothingSeconds: TimeInterval = 0.4,
-         stillnessFraction: Float = 0.1) {
+         stillnessFraction: Float = 0.1, despikeSamples: Int = 5) {
         precondition(smoothingSeconds > 0, "smoothingSeconds is a Gaussian's standard deviation and must be positive")
         precondition(stillnessFraction >= 0, "stillnessFraction is a distance and cannot be negative")
+        precondition(despikeSamples >= 1 && despikeSamples % 2 == 1, "despikeSamples is an odd window, centered")
         self.rectCalculator = rectCalculator
         self.smoothingSeconds = smoothingSeconds
         self.stillnessFraction = stillnessFraction
+        self.despikeSamples = despikeSamples
     }
 
     /// `nil` when no frame holds a keypoint above the confidence threshold, or when the rendered
@@ -92,9 +103,11 @@ struct CropPathCalculator: Sendable {
     /// sample or after the last, holding that end's keyframe.
     func cropPath(for frames: [PoseFrameResult], renderedPixelSize: CGSize) -> CropPath? {
         guard renderedPixelSize.width > 0, renderedPixelSize.height > 0 else { return nil }
-        let samples = frames
-            .sorted { $0.timestamp < $1.timestamp }
-            .map { Sample(time: $0.timestamp, joints: Self.jointBox(in: $0)) }
+        let samples = Self.despiked(
+            frames
+                .sorted { $0.timestamp < $1.timestamp }
+                .map { Sample(time: $0.timestamp, joints: Self.jointBox(in: $0)) },
+            width: despikeSamples)
         let located = samples.compactMap { locatedSample(from: $0, renderedPixelSize: renderedPixelSize) }
         guard !located.isEmpty else { return nil }
 
@@ -242,6 +255,32 @@ struct CropPathCalculator: Sendable {
         let minX = boxes.map(\.minX).min() ?? 0, maxX = boxes.map(\.maxX).max() ?? 1
         let minY = boxes.map(\.minY).min() ?? 0, maxY = boxes.map(\.maxY).max() ?? 1
         return Point(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
+    }
+
+    /// Each located sample's joint box replaced by the median, edge by edge, of the boxes of the
+    /// `width` located samples centered on it. Near the window's ends the window shrinks on
+    /// both sides alike, down to the end sample alone: a lopsided one would hand an end sample
+    /// its neighbour's box and shift the path where it starts and stops. Samples that located
+    /// nothing are skipped over, not counted as empty boxes.
+    private static func despiked(_ samples: [Sample], width: Int) -> [Sample] {
+        guard width > 1 else { return samples }
+        let located = samples.indices.filter { samples[$0].joints != nil }
+        var result = samples
+        for (position, index) in located.enumerated() {
+            let reach = min(width / 2, position, located.count - 1 - position)
+            let boxes = located[(position - reach)...(position + reach)]
+                .compactMap { samples[$0].joints }
+            result[index] = Sample(time: samples[index].time, joints: NormalizedRect(
+                minX: median(boxes.map(\.minX)), maxX: median(boxes.map(\.maxX)),
+                minY: median(boxes.map(\.minY)), maxY: median(boxes.map(\.maxY))))
+        }
+        return result
+    }
+
+    /// The middle value; the upper of the two middle ones for an even count.
+    private static func median(_ values: [Float]) -> Float {
+        let sorted = values.sorted()
+        return sorted[sorted.count / 2]
     }
 
     private static func jointBox(in frame: PoseFrameResult) -> NormalizedRect? {

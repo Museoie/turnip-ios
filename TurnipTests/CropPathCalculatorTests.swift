@@ -122,6 +122,51 @@ final class CropPathCalculatorTests: XCTestCase {
         }
     }
 
+    /// A joint misplaced in one detection, or a second person's arm caught in one frame, widens
+    /// that sample's box alone. The de-spike takes it out before the path sees it, so the crop
+    /// doesn't jerk toward it for one sample and back.
+    func testAOneSampleOutlierDoesNotMoveThePath() throws {
+        func crossing(outlierAt outlier: Int?) -> [PoseFrameResult] {
+            (0..<30).map { index in
+                let x = 0.2 + 0.01 * Float(index)
+                guard index == outlier else { return athlete(at: Double(index) * 0.1, x: x) }
+                return frame(at: Double(index) * 0.1, [(x: x, y: 0.3), (x: x + 0.02, y: 0.7), (x: x + 0.35, y: 0.5)])
+            }
+        }
+
+        let clean = try XCTUnwrap(calculator.cropPath(for: crossing(outlierAt: nil), renderedPixelSize: landscape))
+        let spiked = try XCTUnwrap(calculator.cropPath(for: crossing(outlierAt: 15), renderedPixelSize: landscape))
+        let undespiked = try XCTUnwrap(CropPathCalculator(despikeSamples: 1)
+            .cropPath(for: crossing(outlierAt: 15), renderedPixelSize: landscape))
+
+        // Edge by edge, the outlier's other edges give way to a neighbour's, so its sample's box
+        // can move by one sample's step (0.01 here): nothing like the outlier's 0.35.
+        for (spikedKeyframe, cleanKeyframe) in zip(spiked.keyframes, clean.keyframes) {
+            XCTAssertEqual(
+                centerX(spikedKeyframe.rect), centerX(cleanKeyframe.rect), accuracy: 0.006,
+                "t=\(spikedKeyframe.time)")
+        }
+        XCTAssertGreaterThan(
+            centerX(undespiked.keyframes[15].rect), centerX(clean.keyframes[15].rect) + 0.05,
+            "without the de-spike the outlier pulls its sample's crop toward it")
+    }
+
+    /// A median keeps steady motion and steps alike: away from the window's ends, each sample's
+    /// box is still its own.
+    func testTheDespikeLeavesSteadyMotionAlone() throws {
+        let frames = (0..<30).map { athlete(at: Double($0) * 0.1, x: 0.2 + 0.01 * Float($0)) }
+
+        let despiked = try XCTUnwrap(calculator.cropPath(for: frames, renderedPixelSize: landscape))
+        let raw = try XCTUnwrap(
+            CropPathCalculator(despikeSamples: 1).cropPath(for: frames, renderedPixelSize: landscape))
+
+        for index in 6..<24 {
+            XCTAssertEqual(
+                centerX(despiked.keyframes[index].rect), centerX(raw.keyframes[index].rect), accuracy: 0.002,
+                "t=\(despiked.keyframes[index].time)")
+        }
+    }
+
     func testAFrameWithNoLocatedJointIsPlacedByItsNeighbours() throws {
         let frames = (0..<30).map { index in
             (10...12).contains(index)
