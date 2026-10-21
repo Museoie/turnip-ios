@@ -708,9 +708,9 @@ extension CameraCaptureViewModel: AVCaptureFileOutputRecordingDelegate {
                 return
             }
             isFinishingRecording = true
-            let clips = await finishLivePose()
+            let recording = await finishLivePose(fileURL: outputFileURL)
             isFinishingRecording = false
-            onFinished?(CameraRecording(fileURL: outputFileURL, detectedClips: clips))
+            onFinished?(recording)
         }
     }
 }
@@ -768,11 +768,15 @@ extension CameraCaptureViewModel {
 
     /// The movie output finished. Waits for the consumer to score what is still queued — one
     /// inference in steady state — logs the recording's metrics (where the acceptance gate in
-    /// docs/LIVE_POSE.md is read from), and returns the take's clips, with the scored frames,
-    /// when live inference covered the whole take. Nil sends the take through Processing: no
-    /// live recording ran, the camera was left mid-drain, or coverage fell short.
-    private func finishLivePose() async -> DetectedClips? {
-        guard let recording = livePoseTap.endRecording() else { return nil }
+    /// docs/LIVE_POSE.md is read from), and returns the take with its clips, and the scored
+    /// frames, when live inference covered the whole take. Anything short of that sends the take
+    /// through Processing: with the frames that were scored when there are any (the camera was
+    /// left mid-drain, coverage fell short, the model failed partway), so Processing analyzes
+    /// only what they miss, and with nothing when no live recording ran.
+    private func finishLivePose(fileURL: URL) async -> CameraRecording {
+        guard let recording = livePoseTap.endRecording() else {
+            return CameraRecording(fileURL: fileURL, detectedClips: nil)
+        }
         drainingLivePose = recording
         let outcome = await recording.outcome()
         LivePoseLogger.log(outcome)
@@ -783,10 +787,14 @@ extension CameraCaptureViewModel {
         // was actually configured with — the same granularity the file path samples at — so
         // coverage is checked against the grid the recording actually ran, not the shipped default.
         let interval = 1.0 / Double(armedSampleRate)
-        guard LivePoseCoverage.isComplete(outcome, interval: interval) else { return nil }
-        return DetectedClips(
+        guard LivePoseCoverage.isComplete(outcome, interval: interval) else {
+            let partial = outcome.results.isEmpty ? nil : PartialPoseFrames(
+                frames: outcome.results, interval: interval, renderedPixelSize: liveRenderedPixelSize)
+            return CameraRecording(fileURL: fileURL, detectedClips: nil, partialPose: partial)
+        }
+        return CameraRecording(fileURL: fileURL, detectedClips: DetectedClips(
             clips: makeDetectClips(armedSampleRate)(outcome.results, liveRenderedPixelSize),
-            poseFrames: outcome.results)
+            poseFrames: outcome.results))
     }
 
     private func cancelLivePose() {

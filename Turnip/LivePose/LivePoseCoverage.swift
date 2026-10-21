@@ -22,8 +22,8 @@ enum LivePoseCoverage {
 
     /// True when the recording's results cover it end to end at `interval`'s rate (the caller's
     /// configured granularity, not necessarily the shipped default). Any time under `.serious`
-    /// disqualifies: the detector's thresholds are per sample at the configured rate, and a
-    /// halved rate changes what "three sustained samples" means.
+    /// disqualifies: the stretch it sampled at half the rate is coarser than the file path
+    /// samples, so it goes to Processing, which fills it back to the full rate (`PoseBackfill`).
     static func isComplete(
         _ outcome: LivePoseOutcome, interval: TimeInterval = LivePoseFrameGate.defaultInterval
     ) -> Bool {

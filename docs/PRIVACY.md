@@ -152,6 +152,11 @@ require a manifest/signature. If a dependency is added, check both.
   the clip list (`ClipThumbnailLoader`). There is no on-disk thumbnail
   cache. If one ever lands, it belongs in `Caches/`, never `Documents/`,
   so iOS can evict it and it isn't backed up.
+- **Partial live pose.** When live inference covers a take only in part,
+  the keypoints it did score stay in memory, on the pushed `SelectedVideo`
+  and in `VideoLibraryViewModel`'s store of the last eight such takes, so
+  Processing analyzes only the rest (`docs/LIVE_POSE.md`). They are never
+  written to disk and are gone when the app quits.
 - **Logs** go to `os.Logger` only; nothing is written to log files.
 - Nothing is written to `Documents/` anywhere in v1.
 

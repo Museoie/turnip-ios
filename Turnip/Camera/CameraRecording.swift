@@ -8,4 +8,7 @@ import Foundation
 struct CameraRecording {
     let fileURL: URL
     let detectedClips: DetectedClips?
+    /// What live inference did score when it fell short, so Processing analyzes only the rest.
+    /// Nil when `detectedClips` is set, and when nothing was scored live at all.
+    var partialPose: PartialPoseFrames?
 }

@@ -358,7 +358,9 @@ default empty state, so it never reads as "your library is empty."
   whole take, its clips travel with the selection — with the scored
   frames they were cut from, which the editor's crop fits need — and the
   take lands on Clip List directly (§3) with no analysis step; otherwise it lands on
-  Processing's idle state exactly as if the user had tapped a tile.
+  Processing's idle state as if the user had tapped a tile, carrying the
+  frames live inference did score, so "Analyze clips" analyzes only the
+  stretches it missed and its progress starts where live inference left off.
 
 ### 2. Processing
 

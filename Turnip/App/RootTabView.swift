@@ -97,7 +97,8 @@ struct RootTabView: View {
                 // same update, and a page still sliding in underneath it would hand the
                 // cover's flight a moving source frame.
                 selectedTab = .home
-                viewModel.select(asset, detectedClips: recording.detectedClips)
+                viewModel.select(
+                    asset, detectedClips: recording.detectedClips, partialPose: recording.partialPose)
             } catch {
                 recordingSaveError = (error as? LocalizedError)?.errorDescription
                     ?? error.localizedDescription

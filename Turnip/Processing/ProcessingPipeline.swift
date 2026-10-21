@@ -97,6 +97,11 @@ struct ProcessingResult: Sendable {
 /// a video file.
 protocol FrameSampling: Sendable {
     func sampleFrames(from asset: AVURLAsset, handler: @Sendable (SampledFrame) async throws -> Void) async throws
+    /// One frame per wanted time — the first at or after it — rather than a whole-take sweep.
+    func sampleFrames(
+        from asset: AVURLAsset, at times: [TimeInterval],
+        handler: @Sendable (SampledFrame) async throws -> Void
+    ) async throws
 }
 
 extension VideoFrameSampler: FrameSampling {}
@@ -170,6 +175,9 @@ struct ProcessingPipeline: Sendable {
         guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
             throw ProcessingError.assetHasNoVideoTrack
         }
+        if let partial = video.partialPose {
+            return try await backfill(partial, of: asset, onProgress: onProgress)
+        }
         let totalFrames = await Self.estimatedSampledFrames(of: videoTrack, sampleRate: sampleRate)
 
         let infer = try await makeInference()
@@ -198,6 +206,51 @@ struct ProcessingPipeline: Sendable {
         // `.zero` marks it unknown, which the calculator treats as unlocatable and buildClips
         // turns into the full-frame fallback.
         let renderedPixelSize = await accumulator.renderSize ?? .zero
+        return ProcessingResult(
+            detection: DetectedClips(
+                clips: detectClips(in: frames, renderedPixelSize: renderedPixelSize), poseFrames: frames),
+            asset: asset)
+    }
+
+    /// A take the camera scored live in part: scores only the times `PoseBackfill` plans for the
+    /// stretches the live frames miss, at the live pass's own spacing rather than `sampleRate`,
+    /// and detects over the two merged. Live frames past the end of the file are dropped first:
+    /// the camera keeps scoring between Stop and its own hand-off. Progress counts the live
+    /// frames as already processed, so the bar starts where live inference left off.
+    private func backfill(
+        _ partial: PartialPoseFrames, of asset: AVURLAsset,
+        onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
+    ) async throws -> ProcessingResult {
+        let duration = try await asset.load(.duration).seconds
+        let live = partial.frames.filter { $0.timestamp < duration }
+        let wanted = PoseBackfill.wantedTimes(
+            scored: live.map(\.timestamp), interval: partial.interval, duration: duration)
+
+        let accumulator = FrameAccumulator()
+        if !wanted.isEmpty {
+            let infer = try await makeInference()
+            let reportClock = ProgressReportClock()
+            let totalFrames = live.count + wanted.count
+            try await sampler.sampleFrames(from: asset, at: wanted) { frame in
+                let keypoints = try await infer(frame)
+                let processed = await accumulator.append(PoseFrameResult(
+                    frameIndex: frame.frameIndex,
+                    timestamp: frame.timestamp,
+                    keypoints: keypoints
+                ), renderSize: frame.renderSize)
+                if await reportClock.shouldReport() {
+                    await onProgress(ProcessingProgress(
+                        frame: live.count + processed, totalFrames: totalFrames,
+                        timestamp: frame.timestamp, keypoints: keypoints))
+                }
+            }
+        }
+
+        let frames = PoseBackfill.merged(
+            live: live, backfilled: await accumulator.frames, interval: partial.interval)
+        // The file's composition size when any frame came from the file, as `run` uses; the
+        // live pass's own measure of the same picture otherwise.
+        let renderedPixelSize = await accumulator.renderSize ?? partial.renderedPixelSize
         return ProcessingResult(
             detection: DetectedClips(
                 clips: detectClips(in: frames, renderedPixelSize: renderedPixelSize), poseFrames: frames),

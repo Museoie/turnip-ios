@@ -171,12 +171,36 @@ final class ProcessingPipelineClipTests: XCTestCase {
 private struct ScriptedSampler: FrameSampling, Sendable {
     let renderSize: CGSize
     let results: [PoseFrameResult]
+    /// Every `times` list a targeted call asked for, in call order.
+    let requests = RequestedTimes()
 
     func sampleFrames(
         from asset: AVURLAsset,
         handler: @Sendable (SampledFrame) async throws -> Void
     ) async throws {
-        for (index, result) in results.enumerated() {
+        try await emit(Array(results.indices), handler: handler)
+    }
+
+    /// The first scripted frame at or after each wanted time, each frame at most once — the
+    /// contract `VideoFrameSampler` keeps against a real file.
+    func sampleFrames(
+        from asset: AVURLAsset, at times: [TimeInterval],
+        handler: @Sendable (SampledFrame) async throws -> Void
+    ) async throws {
+        requests.record(times)
+        var picked: [Int] = []
+        for time in times {
+            guard let index = results.firstIndex(where: { $0.timestamp >= time - 1e-9 }),
+                  !picked.contains(index) else { continue }
+            picked.append(index)
+        }
+        try await emit(picked, handler: handler)
+    }
+
+    /// Hands over `results[index]` for each index, with the index as `frameIndex` so a scripted
+    /// inference can look its keypoints up.
+    private func emit(_ indices: [Int], handler: @Sendable (SampledFrame) async throws -> Void) async throws {
+        for index in indices {
             var pixelBuffer: CVPixelBuffer?
             let status = CVPixelBufferCreate(
                 kCFAllocatorDefault,
@@ -187,11 +211,30 @@ private struct ScriptedSampler: FrameSampling, Sendable {
             }
             try await handler(SampledFrame(
                 frameIndex: index,
-                timestamp: result.timestamp,
+                timestamp: results[index].timestamp,
                 pixelBuffer: pixelBuffer,
                 renderSize: renderSize
             ))
         }
+    }
+}
+
+/// What a `ScriptedSampler`'s targeted calls asked for. A class with a lock: the sampler is a
+/// `Sendable` struct and the calls come off the main actor.
+private final class RequestedTimes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls: [[TimeInterval]] = []
+
+    func record(_ times: [TimeInterval]) {
+        lock.lock()
+        defer { lock.unlock() }
+        calls.append(times)
+    }
+
+    var all: [[TimeInterval]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
     }
 }
 
@@ -272,6 +315,97 @@ final class ProcessingPipelineRunTests: XCTestCase {
 
         XCTAssertFalse(viaRun.clips.isEmpty, "the fixture should yield at least one clip to compare")
         XCTAssertEqual(viaDetect, viaRun.clips)
+    }
+
+    /// A take scored live in part: the live frames miss the trick itself and the tail, the way
+    /// a shed run of samples and a drain cut short would leave them. Only those stretches are
+    /// sampled, at the live spacing, and the merged take detects what a whole-file run does.
+    func testABackfillSamplesOnlyTheGapsAndMatchesAWholeFileRun() async throws {
+        let videoURL = try await TestVideoWriter.writeTestVideo(
+            frameCount: 35, width: 64, height: 48, fps: 10)
+        defer { try? FileManager.default.removeItem(at: videoURL) }
+
+        let yPositions = PoseFixture.slide(
+            quietFrames: 15, from: 0.2, perFrame: 0.1, movingFrames: 6, tailFrames: 14)
+        let fixtures = yPositions.enumerated().map { index, y in
+            PoseFixture.body(index: index, hip: (x: 0.5, y: y))
+        }
+        let renderSize = CGSize(width: 48, height: 64)
+        let missing = Set(16...20).union(30...34)
+        let partial = PartialPoseFrames(
+            frames: fixtures.indices.filter { !missing.contains($0) }.map { fixtures[$0] },
+            interval: 0.1, renderedPixelSize: renderSize)
+        let makeInference: ProcessingPipeline.InferenceFactory = {
+            { frame in fixtures[frame.frameIndex].keypoints }
+        }
+        let sampler = ScriptedSampler(renderSize: renderSize, results: fixtures)
+        let pipeline = ProcessingPipeline(sampler: sampler, makeInference: makeInference)
+        let asset = AVURLAsset(url: videoURL)
+        let progress = ProgressLog()
+
+        let viaBackfill = try await pipeline.run(video: SelectedVideo(
+            assetIdentifier: "take", asset: asset, duration: 3.5, partialPose: partial)
+        ) { progress.append($0) }
+        let viaWholeFile = try await ProcessingPipeline(sampler: sampler, makeInference: makeInference)
+            .run(video: SelectedVideo(assetIdentifier: "take", asset: asset, duration: 3.5)) { _ in }
+
+        let requested = try XCTUnwrap(sampler.requests.all.first)
+        XCTAssertEqual(sampler.requests.all.count, 1)
+        let expected = [1.6, 1.7, 1.8, 1.9, 2.0, 3.0, 3.1, 3.2, 3.3, 3.4]
+        XCTAssertEqual(requested.count, expected.count, "only the missing slots are sampled: \(requested)")
+        for (time, want) in zip(requested, expected) {
+            XCTAssertEqual(time, want, accuracy: 1e-9)
+        }
+        XCTAssertEqual(
+            viaBackfill.detection.poseFrames.map(\.timestamp), fixtures.map(\.timestamp),
+            "live and backfilled frames merge into the one grid")
+        XCTAssertFalse(viaWholeFile.clips.isEmpty, "the fixture should yield a clip to compare")
+        XCTAssertEqual(viaBackfill.clips, viaWholeFile.clips)
+        let first = try XCTUnwrap(progress.reports.first)
+        XCTAssertEqual(first.frame, partial.frames.count + 1, "the live frames count as already processed")
+        XCTAssertEqual(first.totalFrames, fixtures.count)
+    }
+
+    /// Live frames that already cover the take leave nothing to sample: the run detects from
+    /// them alone and never loads the model.
+    func testABackfillWithNothingMissingNeverLoadsTheModel() async throws {
+        let videoURL = try await TestVideoWriter.writeTestVideo(
+            frameCount: 35, width: 64, height: 48, fps: 10)
+        defer { try? FileManager.default.removeItem(at: videoURL) }
+
+        let fixtures = PoseFixture.slide(
+            quietFrames: 15, from: 0.2, perFrame: 0.1, movingFrames: 6, tailFrames: 14
+        ).enumerated().map { index, y in PoseFixture.body(index: index, hip: (x: 0.5, y: y)) }
+        let renderSize = CGSize(width: 48, height: 64)
+        let sampler = ScriptedSampler(renderSize: renderSize, results: fixtures)
+        let pipeline = ProcessingPipeline(sampler: sampler, makeInference: { throw TestError.boom })
+
+        let result = try await pipeline.run(video: SelectedVideo(
+            assetIdentifier: "take", asset: AVURLAsset(url: videoURL), duration: 3.5,
+            partialPose: PartialPoseFrames(frames: fixtures, interval: 0.1, renderedPixelSize: renderSize))
+        ) { _ in }
+
+        XCTAssertTrue(sampler.requests.all.isEmpty)
+        XCTAssertEqual(result.detection.poseFrames, fixtures)
+        XCTAssertEqual(result.clips, pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize))
+    }
+}
+
+/// Collects a run's progress reports, which arrive off the main actor.
+private final class ProgressLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var collected: [ProcessingProgress] = []
+
+    func append(_ progress: ProcessingProgress) {
+        lock.lock()
+        defer { lock.unlock() }
+        collected.append(progress)
+    }
+
+    var reports: [ProcessingProgress] {
+        lock.lock()
+        defer { lock.unlock() }
+        return collected
     }
 }
 

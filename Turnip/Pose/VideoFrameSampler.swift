@@ -84,51 +84,14 @@ struct VideoFrameSampler: Sendable {
     /// breaks that inheritance so the handler runs on the generic executor alongside decoding, and
     /// callers must hop to `MainActor` explicitly for any UI-bound writes.
     func sampleFrames(from asset: AVURLAsset, handler: @Sendable (SampledFrame) async throws -> Void) async throws {
-        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
-            throw PoseError.videoLoadFailed(underlying: nil)
-        }
+        let source = try await CompositionSource(asset: asset)
 
         // Sample ~`sampleRate` frames/sec of footage regardless of source fps: a fixed stride of
         // 3 matches the shipped default (10/sec) only at 30 fps, and at 240 fps slo-mo it would
         // run 8x the intended inferences per second of footage.
-        let nominalFrameRate = try await track.load(.nominalFrameRate)
-        let sampleStride = Self.stride(forNominalFrameRate: nominalFrameRate, sampleRate: sampleRate)
+        let sampleStride = Self.stride(forNominalFrameRate: source.nominalFrameRate, sampleRate: sampleRate)
 
-        // iPhone portrait videos are stored as landscape-encoded buffers with a 90° preferredTransform,
-        // so frames have to be rendered through a video composition that applies it.
-        let preferredTransform = try await track.load(.preferredTransform)
-        let naturalSize = try await track.load(.naturalSize)
-        let geometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
-        let renderSize = geometry.displayedSize
-
-        let videoComposition = AVMutableVideoComposition()
-        videoComposition.renderSize = renderSize
-        videoComposition.frameDuration = try await Self.compositionFrameDuration(of: track)
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
-        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-        layerInstruction.setTransform(geometry.uprightTransform, at: .zero)
-        instruction.layerInstructions = [layerInstruction]
-        videoComposition.instructions = [instruction]
-
-        let reader = try AVAssetReader(asset: asset)
-        let outputSettings: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ]
-        let trackOutput = AVAssetReaderVideoCompositionOutput(
-            videoTracks: [track], videoSettings: outputSettings)
-        trackOutput.videoComposition = videoComposition
-        trackOutput.alwaysCopiesSampleData = false
-
-        guard reader.canAdd(trackOutput) else {
-            throw PoseError.videoLoadFailed(underlying: nil)
-        }
-        reader.add(trackOutput)
-
-        guard reader.startReading() else {
-            throw PoseError.videoLoadFailed(underlying: reader.error)
-        }
-
+        let (reader, trackOutput) = try source.startReading()
         var frameIndex = 0
         while let sampleBuffer = trackOutput.copyNextSampleBuffer() {
             // Decoding a multi-minute clip outlives the screen that asked for it unless the loop
@@ -139,12 +102,70 @@ struct VideoFrameSampler: Sendable {
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
             let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
             try await handler(SampledFrame(
-                frameIndex: frameIndex, timestamp: timestamp, pixelBuffer: pixelBuffer, renderSize: renderSize))
+                frameIndex: frameIndex, timestamp: timestamp, pixelBuffer: pixelBuffer,
+                renderSize: source.renderSize))
         }
 
         if reader.status == .failed {
             throw PoseError.videoLoadFailed(underlying: reader.error)
         }
+    }
+
+    /// Wanted times no further apart than this are read by one reader rather than one each.
+    static let spanJoinGap: TimeInterval = 1
+
+    /// Slack for a frame whose timestamp rounds to a hair before the time it was wanted for. Far
+    /// under half a frame at 240 fps, so it never admits the frame before.
+    static let wantedTimeTolerance: TimeInterval = 1e-4
+
+    /// Decodes only around `times` (file seconds, ascending) and invokes `handler` once per
+    /// wanted time with the first frame at or after it; a frame that is first for several, as
+    /// when the capture is slower than the sample rate, is handed over once. A time at or past
+    /// the end of the asset has no frame and is skipped. Processing's backfill (`PoseBackfill`)
+    /// reads the gaps in a take's live pose frames with this instead of decoding the whole take.
+    ///
+    /// `frameIndex` is the frame's position on the composition grid, since a reader started
+    /// mid-file never sees the frames before it. Times within `spanJoinGap` of each other share
+    /// one reader: a reader started mid-file decodes forward from the keyframe before its start,
+    /// so one reader per time would pay that for every sample of a stretch sampled at the halved
+    /// thermal rate, which is a gap every 0.2 s.
+    func sampleFrames(
+        from asset: AVURLAsset, at times: [TimeInterval],
+        handler: @Sendable (SampledFrame) async throws -> Void
+    ) async throws {
+        let source = try await CompositionSource(asset: asset)
+        let inAsset = times.filter { $0 >= 0 && $0 < source.duration.seconds }
+        for span in Self.spans(of: inAsset, joiningWithin: Self.spanJoinGap) {
+            let (reader, trackOutput) = try source.startReading(in: source.readRange(covering: span))
+            var pending = span[...]
+            while let wanted = pending.first, let sampleBuffer = trackOutput.copyNextSampleBuffer() {
+                try Task.checkCancellation()
+                let timestamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+                guard timestamp >= wanted - Self.wantedTimeTolerance else { continue }
+                pending = pending.drop { $0 <= timestamp + Self.wantedTimeTolerance }
+                guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
+                try await handler(SampledFrame(
+                    frameIndex: Int((timestamp / source.frameDuration.seconds).rounded()),
+                    timestamp: timestamp, pixelBuffer: pixelBuffer, renderSize: source.renderSize))
+            }
+            if reader.status == .failed {
+                throw PoseError.videoLoadFailed(underlying: reader.error)
+            }
+            reader.cancelReading()
+        }
+    }
+
+    /// `times` (ascending) split wherever two neighbours are more than `gap` apart.
+    static func spans(of times: [TimeInterval], joiningWithin gap: TimeInterval) -> [[TimeInterval]] {
+        var spans: [[TimeInterval]] = []
+        for time in times {
+            if let previous = spans.last?.last, time - previous <= gap {
+                spans[spans.count - 1].append(time)
+            } else {
+                spans.append([time])
+            }
+        }
+        return spans
     }
 
     /// The composition's output grid from the track's own timing values. The pure overload below
@@ -174,5 +195,90 @@ struct VideoFrameSampler: Sendable {
             throw PoseError.videoLoadFailed(underlying: nil)
         }
         return CMTime(value: 1, timescale: timescale)
+    }
+}
+
+private extension VideoFrameSampler {
+    /// The upright composition `asset` is rendered through, built once per call and shared by
+    /// every reader that call starts.
+    struct CompositionSource {
+        let asset: AVURLAsset
+        let track: AVAssetTrack
+        let composition: AVMutableVideoComposition
+        /// The composition grid frames are rendered onto, in display orientation.
+        let renderSize: CGSize
+        let nominalFrameRate: Float
+        /// The composition's output grid spacing.
+        let frameDuration: CMTime
+        let duration: CMTime
+
+        init(asset: AVURLAsset) async throws {
+            guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+                throw PoseError.videoLoadFailed(underlying: nil)
+            }
+            self.asset = asset
+            self.track = track
+            nominalFrameRate = try await track.load(.nominalFrameRate)
+            duration = try await asset.load(.duration)
+
+            // iPhone portrait videos are stored as landscape-encoded buffers with a 90°
+            // preferredTransform, so frames have to be rendered through a video composition that
+            // applies it.
+            let preferredTransform = try await track.load(.preferredTransform)
+            let naturalSize = try await track.load(.naturalSize)
+            let geometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
+            renderSize = geometry.displayedSize
+            frameDuration = try await VideoFrameSampler.compositionFrameDuration(of: track)
+
+            composition = AVMutableVideoComposition()
+            composition.renderSize = renderSize
+            composition.frameDuration = frameDuration
+            let instruction = AVMutableVideoCompositionInstruction()
+            instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+            let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+            layerInstruction.setTransform(geometry.uprightTransform, at: .zero)
+            instruction.layerInstructions = [layerInstruction]
+            composition.instructions = [instruction]
+        }
+
+        /// From one frame before the span's first time, so a frame that rounds to just before it
+        /// is not cut off, to two frames past its last, enough to reach the first frame at or
+        /// after it. Clamped to the asset.
+        func readRange(covering span: [TimeInterval]) -> CMTimeRange {
+            let timescale: CMTimeScale = 600_000
+            let first = CMTime(seconds: span.first ?? 0, preferredTimescale: timescale)
+            let last = CMTime(seconds: span.last ?? 0, preferredTimescale: timescale)
+            let start = CMTimeMaximum(.zero, CMTimeSubtract(first, frameDuration))
+            let end = CMTimeMinimum(duration, CMTimeAdd(last, CMTimeMultiply(frameDuration, multiplier: 2)))
+            return CMTimeRange(start: start, end: end)
+        }
+
+        /// A started reader over `timeRange`, or the whole asset when nil. The reader is returned
+        /// with its output because the output stops delivering once its reader is released.
+        func startReading(
+            in timeRange: CMTimeRange? = nil
+        ) throws -> (AVAssetReader, AVAssetReaderVideoCompositionOutput) {
+            let reader = try AVAssetReader(asset: asset)
+            if let timeRange {
+                reader.timeRange = timeRange
+            }
+            let outputSettings: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+            ]
+            let trackOutput = AVAssetReaderVideoCompositionOutput(
+                videoTracks: [track], videoSettings: outputSettings)
+            trackOutput.videoComposition = composition
+            trackOutput.alwaysCopiesSampleData = false
+
+            guard reader.canAdd(trackOutput) else {
+                throw PoseError.videoLoadFailed(underlying: nil)
+            }
+            reader.add(trackOutput)
+
+            guard reader.startReading() else {
+                throw PoseError.videoLoadFailed(underlying: reader.error)
+            }
+            return (reader, trackOutput)
+        }
     }
 }

@@ -75,6 +75,52 @@ final class VideoFrameSamplerTests: XCTestCase {
         }
     }
 
+    /// Each wanted time gets the first frame at or after it and nothing else, from readers
+    /// started mid-file: 0.51 has no frame of its own, so the one at 16/30 s is first after it;
+    /// 2.5 is more than `spanJoinGap` past 1.0, so a second reader reaches it; 4.5 is past the
+    /// end of the 4 s movie.
+    func testTargetedSamplingReturnsTheFirstFrameAtOrAfterEachWantedTime() async throws {
+        let longURL = try await TestVideoWriter.writeTestVideo(frameCount: 120, width: 64, height: 64, fps: 30)
+        defer { try? FileManager.default.removeItem(at: longURL) }
+        let observations = FrameObservations()
+        let timestamps = Timestamps()
+
+        try await VideoFrameSampler().sampleFrames(from: AVURLAsset(url: longURL), at: [0.51, 1.0, 2.5, 4.5]) { frame in
+            await observations.record(.init(frameIndex: frame.frameIndex, onMainThread: false))
+            await timestamps.append(frame.timestamp)
+        }
+
+        let entries = await observations.entries
+        XCTAssertEqual(entries.map(\.frameIndex), [16, 30, 75], "frame indices are positions on the file's grid")
+        let values = await timestamps.values
+        XCTAssertEqual(values.count, 3)
+        for (value, expected) in zip(values, [16.0 / 30, 1.0, 2.5]) {
+            XCTAssertEqual(value, expected, accuracy: 0.001)
+        }
+    }
+
+    /// Wanted times closer together than the capture's frames share a frame, handed over once.
+    func testTargetedSamplingHandsAFrameOverOnceForEveryTimeItIsFirstFor() async throws {
+        let timestamps = Timestamps()
+
+        try await VideoFrameSampler().sampleFrames(from: AVURLAsset(url: videoURL), at: [0.1, 0.11, 0.12]) { frame in
+            await timestamps.append(frame.timestamp)
+        }
+
+        let values = await timestamps.values
+        XCTAssertEqual(values.count, 2)
+        for (value, expected) in zip(values, [0.1, 4.0 / 30]) {
+            XCTAssertEqual(value, expected, accuracy: 0.001)
+        }
+    }
+
+    func testWantedTimesSplitIntoSpansAtLongGaps() {
+        XCTAssertEqual(
+            VideoFrameSampler.spans(of: [0.1, 0.5, 1.6, 1.7, 5], joiningWithin: 1),
+            [[0.1, 0.5], [1.6, 1.7], [5]])
+        XCTAssertEqual(VideoFrameSampler.spans(of: [], joiningWithin: 1), [])
+    }
+
     func testAppliesPreferredTransform() async throws {
         // A 64x48 landscape-encoded video carrying the 90° preferredTransform an iPhone writes for
         // a portrait recording — [0, 1, -1, 0, tx: 48, 0], the rotation plus the translation that

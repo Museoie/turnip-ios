@@ -95,6 +95,17 @@ final class VideoLibraryViewModel: ObservableObject {
         !path.isEmpty || resolution != nil
     }
 
+    /// The most takes `partialPoses` holds.
+    static let partialPoseCapacity = 8
+
+    /// Pose frames the camera scored for takes it did not cover end to end, newest last, keyed by
+    /// asset. Every resolution looks here, so a take backed out of Processing unanalyzed and
+    /// opened again later — from its tile, or swiped to — still analyzes only what live inference
+    /// missed. In memory for this session only, like the thumbnails: v1 persists no pose data
+    /// (docs/PRIVACY.md). Bounded, because a take whose tile is never opened again is never
+    /// removed.
+    private var partialPoses: [(assetIdentifier: String, frames: PartialPoseFrames)] = []
+
     let thumbnails = ThumbnailLoader()
 
     private let library: PHPhotoLibrary
@@ -341,9 +352,22 @@ final class VideoLibraryViewModel: ObservableObject {
     ///
     /// `detectedClips` travels with the pushed video when the caller already has them — a take
     /// the camera scored while recording — and Home then lands on the clip list instead of
-    /// Processing. A tapped tile has none.
-    func select(_ asset: PHAsset, detectedClips: DetectedClips? = nil) {
+    /// Processing. A tapped tile has none. `partialPose` is what the camera scored of a take it
+    /// did not cover: it is kept in `partialPoses` and travels with this and every later
+    /// selection of the same asset.
+    func select(_ asset: PHAsset, detectedClips: DetectedClips? = nil, partialPose: PartialPoseFrames? = nil) {
+        if let partialPose {
+            remember(partialPose, for: asset.localIdentifier)
+        }
         resolveAndInsert(asset, detectedClips: detectedClips, replacingTop: false)
+    }
+
+    private func remember(_ frames: PartialPoseFrames, for assetIdentifier: String) {
+        partialPoses.removeAll { $0.assetIdentifier == assetIdentifier }
+        partialPoses.append((assetIdentifier, frames))
+        if partialPoses.count > Self.partialPoseCapacity {
+            partialPoses.removeFirst(partialPoses.count - Self.partialPoseCapacity)
+        }
     }
 
     /// Resolves `asset` and swaps it in for the current top of `path`, rather than pushing a new
@@ -450,7 +474,9 @@ final class VideoLibraryViewModel: ObservableObject {
                 }
                 let video = SelectedVideo(
                     assetIdentifier: identifier, asset: avAsset, duration: asset.duration,
-                    detectedClips: detectedClips)
+                    detectedClips: detectedClips,
+                    partialPose: detectedClips == nil
+                        ? partialPoses.last { $0.assetIdentifier == identifier }?.frames : nil)
                 if replacingTop {
                     path[path.count - 1] = video
                 } else {

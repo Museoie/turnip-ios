@@ -49,6 +49,55 @@ final class VideoLibrarySelectionTests: XCTestCase {
         XCTAssertEqual(model.path.first?.detectedClips?.poseFrames.count, 3)
     }
 
+    /// A take the camera scored in part carries those frames to Processing, and opening the same
+    /// take again later — backed out unanalyzed, tapped again from its tile — still finds them.
+    /// Another video does not.
+    func testPartialLivePoseTravelsAndIsRememberedForTheSameTake() async {
+        let manager = ScriptedImageManager(.asset(AVURLAsset(url: URL(filePath: "/tmp/turnip-selection-partial.mov"))))
+        let model = VideoLibraryViewModel(resolver: PhotoVideoResolver(imageManager: manager))
+        let partial = PartialPoseFrames(
+            frames: PoseFixture.frames(hipXPositions: [0.4, 0.5]), interval: 0.1,
+            renderedPixelSize: CGSize(width: 1080, height: 1920))
+
+        model.select(StubAsset("take-1", duration: 4), partialPose: partial)
+        await wait(until: { model.path.count == 1 }, "the take should reach the path")
+        XCTAssertEqual(model.path.first?.partialPose, partial)
+        XCTAssertNil(model.path.first?.detectedClips, "a partial take still goes through Processing")
+
+        model.path = []
+        model.select(StubAsset("take-1", duration: 4))
+        await wait(until: { model.path.count == 1 }, "the reopened take should reach the path")
+        XCTAssertEqual(model.path.first?.partialPose, partial, "reopening analyzes only what live inference missed")
+
+        model.path = []
+        model.select(StubAsset("other", duration: 4))
+        await wait(until: { model.path.count == 1 }, "the other video should reach the path")
+        XCTAssertNil(model.path.first?.partialPose)
+    }
+
+    /// The store is per session and bounded: the oldest take falls out once it is full.
+    func testThePartialPoseStoreForgetsTheOldestTakeWhenFull() async {
+        let manager = ScriptedImageManager(.asset(AVURLAsset(url: URL(filePath: "/tmp/turnip-selection-capacity.mov"))))
+        let model = VideoLibraryViewModel(resolver: PhotoVideoResolver(imageManager: manager))
+        let partial = PartialPoseFrames(
+            frames: PoseFixture.frames(hipXPositions: [0.5]), interval: 0.1, renderedPixelSize: .zero)
+
+        for take in 0...VideoLibraryViewModel.partialPoseCapacity {
+            model.path = []
+            model.select(StubAsset("take-\(take)"), partialPose: partial)
+            await wait(until: { model.path.count == 1 }, "take \(take) should reach the path")
+        }
+        model.path = []
+        model.select(StubAsset("take-0"))
+        await wait(until: { model.path.count == 1 }, "the oldest take should reach the path")
+        XCTAssertNil(model.path.first?.partialPose)
+
+        model.path = []
+        model.select(StubAsset("take-1"))
+        await wait(until: { model.path.count == 1 }, "the next-oldest take should reach the path")
+        XCTAssertEqual(model.path.first?.partialPose, partial)
+    }
+
     /// Tiles are disabled while a resolution is in flight, but the state machine must not lean on
     /// the view for that: a second tap is dropped, and the first selection keeps the spinner.
     func testASecondTapWhileAResolutionIsInFlightIsDropped() async {

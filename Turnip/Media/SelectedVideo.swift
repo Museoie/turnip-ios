@@ -23,4 +23,8 @@ struct SelectedVideo: Hashable, Sendable {
     /// video on the clip list directly; nil means nothing has analyzed it yet and Home goes to
     /// Processing.
     var detectedClips: DetectedClips?
+    /// The pose frames the camera did score, when it scored this take live but not all of it.
+    /// Processing then analyzes only what they miss (`PoseBackfill`). Nil when `detectedClips`
+    /// is set, and for a video no live pass ever saw.
+    var partialPose: PartialPoseFrames?
 }
