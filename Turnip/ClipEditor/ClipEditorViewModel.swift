@@ -1082,7 +1082,10 @@ final class ClipEditorViewModel: ObservableObject {
     /// Drives an ease while the player is paused, when the item's clock that carries it stands
     /// still: each display refresh puts the ease further along on the wall clock on the frame on
     /// screen, which the paused player redraws. While playing, the composition carries the ease
-    /// itself; once it has arrived, a steady composition takes over, the same frames.
+    /// itself, and keeps it once it has arrived: past its end it draws the target's frames, and
+    /// the next seek or loop puts the steady composition on (`settlePreviewEase()`). Replacing a
+    /// playing item's composition without a seek shows a frame from up to ten source frames
+    /// ahead for one refresh on an iPhone.
     private func previewEaseStep() {
         guard case let .easing(from, target, _, _) = previewPan else {
             stopPreviewEaseLink()
@@ -1102,20 +1105,15 @@ final class ClipEditorViewModel: ObservableObject {
             composePreview(flush: false)
         } else if let progress = previewPan.progress(at: currentTime) {
             previewEaseClock = (wall: now, progress: min(progress, 1))
-            if progress >= 1 + Self.previewEaseSettleMargin {
-                previewPan = .steady(target)
+            if progress >= 1 {
                 stopPreviewEaseLink()
-                composePreview(flush: false)
             }
         }
     }
 
-    /// How far past its end, as a fraction of the ease, playback runs before the steady
-    /// composition replaces the eased one: by then every frame drawn ahead is past the ease too.
-    private static let previewEaseSettleMargin = 0.5
-
     /// Ends an ease on its target ahead of a seek: the seek redraws anyway, and the frames it
-    /// lands on are past the ease's anchor or before it.
+    /// lands on are past the ease's anchor or before it. An ease that arrived while playing is
+    /// still on the item until then.
     private func settlePreviewEase() {
         guard previewPan.isEasing else { return }
         previewPan = .steady(previewPan.target)
