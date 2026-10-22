@@ -8,7 +8,7 @@ import XCTest
 /// Skipped unless the run names the evaluation directory: pass
 /// `TEST_RUNNER_TURNIP_EVAL_DIR=<dir>` to `xcodebuild test`. The directory holds the videos and a
 /// `labels.json` (`EvaluationManifest`); they are recordings of real people, so they live outside
-/// the repository. Each run writes its scored windows to `<dir>/results/<label>.json`
+/// the repository. Each run writes its scored clips to `<dir>/results/<label>.json`
 /// (`TEST_RUNNER_TURNIP_EVAL_LABEL`, default `run`) and the pose it scored to `<dir>/pose/`;
 /// both are overwritten by the next run with the same label or the next full run, so neither is
 /// a history. `TEST_RUNNER_TURNIP_EVAL_REUSE_POSE=1` re-runs detection on that saved pose instead
@@ -27,7 +27,7 @@ final class TrickDetectionEvaluationTests: XCTestCase {
         var report = EvaluationReport(label: environment["TURNIP_EVAL_LABEL"] ?? "run", reusedPose: reusePose)
 
         for clip in manifest.clips {
-            report.add(clip, windows: try await detectedWindows(for: clip, in: directory, reusePose: reusePose))
+            report.add(clip, detected: try await detectedClips(for: clip, in: directory, reusePose: reusePose))
         }
 
         for line in report.lines {
@@ -40,16 +40,16 @@ final class TrickDetectionEvaluationTests: XCTestCase {
         try encoder.encode(report).write(to: results.appendingPathComponent("\(report.label).json"))
     }
 
-    private func detectedWindows(
+    private func detectedClips(
         for clip: EvaluationManifest.Clip,
         in directory: URL,
         reusePose: Bool
-    ) async throws -> [TrickWindow] {
+    ) async throws -> [ProcessedClip] {
         let pipeline = ProcessingPipeline()
         let poseURL = directory.appendingPathComponent("pose/\(clip.video).json")
         if reusePose, let data = try? Data(contentsOf: poseURL) {
             let saved = try JSONDecoder().decode(SavedPose.self, from: data)
-            return pipeline.detectClips(in: saved.poseFrames, renderedPixelSize: saved.renderSize).map(\.window)
+            return pipeline.detectClips(in: saved.poseFrames, renderedPixelSize: saved.renderSize)
         }
 
         let asset = AVURLAsset(url: directory.appendingPathComponent(clip.video))
@@ -61,7 +61,7 @@ final class TrickDetectionEvaluationTests: XCTestCase {
         try FileManager.default.createDirectory(
             at: poseURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(saved).write(to: poseURL)
-        return result.clips.map(\.window)
+        return result.clips
     }
 
     /// The display-orientation size the sampler renders frames at, which `run` measures the
@@ -84,9 +84,10 @@ struct EvaluationManifest: Decodable {
         /// Totals are reported per group, so footage the detector is not built for (handheld,
         /// several people) does not blur the number for footage it is.
         let group: String
-        /// Labelled tricks as `[start, end]` seconds; nil for a video nobody has labelled, which
-        /// reports its clips without a score.
-        let tricks: [[TimeInterval]]?
+        /// Labelled tricks, each `[start, end]` seconds or an object that also says who did it
+        /// (`LabelledTrick`); nil for a video nobody has labelled, which reports its clips
+        /// without a score.
+        let tricks: [LabelledTrick]?
     }
 
     let clips: [Clip]
@@ -98,6 +99,8 @@ private struct EvaluationReport: Encodable {
         let video: String
         let group: String
         let windows: [[TimeInterval]]
+        /// Each clip's crop as `[minX, minY, maxX, maxY]`, the space a trick's `at` is in.
+        let crops: [[Double]]
         /// `TrickDetectionScore.summary`; nil for an unlabelled video.
         let score: String?
     }
@@ -113,17 +116,21 @@ private struct EvaluationReport: Encodable {
         self.reusedPose = reusedPose
     }
 
-    mutating func add(_ clip: EvaluationManifest.Clip, windows: [TrickWindow]) {
+    mutating func add(_ clip: EvaluationManifest.Clip, detected: [ProcessedClip]) {
         var summary: String?
         if let tricks = clip.tricks {
-            let score = TrickDetectionScore(windows: windows, tricks: tricks.map { $0[0]...$0[1] })
+            let score = TrickDetectionScore(clips: detected, tricks: tricks)
             tallies[clip.group, default: TrickDetectionTally()].add(score)
             totals[clip.group] = tallies[clip.group]?.summary
             summary = score.summary
         }
         clips.append(ClipResult(
             video: clip.video, group: clip.group,
-            windows: windows.map { [Self.rounded($0.startTime), Self.rounded($0.endTime)] }, score: summary))
+            windows: detected.map { [Self.rounded($0.window.startTime), Self.rounded($0.window.endTime)] },
+            crops: detected.map(\.cropRect).map { rect in
+                [rect.minX, rect.minY, rect.maxX, rect.maxY].map { (Double($0) * 100).rounded() / 100 }
+            },
+            score: summary))
     }
 
     var lines: [String] {
