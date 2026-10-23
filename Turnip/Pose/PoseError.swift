@@ -12,7 +12,7 @@ enum PoseError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .modelNotFound:
-            return "MoveNet Thunder model not found. See Turnip/Models/README.md for download instructions."
+            return "MoveNet MultiPose model not found. See Turnip/Models/README.md for download instructions."
         case .videoLoadFailed(let underlying):
             if let underlying {
                 return "Failed to load the selected video: \(underlying.localizedDescription)"

@@ -71,7 +71,7 @@ official Swift Package Manager distribution. Setup, in order:
    `bundle install` fails with `Unicode Normalization not appropriate for ASCII-8BIT`,
    your shell has no UTF-8 locale set; run `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 bundle install`
    instead (known CocoaPods/Ruby issue, unrelated to this project)
-6. Download the MoveNet Thunder model per
+6. Download the MoveNet MultiPose model per
    [`Turnip/Models/README.md`](Turnip/Models/README.md) — the app builds and runs
    without it, but nothing pose-related does: live pose on the camera and
    Processing's analysis both need it.

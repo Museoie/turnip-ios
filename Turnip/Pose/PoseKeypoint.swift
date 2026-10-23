@@ -13,7 +13,7 @@ struct PoseKeypoint: Identifiable, Hashable, Sendable {
 
     static let confidenceThreshold: Float = 0.3
 
-    /// COCO keypoint order used by MoveNet Thunder's [1, 1, 17, 3] output tensor.
+    /// COCO keypoint order, the order MoveNet emits each person's keypoints in.
     static let names = [
         "nose", "left_eye", "right_eye", "left_ear", "right_ear",
         "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
@@ -33,6 +33,56 @@ struct PoseKeypoint: Identifiable, Hashable, Sendable {
             let base = index * 3
             return PoseKeypoint(name: name, y: values[base], x: values[base + 1], confidence: values[base + 2])
         }
+    }
+}
+
+/// One person the pose model found in a frame: how sure it is that someone is there, the box
+/// around them, and their 17 keypoints. Frame-normalized like `PoseKeypoint` once
+/// `LetterboxMapping.frameNormalized(person:)` has mapped it.
+struct DetectedPerson: Hashable, Sendable {
+    let score: Float
+    let box: NormalizedRect
+    let keypoints: [PoseKeypoint]
+
+    /// Below this the model is guessing that anyone is there at all. The reference
+    /// implementation's own default for MultiPose.
+    static let minimumScore: Float = 0.25
+
+    /// The most people MultiPose's output holds per frame.
+    static let maximumCount = 6
+
+    /// Per person: 17 × (y, x, score), then the box as (ymin, xmin, ymax, xmax), then the score.
+    static let valuesPerPerson = PoseKeypoint.names.count * 3 + 5
+
+    /// Parses MultiPose's flattened `[1, 6, 56]` output into the people scoring at least
+    /// `minimumScore`, in the model's order and still in its normalized input space. The box is
+    /// y-first like the keypoints.
+    static func parse(from values: [Float]) throws -> [DetectedPerson] {
+        guard values.count == maximumCount * valuesPerPerson else {
+            throw PoseError.inferenceFailed(
+                "Expected \(maximumCount * valuesPerPerson) values in model output, got \(values.count)"
+            )
+        }
+        let keypointValues = PoseKeypoint.names.count * 3
+        return try (0..<maximumCount).compactMap { index in
+            let person = Array(values[(index * valuesPerPerson)..<((index + 1) * valuesPerPerson)])
+            let score = person[keypointValues + 4]
+            guard score >= minimumScore else { return nil }
+            return DetectedPerson(
+                score: score,
+                box: NormalizedRect(
+                    minX: person[keypointValues + 1], maxX: person[keypointValues + 3],
+                    minY: person[keypointValues], maxY: person[keypointValues + 2]),
+                keypoints: try PoseKeypoint.parse(from: Array(person.prefix(keypointValues))))
+        }
+    }
+}
+
+extension Array where Element == DetectedPerson {
+    /// The keypoints of the person the model is surest of, or none when it found nobody: the one
+    /// pose a consumer that follows a single person reads per frame.
+    var mostConfidentKeypoints: [PoseKeypoint] {
+        self.max { $0.score < $1.score }?.keypoints ?? []
     }
 }
 

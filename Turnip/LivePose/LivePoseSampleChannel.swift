@@ -22,7 +22,7 @@ struct LivePoseSample: Sendable {
 /// nil — inference is allowed to lag behind the recording and finish after it. `cancel()` empties
 /// the queue first, so the consumer returns nil immediately after the sample it is on.
 final class LivePoseSampleChannel: Sendable {
-    /// 30 samples ≈ 3 s at the normal rate and ≈ 6 MB of tensors: a few seconds of lag before the
+    /// 30 samples ≈ 3 s at the normal rate and ≈ 7.7 MB of tensors: a few seconds of lag before the
     /// oldest work is shed, small enough that shedding is what happens instead of memory growth.
     static let defaultCapacity = 30
 

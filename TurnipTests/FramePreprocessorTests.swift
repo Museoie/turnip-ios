@@ -17,21 +17,61 @@ private struct Pixel {
 
 final class FramePreprocessorTests: XCTestCase {
 
-    // MARK: - Input shape
+    // MARK: - Input size
 
-    func testInitReadsHeightBeforeWidth() throws {
-        let preprocessor = try FramePreprocessor(inputShape: [1, 192, 256, 3])
+    /// A portrait iPhone frame keeps its aspect: 384 tall, and 216 wide rounded up to 224, the next
+    /// multiple of 32.
+    func testFittingAPortraitFrameRoundsTheShortSideUpToAMultipleOf32() {
+        let preprocessor = FramePreprocessor(fitting: CGSize(width: 1080, height: 1920), longSide: 384)
 
-        XCTAssertEqual(preprocessor.targetHeight, 192)
+        XCTAssertEqual(preprocessor.targetWidth, 224)
+        XCTAssertEqual(preprocessor.targetHeight, 384)
+    }
+
+    /// Up, not to the nearer multiple: 700/1000 of 384 is 269, 8.4 multiples of 32, so the short
+    /// side is 288 and the frame keeps every row rather than losing 13 of them to 256.
+    func testFittingRoundsUpWhenTheNearerMultipleIsBelow() {
+        let preprocessor = FramePreprocessor(fitting: CGSize(width: 1000, height: 700), longSide: 384)
+
+        XCTAssertEqual(preprocessor.targetWidth, 384)
+        XCTAssertEqual(preprocessor.targetHeight, 288)
+    }
+
+    func testFittingALandscapeFramePutsTheLongSideAcross() {
+        let preprocessor = FramePreprocessor(fitting: CGSize(width: 1920, height: 1080), longSide: 384)
+
+        XCTAssertEqual(preprocessor.targetWidth, 384)
+        XCTAssertEqual(preprocessor.targetHeight, 224)
+    }
+
+    func testFittingASquareFrameIsSquare() {
+        let preprocessor = FramePreprocessor(fitting: CGSize(width: 1080, height: 1080), longSide: 384)
+
+        XCTAssertEqual(preprocessor.targetWidth, 384)
+        XCTAssertEqual(preprocessor.targetHeight, 384)
+    }
+
+    /// A short side already on the grid stays where it is rather than growing a row of padding.
+    func testFittingAShortSideAlreadyOnTheGridKeepsIt() {
+        let preprocessor = FramePreprocessor(fitting: CGSize(width: 1024, height: 512), longSide: 256)
+
         XCTAssertEqual(preprocessor.targetWidth, 256)
+        XCTAssertEqual(preprocessor.targetHeight, 128)
     }
 
-    func testInitRejectsShapeThatIsNotRankFour() {
-        XCTAssertThrowsError(try FramePreprocessor(inputShape: [256, 256, 3]))
+    /// A sliver of a frame still gets one row of the grid, not a zero-size input.
+    func testFittingAVeryWideFrameKeepsAtLeastOneMultiple() {
+        let preprocessor = FramePreprocessor(fitting: CGSize(width: 4000, height: 10), longSide: 384)
+
+        XCTAssertEqual(preprocessor.targetWidth, 384)
+        XCTAssertEqual(preprocessor.targetHeight, 32)
     }
 
-    func testInitRejectsChannelCountThePackingCannotWrite() {
-        XCTAssertThrowsError(try FramePreprocessor(inputShape: [1, 256, 256, 4]))
+    func testFittingADegenerateFrameFallsBackToASquare() {
+        let preprocessor = FramePreprocessor(fitting: .zero, longSide: 384)
+
+        XCTAssertEqual(preprocessor.targetWidth, 384)
+        XCTAssertEqual(preprocessor.targetHeight, 384)
     }
 
     // MARK: - Geometry
@@ -164,6 +204,30 @@ final class FramePreprocessorTests: XCTestCase {
             keypoints: [PoseKeypoint(name: "nose", y: 0.5, x: 0.95, confidence: 0.9)])
         XCTAssertEqual(padRight[0].x, 1.30, accuracy: 0.0001)
         XCTAssertEqual(padRight[0].y, 0.5, accuracy: 0.0001)
+    }
+
+    /// A person's box is made of input-normalized points like their keypoints, so it inverts
+    /// through the same letterbox: a box drawn in the pad region of a portrait frame's input
+    /// lands outside [0, 1] on x, and the score passes through.
+    func testFrameNormalizedPersonInvertsTheBoxLikeTheKeypoints() {
+        let mapping = LetterboxMapping(
+            scale: 256.0 / 1920.0, offsetX: 56, offsetY: 0,
+            inputSize: CGSize(width: 256, height: 256),
+            sourceExtent: CGRect(x: 0, y: 0, width: 1080, height: 1920))
+        let person = DetectedPerson(
+            score: 0.7,
+            box: NormalizedRect(minX: 0.10, maxX: 0.5, minY: 0.25, maxY: 0.75),
+            keypoints: [PoseKeypoint(name: "nose", y: 0.5, x: 0.5, confidence: 0.9)])
+
+        let mapped = mapping.frameNormalized(person: person)
+
+        XCTAssertEqual(mapped.score, 0.7, accuracy: 0.0001)
+        XCTAssertEqual(mapped.box.minX, -0.2111, accuracy: 0.0001)
+        XCTAssertEqual(mapped.box.maxX, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(mapped.box.minY, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(mapped.box.maxY, 0.75, accuracy: 0.0001)
+        XCTAssertEqual(mapped.keypoints[0].x, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(mapped.keypoints[0].y, 0.5, accuracy: 0.0001)
     }
 
     // MARK: - Upright rotation

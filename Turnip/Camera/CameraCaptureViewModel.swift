@@ -97,7 +97,7 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     nonisolated let rollRecorder = RollTrackRecorder()
     /// Loaded once, when the camera first starts, and reused across recordings. Nil until it
     /// loads, or if the bundled model is missing; recordings made meanwhile skip live pose.
-    private var poseModel: MoveNetThunderModel?
+    private var poseModel: MoveNetMultiPoseModel?
     /// The consumer of the last stopped recording while it finishes scoring what was queued.
     /// Leaving the camera cancels it; a new take cannot start until it is done.
     private var drainingLivePose: LivePoseRecording?
@@ -724,7 +724,7 @@ extension CameraCaptureViewModel {
         guard poseModel == nil else { return }
         Task { [weak self] in
             do {
-                let model = try await MoveNetThunderModel.load()
+                let model = try await MoveNetMultiPoseModel.load()
                 self?.poseModel = model
             } catch {
                 LivePoseLogger.logModelLoadFailure(error)
@@ -749,7 +749,7 @@ extension CameraCaptureViewModel {
         liveRenderedPixelSize = LivePoseCoverage.renderedPixelSize(
             sensorWidth: sensor.width, sensorHeight: sensor.height, movieRotationDegrees: movieRotation)
         let recording = LivePoseRecording(
-            inference: { try await poseModel.runInference(on: $0) },
+            inference: { try await poseModel.runInference(on: $0).mostConfidentKeypoints },
             channel: LivePoseSampleChannel(),
             onResult: { [weak self] result in
                 let keypoints = LivePoseKeypointRotation.rotated(result.keypoints, clockwiseDegrees: toDeviceSpace)

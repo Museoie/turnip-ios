@@ -7,17 +7,20 @@ import XCTest
 /// premise is that the camera's native 420v frames can go straight in without an ISP conversion
 /// to BGRA, so that is exercised here alongside the file path's BGRA.
 final class PoseInputPreparerTests: XCTestCase {
-    private let preparer = PoseInputPreparer(preprocessor: FramePreprocessor(targetWidth: 256, targetHeight: 256))
+    private let preparer = PoseInputPreparer(longSide: 256)
 
-    func testBGRASourcePacksAFullTensorWithLetterboxGeometry() throws {
+    /// A 640x360 frame at a long side of 256 is a 256x160 input: 144 rows of picture, rounded up
+    /// to 160 with 8 rows of pad above and below.
+    func testBGRASourcePacksATensorSizedToTheFrame() throws {
         let source = try makeBuffer(width: 640, height: 360, format: kCVPixelFormatType_32BGRA)
 
         let input = try preparer.prepare(source)
 
-        XCTAssertEqual(input.tensor.count, 256 * 256 * 3)
+        XCTAssertEqual(input.mapping.inputSize, CGSize(width: 256, height: 160))
+        XCTAssertEqual(input.tensor.count, 256 * 160 * 3)
         XCTAssertEqual(input.mapping.scale, 256.0 / 640, accuracy: 1e-6)
         XCTAssertEqual(input.mapping.offsetX, 0, accuracy: 1e-6)
-        XCTAssertEqual(input.mapping.offsetY, (256 - 360 * 256.0 / 640) / 2, accuracy: 1e-6)
+        XCTAssertEqual(input.mapping.offsetY, 8, accuracy: 1e-6)
         XCTAssertEqual(input.mapping.sourceExtent, CGRect(x: 0, y: 0, width: 640, height: 360))
     }
 
@@ -29,15 +32,15 @@ final class PoseInputPreparerTests: XCTestCase {
 
         let input = try preparer.prepare(source)
 
-        XCTAssertEqual(input.tensor.count, 256 * 256 * 3)
+        XCTAssertEqual(input.tensor.count, 256 * 160 * 3)
         XCTAssertEqual(input.mapping.sourceExtent, CGRect(x: 0, y: 0, width: 640, height: 360))
         // The letterboxed content is bright and the pad stays black: sample the middle row and a
         // pad row. Video-range luma 200 with neutral chroma converts to a light gray.
-        let middle = pixel(in: input.tensor, x: 128, y: 128)
+        let middle = pixel(in: input, x: 128, y: 80)
         XCTAssertGreaterThan(middle.red, 150, "content row was not rendered from the 420v source")
         XCTAssertGreaterThan(middle.green, 150)
         XCTAssertGreaterThan(middle.blue, 150)
-        let pad = pixel(in: input.tensor, x: 128, y: 2)
+        let pad = pixel(in: input, x: 128, y: 2)
         XCTAssertEqual(pad.red, 0, "letterbox pad must stay zeroed")
         XCTAssertEqual(pad.green, 0)
         XCTAssertEqual(pad.blue, 0)
@@ -53,11 +56,13 @@ final class PoseInputPreparerTests: XCTestCase {
         let input = try preparer.prepare(source, rotationDegrees: 90)
 
         // 640x360 rotated 90° clockwise is 360x640 — portrait, the same shape a portrait
-        // recording's movie connection reports — so the letterbox pads left/right, not top/bottom.
+        // recording's movie connection reports — so the input is portrait too, 160x256, and the
+        // letterbox pads left/right, not top/bottom.
         XCTAssertEqual(input.mapping.sourceExtent, CGRect(x: 0, y: 0, width: 360, height: 640))
+        XCTAssertEqual(input.mapping.inputSize, CGSize(width: 160, height: 256))
         XCTAssertEqual(input.mapping.scale, 256.0 / 640, accuracy: 1e-6)
         XCTAssertEqual(input.mapping.offsetY, 0, accuracy: 1e-6)
-        XCTAssertEqual(input.mapping.offsetX, (256 - 360 * 256.0 / 640) / 2, accuracy: 1e-6)
+        XCTAssertEqual(input.mapping.offsetX, 8, accuracy: 1e-6)
     }
 
     /// The mapping alone doesn't pin the render: it is a pure function of the rotated extent and
@@ -71,19 +76,19 @@ final class PoseInputPreparerTests: XCTestCase {
     /// swings the left edge up to become the top edge (`FramePreprocessorTests`' rendered-fixture
     /// test pins that direction for a marked corner the same way), so the bright half should land
     /// in the top half of the rotated 360x640 frame, then scale 0.4 into the top half of the
-    /// 256x256 tensor's content rows (`y` 0..<128, at `x` 56..<200 where the letterbox is unpadded
-    /// — `offsetX` is 56, per the mapping test above). The bottom half (`y` 128..<256) must be
+    /// 160x256 tensor's content rows (`y` 0..<128, at `x` 8..<152 where the letterbox is unpadded
+    /// — `offsetX` is 8, per the mapping test above). The bottom half (`y` 128..<256) must be
     /// dark, and rotating-then-letterboxing (rather than the reverse) is what keeps the content
-    /// inside the target at all: letterbox-then-rotate would translate it outside the 256x256
+    /// inside the target at all: letterbox-then-rotate would translate it outside the 160x256
     /// buffer entirely, rendering nothing.
     func testRotationRendersContentUprightBeforeLetterboxingNotAfter() throws {
         let source = try makeVerticalSplitBuffer(width: 640, height: 360, brightUntilColumn: 320)
 
         let input = try preparer.prepare(source, rotationDegrees: 90)
 
-        let top = pixel(in: input.tensor, x: 128, y: 40)
+        let top = pixel(in: input, x: 80, y: 40)
         XCTAssertEqual(top.red, 255, "the source's left half must land in the tensor's top half")
-        let bottom = pixel(in: input.tensor, x: 128, y: 210)
+        let bottom = pixel(in: input, x: 80, y: 210)
         XCTAssertEqual(bottom.red, 0, "the source's right half must land in the tensor's bottom half")
     }
 
@@ -93,7 +98,7 @@ final class PoseInputPreparerTests: XCTestCase {
         let tiny = try makeBuffer(width: 1, height: 1, format: kCVPixelFormatType_32BGRA)
         XCTAssertNoThrow(try preparer.prepare(tiny))
         XCTAssertThrowsError(
-            try preparer.preprocessor.letterboxGeometry(forSourceExtent: .zero))
+            try FramePreprocessor(fitting: .zero, longSide: 256).letterboxGeometry(forSourceExtent: .zero))
     }
 
     // MARK: - Fixtures
@@ -104,9 +109,9 @@ final class PoseInputPreparerTests: XCTestCase {
         let blue: UInt8
     }
 
-    private func pixel(in tensor: Data, x: Int, y: Int) -> RGB {
-        let offset = (y * 256 + x) * 3
-        return RGB(red: tensor[offset], green: tensor[offset + 1], blue: tensor[offset + 2])
+    private func pixel(in input: PoseModelInput, x: Int, y: Int) -> RGB {
+        let offset = (y * Int(input.mapping.inputSize.width) + x) * 3
+        return RGB(red: input.tensor[offset], green: input.tensor[offset + 1], blue: input.tensor[offset + 2])
     }
 
     private func makeBuffer(width: Int, height: Int, format: OSType) throws -> CVPixelBuffer {

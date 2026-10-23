@@ -1,12 +1,12 @@
 # Models
 
-The app expects a MoveNet Thunder model file here, named exactly:
+The app expects a MoveNet MultiPose Lightning model file here, named exactly:
 
 ```
-movenet_thunder_int8.tflite
+movenet_multipose_lightning_float16.tflite
 ```
 
-This file is **not committed to the repo** (see the root `.gitignore`) — it's a ~7 MB binary
+This file is **not committed to the repo** (see the root `.gitignore`) — it's a ~9.6 MB binary
 ML artifact. Release builds (Xcode Cloud → TestFlight) download and checksum-verify it in
 `ci_scripts/ci_post_clone.sh`, so it is always inside the archived app bundle. For local
 development, fetch it yourself with the steps below. The app builds and runs without it,
@@ -14,76 +14,68 @@ but nothing pose-related works: the camera records without live pose (it logs th
 failure under the `LivePose` category and every take goes through Processing), and
 Processing's analysis fails with a "model not found" error.
 
+Every file in this folder is copied into the app bundle ("Why a folder reference", below). A
+`movenet_thunder_int8.tflite` left over from before the app used MultiPose is bundled too and
+never loaded, so delete it.
+
 ## Getting the file
 
-The model is the TF Lite int8 build of `google/movenet/singlepose/thunder/4`, published
+The model is the TF Lite float16 build of `google/movenet/multipose/lightning/1`, published
 under **Apache 2.0**, which is the licensing `docs/DESIGN.md` assumes when it bundles the
 weights. Download it from TF Hub — no account needed, and the URL serves the raw `.tflite`
 directly. From the repo root:
 
 ```
-$ curl -L -o Turnip/Models/movenet_thunder_int8.tflite \
-    "https://tfhub.dev/google/lite-model/movenet/singlepose/thunder/tflite/int8/4?lite-format=tflite"
-$ shasum -a 256 Turnip/Models/movenet_thunder_int8.tflite
+$ curl -L -o Turnip/Models/movenet_multipose_lightning_float16.tflite \
+    "https://tfhub.dev/google/lite-model/movenet/multipose/lightning/tflite/float16/1?lite-format=tflite"
+$ shasum -a 256 Turnip/Models/movenet_multipose_lightning_float16.tflite
 ```
 
-The second command must print the checksum recorded below — run it, because the load-time
-check in `MoveNetThunderModel` cannot tell the float16 build apart from this one, so the
-checksum is what separates them (see "Checking you got the right file").
+The second command must print the checksum recorded below.
 
-Provenance last checked **2026-09-14**: the TF Hub URL serves bytes matching the checksum
-below. (The Kaggle model page,
-`https://www.kaggle.com/models/google/movenet/tfLite/singlepose-thunder-tflite-int8`, is
-still live under Apache 2.0, but its API download endpoint now returns 404, so TF Hub is
-the fetch path.)
+Provenance last checked **2026-10-21**: the TF Hub URL serves bytes matching the checksum
+below, and Kaggle's model API (`https://www.kaggle.com/api/v1/models/google/movenet/get`)
+lists the `multipose-lightning-tflite-float16` instance under Apache 2.0.
 
 ## Checking you got the right file
 
-Two checks cover this, and they catch different wrong files — run the checksum first, because
-it is the one that catches the variant the app cannot detect for itself.
+Two checks cover this, and they catch different wrong files.
 
 ### The checksum and byte count
 
 ```
-$ shasum -a 256 Turnip/Models/movenet_thunder_int8.tflite
-b72fed22707cd6fb94b5a248b9bddb9c062b9f445471b4fa263407cf6d222011
+$ shasum -a 256 Turnip/Models/movenet_multipose_lightning_float16.tflite
+d4489f89e6bd6777a8b9a1a16189832131f84ff90d82fae729e670b84d7948dd
 ```
 
-The file is **7,126,768 bytes**. Its input tensor is `[1, 256, 256, 3]` uint8 and its output
-tensor is `[1, 1, 17, 3]` float32 — the shapes `FramePreprocessor` and `PoseKeypoint.parse`
-are built around.
+The file is **9,585,276 bytes**. Its input tensor is uint8 with its height and width left open
+(`[1, -1, -1, 3]`; it reads `[1, 1, 1, 3]` until resized), and its output tensor is
+`[1, 6, 56]` float32: up to six people, each 17 keypoints of (y, x, score), then a box and the
+person's score. `PoseInputPreparer` sizes each frame's input to the frame's own aspect, a long
+side of 384 with the short side rounded up to a multiple of 32, and `MoveNetMultiPoseModel`
+resizes the interpreter to match; `DetectedPerson.parse` reads the output.
 
 If the checksum disagrees, you have a different artifact. The likely candidates are the
-neighbouring MoveNet builds, and the two closest ones are worth knowing about:
+neighbouring MoveNet builds, which are single-pose:
 
 | Instance | Bytes | Input tensor | Output tensor |
 | --- | --- | --- | --- |
-| `singlepose-thunder-tflite-int8` (this one) | 7,126,768 | `[1, 256, 256, 3]` uint8 | `[1, 1, 17, 3]` float32 |
+| `multipose-lightning-tflite-float16` (this one) | 9,585,276 | `[1, -1, -1, 3]` uint8 | `[1, 6, 56]` float32 |
+| `singlepose-thunder-tflite-int8` | 7,126,768 | `[1, 256, 256, 3]` uint8 | `[1, 1, 17, 3]` float32 |
 | `singlepose-thunder-tflite-float16` | 12,584,128 | `[1, 256, 256, 3]` uint8 | `[1, 1, 17, 3]` float32 |
 | `singlepose-lightning-tflite-int8` | 2,894,840 | `[1, 192, 192, 3]` uint8 | `[1, 1, 17, 3]` float32 |
 
-The Thunder float16 build reports the same shapes and the same element types as the int8
-build, so nothing readable at load separates the two: it loads, allocates, and emits keypoints
-the parser accepts, and the only difference is the numbers that come out. float16 is also the
-escalation `docs/DESIGN.md` names before any model swap, so quietly running it instead would
-pre-empt the accuracy comparison that choice exists to decide. The checksum and the byte
-count are the only checks that tell them apart, which is why both are recorded here.
-
-(Sizes are the uncompressed artifact sizes the model page reports per instance; the tensor
-shapes are read out of the files themselves.)
+(The tensor shapes are read out of the files themselves.)
 
 ### The load-time check
 
-`MoveNetThunderModel` reads the bundled file's input and output tensors at load and rejects
-anything that isn't the Thunder singlepose int8 shape — `[1, 256, 256, 3]` input, `[1, 1, 17,
-3]` output — with a visible error instead of silently producing worse keypoints. If
-Processing's analysis fails with an input-shape or output-shape error, the file is a different variant
-(Lightning is 192x192) — go back to the download step. If it fails with a data-type error like
-"Model input wants Float32, the frame packing writes uInt8", it's the fp32 Thunder build
-rather than the int8 one — also go back.
-
-This check cannot see the float16 build, whose input tensor is uint8 at the same resolution,
-which is what the checksum above is for.
+`MoveNetMultiPoseModel` resizes the bundled file's input to 384×384 at load, allocates it, and
+rejects anything whose output isn't `[1, 6, 56]`, with a visible error naming both shapes. A
+single-pose build takes the same resize and allocates without complaint, so the output shape
+is what catches it: if Processing's analysis fails with an output-shape error, the file is a
+single-pose MoveNet — go back to the download step. If it fails with a data-type error like
+"Model input wants Float32, the frame packing writes uInt8", the file wants float input — also
+go back.
 
 ## Why a folder reference
 

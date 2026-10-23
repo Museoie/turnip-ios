@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Takes the values rather than a `Tensor` because TensorFlowLiteSwift declares neither
 /// `Tensor.init` nor `QuantizationParameters.init` public, so nothing outside the pod — a test
-/// included — can build one to pass in. `MoveNetThunderModel` unpacks the tensor and calls in here.
+/// included — can build one to pass in. `MoveNetMultiPoseModel` unpacks the tensor and calls in here.
 enum TensorDequantizer {
     /// Undoes affine uint8 quantization: `value = (byte - zeroPoint) * scale`.
     static func floats(fromUInt8 data: Data, scale: Float, zeroPoint: Int) -> [Float] {

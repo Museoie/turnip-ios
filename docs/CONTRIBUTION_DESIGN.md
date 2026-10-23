@@ -104,7 +104,7 @@ so every downstream screen can reference it without recomputing.
 
 ### 2.1 Pipeline reuse
 
-Pose comes from the existing bundled MoveNet Thunder path — the same
+Pose comes from the existing bundled MoveNet path — the same
 per-frame `{x, y, confidence}` × 17 keypoints the detector consumes, at
 the Settings **analysis granularity** (1–30 fps, default 10;
 `TurnipSettingsStore`). No second inference pass: the contribution blob

@@ -75,7 +75,7 @@ vendor/bundle
 *.xcworkspace/
 Pods/
 
-# MoveNet Thunder model binary — see Turnip/Models/README.md
+# MoveNet MultiPose model binary — see Turnip/Models/README.md
 Turnip/Models/*.tflite
 
 DerivedData/

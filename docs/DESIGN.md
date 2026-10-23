@@ -23,7 +23,7 @@ The app is open source, and doubles as a **community labeling + continuous train
 ## Product scope
 
 **v1 (personal use)**:
-- Auto-clip + auto-crop + multi-trick split (iOS-only, off-the-shelf MoveNet Thunder)
+- Auto-clip + auto-crop + multi-trick split (iOS-only, off-the-shelf MoveNet)
 - Preview UI, export to Photos
 
 **v2 (community + backend)**:
@@ -47,7 +47,7 @@ The app is open source, and doubles as a **community labeling + continuous train
 
 Three public repos, Apache 2.0:
 
-- **`turnip-ios`** — Swift/SwiftUI iOS app. Bundles MoveNet Thunder TFLite. Handles capture, on-device clip detection, preview UI, export, and (v2) contribution of pose-format keypoints + confirmed clips/labels to the backend training dataset (video never leaves the device).
+- **`turnip-ios`** — Swift/SwiftUI iOS app. Bundles MoveNet MultiPose Lightning TFLite. Handles capture, on-device clip detection, preview UI, export, and (v2) contribution of pose-format keypoints + confirmed clips/labels to the backend training dataset (video never leaves the device).
 - **`turnip-farm`** — Bun + TypeScript + Postgres backend. Grows the labeled dataset. Serves pose-blob ingest, confirmed clip/label upserts, user accounts, moderation, quality scoring, dataset export for the training pipeline, and the trick-model manifest. No video anywhere in the stack.
 - **`turnip-ml`** — Python + TensorFlow training pipeline. Fetches the labeled pose dataset from turnip-farm, trains the trick-detection model (pose sequence → trick segments + names), evaluates on a held-out set, exports to Core ML, and publishes through the farm's model manifest endpoint that the app polls.
 
@@ -58,13 +58,14 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
 ### iOS app (`turnip-ios`)
 
 - **Language**: Swift + SwiftUI, min deployment target **iOS 16** (~98% device coverage as of 2026, drops the iOS 14/15 back-compat testing surface). iOS 17+ features (like `VNDetectHumanBodyPose3DRequest` for depth-aware 3D pose) would be feature-gated via `if #available(iOS 17)`; none of them is used yet.
-- **Pose engine**: MoveNet Thunder (Apache 2.0, ~7 MB TFLite int8 · ~12 MB fp16 · ~24 MB fp32) — pretrained on Google's "Active" dataset (yoga/fitness/dance with high motion + self-occlusion), 84% joint accuracy on the ISBS 2024 gymnastics benchmark. int8 is the default bundle; fp16 is the escalation if accuracy on real footage demands it before the model swap. See "Model escalation ladder" below for the fallback path if empirical testing shows Thunder underperforms.
+- **Pose engine**: MoveNet MultiPose Lightning (Apache 2.0, ~9.6 MB TFLite float16), at an input long side of 384, with the most confident person in each frame as the frame's pose. It finds up to six people per frame; giving each person clips of their own is planned in [`MULTI_PERSON.md`](MULTI_PERSON.md). It replaced MoveNet Thunder (~7 MB TFLite int8; pretrained on Google's "Active" dataset of yoga/fitness/dance with high motion and self-occlusion, 84% joint accuracy on the ISBS 2024 gymnastics benchmark), the MVP pick, after scoring better than it on the labelled evaluation footage: 13 tricks caught, none partial, 1 missed and 1 false positive on the tripod videos against Thunder's 12, 1, 1 and 1, and a usable pose for a far athlete in 79% of trick-window samples against 46%. At a long side of 256 it missed all three of the far athlete's tricks. See "Model escalation ladder" below for the fallback path if empirical testing shows it underperforms.
 - **Runtime**: TensorFlow Lite iOS OR Core ML (via coremltools conversion of the TFLite → Core ML). Core ML is preferable for Neural Engine acceleration on A11+ devices.
 - **Pipeline** (per input video):
   1. Decode frames at native fps, applying the track's rotation transform
   2. Sample ~10 frames/sec of footage — stride derived from the track's nominal frame rate
      (3 at 30 fps, 24 at 240 fps slo-mo) — scaling each kept frame straight to the model's own
-     input size (256x256 for Thunder), letterboxed so the frame's aspect ratio survives
+     input, sized to the frame's own aspect (a long side of 384, the short side rounded up to a
+     multiple of 32), letterboxed so the frame's aspect ratio survives
   3. Run pose detection on each kept frame
   4. Motion signal = whole-body speed between consecutive frames, in torso lengths per second, median-smoothed
   5. Peak detection against the athlete's own activity level, sustained ≥ 300 ms → list of trick windows
@@ -84,7 +85,7 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
 - **Preview UI**: a looping preview tile per detected clip; tapping one opens the clip editor (crop, trim with start/end handles, Auto crop / Auto rotate; Still and Follow framing modes, with Auto follow and keyframes); a per-tile trash button; "Save Clips" saves the rest to Photos. Screens: [`UIUX.md`](UIUX.md).
 - **Clip library + Profile** (v2, first): saving — at the end of a Name Clips step after Clip List, or straight from Clip List's "Save without names" — writes each saved clip — its window, names, whose clip it is, the saved Photos asset, and the source's pose sequence — to an on-device library, and the Profile tab (the root pager's third page) is computed from it: achievements per trick counted by sessions and reps, a gallery grouped by canonical trick name, and highlight videos composed on the device. Nothing in it leaves the device, and nothing in it requires an account or contributing. Full design: [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md).
 - **Contribution** (v2): opt-in per clip — a "Contribute this clip" toggle on the Name Clips screen and on the Profile's Clip view, never on Clip List or the Clip Editor. Uploads the pose-format keypoint sequence plus the confirmed clip windows, the free-text trick names the clips already carry, and each name's provenance to `turnip-farm` — keypoints only, video never leaves the device. The farm upserts on ID match, so re-contribution is safe and idempotent. Full design: [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md).
-- **OTA model updates**: two models. Bundled MoveNet Thunder does pose detection (unchanged). The trick-detection model arrives over the air: on launch and foreground, poll `GET /api/models/current` for the manifest (version, URL, checksum, `taxonomy_version`, vocabulary, per-trick `name_metrics`) — a public endpoint, no sign-in; download in background, verify the checksum, atomic-replace. The trick model proposes clip windows *and* trick names, pre-filling only the names it is confident in and none on a random tenth of its clips (the blind sample, `MODEL_CONTRACT.md` §3.3); the heuristic detector stays as the offline fallback. (The old "pose+action model" language is retired.) Built so far (`Turnip/ModelUpdates/`): the manifest client, the sha256 check, the atomic-replace store, and the launch/foreground poll, which stays a no-op until `TURNIP_MODEL_UPDATE_ENDPOINT` names a deployment (it is empty in the committed Info.plist). Still to come: the trick-model loader that reads the staged file, and `taxonomy_version` and the vocabulary in the manifest, which carries only version, download URL, sha256 and file name today.
+- **OTA model updates**: two models. Bundled MoveNet MultiPose does pose detection (unchanged). The trick-detection model arrives over the air: on launch and foreground, poll `GET /api/models/current` for the manifest (version, URL, checksum, `taxonomy_version`, vocabulary, per-trick `name_metrics`) — a public endpoint, no sign-in; download in background, verify the checksum, atomic-replace. The trick model proposes clip windows *and* trick names, pre-filling only the names it is confident in and none on a random tenth of its clips (the blind sample, `MODEL_CONTRACT.md` §3.3); the heuristic detector stays as the offline fallback. (The old "pose+action model" language is retired.) Built so far (`Turnip/ModelUpdates/`): the manifest client, the sha256 check, the atomic-replace store, and the launch/foreground poll, which stays a no-op until `TURNIP_MODEL_UPDATE_ENDPOINT` names a deployment (it is empty in the committed Info.plist). Still to come: the trick-model loader that reads the staged file, and `taxonomy_version` and the vocabulary in the manifest, which carries only version, download URL, sha256 and file name today.
 
 ### Performance targets
 
@@ -170,10 +171,10 @@ Steps 4, 5 and 6 are implemented in `Turnip/TrickDetection/` as `MotionSignalBui
 
 ### Model escalation ladder
 
-MoveNet Thunder is the MVP pick because it's the leanest option with independent evidence on acrobatic footage (84% joint accuracy on the ISBS 2024 gymnastics study). If empirical testing on real tricking footage shows it underperforms (< 70% frames with usable pose during aerial phases), escalate in this order:
+MoveNet Thunder was the MVP pick because it was the leanest option with independent evidence on acrobatic footage (84% joint accuracy on the ISBS 2024 gymnastics study). MultiPose Lightning has since replaced it on the evaluation's evidence ("Pose engine", above), and the ladder now escalates from it. If empirical testing on real tricking footage shows it underperforms (< 70% frames with usable pose during aerial phases), escalate in this order:
 
-1. **MediaPipe BlazePose Heavy** (Apache 2.0, ~29 MB, 33 keypoints incl. feet) — MediaPipe iOS SDK, no conversion. Google's benchmarks: 96.4% PCK on yoga, 97.2% on dance. Larger than Thunder but purpose-built for fitness/dance/yoga.
-2. **Fine-tune Thunder on tricking data** — collect 200-500 labeled clips (~4-6 hours of labeling), fine-tune the pretrained weights. The AthletePose3D paper (CVPRW 2025) found sports-specific fine-tuning cuts pose error > 69%. Same 7 MB bundle, better accuracy on the target distribution.
+1. **MediaPipe BlazePose Heavy** (Apache 2.0, ~29 MB, 33 keypoints incl. feet) — MediaPipe iOS SDK, no conversion. Google's benchmarks: 96.4% PCK on yoga, 97.2% on dance. Three times the size of MultiPose Lightning, but purpose-built for fitness/dance/yoga.
+2. **Fine-tune MultiPose Lightning on tricking data** — collect 200-500 labeled clips (~4-6 hours of labeling), fine-tune the pretrained weights. The AthletePose3D paper (CVPRW 2025) found sports-specific fine-tuning cuts pose error > 69%. Same 9.6 MB bundle, better accuracy on the target distribution.
 3. **RTMPose-m** (Apache 2.0, ~27 MB fp16) — best raw accuracy per FLOP (75.8 AP on COCO). No sports pretraining, so pair with fine-tuning if used. Needs a bundled person detector (RTMDet-nano, also Apache).
 4. **ViTPose or PoseC3D** — SOTA family but larger. Reach for these only if the top three fail. PoseC3D fine-tuned on FineGym is 2 M params and 93.5% mean top-1 across 99 gymnastics classes — the natural bridge to v2's automatic trick classification.
 

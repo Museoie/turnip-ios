@@ -5,7 +5,7 @@ import Foundation
 /// growing without bound.
 ///
 /// Sized in the live pose path to a few seconds of samples (`LivePoseSampleChannel.defaultCapacity`);
-/// each element there is a ~196 KB tensor, so the bound is a memory safety valve, not steady state.
+/// each element there is a ~258 KB tensor, so the bound is a memory safety valve, not steady state.
 /// `maxDepth` and `dropCount` are what the acceptance gate reads: a queue that sits near empty means
 /// inference is keeping up with capture.
 ///

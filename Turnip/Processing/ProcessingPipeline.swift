@@ -131,7 +131,7 @@ protocol ProcessingRunning: Sendable {
 /// wrapped — the view model must see it unwrapped to distinguish cancel from failure.
 struct ProcessingPipeline: Sendable {
     /// Builds the per-frame inference function once per run, so the model loads a single time
-    /// rather than per frame. The default loads the bundled MoveNet Thunder model; tests
+    /// rather than per frame. The default loads the bundled MoveNet MultiPose model; tests
     /// inject a stub.
     typealias InferenceFactory = @Sendable () async throws -> @Sendable (SampledFrame) async throws -> [PoseKeypoint]
 
@@ -160,10 +160,11 @@ struct ProcessingPipeline: Sendable {
         self.windowDetector = windowDetector ?? TrickWindowDetector()
     }
 
-    /// Loads the bundled MoveNet Thunder model once, then answers each frame from it.
+    /// Loads the bundled MoveNet MultiPose model once, then answers each frame with the pose of
+    /// the person it is surest of.
     private static let defaultInference: InferenceFactory = {
-        let model = try await MoveNetThunderModel.load()
-        return { frame in try await model.runInference(on: frame.pixelBuffer) }
+        let model = try await MoveNetMultiPoseModel.load()
+        return { frame in try await model.runInference(on: frame.pixelBuffer).mostConfidentKeypoints }
     }
 
     func run(

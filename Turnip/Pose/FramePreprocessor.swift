@@ -2,8 +2,8 @@ import CoreGraphics
 import CoreVideo
 import Foundation
 
-/// Records how a source frame was placed into the model's square input, so downstream work can
-/// invert the mapping: MoveNet returns keypoints in normalized input coordinates. The inverse is
+/// Records how a source frame was placed into the model's input, so downstream work can
+/// invert the mapping: MoveNet returns keypoints and boxes in normalized input coordinates. The inverse is
 /// `sourceX = (x * inputWidth - offsetX) / scale`, and likewise for y — see
 /// `sourcePoint(normalizedX:normalizedY:)`.
 struct LetterboxMapping: Sendable, Equatable {
@@ -51,20 +51,37 @@ struct LetterboxMapping: Sendable, Equatable {
             )
         }
     }
+
+    /// A person's keypoints and box, mapped the same way: the box corners are input-normalized
+    /// points like the keypoints, so one inversion serves both.
+    func frameNormalized(person: DetectedPerson) -> DetectedPerson {
+        let topLeft = sourcePoint(normalizedX: CGFloat(person.box.minX), normalizedY: CGFloat(person.box.minY))
+        let bottomRight = sourcePoint(normalizedX: CGFloat(person.box.maxX), normalizedY: CGFloat(person.box.maxY))
+        return DetectedPerson(
+            score: person.score,
+            box: NormalizedRect(
+                minX: Float(topLeft.x / sourceExtent.width),
+                maxX: Float(bottomRight.x / sourceExtent.width),
+                minY: Float(topLeft.y / sourceExtent.height),
+                maxY: Float(bottomRight.y / sourceExtent.height)),
+            keypoints: frameNormalized(keypoints: person.keypoints))
+    }
 }
 
 /// Scales a decoded frame to the model's input size and packs it as the interleaved RGB uint8
 /// buffer MoveNet's `[1, height, width, 3]` input tensor expects.
 ///
-/// A value type separate from `MoveNetThunderModel` because all of this is pure geometry and byte
+/// A value type separate from `MoveNetMultiPoseModel` because all of this is pure geometry and byte
 /// walking, while the model can only be constructed from a bundled `.tflite` that is deliberately
 /// not in the repository — so as long as the scale computation and the BGRA→RGB walk live on the
 /// actor, nothing can exercise them.
 struct FramePreprocessor {
-    /// Channels the packing writes per pixel. A model whose input tensor disagrees is rejected
-    /// at load in `MoveNetThunderModel.init` before this type is constructed; the rank and
-    /// channel guards in `init(inputShape:)` below are defense-in-depth for direct construction.
+    /// Channels the packing writes per pixel, and the last dimension of the input shape
+    /// `MoveNetMultiPoseModel` resizes its interpreter to.
     static let channelCount = 3
+
+    /// MultiPose takes any input height and width, as long as each is a multiple of this.
+    static let sizeMultiple = 32
 
     let targetWidth: Int
     let targetHeight: Int
@@ -74,21 +91,26 @@ struct FramePreprocessor {
         self.targetHeight = targetHeight
     }
 
-    /// Derives the target size from the model's own input tensor dimensions, in the tensor's
-    /// `[batch, height, width, channels]` order.
-    init(inputShape: [Int]) throws {
-        guard inputShape.count == 4 else {
-            throw PoseError.inferenceFailed("Unexpected model input shape: \(inputShape)")
+    /// Sized to a frame's own aspect, so the letterbox pads only the rounding rather than a
+    /// square's worth of black: the longer side is `longSide`, and the shorter one is scaled to
+    /// match and rounded up to `sizeMultiple`. A portrait 1080×1920 frame at 384 is 224×384. A
+    /// degenerate frame gets a square, which `letterboxGeometry(forSourceExtent:)` then rejects.
+    init(fitting frameSize: CGSize, longSide: Int) {
+        guard frameSize.width > 0, frameSize.height > 0 else {
+            self.init(targetWidth: longSide, targetHeight: longSide)
+            return
         }
-        guard inputShape[3] == Self.channelCount else {
-            throw PoseError.inferenceFailed(
-                "Model input wants \(inputShape[3]) channels, the frame packing writes \(Self.channelCount)"
-            )
-        }
-        self.init(targetWidth: inputShape[2], targetHeight: inputShape[1])
+        let isLandscape = frameSize.width > frameSize.height
+        let aspect = isLandscape ? frameSize.height / frameSize.width : frameSize.width / frameSize.height
+        let scaledShort = (CGFloat(longSide) * aspect).rounded()
+        let multiple = CGFloat(Self.sizeMultiple)
+        let shortSide = max(Int((scaledShort / multiple).rounded(.up) * multiple), Self.sizeMultiple)
+        self.init(
+            targetWidth: isLandscape ? longSide : shortSide,
+            targetHeight: isLandscape ? shortSide : longSide)
     }
 
-    /// The geometry that maps a source frame into the model's square input: a uniform scale that
+    /// The geometry that maps a source frame into the model's input: a uniform scale that
     /// preserves aspect ratio plus the centering translation that letterboxes the remainder.
     /// Computed in one place so the forward transform and the `LetterboxMapping` that inverts it
     /// can never disagree.

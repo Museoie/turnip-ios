@@ -5,7 +5,7 @@ import CoreVideo
 ///
 /// `@unchecked Sendable` because `CVPixelBuffer` has no `Sendable` conformance on this SDK, yet the
 /// frame must cross from the sampler's decode loop into the `@Sendable` handler (and from there
-/// into the `MoveNetThunderModel` actor). The crossing is safe by construction: each buffer is
+/// into the `MoveNetMultiPoseModel` actor). The crossing is safe by construction: each buffer is
 /// produced by a single `AVAssetReader` loop, handed to exactly one handler invocation, and the
 /// loop `await`s that invocation before decoding the next frame — so no two contexts ever touch
 /// the same buffer concurrently. Revisit if the sampler ever fans frames out to parallel consumers.

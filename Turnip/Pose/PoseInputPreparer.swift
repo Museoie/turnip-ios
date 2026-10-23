@@ -2,8 +2,12 @@ import CoreImage
 import CoreVideo
 import Foundation
 
-/// Turns a source frame into a `PoseModelInput`: letterbox into the model's square input through
-/// Core Image, then repack the rendered 32BGRA target as interleaved RGB.
+/// Turns a source frame into a `PoseModelInput`: letterbox into an input sized to the frame's own
+/// aspect through Core Image, then repack the rendered 32BGRA target as interleaved RGB.
+///
+/// The input size is decided per frame (`FramePreprocessor.init(fitting:longSide:)`), from the
+/// frame's upright extent, so a portrait and a landscape take each get an input their own shape
+/// without the caller choosing one.
 ///
 /// Synchronous and callable from any thread, which is what lets the live path run it inside the
 /// capture output's delegate callback and the file path run it from the sampler's handler, with a
@@ -14,11 +18,12 @@ import Foundation
 /// `@unchecked Sendable` because `CIContext` carries no `Sendable` annotation; Apple documents it
 /// as immutable and thread-safe, and this type holds nothing else that is mutable.
 struct PoseInputPreparer: @unchecked Sendable {
-    let preprocessor: FramePreprocessor
+    /// The longer side of every input this prepares.
+    let longSide: Int
     private let ciContext: CIContext
 
-    init(preprocessor: FramePreprocessor, ciContext: CIContext = CIContext()) {
-        self.preprocessor = preprocessor
+    init(longSide: Int, ciContext: CIContext = CIContext()) {
+        self.longSide = longSide
         self.ciContext = ciContext
     }
 
@@ -35,6 +40,7 @@ struct PoseInputPreparer: @unchecked Sendable {
         let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
         let (uprightTransform, uprightExtent) = FramePreprocessor.uprightTransform(
             forExtent: sourceImage.extent, clockwiseDegrees: rotationDegrees)
+        let preprocessor = FramePreprocessor(fitting: uprightExtent.size, longSide: longSide)
         let (letterboxTransform, mapping) = try preprocessor.letterboxGeometry(forSourceExtent: uprightExtent)
         let outputBuffer = try preprocessor.makeTargetBuffer()
         ciContext.render(
