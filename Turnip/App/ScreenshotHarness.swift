@@ -173,10 +173,8 @@ struct ScreenshotClipEditorHarness: View {
 
     /// Starts the sample-movie encode on a background queue ahead of first use.
     /// Called from `TurnipApp.init()` when a harness that uses the sample movie is
-    /// launched, so the first render usually doesn't stall on the encode. (If
-    /// the encode hasn't finished when `body` first touches `sampleMovie`,
-    /// the main thread still blocks on the lazy initializer until it completes —
-    /// the warm-up makes that rare, not impossible.)
+    /// launched, so the encode is under way, or done, by the time `HarnessMovieGate`
+    /// first asks for the movie, and the harness shows sooner.
     static func warmUpSampleMovie() {
         DispatchQueue.global(qos: .userInitiated).async {
             _ = Self.sampleMovie
@@ -411,8 +409,8 @@ private func appendRollSample(
 }
 
 /// Waits for a harness movie's writer to finish, throwing on failure, or when it hasn't
-/// finished in 30 s: a writer that never calls back would otherwise hold the harness, and
-/// the main thread waiting on it, past every UI test's wait with no reason given.
+/// finished in 30 s: a writer that never calls back would otherwise leave the harness
+/// waiting for its movie past every UI test's wait, with no reason given.
 func finishSampleMovieWriting(writer: AVAssetWriter) throws {
     let finished = DispatchSemaphore(value: 0)
     // The completion handler runs off the main thread, so waiting here can't deadlock.
