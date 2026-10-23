@@ -1,0 +1,92 @@
+# Shared lifecycle for drift-tracking checks (turnip-ios#153).
+#
+# Each scheduled check runs a checker script and keeps exactly one tracking
+# issue in sync with its verdict: open or update it while the check reports
+# drift, close it once drift clears. The lifecycle's edge cases (capped issue
+# lookup, title collisions, empty-vs-false `drifted` outputs) live here, once —
+# callers supply only the payload that differs.
+name: Drift tracker
+
+on:
+  workflow_call:
+    inputs:
+      checker-script:
+        required: true
+        type: string
+        description: Checker script to run, relative to the repo root
+      tracker-title:
+        required: true
+        type: string
+        description: Title of the tracking issue kept in sync
+      report-filename:
+        required: true
+        type: string
+        description: Report filename written under $RUNNER_TEMP
+      close-comment:
+        required: true
+        type: string
+        description: Comment posted on the tracking issue when drift clears
+      post-report-on-close:
+        required: false
+        type: boolean
+        default: false
+        description: Post the report as a comment before closing (use when the
+          run cannot read everything the check covers, so the close trail
+          carries what it could read)
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift-tracker:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TRACKER_TITLE: ${{ inputs.tracker-title }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Run the checker and capture the drift verdict
+        id: check
+        run: |
+          set +e
+          "${{ inputs.checker-script }}" > "$RUNNER_TEMP/${{ inputs.report-filename }}"
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/${{ inputs.report-filename }}"
+          case "$status" in
+            0) echo "drifted=false" >> "$GITHUB_OUTPUT" ;;
+            1) echo "drifted=true" >> "$GITHUB_OUTPUT" ;;
+            *) exit "$status" ;;
+          esac
+
+      - name: Find the tracking issue
+        id: tracker
+        run: |
+          number=$(gh issue list --state open --limit 200 --json number,title |
+            jq -r --arg t "$TRACKER_TITLE" 'map(select(.title == $t)) | first | .number // ""')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue
+        if: steps.check.outputs.drifted == 'true'
+        env:
+          TRACKER: ${{ steps.tracker.outputs.number }}
+        run: |
+          if [ -n "$TRACKER" ]; then
+            gh issue edit "$TRACKER" --body-file "$RUNNER_TEMP/${{ inputs.report-filename }}"
+          else
+            gh issue create --title "$TRACKER_TITLE" --body-file "$RUNNER_TEMP/${{ inputs.report-filename }}"
+          fi
+
+      - name: Close the tracking issue
+        if: steps.check.outputs.drifted == 'false' && steps.tracker.outputs.number != ''
+        env:
+          TRACKER: ${{ steps.tracker.outputs.number }}
+        run: |
+          if [ "${{ inputs.post-report-on-close }}" = "true" ]; then
+            gh issue comment "$TRACKER" --body-file "$RUNNER_TEMP/${{ inputs.report-filename }}"
+          fi
+          gh issue close "$TRACKER" --comment "${{ inputs.close-comment }}"

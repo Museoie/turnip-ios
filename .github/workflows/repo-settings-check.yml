@@ -11,55 +11,14 @@ permissions:
 
 jobs:
   documented-settings:
-    runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-      TRACKER_TITLE: Repository settings do not match the documents that promise them
-
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - name: Compare repository settings against what the documents promise
-        id: check
-        run: |
-          set +e
-          ci_scripts/check-repo-settings.sh > "$RUNNER_TEMP/settings-report.md"
-          status=$?
-          set -e
-          cat "$RUNNER_TEMP/settings-report.md"
-          case "$status" in
-            0) echo "drifted=false" >> "$GITHUB_OUTPUT" ;;
-            1) echo "drifted=true" >> "$GITHUB_OUTPUT" ;;
-            *) exit "$status" ;;
-          esac
-
-      - name: Find the tracking issue
-        id: tracker
-        run: |
-          number=$(gh issue list --state open --limit 200 --json number,title |
-            jq -r --arg t "$TRACKER_TITLE" 'map(select(.title == $t)) | first | .number // ""')
-          echo "number=$number" >> "$GITHUB_OUTPUT"
-
-      - name: Open or update the tracking issue
-        if: steps.check.outputs.drifted == 'true'
-        env:
-          TRACKER: ${{ steps.tracker.outputs.number }}
-        run: |
-          if [ -n "$TRACKER" ]; then
-            gh issue edit "$TRACKER" --body-file "$RUNNER_TEMP/settings-report.md"
-          else
-            gh issue create --title "$TRACKER_TITLE" --body-file "$RUNNER_TEMP/settings-report.md"
-          fi
-
+    uses: ./.github/workflows/drift-tracker.yml
+    with:
+      checker-script: ci_scripts/check-repo-settings.sh
+      tracker-title: Repository settings do not match the documents that promise them
+      report-filename: settings-report.md
       # The report is posted before the close so the comment trail carries what
-      # the run could read and what it could not: GITHUB_TOKEN is not a
+      # the run could read and what it could not: github.token is not a
       # repository administrator, so the two scanning settings are unread on
       # every scheduled run and the verdict being closed here covers the rest.
-      - name: Close the tracking issue
-        if: steps.check.outputs.drifted == 'false' && steps.tracker.outputs.number != ''
-        env:
-          TRACKER: ${{ steps.tracker.outputs.number }}
-        run: |
-          gh issue comment "$TRACKER" --body-file "$RUNNER_TEMP/settings-report.md"
-          gh issue close "$TRACKER" --comment "Every setting this run could read matches the documents again. The report above names any it could not read; this run claims nothing about those."
+      post-report-on-close: true
+      close-comment: Every setting this run could read matches the documents again. The report above names any it could not read; this run claims nothing about those.
