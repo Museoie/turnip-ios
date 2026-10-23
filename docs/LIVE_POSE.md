@@ -1,6 +1,6 @@
 # Live pose inference during recording
 
-*Rev 7 · 2026-10-21 · A take goes straight from Stop to the clip list on its live results; Processing is the fallback, and analyzes only what live inference missed. Device gate not yet run. Rev 1 was the design draft, Rev 2 the flag-gated prototype, Rev 3 the preview overlay. Rev 5 notes the 10 samples/sec and 100 ms grid this whole doc otherwise treats as fixed are the shipped default, overridable by the Settings screen's analysis granularity (`docs/UIUX.md` §1a) — every occurrence below describes that default, and every device number below (the queue-size math, the acceptance gate's own samples/sec target) is stated, and was validated, at it. Rev 6 keeps the frames a take that fell short did score and has Processing sample only its gaps ("From results to clips"). Rev 7 records the model swap to MoveNet MultiPose Lightning, whose input takes each recording's own orientation and is a third larger per sample; the gate must be run with it.*
+*Rev 8 · 2026-10-23 · A take goes straight from Stop to the clip list on its live results; Processing is the fallback, and analyzes only what live inference missed. The gate has been run on an iPhone 13 mini at 30 fps and passes at the default rate; it has not been run on an A11 device or at 240 fps. Rev 1 was the design draft, Rev 2 the flag-gated prototype, Rev 3 the preview overlay. Rev 5 notes the 10 samples/sec and 100 ms grid this whole doc otherwise treats as fixed are the shipped default, overridable by the Settings screen's analysis granularity (`docs/UIUX.md` §1a) — every occurrence below describes that default, and every device number below (the queue-size math, the acceptance gate's own samples/sec target) is stated, and was validated, at it. Rev 6 keeps the frames a take that fell short did score and has Processing sample only its gaps ("From results to clips"). Rev 7 records the model swap to MoveNet MultiPose Lightning, whose input takes each recording's own orientation and is a third larger per sample; the gate must be run with it. Rev 8 records that run ("Results", under the gate).*
 
 *Companion to [`DESIGN.md`](DESIGN.md). This doc covers one question: can the pose pass start when recording starts, instead of after the file is written? Pipeline shape, budgets and model choice stay as recorded in `DESIGN.md`.*
 
@@ -110,7 +110,45 @@ The unverified combination is a movie file output and a video data output both a
 
 Also check on the device, since no test here can: that the skeleton lands on the athlete on the preview in portrait, on both the rear and the mirrored front camera (the keypoint rotation's sign pairing and the preview layer's device-point mapping); that a clean take lands on the clip list with its windows on the tricks; and that the "Live:" line for a take that fell back to Processing names why.
 
-Fail (1): the recorder is the constraint; move to the `AVAssetWriter` alternative. Fail (2) or (3) only: the model is the constraint; try `Interpreter.Options.threadCount` first, then the Core ML delegate, and rerun the gate. The Core ML delegate brings the Neural Engine into play and has its own op-support risk for MoveNet, so it is the second lever, not the first.
+Fail (1): the recorder is the constraint; move to the `AVAssetWriter` alternative. Fail (2) or (3) only: the model is the constraint; try `Interpreter.Options.threadCount` first, then the Core ML delegate, and rerun the gate. The Core ML delegate brings the Neural Engine into play and has its own op-support risk for MoveNet, so it is the second lever, not the first. On an A15, two threads did not hold up over longer takes ("Results"), so check it the same way before relying on it.
+
+### Results
+
+**iPhone 13 mini (A15), iOS 27.0.1, Release build, 2026-10-21 and 2026-10-23.** MoveNet MultiPose Lightning at a long side of 384 (Rev 7), rear camera, 1080p at 30 fps, portrait. Turnip's format menu offers nothing above 60 fps on this phone, so the 240 fps condition was not run. No single take reached three minutes.
+
+At the default 10 samples/sec with one inference thread, which is what ships, two takes, the second started about a minute and a half after the first ended:
+
+| Take | Length | Scored | Queue drops (max depth) | Inference avg / max | At `.serious` | After Stop |
+|---|---|---|---|---|---|---|
+| 1 | 73.1 s | 732 of 732 | 0 (1) | 45.7 / 59.3 ms | 0 s | clip list |
+| 2 | 81.2 s | 813 of 813 | 0 (1) | 45.9 / 92.5 ms | 0 s | clip list |
+
+All three checks pass for this device and format:
+1. Each file holds exactly duration × 30 frames. Nothing dropped, so no baseline build was needed.
+2. Every kept sample was scored, with the queue at most one deep.
+3. No time at `.serious`.
+
+Preprocess averaged 1.6–1.7 ms.
+
+At 20 samples/sec, a Settings choice that halves the budget to 50 ms, the two shorter takes kept up and the three longer ones fell behind:
+
+| Threads | Started | Length | Scored | Queue drops | Inference avg / max | After Stop |
+|---|---|---|---|---|---|---|
+| 1 | first that day | 18.1 s | 362 of 362 | 0 | 44.8 / 51.7 ms | clip list |
+| 1 | 19 min after it | 56.4 s | 1,104 of 1,128 | 24 | 51.6 / 70.6 ms | Processing |
+| 1 | 3 min after that | 50.3 s | 973 of 1,006 | 33 | 52.5 / 106.5 ms | Processing |
+| 2 | first that day | 38.3 s | 766 of 766 | 0 | 28.3 / 42.3 ms | clip list |
+| 2 | 24 s after it | 66.5 s | 1,112 of 1,331 | 219 | 61.4 / 111.6 ms | Processing |
+
+None of these spent time at `.serious`, and every file had all its frames. Sustained load moved inference time more than the second thread did: two threads was the fastest in the 38-second take and the slowest in the 66-second take after it. These runs can't tell apart the take's own length and the phone's state after the take before. At 10 samples/sec the model is busy about half the time instead of nearly all of it, and the 73- and 81-second takes held at 46 ms. A take that falls behind goes to Processing with the frames it did score, which fills only the gaps. If 20 samples/sec has to stay live, two levers are left: the Core ML delegate, or halving the rate when the queue fills, the way `.serious` already does.
+
+Not covered by these runs:
+- an A11 device or 240 fps;
+- a single three-minute take;
+- the front camera;
+- whether the skeleton lands on the athlete on the preview, and whether a clean take's windows land on the tricks.
+
+The phone was paired over Wi-Fi, where `log collect` needs root and a console attached through `devicectl` dropped within about half an hour. So the runs used a scratch build that also wrote each "Live:" line to a file in the app's container, read off the phone with `devicectl device copy from`.
 
 ## Alternatives
 
