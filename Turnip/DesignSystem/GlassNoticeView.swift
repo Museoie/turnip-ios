@@ -12,6 +12,7 @@ struct GlassNoticeView: View {
     /// notice waits to be dismissed instead of dismissing itself. Injected rather than read
     /// inline so the branch is reachable without a running screen reader.
     var isScreenReaderRunning: () -> Bool = { UIAccessibility.isVoiceOverRunning }
+    @Environment(\.glassNoticesDismissThemselves) private var dismissesItself
 
     var body: some View {
         Button(action: dismiss) {
@@ -28,7 +29,7 @@ struct GlassNoticeView: View {
         }
         .buttonStyle(.plain)
         .task {
-            guard !isScreenReaderRunning() else { return }
+            guard dismissesItself, !isScreenReaderRunning() else { return }
             try? await Task.sleep(for: .seconds(autoDismissAfter))
             guard !Task.isCancelled else { return }
             dismiss()
@@ -38,6 +39,21 @@ struct GlassNoticeView: View {
 
     private func dismiss() {
         withAnimation(.easeOut(duration: 0.2)) { isPresented = false }
+    }
+}
+
+/// Whether a `GlassNoticeView` dismisses itself on its timer. Off, every notice waits to be
+/// dismissed, as it does under a screen reader: the UI test harnesses turn it off for a test
+/// that checks a notice appeared, which would otherwise race the notice's timer against the
+/// test runner's queries, and a loaded CI runner can answer a query after the notice is gone.
+private struct GlassNoticesDismissThemselvesKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var glassNoticesDismissThemselves: Bool {
+        get { self[GlassNoticesDismissThemselvesKey.self] }
+        set { self[GlassNoticesDismissThemselvesKey.self] = newValue }
     }
 }
 

@@ -66,6 +66,11 @@ struct TurnipApp: App {
                 ContentView()
                 #endif
             }
+            #if DEBUG
+            // `-noticesStay`: notices wait to be dismissed, so a UI test can check one appeared
+            // without racing its timer (`glassNoticesDismissThemselves`).
+            .environment(\.glassNoticesDismissThemselves, !CommandLine.arguments.contains("-noticesStay"))
+            #endif
             // OTA model-update poll: didBecomeActive fires on launch and on
             // every foreground transition. checkForUpdates dispatches itself to
             // a detached utility-QoS task, so the manifest fetch, hashing, and

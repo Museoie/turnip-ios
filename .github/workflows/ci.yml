@@ -192,6 +192,21 @@ jobs:
             -destination "id=$SIMULATOR_UDID" \
             -derivedDataPath "$RUNNER_TEMP/derived-data"
 
+      # The app's own log never reaches the test output: the harnesses log how long each
+      # sample-movie encode took or why it failed, and AVFoundation and VideoToolbox log
+      # their errors there. Printed only when a test step failed. `xcodebuild test` shuts
+      # the simulator down when it ends, and reading its log needs it booted; the log
+      # itself survives the shutdown.
+      - name: Simulator log
+        if: failure() && env.SIMULATOR_UDID != ''
+        run: |
+          xcrun simctl bootstatus "$SIMULATOR_UDID" -b > /dev/null || true
+          xcrun simctl spawn "$SIMULATOR_UDID" log show --style compact --last 2h --predicate '
+            subsystem == "com.hoiekim.turnip"
+            OR ((process == "Turnip" OR process CONTAINS[c] "VTEncoder" OR process CONTAINS[c] "VTDecoder"
+                 OR process == "mediaserverd")
+                AND (messageType == error OR messageType == fault))' || true
+
       # Build the UITest bundle for the screenshots job (below) to reuse via
       # test-without-building. Only runs on UI-change PRs; the products are
       # uploaded as an artifact so the screenshots job skips recompiling.

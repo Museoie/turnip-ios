@@ -60,6 +60,9 @@ targets:
     platform: iOS
     sources:
       - path: TurnipUITests
+      # Shared with the app target, so an identifier the harness draws and a test looks up
+      # can't drift apart.
+      - path: Turnip/App/HarnessIdentifiers.swift
     dependencies:
       - target: Turnip
     settings:

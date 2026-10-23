@@ -14,7 +14,9 @@ final class FollowModeTests: XCTestCase {
         app.launch()
         let modeSwitch = app.segmentedControls["framing-mode-switch"]
         XCTAssertTrue(modeSwitch.waitForExistence(timeout: 45))
-        XCTAssertTrue(waitUntil(timeout: 45) { modeSwitch.isEnabled }, "the editor never loaded its media")
+        XCTAssertTrue(
+            waitUntil(timeout: 45) { modeSwitch.isEnabled },
+            "the editor never loaded its media: \(app.harnessMovieState)")
         return app
     }
 
@@ -93,22 +95,31 @@ final class FollowModeTests: XCTestCase {
         XCTAssertTrue(waitUntil { follow.label == "Auto follow" }, "a pinch left Auto follow's button on Reset")
     }
 
-    /// A drag on the lane scrubs and pauses: the play button then offers Play.
+    /// A drag on the lane scrubs and pauses: the play button then offers Play, and a second
+    /// drag moves the paused playhead. The two scrubs are compared with each other, not with
+    /// the playing preview: a drag lands on the same frame whenever it starts, so the frame
+    /// playing beforehand can be the one it lands on.
     func testScrubbingTheLanePausesPlayback() throws {
         let app = launchEditor(["-screenshotClipEditorFollow", "-follow"])
         let lane = element("follow-lane", in: app)
         XCTAssertTrue(lane.waitForExistence(timeout: 10))
         let playPause = app.buttons["playback-play-pause"]
         XCTAssertTrue(waitUntil { playPause.label == "Pause" }, "the preview never started playing")
-        let before = lane.value as? String ?? ""
 
-        let start = lane.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
-        start.press(
-            forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 120, dy: 0)),
-            withVelocity: XCUIGestureVelocity(300), thenHoldForDuration: 0.1)
-
+        scrub(lane, from: 0.2, by: 120)
         XCTAssertTrue(waitUntil { playPause.label == "Play" }, "scrubbing the lane didn't pause")
-        XCTAssertNotEqual(lane.value as? String, before)
+        let scrubbed = lane.value as? String
+
+        scrub(lane, from: 0.85, by: -40)
+        XCTAssertTrue(
+            waitUntil { lane.value as? String != scrubbed }, "a second scrub left the playhead at \(scrubbed ?? "")")
+    }
+
+    private func scrub(_ lane: XCUIElement, from fraction: CGFloat, by points: CGFloat) {
+        let start = lane.coordinate(withNormalizedOffset: CGVector(dx: fraction, dy: 0.5))
+        start.press(
+            forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: points, dy: 0)),
+            withVelocity: XCUIGestureVelocity(300), thenHoldForDuration: 0.1)
     }
 
     private func keyframeCount(in lane: XCUIElement) -> Int {
@@ -157,9 +168,10 @@ final class FollowModeTests: XCTestCase {
         XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
     }
 
-    /// Following an athlete who stays put leaves one keyframe and says so.
+    /// Following an athlete who stays put leaves one keyframe and says so. The notice stays up
+    /// (`-noticesStay`): on its own timer it can be gone before a loaded runner answers the query.
     func testAnAthleteWhoStaysPutHasNothingToFollow() throws {
-        let app = launchEditor(["-screenshotClipEditor"])
+        let app = launchEditor(["-screenshotClipEditor", "-noticesStay"])
 
         app.segmentedControls["framing-mode-switch"].buttons["Follow"].tap()
 

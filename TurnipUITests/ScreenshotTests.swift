@@ -236,6 +236,11 @@ final class ScreenshotTests: XCTestCase {
         }
     }
 
+    /// What a test that lands on the editor's load-failure state reports.
+    private func sampleMovieFailureMessage(in app: XCUIApplication) -> String {
+        "editor reached its load-failure state: \(app.harnessMovieState)"
+    }
+
     /// Waits for the clip editor harness to reach its loaded state (the trim range label),
     /// failing fast with a reason if its sample movie failed to encode — see `testClipEditor`.
     private func waitForClipEditorToLoad(_ app: XCUIApplication) {
@@ -247,13 +252,13 @@ final class ScreenshotTests: XCTestCase {
             .firstMatch
         let deadline = Date().addingTimeInterval(45)
         while Date() < deadline, !trimRange.exists {
-            XCTAssertFalse(
-                loadFailure.exists,
-                "editor reached its load-failure state: the harness's sample movie failed to encode")
-            if loadFailure.exists { return }
+            if loadFailure.exists {
+                XCTFail(sampleMovieFailureMessage(in: app))
+                return
+            }
             Thread.sleep(forTimeInterval: 0.25)
         }
-        XCTAssertTrue(trimRange.exists, "the editor never reached its loaded state")
+        XCTAssertTrue(trimRange.exists, "the editor never reached its loaded state: \(app.harnessMovieState)")
     }
 
     private func waitUntil(timeout: TimeInterval = 10, _ condition: () -> Bool) -> Bool {
@@ -329,13 +334,13 @@ final class ScreenshotTests: XCTestCase {
             .firstMatch
         let deadline = Date().addingTimeInterval(45)
         while Date() < deadline, !trimRange.exists {
-            XCTAssertFalse(
-                loadFailure.exists,
-                "editor reached its load-failure state: the harness's sample movie failed to encode")
-            if loadFailure.exists { return }
+            if loadFailure.exists {
+                XCTFail(sampleMovieFailureMessage(in: app))
+                return
+            }
             Thread.sleep(forTimeInterval: 0.25)
         }
-        XCTAssertTrue(trimRange.exists, "trim range never loaded within 45s")
+        XCTAssertTrue(trimRange.exists, "trim range never loaded within 45s: \(app.harnessMovieState)")
         addScreenshot(named: "clip-editor")
     }
 
