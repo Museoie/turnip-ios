@@ -1,5 +1,11 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 17 · 2026-10-22 · Reconciliation (issue #152): the Decisions log's bulk
+keep/discard entry gains its reversal audit trail — the "Select All" /
+"Deselect All" toolbar button shipped on main, then was removed again with
+the keep/discard → trash-toggle change (decision 6). The closed issue links
+(#11, #17, #21) are re-tensed to past tense and kept as provenance.*
+
 *Rev 16 · 2026-10-19 · The Clip Editor gets two framing
 modes, Still and Follow, switched by a segmented control in the header's
 title slot (§4). Still mode is today's editor, with the switch in its
@@ -57,9 +63,9 @@ screens. In practice that behavior needs at least two distinct screens — a
 list/triage view and a per-clip editor — plus states DESIGN.md doesn't
 mention at all: a loading state while the pipeline runs, an empty state when
 no tricks are detected, and a confirmation state after export. Issue
-[#11](https://github.com/hoiekim/turnip-ios/issues/11) currently bundles all
-of this into one "Preview UI" issue; this doc exists to pin the flow down
-before that issue gets split.
+[#11](https://github.com/hoiekim/turnip-ios/issues/11) bundled all
+of this into one "Preview UI" issue; this doc was written to pin the flow down
+before that issue was split and shipped.
 
 ## A gesture and its button play one animation
 
@@ -815,11 +821,15 @@ Resolved 2026-09-04.
    "Auto crop" (Rev 6) is the one tap that refits the framing to the range.*
 2. **Bulk keep/discard → Not in v1.** Every clip defaults to "kept"; a user
    discards by tapping individual cards. At ~10 clips per session that's a
-   few taps. Add "discard all" only if feedback asks for it.
-3. **Cancel during processing → Yes.** Processing (#17) exposes a cancel
+   few taps. Add "discard all" only if feedback asks for it. *Reversal
+   recorded 2026-10-22 (Rev 17, issue #152): a "Select All" / "Deselect All"
+   toolbar button did ship on main, then was removed again 2026-09-22 with
+   the keep/discard → trash-toggle change (decision 6) — the decision stands
+   as recorded.*
+3. **Cancel during processing → Yes.** Processing (#17) shipped a cancel
    action that returns to Home. It's nearly free with structured concurrency
-   (cooperative `Task.isCancelled` checks in the frame-sampler loop, tracked
-   in #21), and users will background or leave the screen anyway — a clean
+   (cooperative `Task.isCancelled` checks in the frame-sampler loop,
+   implemented under #21), and users will background or leave the screen anyway — a clean
    cancel beats a stuck screen. The flow diagram's `Processing → Home` edge
    covers this path.
 4. **Preview framing → Superseded by direct crop editing.** Recorded 2026-09-14
