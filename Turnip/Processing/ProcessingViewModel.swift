@@ -60,7 +60,9 @@ final class ProcessingViewModel: ObservableObject {
     ///
     /// The handle is checked too, not just the state: a run that has not yet reported its
     /// first frame is still `.idle`, and a second `start` in that gap would orphan it.
-    func start(video: SelectedVideo) {
+    ///
+    /// `people` is the person mode chosen on the screen when the user tapped to start.
+    func start(video: SelectedVideo, people: PersonMode = .one) {
         guard runTask == nil, case .idle = state else { return }
         runGeneration += 1
         let generation = runGeneration
@@ -68,7 +70,7 @@ final class ProcessingViewModel: ObservableObject {
         // Weak capture: the task must not keep the view model (and its screen) alive.
         runTask = Task { [weak self] in
             do {
-                let result = try await runner.run(video: video) { [weak self] progress in
+                let result = try await runner.run(video: video, people: people) { [weak self] progress in
                     guard let self else { return }
                     await MainActor.run { self.apply(progress, from: generation) }
                 }
@@ -115,8 +117,8 @@ final class ProcessingViewModel: ObservableObject {
         isShowingClips = false
     }
 
-    /// Restarts after a failure.
-    func retry(video: SelectedVideo) {
+    /// Restarts after a failure, in the person mode the screen shows when Retry is tapped.
+    func retry(video: SelectedVideo, people: PersonMode = .one) {
         guard !isRunning else { return }
         runTask?.cancel()
         runTask = nil
@@ -125,7 +127,7 @@ final class ProcessingViewModel: ObservableObject {
         state = .idle
         result = nil
         isShowingClips = false
-        start(video: video)
+        start(video: video, people: people)
     }
 
     private func apply(_ progress: ProcessingProgress, from generation: Int) {

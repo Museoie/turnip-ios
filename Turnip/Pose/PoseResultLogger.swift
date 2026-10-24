@@ -16,6 +16,9 @@ enum PoseResultLogger {
         return "frame \(result.frameIndex) t=\(timestamp)s avgConfidence=\(confidence) usableKeypoints=\(usable)"
     }
 
+    /// The live recording logs each sample's most confident person (`MultiPoseFrame.primary`)
+    /// whichever person mode the take is in, so following everyone the line describes one of the
+    /// people the overlay draws, not all of them.
     static func log(_ result: PoseFrameResult) {
         // `privacy: .public` keeps the confidence/timestamp digits in the log — without it they
         // arrive as Strings and are redacted to `<private>`. `.notice` rather than `.info` so

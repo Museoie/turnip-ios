@@ -148,6 +148,10 @@ final class ClipListViewModel: ObservableObject {
     /// when nothing analyzed the video (the screenshot harness), in which case Auto crop
     /// has nothing to fit.
     private let poseFrames: [PoseFrameResult]
+    /// The people whose tricks became clips, when the video was analyzed following everyone
+    /// (`DetectedClips.people`); a clip with a `personID` reads its own person's frames instead
+    /// of `poseFrames`.
+    private let people: [PoseTrack]
     /// The source video's `PHAsset.localIdentifier`, for deleting it from Photos
     /// when the original tile is trashed at `save()` time.
     private let assetIdentifier: String
@@ -175,6 +179,7 @@ final class ClipListViewModel: ObservableObject {
     private struct AutoFollowKey: Hashable {
         let window: TrickWindow
         let cropRect: NormalizedRect
+        let personID: Int?
     }
     private let announce: AccessibilityAnnouncing
     /// For a message that lands as the screen changes: the zero-tricks notice, shown as this
@@ -211,6 +216,7 @@ final class ClipListViewModel: ObservableObject {
     init(
         items: [ClipListItem],
         poseFrames: [PoseFrameResult] = [],
+        people: [PoseTrack] = [],
         asset: AVAsset,
         assetIdentifier: String,
         duration: TimeInterval,
@@ -235,6 +241,7 @@ final class ClipListViewModel: ObservableObject {
             return item
         }
         self.poseFrames = poseFrames
+        self.people = people
         self.asset = asset
         self.assetIdentifier = assetIdentifier
         self.loader = loader
@@ -287,7 +294,13 @@ final class ClipListViewModel: ObservableObject {
             framingMode: item.framingMode,
             followCrop: item.followCrop,
             asset: asset,
-            poseFrames: poseFrames)
+            poseFrames: poseFrames(forPerson: item.personID))
+    }
+
+    /// The frames a clip's crop and follow path are fitted to: its own person's when it has one,
+    /// every scored frame otherwise.
+    private func poseFrames(forPerson personID: Int?) -> [PoseFrameResult] {
+        personID.flatMap { id in people.first { $0.id == id }?.frames } ?? poseFrames
     }
 
     /// Applies the editor's commit to the item with the given id: the window, crop rect,
@@ -308,7 +321,8 @@ final class ClipListViewModel: ObservableObject {
             framingMode: result.framingMode,
             followCrop: result.followCrop,
             isTrashed: item.isTrashed,
-            isSaved: item.isSaved && describesTheSameVideo(result, as: item))
+            isSaved: item.isSaved && describesTheSameVideo(result, as: item),
+            personID: item.personID)
     }
 
     /// Whether `result` would export the same video as `item`. The editor commits on every
@@ -437,7 +451,7 @@ final class ClipListViewModel: ObservableObject {
         if geometry.framingMode == .follow,
            let followCrop = await followCrop(
                mode: geometry.framingMode, followCrop: geometry.followCrop,
-               window: geometry.window, cropRect: geometry.cropRect) {
+               window: geometry.window, cropRect: geometry.cropRect, personID: geometry.personID) {
             transform = ClipExportTransform.make(
                 followCrop: followCrop, cropRect: geometry.cropRect, over: 0...max(duration.seconds, 0),
                 frameRate: track.frameRate, naturalSize: track.naturalSize,
@@ -455,21 +469,23 @@ final class ClipListViewModel: ObservableObject {
     /// same crop the editor opens it on. `nil` too when the track geometry can't be loaded.
     func followCrop(for item: ClipListItem) async -> FollowCrop? {
         await followCrop(
-            mode: item.framingMode, followCrop: item.followCrop, window: item.window, cropRect: item.cropRect)
+            mode: item.framingMode, followCrop: item.followCrop, window: item.window, cropRect: item.cropRect,
+            personID: item.personID)
     }
 
     private func followCrop(
-        mode: FramingMode, followCrop: FollowCrop?, window: TrickWindow, cropRect: NormalizedRect
+        mode: FramingMode, followCrop: FollowCrop?, window: TrickWindow, cropRect: NormalizedRect, personID: Int?
     ) async -> FollowCrop? {
         guard mode == .follow else { return nil }
         if let followCrop { return followCrop }
-        let key = AutoFollowKey(window: window, cropRect: cropRect)
+        let key = AutoFollowKey(window: window, cropRect: cropRect, personID: personID)
         if let fitted = autoFollowCrops[key] { return fitted }
         guard let track = await trackGeometry() else { return nil }
         let geometry = VideoTrackGeometry(naturalSize: track.naturalSize, preferredTransform: track.preferredTransform)
         guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
         let fitted = autoFollow.defaultCrop(
-            poseFrames: poseFrames, window: window, cropRect: crop, videoSize: geometry.displayedSize)
+            poseFrames: poseFrames(forPerson: personID), window: window, cropRect: crop,
+            videoSize: geometry.displayedSize)
         autoFollowCrops[key] = fitted
         return fitted
     }

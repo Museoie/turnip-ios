@@ -30,6 +30,8 @@ final class TurnipSettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.analysisGranularity, 10)
         XCTAssertFalse(store.followAthlete)
         XCTAssertFalse(store.current.followAthlete)
+        XCTAssertEqual(store.personMode, .one)
+        XCTAssertEqual(store.current.personMode, .one)
     }
 
     @MainActor
@@ -40,6 +42,7 @@ final class TurnipSettingsStoreTests: XCTestCase {
         first.albumName = "Tricking Sessions"
         first.setAnalysisGranularity(24)
         first.followAthlete = true
+        first.personMode = .everyone
 
         let second = TurnipSettingsStore(defaults: defaults)
 
@@ -49,6 +52,8 @@ final class TurnipSettingsStoreTests: XCTestCase {
         XCTAssertEqual(second.analysisGranularity, 24)
         XCTAssertTrue(second.followAthlete)
         XCTAssertTrue(second.current.followAthlete)
+        XCTAssertEqual(second.personMode, .everyone)
+        XCTAssertEqual(second.current.personMode, .everyone)
     }
 
     @MainActor

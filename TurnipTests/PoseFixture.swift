@@ -122,3 +122,26 @@ enum PoseFixture {
             + [Float](repeating: moving[moving.count - 1], count: tailFrames)
     }
 }
+
+extension DetectedPerson {
+    /// A fixture pose as one person the model found, boxed around its confident joints (or every
+    /// joint, when none is confident).
+    static func fixture(_ keypoints: [PoseKeypoint], score: Float = 0.9) -> DetectedPerson {
+        let confident = keypoints.filter { $0.confidence > PoseKeypoint.confidenceThreshold }
+        let points = confident.isEmpty ? keypoints : confident
+        return DetectedPerson(
+            score: score,
+            box: NormalizedRect(
+                minX: points.map(\.x).min() ?? 0, maxX: points.map(\.x).max() ?? 0,
+                minY: points.map(\.y).min() ?? 0, maxY: points.map(\.y).max() ?? 0),
+            keypoints: keypoints)
+    }
+}
+
+extension MultiPoseFrame {
+    /// A fixture frame holding one person. Keeps the fixture itself as the frame's one-person
+    /// view, so frames that come back out of the pipeline still equal the fixture.
+    init(single frame: PoseFrameResult) {
+        self.init(primary: frame, people: frame.keypoints.isEmpty ? [] : [.fixture(frame.keypoints)])
+    }
+}

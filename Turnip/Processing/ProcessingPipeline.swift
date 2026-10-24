@@ -20,14 +20,15 @@ struct ProcessingProgress: Sendable {
     let frame: Int
     /// Estimated from the track's duration × frame rate; nil when the track reports no frame rate.
     let totalFrames: Int?
-    /// The just-processed frame's position in the source video and the pose it scored
+    /// The just-processed frame's position in the source video and the poses it scored
     /// there — the processing screen scrubs its preview to this timestamp and draws the
-    /// skeleton over it, so the video visibly tracks the progress bar rather than sitting
-    /// static and paused. Defaulted so the pipeline's own reports are the only required
+    /// skeletons over it, so the video visibly tracks the progress bar rather than sitting
+    /// static and paused. One skeleton when the run follows one person, everyone's when it
+    /// follows everyone. Defaulted so the pipeline's own reports are the only required
     /// call site; a caller with no frame in hand (tests, the screenshot harness) gets an
     /// inert progress report instead of a compile error.
     var timestamp: TimeInterval = 0
-    var keypoints: [PoseKeypoint] = []
+    var skeletons: [[PoseKeypoint]] = []
 
     /// 0...1 for `ProgressView`; nil when the total is unknown, in which case the view shows
     /// an indeterminate spinner next to the frame counter.
@@ -58,10 +59,14 @@ struct ProcessingProgress: Sendable {
 /// This is the processing screen's output contract. It deliberately mirrors — rather than
 /// reuses — `ClipListItem` (Turnip/ClipList/ClipListItem.swift): a screen's output contract
 /// should not be its neighbour's view model, so the home flow maps each clip with
-/// `ClipListItem(window: clip.window, cropRect: clip.cropRect)` when it wires the two.
+/// `ClipListItem(window: clip.window, cropRect: clip.cropRect, personID: clip.personID)` when it
+/// wires the two.
 struct ProcessedClip: Hashable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
+    /// Whose trick this is, a `PoseTrack.id` in `DetectedClips.people`, when the run followed
+    /// everyone; `nil` when it followed one person.
+    var personID: Int?
 }
 
 /// What detection yields for one video: the clips, with every sampled frame they were cut
@@ -73,8 +78,18 @@ struct DetectedClips: Hashable, Sendable {
     /// One clip per detected trick window, in video order.
     let clips: [ProcessedClip]
     /// Every scored frame of the video, in video order, in the display-orientation
-    /// normalized space the clips' crop rects were computed in.
+    /// normalized space the clips' crop rects were computed in: the pose of the person the
+    /// model was surest of in each. What a clip without a person reads.
     let poseFrames: [PoseFrameResult]
+    /// The people whose tricks became clips, when the run followed everyone. Only those: the
+    /// detection rides in the navigation path and is hashed on every push.
+    var people: [PoseTrack] = []
+
+    /// The frames a clip's crop, follow path and the editor's Auto crop read: its own person's
+    /// when it has one, every scored frame otherwise.
+    func poseFrames(forPerson personID: Int?) -> [PoseFrameResult] {
+        personID.flatMap { id in people.first { $0.id == id }?.frames } ?? poseFrames
+    }
 }
 
 /// The pipeline's terminal output: what the success destination needs.
@@ -108,10 +123,12 @@ extension VideoFrameSampler: FrameSampling {}
 /// The seam the processing view model runs against: the real `ProcessingPipeline` in the app,
 /// scripted fakes in tests.
 protocol ProcessingRunning: Sendable {
-    /// `onProgress` escapes: the throttled report is made from inside the sampler's handler,
-    /// which outlives the call that formed the closure.
+    /// `people` is read when the user starts the run, not when the screen was built: the screen
+    /// carries its own choice of mode. `onProgress` escapes: the throttled report is made from
+    /// inside the sampler's handler, which outlives the call that formed the closure.
     func run(
         video: SelectedVideo,
+        people: PersonMode,
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult
 }
@@ -133,7 +150,7 @@ struct ProcessingPipeline: Sendable {
     /// Builds the per-frame inference function once per run, so the model loads a single time
     /// rather than per frame. The default loads the bundled MoveNet MultiPose model; tests
     /// inject a stub.
-    typealias InferenceFactory = @Sendable () async throws -> @Sendable (SampledFrame) async throws -> [PoseKeypoint]
+    typealias InferenceFactory = @Sendable () async throws -> @Sendable (SampledFrame) async throws -> [DetectedPerson]
 
     let sampler: any FrameSampling
     /// Samples per second of footage this run targets — `TurnipSettings.analysisGranularity`
@@ -145,6 +162,7 @@ struct ProcessingPipeline: Sendable {
     let makeInference: InferenceFactory
     let cropRectCalculator: CropRectCalculator
     let windowDetector: TrickWindowDetector
+    let personTracker = PersonTracker()
 
     init(
         sampler: (any FrameSampling)? = nil,
@@ -160,15 +178,16 @@ struct ProcessingPipeline: Sendable {
         self.windowDetector = windowDetector ?? TrickWindowDetector()
     }
 
-    /// Loads the bundled MoveNet MultiPose model once, then answers each frame with the pose of
-    /// the person it is surest of.
+    /// Loads the bundled MoveNet MultiPose model once, then answers each frame with everyone it
+    /// found.
     private static let defaultInference: InferenceFactory = {
         let model = try await MoveNetMultiPoseModel.load()
-        return { frame in try await model.runInference(on: frame.pixelBuffer).mostConfidentKeypoints }
+        return { frame in try await model.runInference(on: frame.pixelBuffer) }
     }
 
     func run(
         video: SelectedVideo,
+        people mode: PersonMode = .one,
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         let asset = video.asset
@@ -176,7 +195,7 @@ struct ProcessingPipeline: Sendable {
             throw ProcessingError.assetHasNoVideoTrack
         }
         if let partial = video.partialPose {
-            return try await backfill(partial, of: asset, onProgress: onProgress)
+            return try await backfill(partial, of: asset, people: mode, onProgress: onProgress)
         }
         let totalFrames = await Self.estimatedSampledFrames(of: videoTrack, sampleRate: sampleRate)
 
@@ -184,16 +203,13 @@ struct ProcessingPipeline: Sendable {
         let accumulator = FrameAccumulator()
         let reportClock = ProgressReportClock()
         try await sampler.sampleFrames(from: asset) { frame in
-            let keypoints = try await infer(frame)
-            let processed = await accumulator.append(PoseFrameResult(
-                frameIndex: frame.frameIndex,
-                timestamp: frame.timestamp,
-                keypoints: keypoints
-            ), renderSize: frame.renderSize)
+            let scored = MultiPoseFrame(
+                frameIndex: frame.frameIndex, timestamp: frame.timestamp, people: try await infer(frame))
+            let processed = await accumulator.append(scored, renderSize: frame.renderSize)
             if await reportClock.shouldReport() {
                 await onProgress(ProcessingProgress(
                     frame: processed, totalFrames: totalFrames,
-                    timestamp: frame.timestamp, keypoints: keypoints))
+                    timestamp: frame.timestamp, skeletons: mode.skeletons(in: scored)))
             }
         }
 
@@ -207,9 +223,7 @@ struct ProcessingPipeline: Sendable {
         // turns into the full-frame fallback.
         let renderedPixelSize = await accumulator.renderSize ?? .zero
         return ProcessingResult(
-            detection: DetectedClips(
-                clips: detectClips(in: frames, renderedPixelSize: renderedPixelSize), poseFrames: frames),
-            asset: asset)
+            detection: detect(in: frames, people: mode, renderedPixelSize: renderedPixelSize), asset: asset)
     }
 
     /// A take the camera scored live in part: scores only the times `PoseBackfill` plans for the
@@ -218,7 +232,7 @@ struct ProcessingPipeline: Sendable {
     /// the camera keeps scoring between Stop and its own hand-off. Progress counts the live
     /// frames as already processed, so the bar starts where live inference left off.
     private func backfill(
-        _ partial: PartialPoseFrames, of asset: AVURLAsset,
+        _ partial: PartialPoseFrames, of asset: AVURLAsset, people mode: PersonMode,
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         let duration = try await asset.load(.duration).seconds
@@ -232,16 +246,13 @@ struct ProcessingPipeline: Sendable {
             let reportClock = ProgressReportClock()
             let totalFrames = live.count + wanted.count
             try await sampler.sampleFrames(from: asset, at: wanted) { frame in
-                let keypoints = try await infer(frame)
-                let processed = await accumulator.append(PoseFrameResult(
-                    frameIndex: frame.frameIndex,
-                    timestamp: frame.timestamp,
-                    keypoints: keypoints
-                ), renderSize: frame.renderSize)
+                let scored = MultiPoseFrame(
+                    frameIndex: frame.frameIndex, timestamp: frame.timestamp, people: try await infer(frame))
+                let processed = await accumulator.append(scored, renderSize: frame.renderSize)
                 if await reportClock.shouldReport() {
                     await onProgress(ProcessingProgress(
                         frame: live.count + processed, totalFrames: totalFrames,
-                        timestamp: frame.timestamp, keypoints: keypoints))
+                        timestamp: frame.timestamp, skeletons: mode.skeletons(in: scored)))
                 }
             }
         }
@@ -252,9 +263,30 @@ struct ProcessingPipeline: Sendable {
         // live pass's own measure of the same picture otherwise.
         let renderedPixelSize = await accumulator.renderSize ?? partial.renderedPixelSize
         return ProcessingResult(
-            detection: DetectedClips(
-                clips: detectClips(in: frames, renderedPixelSize: renderedPixelSize), poseFrames: frames),
-            asset: asset)
+            detection: detect(in: frames, people: mode, renderedPixelSize: renderedPixelSize), asset: asset)
+    }
+
+    /// Steps 4-6 for a take whose frames hold everyone the model found. Following one person,
+    /// they run once over the person the model was surest of in each frame. Following everyone,
+    /// the people are tracked across the take (`PersonTracker`) and they run once per person, so
+    /// each person's speed is measured against their own activity and each clip frames its own
+    /// person. Both frame sources call this: the file sampler above and the camera's hand-off.
+    func detect(in frames: [MultiPoseFrame], people mode: PersonMode, renderedPixelSize: CGSize) -> DetectedClips {
+        let primary = frames.map(\.primary)
+        guard mode == .everyone else {
+            return DetectedClips(
+                clips: detectClips(in: primary, renderedPixelSize: renderedPixelSize), poseFrames: primary)
+        }
+        var clips: [ProcessedClip] = []
+        var people: [PoseTrack] = []
+        for track in personTracker.tracks(in: frames, renderedPixelSize: renderedPixelSize) {
+            let found = detectClips(in: track.frames, renderedPixelSize: renderedPixelSize)
+            guard !found.isEmpty else { continue }
+            people.append(track)
+            clips += found.map { ProcessedClip(window: $0.window, cropRect: $0.cropRect, personID: track.id) }
+        }
+        clips.sort { ($0.window.startTime, $0.personID ?? -1) < ($1.window.startTime, $1.personID ?? -1) }
+        return DetectedClips(clips: clips, poseFrames: primary, people: people)
     }
 
     /// Steps 4-6 over frames that have already been scored: motion signal, trick windows, crop
@@ -316,10 +348,22 @@ struct ProcessingPipeline: Sendable {
 
 extension ProcessingPipeline: ProcessingRunning {}
 
+extension PersonMode {
+    /// What a progress overlay draws for one frame: the followed person's skeleton, or everyone's.
+    func skeletons(in frame: MultiPoseFrame) -> [[PoseKeypoint]] {
+        switch self {
+        case .one:
+            return frame.primary.keypoints.isEmpty ? [] : [frame.primary.keypoints]
+        case .everyone:
+            return frame.people.map(\.keypoints)
+        }
+    }
+}
+
 /// Collects the handler's per-frame results. The sampler's handler is `@Sendable` and runs
 /// off the main actor, so the accumulation point is an actor rather than a captured `var`.
 private actor FrameAccumulator {
-    private(set) var frames: [PoseFrameResult] = []
+    private(set) var frames: [MultiPoseFrame] = []
     /// The composition grid the run's frames were rendered onto, in display orientation. The
     /// sampler builds one composition per run, so the first frame's size stands for all of
     /// them; pose keypoints are measured in this space, so the crop math denormalizes against
@@ -329,7 +373,7 @@ private actor FrameAccumulator {
 
     /// Appends the frame's inference result and returns the 1-based processed count for
     /// progress reporting. Records the run's render size from the first frame.
-    func append(_ result: PoseFrameResult, renderSize: CGSize) -> Int {
+    func append(_ result: MultiPoseFrame, renderSize: CGSize) -> Int {
         if self.renderSize == nil {
             self.renderSize = renderSize
         }

@@ -19,6 +19,24 @@ enum AnalysisMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Whose tricks become clips: the person the pose model is surest of in each frame, or everyone
+/// it finds, each followed across the take and given clips of their own (`docs/MULTI_PERSON.md`).
+/// Chosen on the camera before a take and on Processing before an analysis, and remembered for
+/// the next one.
+enum PersonMode: String, CaseIterable, Identifiable, Sendable {
+    case one
+    case everyone
+
+    var id: Self { self }
+
+    var label: String {
+        switch self {
+        case .one: return "One person"
+        case .everyone: return "Everyone"
+        }
+    }
+}
+
 /// The app's user-configurable preferences, as a plain value type — what `TurnipSettingsStore`
 /// persists and hands to code that reads settings off the main actor. Kept separate from the
 /// store so defaulting and clamping are pure and directly testable, the same split
@@ -35,19 +53,22 @@ struct TurnipSettings: Equatable, Sendable {
     /// Whether a detected clip starts in the editor's Follow mode, its crop moving with the
     /// athlete (`AutoFollow`), rather than in Still.
     var followAthlete: Bool
+    var personMode: PersonMode
 
     init(
         analysisMode: AnalysisMode = .realTime,
         autoAddToAlbum: Bool = false,
         albumName: String = TurnipSettings.defaultAlbumName,
         analysisGranularity: Int = TurnipSettings.defaultGranularity,
-        followAthlete: Bool = false
+        followAthlete: Bool = false,
+        personMode: PersonMode = .one
     ) {
         self.analysisMode = analysisMode
         self.autoAddToAlbum = autoAddToAlbum
         self.albumName = albumName
         self.analysisGranularity = Self.clampedGranularity(analysisGranularity)
         self.followAthlete = followAthlete
+        self.personMode = personMode
     }
 
     /// Clamps to `granularityRange` so a corrupt or out-of-range stored value, or a future

@@ -34,6 +34,7 @@ final class ClipListTests: XCTestCase {
     private func makeViewModel(
         items: [ClipListItem],
         poseFrames: [PoseFrameResult] = [],
+        people: [PoseTrack] = [],
         asset: AVURLAsset? = nil,
         assetIdentifier: String = "asset-1",
         duration: TimeInterval = 30,
@@ -47,6 +48,7 @@ final class ClipListTests: XCTestCase {
         ClipListViewModel(
             items: items,
             poseFrames: poseFrames,
+            people: people,
             asset: asset ?? dummyAsset(),
             assetIdentifier: assetIdentifier,
             duration: duration,
@@ -527,6 +529,32 @@ final class ClipListTests: XCTestCase {
         let source = viewModel.editorSource(for: item)
 
         XCTAssertEqual(source.poseFrames, frames)
+    }
+
+    /// A clip found following everyone opens on its own person's frames, so Auto crop fits that
+    /// person; a clip without a person still gets every scored frame.
+    @MainActor
+    func testEditorSourceCarriesTheClipsOwnPersonsFrames() {
+        let everyFrame = PoseFixture.frames(hipXPositions: [0.3, 0.4, 0.5, 0.6])
+        let person = PoseTrack(id: 4, frames: PoseFixture.frames(hipXPositions: [0.8, 0.8]))
+        let theirs = ClipListItem(window: window, cropRect: fullFrame, personID: 4)
+        let nobodys = makeItem()
+        let viewModel = makeViewModel(items: [theirs, nobodys], poseFrames: everyFrame, people: [person])
+
+        XCTAssertEqual(viewModel.editorSource(for: theirs).poseFrames, person.frames)
+        XCTAssertEqual(viewModel.editorSource(for: nobodys).poseFrames, everyFrame)
+    }
+
+    /// The editor's commit keeps the clip's person, so a reopened clip still fits its own person.
+    @MainActor
+    func testApplyingAnEditorResultKeepsTheClipsPerson() throws {
+        let item = ClipListItem(window: window, cropRect: fullFrame, personID: 2)
+        let viewModel = makeViewModel(items: [item])
+
+        viewModel.applyEditorResult(
+            ClipEditorResult(window: window, cropRect: fullFrame, cropAdjustment: .identity), to: item.id)
+
+        XCTAssertEqual(try XCTUnwrap(viewModel.items.last).personID, 2)
     }
 
     // MARK: - save()

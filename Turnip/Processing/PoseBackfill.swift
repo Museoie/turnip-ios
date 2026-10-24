@@ -9,8 +9,9 @@ import Foundation
 /// Held in memory only — on the pushed `SelectedVideo` and in `VideoLibraryViewModel`'s
 /// per-session store — never written to disk: docs/PRIVACY.md has v1 persisting no pose data.
 struct PartialPoseFrames: Hashable, Sendable {
-    /// File-relative, in timestamp order.
-    let frames: [PoseFrameResult]
+    /// File-relative, in timestamp order, with everyone the model found in each: the mode the
+    /// take is analyzed in is chosen on Processing, after the live pass.
+    let frames: [MultiPoseFrame]
     /// The spacing the live pass sampled at: 1 / the granularity it was armed with. The gaps are
     /// filled at this spacing too, not at whatever granularity Processing is set to by the time
     /// it runs, so the merged take is one grid and its motion signal one rate.
@@ -19,6 +20,14 @@ struct PartialPoseFrames: Hashable, Sendable {
     /// the crop step when nothing needs filling and no file frame supplies a render size.
     let renderedPixelSize: CGSize
 }
+
+/// A sample with a place on a take's timeline, which is all `PoseBackfill.merged` needs of it.
+protocol TimestampedSample {
+    var timestamp: TimeInterval { get }
+}
+
+extension PoseFrameResult: TimestampedSample {}
+extension MultiPoseFrame: TimestampedSample {}
 
 /// Plans and merges the file samples that fill the gaps in a take's live pose frames. Pure, so the
 /// grid arithmetic is testable without a video file.
@@ -56,9 +65,9 @@ enum PoseBackfill {
     /// closer than half an interval to any live sample is dropped, because the motion signal
     /// divides displacement by the time between samples and keypoint jitter over a few
     /// milliseconds reads as a burst.
-    static func merged(
-        live: [PoseFrameResult], backfilled: [PoseFrameResult], interval: TimeInterval
-    ) -> [PoseFrameResult] {
+    static func merged<Frame: TimestampedSample>(
+        live: [Frame], backfilled: [Frame], interval: TimeInterval
+    ) -> [Frame] {
         let liveTimes = live.map(\.timestamp).sorted()
         let kept = backfilled.filter { frame in
             distanceToNearest(frame.timestamp, in: liveTimes) >= interval / 2

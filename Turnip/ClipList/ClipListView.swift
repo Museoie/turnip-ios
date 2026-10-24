@@ -58,6 +58,7 @@ struct ClipListView: View {
     init(
         items: [ClipListItem],
         poseFrames: [PoseFrameResult] = [],
+        people: [PoseTrack] = [],
         asset: AVAsset,
         assetIdentifier: String,
         duration: TimeInterval,
@@ -66,7 +67,7 @@ struct ClipListView: View {
         popToRoot: @escaping () -> Void = {}
     ) {
         _viewModel = StateObject(wrappedValue: ClipListViewModel(
-            items: items, poseFrames: poseFrames, asset: asset, assetIdentifier: assetIdentifier,
+            items: items, poseFrames: poseFrames, people: people, asset: asset, assetIdentifier: assetIdentifier,
             duration: duration, loader: loader))
         _isShowingNoTricksNotice = State(initialValue: showsNoTricksFound)
         self.popToRoot = popToRoot
@@ -385,7 +386,7 @@ private struct ClipCardView: View {
     private func currentPlaybackGeometry() -> ClipCardPlaybackGeometry {
         ClipCardPlaybackGeometry(
             window: item.window, cropRect: item.cropRect, cropAdjustment: item.cropAdjustment,
-            framingMode: item.framingMode, followCrop: item.followCrop)
+            framingMode: item.framingMode, followCrop: item.followCrop, personID: item.personID)
     }
 
     private var tile: some View {

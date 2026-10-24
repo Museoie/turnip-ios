@@ -551,10 +551,11 @@ struct ScreenshotProcessingPoseHarness: View {
 struct ScreenshotProcessingPoseRunner: ProcessingRunning {
     func run(
         video: SelectedVideo,
+        people: PersonMode,
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         await onProgress(ProcessingProgress(
-            frame: 40, totalFrames: 90, timestamp: 3, keypoints: Self.sampleKeypoints))
+            frame: 40, totalFrames: 90, timestamp: 3, skeletons: [Self.sampleKeypoints]))
         try await Task.sleep(for: .seconds(60))
         throw CancellationError()
     }
@@ -599,6 +600,7 @@ struct ScreenshotProcessingIdleHarness: View {
 private struct ScreenshotProcessingRunner: ProcessingRunning {
     func run(
         video: SelectedVideo,
+        people: PersonMode,
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         await onProgress(ProcessingProgress(frame: 400, totalFrames: 1200))

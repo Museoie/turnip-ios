@@ -89,6 +89,9 @@ struct ProcessingView<Destination: View>: View {
     }
 
     @StateObject private var viewModel: ProcessingViewModel
+    /// Holds the person mode the picker above "Analyze clips" shows and a run starts in, the
+    /// same remembered choice the camera's control sets.
+    @ObservedObject private var settings = TurnipSettingsStore.shared
     @State private var player: AVPlayer?
     /// The frame size as the player shows it (display orientation), loaded once in
     /// `.task` alongside the player — this view owns the player, so it owns the geometry
@@ -271,7 +274,7 @@ struct ProcessingView<Destination: View>: View {
                     naturalSize: naturalSize, preferredTransform: preferredTransform).displayedSize
             }
             if autostart {
-                viewModel.start(video: video)
+                viewModel.start(video: video, people: settings.personMode)
             }
         }
         // Posters are sized to the window, so they wait for `swipeBackdrop`'s first measurement.
@@ -672,7 +675,7 @@ struct ProcessingView<Destination: View>: View {
             if isAnalyzing {
                 Color.black.opacity(0.45).ignoresSafeArea()
                 if let progress = currentProgress, let displaySize {
-                    poseOverlay(keypoints: progress.keypoints, displaySize: displaySize)
+                    poseOverlay(skeletons: progress.skeletons, displaySize: displaySize)
                 }
             }
         }
@@ -698,12 +701,16 @@ struct ProcessingView<Destination: View>: View {
     /// whenever the source isn't exactly screen-shaped. `AVMakeRect` computes that same
     /// letterbox math; `.ignoresSafeArea()` matches the `GeometryReader` proxy's frame to
     /// the player's, since the player itself ignores the safe area.
-    private func poseOverlay(keypoints: [PoseKeypoint], displaySize: CGSize) -> some View {
+    private func poseOverlay(skeletons: [[PoseKeypoint]], displaySize: CGSize) -> some View {
         GeometryReader { proxy in
             let frame = AVMakeRect(aspectRatio: displaySize, insideRect: proxy.frame(in: .local))
-            PoseOverlayView(keypoints: keypoints)
-                .frame(width: frame.width, height: frame.height)
-                .position(x: frame.midX, y: frame.midY)
+            ZStack {
+                ForEach(skeletons.indices, id: \.self) { index in
+                    PoseOverlayView(keypoints: skeletons[index])
+                }
+            }
+            .frame(width: frame.width, height: frame.height)
+            .position(x: frame.midX, y: frame.midY)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
@@ -723,6 +730,7 @@ struct ProcessingView<Destination: View>: View {
             // keep playing behind the progress UI and the clip list. The skip
             // leaves the hierarchy the same way (the clip list pushes over this
             // screen), so it pauses first for the same reason.
+            personModePicker
             PrimaryActionBar(
                 "Analyze clips",
                 secondary: .init("Clip manually") {
@@ -731,10 +739,25 @@ struct ProcessingView<Destination: View>: View {
                 }
             ) {
                 player?.pause()
-                viewModel.start(video: video)
+                viewModel.start(video: video, people: settings.personMode)
             }
             .accessibilityIdentifier("start-analysis")
         }
+    }
+
+    /// Whose tricks the analysis cuts clips for (`PersonMode`): the person the model is surest of
+    /// in each frame, or everyone, each with clips of their own. Dark like the rest of the stage,
+    /// which stays black whatever the system appearance.
+    private var personModePicker: some View {
+        Picker("Clips for", selection: $settings.personMode) {
+            ForEach(PersonMode.allCases) { mode in
+                Text(mode.label).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .environment(\.colorScheme, .dark)
+        .padding(.horizontal)
+        .accessibilityIdentifier("person-mode-picker")
     }
 
     /// The progress panel drawn over the bottom of the still-visible, paused video —
@@ -777,7 +800,7 @@ struct ProcessingView<Destination: View>: View {
             message: message
         ) {
             VStack(spacing: 12) {
-                Button("Retry") { viewModel.retry(video: video) }
+                Button("Retry") { viewModel.retry(video: video, people: settings.personMode) }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("processing-retry")
                 Button("Back to Home", role: .cancel) { close() }

@@ -118,9 +118,10 @@ struct HomeView: View {
     ) -> ClipListView {
         ClipListView(
             items: detection.clips.map {
-                ClipListItem(window: $0.window, cropRect: $0.cropRect)
+                ClipListItem(window: $0.window, cropRect: $0.cropRect, personID: $0.personID)
             },
             poseFrames: detection.poseFrames,
+            people: detection.people,
             asset: asset,
             assetIdentifier: video.assetIdentifier,
             duration: video.duration,

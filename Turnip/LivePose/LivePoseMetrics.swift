@@ -84,8 +84,10 @@ struct LivePoseMetrics: Equatable, Sendable {
 
 /// Everything one live-inference recording produced, available once the consumer has drained.
 struct LivePoseOutcome: Sendable {
-    /// In timestamp order: the capture callback is serial and the queue is FIFO.
-    let results: [PoseFrameResult]
+    /// In timestamp order: the capture callback is serial and the queue is FIFO. Everyone the
+    /// model found in each sample, since which mode the take is detected in is read at the
+    /// hand-off.
+    let results: [MultiPoseFrame]
     let metrics: LivePoseMetrics
     let errorMessage: String?
 }

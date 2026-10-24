@@ -13,7 +13,9 @@ import XCTest
 /// both are overwritten by the next run with the same label or the next full run, so neither is
 /// a history. `TEST_RUNNER_TURNIP_EVAL_REUSE_POSE=1` re-runs detection on that saved pose instead
 /// of the model: seconds instead of minutes, and the same frames on both sides of a detector
-/// change.
+/// change. `TEST_RUNNER_TURNIP_EVAL_PEOPLE=everyone` runs the pipeline following everyone
+/// (`PersonMode`) instead of one person; the saved pose is one person's, so reusing it always
+/// follows one.
 final class TrickDetectionEvaluationTests: XCTestCase {
     func testScoreDetectionOnLabelledFootage() async throws {
         let environment = ProcessInfo.processInfo.environment
@@ -24,10 +26,12 @@ final class TrickDetectionEvaluationTests: XCTestCase {
         let manifest = try JSONDecoder().decode(
             EvaluationManifest.self, from: Data(contentsOf: directory.appendingPathComponent("labels.json")))
         let reusePose = environment["TURNIP_EVAL_REUSE_POSE"] == "1"
+        let people = environment["TURNIP_EVAL_PEOPLE"].flatMap(PersonMode.init(rawValue:)) ?? .one
         var report = EvaluationReport(label: environment["TURNIP_EVAL_LABEL"] ?? "run", reusedPose: reusePose)
 
         for clip in manifest.clips {
-            report.add(clip, detected: try await detectedClips(for: clip, in: directory, reusePose: reusePose))
+            report.add(
+                clip, detected: try await detectedClips(for: clip, in: directory, reusePose: reusePose, people: people))
         }
 
         for line in report.lines {
@@ -43,7 +47,8 @@ final class TrickDetectionEvaluationTests: XCTestCase {
     private func detectedClips(
         for clip: EvaluationManifest.Clip,
         in directory: URL,
-        reusePose: Bool
+        reusePose: Bool,
+        people: PersonMode
     ) async throws -> [ProcessedClip] {
         let pipeline = ProcessingPipeline()
         let poseURL = directory.appendingPathComponent("pose/\(clip.video).json")
@@ -55,7 +60,7 @@ final class TrickDetectionEvaluationTests: XCTestCase {
         let asset = AVURLAsset(url: directory.appendingPathComponent(clip.video))
         let video = SelectedVideo(
             assetIdentifier: clip.video, asset: asset, duration: try await asset.load(.duration).seconds)
-        let result = try await pipeline.run(video: video) { _ in }
+        let result = try await pipeline.run(video: video, people: people) { _ in }
 
         let saved = SavedPose(frames: result.detection.poseFrames, renderSize: try await Self.renderSize(of: asset))
         try FileManager.default.createDirectory(

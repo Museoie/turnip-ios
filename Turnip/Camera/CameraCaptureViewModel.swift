@@ -80,11 +80,11 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     private var pinchBaseZoomFactor: CGFloat?
     private let sessionQueue = DispatchQueue(label: "com.hoiekim.turnip.camera.session")
 
-    /// The pose scored most recently during the current recording, in capture-device
+    /// The poses scored most recently during the current recording, in capture-device
     /// coordinates (the unrotated sensor picture, which `AVCaptureVideoPreviewLayer` maps onto
-    /// the preview for whatever orientation and mirroring it applies). Empty when not
-    /// recording. See docs/LIVE_POSE.md.
-    @Published private(set) var livePoseKeypoints: [PoseKeypoint] = []
+    /// the preview for whatever orientation and mirroring it applies): the one person followed,
+    /// or everyone, by the take's person mode. Empty when not recording. See docs/LIVE_POSE.md.
+    @Published private(set) var livePoseSkeletons: [[PoseKeypoint]] = []
 
     /// Live pose inference alongside recording (docs/LIVE_POSE.md): a video data output on the
     /// session ahead of the movie output, sampled while the movie output records. `nonisolated`
@@ -113,6 +113,9 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// so coverage is checked at the rate the recording was sampled at even if the setting
     /// changed mid-recording.
     private var armedSampleRate = VideoFrameSampler.targetSamplesPerSecond
+    /// The person mode read at the Record tap, so a take is detected the way it was recorded even
+    /// if the mode changes before it finishes. The control is disabled while recording.
+    private var armedPersonMode = PersonMode.one
     /// Reads the current settings snapshot at the point a setting takes effect (Record tap),
     /// rather than once at init — a change made while the camera tab is already open is picked
     /// up by the next recording. `@MainActor`-typed (not plain, and not `@Sendable`/`async`) so
@@ -125,11 +128,12 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// `AnalysisMode` cases without touching `UserDefaults`.
     private let settingsProvider: @MainActor () -> TurnipSettings
 
-    typealias ClipDetection = @Sendable ([PoseFrameResult], CGSize) -> [ProcessedClip]
+    typealias ClipDetection = @Sendable ([MultiPoseFrame], PersonMode, CGSize) -> DetectedClips
 
     init(
         makeDetectClips: @escaping (Int) -> ClipDetection = { rate in
-            ProcessingPipeline(sampleRate: rate).detectClips
+            let pipeline = ProcessingPipeline(sampleRate: rate)
+            return { frames, mode, size in pipeline.detect(in: frames, people: mode, renderedPixelSize: size) }
         },
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettingsStore.shared.current }
     ) {
@@ -701,7 +705,7 @@ extension CameraCaptureViewModel: AVCaptureFileOutputRecordingDelegate {
         rollRecorder.stop()
         Task { @MainActor in
             isRecording = false
-            livePoseKeypoints = []
+            livePoseSkeletons = []
             if let error {
                 errorMessage = error.localizedDescription
                 livePoseTap.cancel()
@@ -741,6 +745,8 @@ extension CameraCaptureViewModel {
               let dataConnection = livePoseTap.output.connection(with: .video),
               let movieConnection = movieOutput.connection(with: .video) else { return }
         armedSampleRate = settingsProvider().analysisGranularity
+        let mode = settingsProvider().personMode
+        armedPersonMode = mode
         let movieRotation = LivePoseFrameTap.rotationDegrees(of: movieConnection)
         let rotation = LivePoseKeypointRotation.relativeDegrees(
             producer: LivePoseFrameTap.rotationDegrees(of: dataConnection), consumer: movieRotation)
@@ -749,13 +755,15 @@ extension CameraCaptureViewModel {
         liveRenderedPixelSize = LivePoseCoverage.renderedPixelSize(
             sensorWidth: sensor.width, sensorHeight: sensor.height, movieRotationDegrees: movieRotation)
         let recording = LivePoseRecording(
-            inference: { try await poseModel.runInference(on: $0).mostConfidentKeypoints },
+            inference: { try await poseModel.runInference(on: $0) },
             channel: LivePoseSampleChannel(),
             onResult: { [weak self] result in
-                let keypoints = LivePoseKeypointRotation.rotated(result.keypoints, clockwiseDegrees: toDeviceSpace)
+                let skeletons = mode.skeletons(in: result).map {
+                    LivePoseKeypointRotation.rotated($0, clockwiseDegrees: toDeviceSpace)
+                }
                 Task { @MainActor in
                     guard let self, self.isRecording else { return }
-                    self.livePoseKeypoints = keypoints
+                    self.livePoseSkeletons = skeletons
                 }
             })
         livePoseTap.arm(
@@ -792,15 +800,15 @@ extension CameraCaptureViewModel {
                 frames: outcome.results, interval: interval, renderedPixelSize: liveRenderedPixelSize)
             return CameraRecording(fileURL: fileURL, detectedClips: nil, partialPose: partial)
         }
-        return CameraRecording(fileURL: fileURL, detectedClips: DetectedClips(
-            clips: makeDetectClips(armedSampleRate)(outcome.results, liveRenderedPixelSize),
-            poseFrames: outcome.results))
+        return CameraRecording(
+            fileURL: fileURL,
+            detectedClips: makeDetectClips(armedSampleRate)(outcome.results, armedPersonMode, liveRenderedPixelSize))
     }
 
     private func cancelLivePose() {
         livePoseTap.cancel()
         drainingLivePose?.cancel(producer: nil)
         drainingLivePose = nil
-        livePoseKeypoints = []
+        livePoseSkeletons = []
     }
 }

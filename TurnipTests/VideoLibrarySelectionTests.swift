@@ -56,7 +56,7 @@ final class VideoLibrarySelectionTests: XCTestCase {
         let manager = ScriptedImageManager(.asset(AVURLAsset(url: URL(filePath: "/tmp/turnip-selection-partial.mov"))))
         let model = VideoLibraryViewModel(resolver: PhotoVideoResolver(imageManager: manager))
         let partial = PartialPoseFrames(
-            frames: PoseFixture.frames(hipXPositions: [0.4, 0.5]), interval: 0.1,
+            frames: PoseFixture.frames(hipXPositions: [0.4, 0.5]).map(MultiPoseFrame.init(single:)), interval: 0.1,
             renderedPixelSize: CGSize(width: 1080, height: 1920))
 
         model.select(StubAsset("take-1", duration: 4), partialPose: partial)
@@ -80,7 +80,8 @@ final class VideoLibrarySelectionTests: XCTestCase {
         let manager = ScriptedImageManager(.asset(AVURLAsset(url: URL(filePath: "/tmp/turnip-selection-capacity.mov"))))
         let model = VideoLibraryViewModel(resolver: PhotoVideoResolver(imageManager: manager))
         let partial = PartialPoseFrames(
-            frames: PoseFixture.frames(hipXPositions: [0.5]), interval: 0.1, renderedPixelSize: .zero)
+            frames: PoseFixture.frames(hipXPositions: [0.5]).map(MultiPoseFrame.init(single:)), interval: 0.1,
+            renderedPixelSize: .zero)
 
         for take in 0...VideoLibraryViewModel.partialPoseCapacity {
             model.path = []

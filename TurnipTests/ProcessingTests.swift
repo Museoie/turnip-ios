@@ -259,7 +259,7 @@ final class ProcessingPipelineRunTests: XCTestCase {
         }
         let sampler = ScriptedSampler(renderSize: CGSize(width: 48, height: 64), results: fixtures)
         let makeInference: ProcessingPipeline.InferenceFactory = {
-            { frame in fixtures[frame.frameIndex].keypoints }
+            { frame in [.fixture(fixtures[frame.frameIndex].keypoints)] }
         }
 
         let pipeline = ProcessingPipeline(sampler: sampler, makeInference: makeInference)
@@ -304,7 +304,7 @@ final class ProcessingPipelineRunTests: XCTestCase {
         let renderSize = CGSize(width: 48, height: 64)
         let sampler = ScriptedSampler(renderSize: renderSize, results: fixtures)
         let makeInference: ProcessingPipeline.InferenceFactory = {
-            { frame in fixtures[frame.frameIndex].keypoints }
+            { frame in [.fixture(fixtures[frame.frameIndex].keypoints)] }
         }
         let pipeline = ProcessingPipeline(sampler: sampler, makeInference: makeInference)
         let video = SelectedVideo(
@@ -333,10 +333,10 @@ final class ProcessingPipelineRunTests: XCTestCase {
         let renderSize = CGSize(width: 48, height: 64)
         let missing = Set(16...20).union(30...34)
         let partial = PartialPoseFrames(
-            frames: fixtures.indices.filter { !missing.contains($0) }.map { fixtures[$0] },
+            frames: fixtures.indices.filter { !missing.contains($0) }.map { MultiPoseFrame(single: fixtures[$0]) },
             interval: 0.1, renderedPixelSize: renderSize)
         let makeInference: ProcessingPipeline.InferenceFactory = {
-            { frame in fixtures[frame.frameIndex].keypoints }
+            { frame in [.fixture(fixtures[frame.frameIndex].keypoints)] }
         }
         let sampler = ScriptedSampler(renderSize: renderSize, results: fixtures)
         let pipeline = ProcessingPipeline(sampler: sampler, makeInference: makeInference)
@@ -382,7 +382,8 @@ final class ProcessingPipelineRunTests: XCTestCase {
 
         let result = try await pipeline.run(video: SelectedVideo(
             assetIdentifier: "take", asset: AVURLAsset(url: videoURL), duration: 3.5,
-            partialPose: PartialPoseFrames(frames: fixtures, interval: 0.1, renderedPixelSize: renderSize))
+            partialPose: PartialPoseFrames(
+                frames: fixtures.map(MultiPoseFrame.init(single:)), interval: 0.1, renderedPixelSize: renderSize))
         ) { _ in }
 
         XCTAssertTrue(sampler.requests.all.isEmpty)
@@ -865,6 +866,7 @@ private final class ScriptedRunner: ProcessingRunning, @unchecked Sendable {
 
     func run(
         video: SelectedVideo,
+        people: PersonMode,
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         switch behavior {

@@ -86,6 +86,39 @@ extension Array where Element == DetectedPerson {
     }
 }
 
+/// Everyone the pose model found in one sampled frame, plus the frame as a consumer that follows
+/// a single person reads it.
+struct MultiPoseFrame: Hashable, Sendable {
+    /// The pose of the person the model is surest of, or no pose when it found nobody. Built once
+    /// rather than on each read, so it keeps one identity however often a consumer asks for it.
+    let primary: PoseFrameResult
+    let people: [DetectedPerson]
+
+    var frameIndex: Int { primary.frameIndex }
+    var timestamp: TimeInterval { primary.timestamp }
+
+    init(frameIndex: Int, timestamp: TimeInterval, people: [DetectedPerson]) {
+        self.init(
+            primary: PoseFrameResult(
+                frameIndex: frameIndex, timestamp: timestamp, keypoints: people.mostConfidentKeypoints),
+            people: people)
+    }
+
+    init(primary: PoseFrameResult, people: [DetectedPerson]) {
+        self.primary = primary
+        self.people = people
+    }
+}
+
+/// One person followed across a take: their pose at every sample from the first they were found
+/// in to the last, with an empty pose wherever the model lost them in between. A missed sample
+/// stays an unknown sample to the motion signal, which divides by the time between consecutive
+/// frames, rather than becoming one longer step.
+struct PoseTrack: Hashable, Sendable, Identifiable {
+    let id: Int
+    let frames: [PoseFrameResult]
+}
+
 /// `Hashable` (by every field, the fresh `id` included) so a video's frames can ride in
 /// `DetectedClips` on a `SelectedVideo`, which the navigation path hashes.
 struct PoseFrameResult: Identifiable, Hashable, Sendable {

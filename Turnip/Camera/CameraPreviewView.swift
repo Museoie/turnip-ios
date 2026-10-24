@@ -23,8 +23,9 @@ struct CameraPreviewView: UIViewRepresentable {
     /// False while the session is stopped or stopping. Hides the preview at once so a stale
     /// frame never shows; the next frames the layer renders fade it back in.
     var isLive = true
-    /// In capture-device coordinates (the unrotated sensor picture, 0...1). Empty hides it.
-    var poseKeypoints: [PoseKeypoint] = []
+    /// In capture-device coordinates (the unrotated sensor picture, 0...1), one skeleton per
+    /// person drawn. Empty hides them.
+    var poseSkeletons: [[PoseKeypoint]] = []
 
     func makeUIView(context: Context) -> PreviewUIView {
         let view = PreviewUIView()
@@ -34,7 +35,7 @@ struct CameraPreviewView: UIViewRepresentable {
 
     func updateUIView(_ uiView: PreviewUIView, context: Context) {
         uiView.setLive(isLive)
-        uiView.show(poseKeypoints)
+        uiView.show(poseSkeletons)
     }
 
     final class PreviewUIView: UIView {
@@ -136,24 +137,26 @@ struct CameraPreviewView: UIViewRepresentable {
             CATransaction.commit()
         }
 
-        /// Redraws the skeleton. Implicit layer animations are disabled: at ten poses a second an
+        /// Redraws the skeletons. Implicit layer animations are disabled: at ten poses a second an
         /// animated path would always be mid-tween, smearing the joints between two poses.
-        func show(_ keypoints: [PoseKeypoint]) {
+        func show(_ skeletons: [[PoseKeypoint]]) {
             let previewLayer = videoPreviewLayer
-            let geometry = LivePoseOverlayGeometry(keypoints: keypoints) { keypoint in
-                previewLayer.layerPointConverted(
-                    fromCaptureDevicePoint: CGPoint(x: CGFloat(keypoint.x), y: CGFloat(keypoint.y)))
-            }
             let limbs = CGMutablePath()
-            for limb in geometry.limbs {
-                limbs.move(to: limb.start)
-                limbs.addLine(to: limb.end)
-            }
             let joints = CGMutablePath()
-            for joint in geometry.joints {
-                joints.addEllipse(in: CGRect(
-                    x: joint.x - Self.jointRadius, y: joint.y - Self.jointRadius,
-                    width: Self.jointRadius * 2, height: Self.jointRadius * 2))
+            for keypoints in skeletons {
+                let geometry = LivePoseOverlayGeometry(keypoints: keypoints) { keypoint in
+                    previewLayer.layerPointConverted(
+                        fromCaptureDevicePoint: CGPoint(x: CGFloat(keypoint.x), y: CGFloat(keypoint.y)))
+                }
+                for limb in geometry.limbs {
+                    limbs.move(to: limb.start)
+                    limbs.addLine(to: limb.end)
+                }
+                for joint in geometry.joints {
+                    joints.addEllipse(in: CGRect(
+                        x: joint.x - Self.jointRadius, y: joint.y - Self.jointRadius,
+                        width: Self.jointRadius * 2, height: Self.jointRadius * 2))
+                }
             }
             CATransaction.begin()
             CATransaction.setDisableActions(true)

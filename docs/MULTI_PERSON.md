@@ -1,17 +1,14 @@
 # Several people in one video
 
-*Rev 1 · 2026-10-21 · Design for review; nothing is built. A spike ran the multi-person model on the evaluation footage, and its numbers are in "Measurements".*
+*Rev 2 · 2026-10-23 · Built: the model swap, and the choice between following one person and following everyone, made by the user on the camera and on Processing. Rev 1 planned the per-person mode behind a Settings toggle, off by default, until multi-person footage was labelled. A choice the user makes keeps one-person videos exactly as they were, so labels now tune the tracker rather than gate it. A spike ran the multi-person model on the evaluation footage, and its numbers are in "Measurements".*
 
 *Companion to [`DESIGN.md`](DESIGN.md). This doc covers one question: when a video holds several people, how does each person's trick become a clip of its own? Pipeline steps 4-6 (motion signal, trick windows, crop) stay as `DESIGN.md` records them. What changes is the pose they run on.*
 
 ## Decision
 
-Proposed, in four steps:
-
-1. **Swap the model.** MoveNet MultiPose Lightning replaces MoveNet Thunder, and the most confident person in each frame stands in for Thunder's one pose. Nothing downstream changes. On the labelled tripod footage this alone scores better than Thunder (13 tricks caught, none partial, 1 missed, 1 false positive, against 12, 1, 1, 1), most of all on a far athlete. It is not the feature: in a frame with several people, the most confident one can still change from sample to sample.
-2. **Label multi-person footage.** All labelled footage today shows one person, so it can only show that a change does no harm. Tracking can't be tuned until a multi-person take has trick windows and who did each.
-3. **Track people and detect per person**, behind a Settings toggle, off by default. Detections are linked into people across the take. Steps 4-6 run once per person, and each clip belongs to one person. Its crop, its follow path and the editor's Auto crop read only that person's pose.
-4. **Track live takes at the hand-off**, after the live device gate is run again with the new model.
+1. **Swap the model** (built, #238). MoveNet MultiPose Lightning replaces MoveNet Thunder. On the labelled tripod footage it scores better than Thunder (13 tricks caught, none partial, 1 missed, 1 false positive, against 12, 1, 1, 1), most of all on a far athlete.
+2. **Let the user choose whose tricks become clips** (built). Following one person, the most confident person in each frame stands in for Thunder's one pose, and nothing downstream changes. Following everyone, detections are linked into people across the take, steps 4-6 run once per person, and each clip belongs to one person: its crop, its follow path and the editor's Auto crop and Auto follow read only that person's pose. The choice is a control on the camera and a picker on Processing ("Screens"). Each mode is better at its own footage. On the labelled single-athlete footage, following everyone scores 12 / 0 / 2 / 1 against following one person's 13 / 0 / 1 / 1. On the gym take it trades about 11 clips of people standing or talking for one ("Measurements"). So nobody's solo videos get worse.
+3. **Label multi-person footage**, to tune the tracker. The evaluation can score who did each trick and count duplicate clips (#239). Nothing waits on labels any more, but the open problems below can't be measured without them.
 
 Four problems are still open ("Open problems"). The first two are the design work left, not parameter choices.
 
@@ -25,11 +22,13 @@ MoveNet Thunder is a single-pose model: every frame gets exactly one pose, whoev
 
 The evaluation footage has one multi-person take: a 240 s gym session where people trick in turn while others stand, sit and talk; MultiPose finds two or three people in 42% of its samples. On it, Thunder's pipeline cuts 19 clips, and about 11 of them show people standing, sitting or talking ("The gym take", below).
 
-## What is true today
+## What was true before this change
 
-- **Model.** `MoveNetThunderModel` loads `movenet_thunder_int8.tflite` (7 MB, `[1, 256, 256, 3]` uint8 in, `[1, 1, 17, 3]` float32 out) and checks both shapes at load. `PoseInputPreparer` letterboxes each frame into the square input.
-- **One pose per sample, everywhere.** `PoseFrameResult` is one pose at one time. `DetectedClips.poseFrames` is one series per video. `ProcessedClip` and `ClipListItem` carry no person. The editor's Auto crop and the Clip List's follow crop both filter `poseFrames` by the clip's window.
-- **Live.** `LivePoseRecording` scores one pose per sample, and the camera overlay draws one skeleton. `PartialPoseFrames` and `PoseBackfill` merge one series by timestamp.
+- **Model.** `MoveNetThunderModel` loaded `movenet_thunder_int8.tflite` (7 MB, `[1, 256, 256, 3]` uint8 in, `[1, 1, 17, 3]` float32 out) and checked both shapes at load. `PoseInputPreparer` letterboxed each frame into the square input.
+- **One pose per sample, everywhere.** `PoseFrameResult` was one pose at one time, and `DetectedClips.poseFrames` one series per video. `ProcessedClip` and `ClipListItem` carried no person. The editor's Auto crop and the Clip List's follow crop both filtered `poseFrames` by the clip's window.
+- **Live.** `LivePoseRecording` scored one pose per sample, and the camera overlay drew one skeleton. `PartialPoseFrames` and `PoseBackfill` merged one series by timestamp.
+
+These still hold:
 - **The farm's pose format** (`turnip-farm` `docs/POSE_FORMAT.md`, TKP1) is one pose of 17 COCO keypoints per frame.
 - **The Profile (planned)** stores a source's pose as one TKP1 blob (`PROFILE_DESIGN.md` §2.2). Whose a clip is (`is_me`, §4.3) is chosen on a video's first clip and carries to its other clips.
 
@@ -65,31 +64,34 @@ Two clips of different people may overlap in time, or cover the same moments. Ea
 
 ### Data
 
-- `DetectedPerson`: one person in one frame, with score, box and keypoints. `MultiPoseFrame`: a sample's frame index, timestamp and people. This is what the model returns and what live recording and backfill carry.
-- `PoseTrack`: an id and the person's `[PoseFrameResult]` over their lifetime, as above. `PoseFrameResult` stays "one person at one time", so steps 4-6, `CropRectCalculator` and `CropPathCalculator` take a track's frames as they take a video's frames today.
-- `DetectedClips` holds `tracks: [PoseTrack]` in place of `poseFrames`, and `ProcessedClip` gains `trackID`. `DetectedClips` rides in the navigation path and is hashed there. A take's tracks hold about one series per person on screen, not six, and the frames before and after a person's lifetime are not stored.
-- `ClipListItem` gains `trackID: Int?`: nil for the original and for clips added by hand, which have no pose today either. `ClipListViewModel.followCrop` and the editor's `ClipEditorSource` read the clip's own track instead of every frame. A trim that drags a handle outward pulls in that person's frames beyond the window, as it pulls in the video's frames today.
-- `PartialPoseFrames` holds `[MultiPoseFrame]`. `PoseBackfill` plans and merges by timestamp alone, so it is unchanged.
-- The single-person path is one track. With the Settings toggle off, the tracker is skipped and the most confident person per frame is the one track, which is step 1 of the rollout.
+- `DetectedPerson`: one person in one frame, with score, box and keypoints. `MultiPoseFrame`: everyone found in one sample, plus `primary`, the frame as a one-person consumer reads it (the most confident person's pose, built once so it keeps one identity). This is what the model returns, and what live recording and backfill carry in both modes. The mode is applied at detection, so a take recorded or partly scored in one mode can still be detected in the other.
+- `PoseTrack`: an id and the person's `[PoseFrameResult]` from their first sighting to their last, as above. `PoseFrameResult` stays "one person at one time", so steps 4-6, `CropRectCalculator` and `CropPathCalculator` take a track's frames as they take a video's.
+- `DetectedClips.poseFrames` keeps its meaning, the `primary` series, in both modes: it's what the original tile and a clip added by hand read. `DetectedClips.people` holds the tracks that own a clip, and only those, since the detection is hashed on every navigation push. `ProcessedClip.personID` and `ClipListItem.personID` name the clip's person, or are `nil` following one person. `DetectedClips.poseFrames(forPerson:)` and the clip list's own lookup give a clip its person's frames, or every scored frame without one.
+- `ClipListViewModel.followCrop` and the editor's `ClipEditorSource` read the clip's own person's frames. A trim that drags a handle outward pulls in that person's frames beyond the window. The editor's commit keeps the person.
+- `PartialPoseFrames` holds `[MultiPoseFrame]`. `PoseBackfill.merged` merges any timestamped frame, so it is unchanged in substance.
+- `ProcessingPipeline.detect(in:people:renderedPixelSize:)` is the one detection both frame sources call: the file run, and the camera's hand-off.
 
 ### Screens
 
-- **Clip List:** one tile per detected clip in start order, as today. Clips of different people can overlap, and each tile's crop shows whose it is. No label or grouping by person: tracks have no stable identity across takes, and nothing in v1 needs one. "No tricks found" is unchanged.
-- **Processing's progress overlay and the camera overlay** draw every detected person's skeleton.
+- **Camera:** a person control leads the top-right group, one figure for one person and two for everyone (`UIUX.md` §1b). It is read at the Record tap and disabled while recording.
+- **Processing:** a segmented picker, "One person | Everyone", sits between the scrub bar and "Analyze clips" (`UIUX.md` §2). A run starts, and a retry restarts, in the mode it shows. A take the camera scored in part is detected in Processing's mode, not the camera's.
+- **One setting behind both** (`TurnipSettings.personMode`, default one person), so the choice carries from one screen to the other and to the next session.
+- **Clip List:** one tile per detected clip in start order, as before. Clips of different people can overlap, and each tile's crop shows whose it is. No label or grouping by person: tracks have no stable identity across takes, and nothing in v1 needs one. "No tricks found" is unchanged.
+- **Processing's progress overlay and the camera overlay** draw the followed person's skeleton, or everyone's.
 - **Editor:** Auto crop and Auto follow frame the clip's own person. A hand-added clip keeps Reset crop (`UIUX.md` Rev 13).
 
 ### Live path
 
-Live runs the same model, so it needs the same tracker at the hand-off, after the drain, and nothing on the capture path changes. The risk is inference time on the device. On the simulator, MultiPose at 384 took 40-43 ms per frame against Thunder's 40.6 ms on the same machine. The reference implementation's own benchmark has MultiPose at about 1.8 times Thunder's time on an iPhone 12 (24 against 43 frames per second, WebGL). Simulator CPU numbers don't carry over to a device, so the `LIVE_POSE.md` acceptance gate must be run again before step 1 ships. The queued tensor grows from 196 KB to 258 KB, so the 30-entry queue bound becomes about 7.7 MB.
+Live runs the same model and keeps everyone found per sample. The tracker runs at the hand-off, after the drain, in the mode read at the Record tap, and nothing on the capture path changes. Tracking a take's frames is a pass over a few thousand boxes, small next to the inference already done. The `LIVE_POSE.md` gate passes at the default 10 samples/sec on an iPhone 13 mini, and falls behind at 20/sec on takes over about 50 s ("Results" there). The queued tensor is 258 KB, so the 30-entry queue bound is about 7.7 MB.
 
 ### Contribution, Profile and privacy
 
-These are notes for the PRs that touch them. `PRIVACY.md` describes the shipped app, so it changes when they land.
+The contribution and Profile notes are for the PRs that build those features. `PRIVACY.md` already records the last bullet.
 
 - **TKP1 is unchanged.** A contribution carries one track, the clip's person, on the take's grid, and no one else's pose.
 - **`is_me` carries per person, not per video** (`PROFILE_DESIGN.md` §4.3). A choice on a person's first clip carries to that person's other clips in the take.
 - **Stored pose** (`PROFILE_DESIGN.md` §2.2) should keep only the tracks with a saved clip, not everyone the camera saw.
-- Bystanders' keypoints exist in memory, as the athlete's do today, and are never written to disk in v1. `PoseResultLogger` writes per-frame pose to the device log and would log every person.
+- Bystanders' keypoints exist in memory, as the athlete's do, and are never written to disk in v1. `PoseResultLogger` logs one line per live sample with the followed person's confidence and no coordinates.
 
 ## Measurements
 
@@ -147,15 +149,14 @@ Worth trying again against labels; not adopted on this evidence.
 1. **A person on screen only while tricking has nothing to stand out from.** Their activity level is the median of their own speed within 5 s, and if all of their own samples are the trick, the trick is the baseline. The gym take's last flip is this: the person is on screen for 3 s, all of it moving. Thunder's single series caught it, because other people's quiet stood in for theirs. A fix changes the activity level for short tracks, which is a detector change measured against labels.
 2. **Re-linking a person who leaves and comes back, without swapping people.** A short window splits one person in two, which costs the tripod footage a trick. A long one swaps people in a crowd. Position and size alone can't tell a returning person from someone else arriving at the same spot. Colour can partly, but not while the person is upside down.
 3. **A passer-by close to the lens.** Per-person detection measured one in the gym take's first seconds as a trick. `DESIGN.md`'s "a passer-by at the lens reads as walking" holds for a person far enough away that their torso stays in frame. A person right at the lens doesn't fit that.
-4. **No labelled multi-person footage.** Every gym-take number above is read from strips. Step 2 of the rollout is what makes the other three measurable.
+4. **No labelled multi-person footage.** Every gym-take number above is read from strips. Step 3 of the decision is what makes the other three measurable.
 
 ## Rollout
 
-1. **Model swap.** `MoveNetMultiPoseModel` (input sized to the take, the `[1, 6, 56]` parse, one mapping for box and keypoints, the 0.25 floor), with Thunder removed. Bundling: `Turnip/Models/README.md`, the checksum in `ci_scripts/ci_post_clone.sh`, and the load-time checks. The most confident person per frame feeds the existing pipeline. The live path sets its input shape per recording. Re-run the `LIVE_POSE.md` gate and the detection evaluation; the saved evaluation pose has to be re-scored from scratch, since it is Thunder's.
-2. **Labels.** Trick windows, and who did each, on the gym take and ideally one more multi-person take, in the evaluation's `labels.json`. The scorer gains duplicate counting and checks each caught trick's clip against the right person.
-3. **Tracker and per-person detection in Processing**, behind a Settings toggle, off by default, the way Follow the athlete shipped. The data changes above, the editor and Clip List reading the clip's own person, and every skeleton on the progress overlay. The Swift tracker is checked against the spike's on the same saved detections.
-4. **Live takes tracked at the hand-off**, after the gate, and every skeleton on the camera overlay.
-5. **Docs that describe shipped behaviour,** as each step lands: `CONTRIBUTION_DESIGN.md` §2.1 and §9 (the bundled pose model at step 1, a contribution carrying the clip's own person at step 3), `UIUX.md` §1a (the Settings toggle) and §3, `PRIVACY.md`, and `PROFILE_DESIGN.md` §2.2 and §4.3.
+1. **Model swap** (built, #238): `MoveNetMultiPoseModel`, bundling, the load-time checks, and the `LIVE_POSE.md` gate.
+2. **The person mode** (built): the setting and its two controls, the tracker, per-person detection in Processing and at the camera's hand-off, clips that carry their person through the Clip List and the editor, and every skeleton on both overlays. The Swift tracker reproduces the spike's tracks and clip windows exactly on its saved detections for all six evaluation videos.
+3. **Labels and tuning:** trick windows, and who did each, on the gym take and ideally one more multi-person take, then the open problems against them. `TEST_RUNNER_TURNIP_EVAL_PEOPLE=everyone` runs the evaluation following everyone.
+4. **Docs for features not built yet:** `CONTRIBUTION_DESIGN.md` §2.1 and §9 (a contribution carries the clip's own person) and `PROFILE_DESIGN.md` §2.2 and §4.3, when those land.
 
 ## Alternatives
 

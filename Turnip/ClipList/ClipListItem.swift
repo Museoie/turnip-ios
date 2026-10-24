@@ -44,6 +44,11 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     var isTrashed: Bool
     var isSaved: Bool
     let isOriginal: Bool
+    /// Whose trick this is, when the video was analyzed following everyone
+    /// (`DetectedClips.people`): its crop, follow path and the editor's Auto crop read only that
+    /// person's pose. `nil` for the original, a clip added by hand, and every clip of a video
+    /// analyzed following one person, which read every scored frame.
+    let personID: Int?
 
     init(
         id: UUID = UUID(),
@@ -54,7 +59,8 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         followCrop: FollowCrop? = nil,
         isTrashed: Bool = false,
         isSaved: Bool = false,
-        isOriginal: Bool = false
+        isOriginal: Bool = false,
+        personID: Int? = nil
     ) {
         self.id = id
         self.window = window
@@ -65,6 +71,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.isTrashed = isTrashed
         self.isSaved = isSaved
         self.isOriginal = isOriginal
+        self.personID = personID
     }
 
     /// "2.4s"-style duration label for the card, via the one shared clip-duration

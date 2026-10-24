@@ -13,10 +13,10 @@ import os
 /// error ending, the cancelled ending, the metrics merge — can be exercised with a stub; the
 /// model itself only exists on a device with the bundled `.tflite`.
 final class LivePoseRecording: Sendable {
-    typealias Inference = @Sendable (PoseModelInput) async throws -> [PoseKeypoint]
+    typealias Inference = @Sendable (PoseModelInput) async throws -> [DetectedPerson]
     /// Called with each result as soon as it is scored, off the main actor, so a live consumer
     /// (the camera preview overlay) can show it while the recording is still running.
-    typealias ResultHandler = @Sendable (PoseFrameResult) -> Void
+    typealias ResultHandler = @Sendable (MultiPoseFrame) -> Void
 
     let channel: LivePoseSampleChannel
     private let producerMetrics: OSAllocatedUnfairLock<LivePoseMetrics?>
@@ -64,17 +64,17 @@ final class LivePoseRecording: Sendable {
         onResult: ResultHandler,
         producerMetrics: OSAllocatedUnfairLock<LivePoseMetrics?>
     ) async -> LivePoseOutcome {
-        var results: [PoseFrameResult] = []
+        var results: [MultiPoseFrame] = []
         var inferenceStats = DurationStats()
         var errorMessage: String?
         while let sample = await channel.next() {
             let start = ProcessInfo.processInfo.systemUptime
             do {
-                let keypoints = try await inference(sample.input)
+                let people = try await inference(sample.input)
                 inferenceStats.record(ProcessInfo.processInfo.systemUptime - start)
-                let result = PoseFrameResult(
-                    frameIndex: sample.frameIndex, timestamp: sample.timestamp, keypoints: keypoints)
-                PoseResultLogger.log(result)
+                let result = MultiPoseFrame(
+                    frameIndex: sample.frameIndex, timestamp: sample.timestamp, people: people)
+                PoseResultLogger.log(result.primary)
                 results.append(result)
                 onResult(result)
             } catch {

@@ -178,7 +178,7 @@ final class ClipCardPlayback: ObservableObject {
         guard let current = geometry else { return }
         geometry = ClipCardPlaybackGeometry(
             window: window, cropRect: current.cropRect, cropAdjustment: current.cropAdjustment,
-            framingMode: current.framingMode, followCrop: current.followCrop)
+            framingMode: current.framingMode, followCrop: current.followCrop, personID: current.personID)
         teardown()
         resume()
     }
@@ -252,7 +252,7 @@ final class ClipCardPlayback: ObservableObject {
         guard clampedWindow != target.window else { return target }
         return ClipCardPlaybackGeometry(
             window: clampedWindow, cropRect: target.cropRect, cropAdjustment: target.cropAdjustment,
-            framingMode: target.framingMode, followCrop: target.followCrop)
+            framingMode: target.framingMode, followCrop: target.followCrop, personID: target.personID)
     }
 
     /// Clears the in-flight slot only if `token` still owns it: a later attempt for the
@@ -276,6 +276,8 @@ struct ClipCardPlaybackGeometry: Equatable {
     let cropAdjustment: CropAdjustment
     var framingMode: FramingMode = .still
     var followCrop: FollowCrop?
+    /// The item's `personID`: which person's frames a follow crop fitted here reads.
+    var personID: Int?
 }
 
 /// Whether a mounted loop has to be replaced to show `target`: `builtFor` is `nil` when

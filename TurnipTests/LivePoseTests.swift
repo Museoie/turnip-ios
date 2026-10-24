@@ -297,7 +297,7 @@ final class LivePoseTests: XCTestCase {
             channel.push(sample(index))
         }
         let recording = LivePoseRecording(
-            inference: { _ in [PoseKeypoint(name: "nose", y: 0.2, x: 0.1, confidence: 0.9)] },
+            inference: { _ in [.fixture([PoseKeypoint(name: "nose", y: 0.2, x: 0.1, confidence: 0.9)])] },
             channel: channel,
             onResult: { result in streamed.append(result) })
         var producer = LivePoseMetrics()
@@ -320,8 +320,9 @@ final class LivePoseTests: XCTestCase {
         XCTAssertEqual(outcome.metrics.maxQueueDepth, 3)
         // Keypoints pass through the drain unmodified: uprighting happens in
         // PoseInputPreparer, before inference, not as a post-hoc rotation here.
-        XCTAssertEqual(outcome.results[0].keypoints[0].x, 0.1, accuracy: 1e-6)
-        XCTAssertEqual(outcome.results[0].keypoints[0].y, 0.2, accuracy: 1e-6)
+        XCTAssertEqual(outcome.results[0].primary.keypoints[0].x, 0.1, accuracy: 1e-6)
+        XCTAssertEqual(outcome.results[0].primary.keypoints[0].y, 0.2, accuracy: 1e-6)
+        XCTAssertEqual(outcome.results[0].people.count, 1, "everyone found is kept for the hand-off")
     }
 
     /// A model failure is a reviewable ending, not an abandoned one: the error is reported and
@@ -488,9 +489,9 @@ final class LivePoseTests: XCTestCase {
     /// than an actor: the handler is synchronous and called from the drain's task.
     private final class StreamedResults: @unchecked Sendable {
         private let lock = NSLock()
-        private var results: [PoseFrameResult] = []
+        private var results: [MultiPoseFrame] = []
 
-        func append(_ result: PoseFrameResult) {
+        func append(_ result: MultiPoseFrame) {
             lock.lock()
             defer { lock.unlock() }
             results.append(result)
@@ -505,7 +506,7 @@ final class LivePoseTests: XCTestCase {
         var firstKeypointX: Float {
             lock.lock()
             defer { lock.unlock() }
-            return results.first?.keypoints.first?.x ?? .nan
+            return results.first?.primary.keypoints.first?.x ?? .nan
         }
     }
 
