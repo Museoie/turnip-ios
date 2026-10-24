@@ -162,6 +162,33 @@ final class ProcessingPipelineClipTests: XCTestCase {
         let clips = ProcessingPipeline().buildClips(windows: [], frames: frames, renderedPixelSize: size)
         XCTAssertTrue(clips.isEmpty)
     }
+
+    func testBuildClipsClampsWindowsToTheAssetDuration() {
+        // The detector's trailing buffer runs the last window past the file:
+        // triage must see the clamped window, not the raw one, or the card
+        // labels a longer clip than the export produces.
+        let clips = ProcessingPipeline().buildClips(
+            windows: [TrickWindow(startTime: 4, endTime: 9)],
+            frames: frames, renderedPixelSize: size, duration: 6)
+        XCTAssertEqual(clips.count, 1)
+        XCTAssertEqual(clips[0].window, TrickWindow(startTime: 4, endTime: 6))
+    }
+
+    func testBuildClipsDropsWindowsWithNothingInsideTheAsset() {
+        let clips = ProcessingPipeline().buildClips(
+            windows: [TrickWindow(startTime: 7, endTime: 9)],
+            frames: frames, renderedPixelSize: size, duration: 6)
+        XCTAssertTrue(clips.isEmpty)
+    }
+
+    func testBuildClipsWithoutADurationLeavesWindowsUnclamped() {
+        // The camera's live path has no file yet, so no duration exists to
+        // clamp to — that call site keeps the raw windows.
+        let window = TrickWindow(startTime: 4, endTime: 9)
+        let clips = ProcessingPipeline().buildClips(
+            windows: [window], frames: frames, renderedPixelSize: size)
+        XCTAssertEqual(clips.map(\.window), [window])
+    }
 }
 
 /// A scripted `FrameSampling` that emits canned frames with a fixed `renderSize`, ignoring the

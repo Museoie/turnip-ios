@@ -3,11 +3,33 @@ import Foundation
 /// A detected trick's time range in the source video, in seconds.
 ///
 /// `endTime` carries the trailing buffer and can therefore sit past the last sampled frame;
-/// clip trimming clamps it to the asset's duration. Two windows may overlap where their
+/// the pipeline clamps it to the asset's duration before any consumer sees it
+/// (`clamped(to:)`), and clip trimming clamps it again on the way out. Two windows may overlap where their
 /// buffers meet — each is a standalone clip of its own trick, not a partition of the video.
 struct TrickWindow: Hashable, Sendable {
     let startTime: TimeInterval
     let endTime: TimeInterval
+
+    /// This window intersected with `[0, duration]`, or `nil` when the
+    /// intersection is empty. The detector's trailing buffer can leave
+    /// `endTime` past the asset's duration, and every consumer that reads
+    /// the window raw then disagrees with the export, which clamps on the
+    /// way out (`ClipExporter.trimmedRange`): the triage card labels a
+    /// longer clip than the file that exports. Clamping once at the
+    /// pipeline boundary makes every consumer see the same window.
+    ///
+    /// This deliberately mirrors `trimmedRange`, not
+    /// `ClipEditorViewModel.clamped(window:to:)`: the editor's clamp keeps
+    /// a draggable clip at least `minimumClipDuration` long, which is
+    /// editor UX — the pipeline must not invent length a window never
+    /// had, so a window with nothing inside the asset is dropped
+    /// (callers use `compactMap`) rather than stretched to a minimum.
+    func clamped(to duration: TimeInterval) -> TrickWindow? {
+        let start = max(0, startTime)
+        let end = min(duration, endTime)
+        guard start < end else { return nil }
+        return TrickWindow(startTime: start, endTime: end)
+    }
 }
 
 /// Peak-detects the motion signal into trick windows (docs/DESIGN.md's pipeline step 5).
