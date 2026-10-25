@@ -332,8 +332,9 @@ final class ClipExporterTests: XCTestCase {
             over: 1...5, frameRate: 30, naturalSize: CGSize(width: 64, height: 36),
             preferredTransform: .identity))
 
-        let composition = transform.makeVideoComposition(
-            for: track, duration: CMTime(seconds: 4, preferredTimescale: 600), frameRate: 30)
+        let composition = try transform.makeVideoComposition(
+            for: track, duration: CMTime(seconds: 4, preferredTimescale: 600), frameRate: 30,
+            minFrameDuration: .invalid)
 
         let instruction = try XCTUnwrap(
             composition.instructions.first as? AVMutableVideoCompositionInstruction)
@@ -349,6 +350,42 @@ final class ClipExporterTests: XCTestCase {
             XCTAssertEqual(end, expected.end)
             XCTAssertEqual(range, expected.timeRange)
         }
+    }
+
+    /// The grid derivation the exporter shares with the sampler rejects a rate
+    /// that rounds to a zero timescale instead of assigning a non-numeric
+    /// frameDuration (which would raise, uncatchable, when attached): a 0.3 fps
+    /// nominal rate with no usable minFrameDuration throws rather than trapping.
+    func testVideoCompositionThrowsForSubHalfFpsRateWithNoMinFrameDuration() async throws {
+        let url = try await TestVideoWriter.writeTestVideo(frameCount: 30, width: 64, height: 36, fps: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let track = try await AVURLAsset(url: url).loadTracks(withMediaType: .video)[0]
+        let transform = try XCTUnwrap(ClipExportTransform.make(
+            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+            naturalSize: CGSize(width: 64, height: 36),
+            preferredTransform: .identity))
+
+        XCTAssertThrowsError(try transform.makeVideoComposition(
+            for: track, duration: CMTime(seconds: 1, preferredTimescale: 600), frameRate: 0.3,
+            minFrameDuration: .invalid))
+    }
+
+    /// The exact per-track spacing wins over the nominal average: a variable-rate
+    /// source keeps its own grid instead of dropping or duplicating frames to
+    /// the nominal rate's grid.
+    func testVideoCompositionPrefersMinFrameDurationOverNominalRate() async throws {
+        let url = try await TestVideoWriter.writeTestVideo(frameCount: 30, width: 64, height: 36, fps: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let track = try await AVURLAsset(url: url).loadTracks(withMediaType: .video)[0]
+        let transform = try XCTUnwrap(ClipExportTransform.make(
+            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+            naturalSize: CGSize(width: 64, height: 36),
+            preferredTransform: .identity))
+
+        let composition = try transform.makeVideoComposition(
+            for: track, duration: CMTime(seconds: 1, preferredTimescale: 600), frameRate: 30,
+            minFrameDuration: CMTime(value: 1, timescale: 48))
+        XCTAssertEqual(composition.frameDuration, CMTime(value: 1, timescale: 48))
     }
 
     // MARK: - insertRanges

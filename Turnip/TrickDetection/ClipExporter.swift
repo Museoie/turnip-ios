@@ -237,16 +237,21 @@ struct ClipExportTransform {
     /// `duration` from the start with a single instruction — shared by `ClipExporter`
     /// (over a trimmed composition track) and the clip list's live preview player (over
     /// the untrimmed source track; `AVPlayerLooper`'s own `timeRange` bounds what
-    /// actually loops, this only shapes the frame). `frameRate` falls back to 30 when the
-    /// track doesn't report one, rather than a 1 fps timescale, to keep the render clock
-    /// sane.
+    /// actually loops, this only shapes the frame). The output grid is the one
+    /// `VideoFrameSampler` derives, not a second copy: the hand-rolled version this
+    /// replaces accepted a `frameRate` in (0, 0.5) (rounded to a timescale of 0, a
+    /// non-numeric `frameDuration` that raises, uncatchable, when attached), trapped
+    /// on rates past `Int32.max`, and pinned the grid to the nominal average instead
+    /// of the track's exact `minFrameDuration`. Throws `PoseError.videoLoadFailed`
+    /// when neither timing value yields a valid grid; callers map that onto their
+    /// own error type.
     func makeVideoComposition(
-        for track: AVAssetTrack, duration: CMTime, frameRate: Float
-    ) -> AVMutableVideoComposition {
+        for track: AVAssetTrack, duration: CMTime, frameRate: Float, minFrameDuration: CMTime
+    ) throws -> AVMutableVideoComposition {
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
-        let timescale = frameRate > 0 ? Int32(frameRate.rounded()) : 30
-        videoComposition.frameDuration = CMTime(value: 1, timescale: timescale)
+        videoComposition.frameDuration = try VideoFrameSampler.compositionFrameDuration(
+            minFrameDuration: minFrameDuration, nominalFrameRate: frameRate)
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
@@ -410,13 +415,15 @@ actor ClipExporter {
             throw ClipExportError.invalidTimeRange(window: spec.window)
         }
         let frameRate = try await videoTrack.load(.nominalFrameRate)
+        let minFrameDuration = try await videoTrack.load(.minFrameDuration)
         let transform = try Self.renderTransform(
             for: spec, staticTransform: staticTransform, videoRange: ranges.video, frameRate: frameRate,
             naturalSize: naturalSize, preferredTransform: preferredTransform)
         let composition = try makeComposition(
             videoTrack: videoTrack, audioTrack: audioTrack, ranges: ranges)
         let videoComposition = try makeVideoComposition(
-            in: composition, transform: transform, frameRate: frameRate)
+            in: composition, transform: transform, frameRate: frameRate,
+            minFrameDuration: minFrameDuration)
 
         guard let session = AVAssetExportSession(
             asset: composition, presetName: AVAssetExportPresetHighestQuality)
@@ -504,13 +511,21 @@ actor ClipExporter {
     private func makeVideoComposition(
         in composition: AVMutableComposition,
         transform: ClipExportTransform,
-        frameRate: Float
+        frameRate: Float,
+        minFrameDuration: CMTime
     ) throws -> AVMutableVideoComposition {
         guard let compositionTrack = composition.tracks(withMediaType: .video).first else {
             throw ClipExportError.exportFailed(reason: "composition lost its video track")
         }
-        return transform.makeVideoComposition(
-            for: compositionTrack, duration: composition.duration, frameRate: frameRate)
+        do {
+            return try transform.makeVideoComposition(
+                for: compositionTrack, duration: composition.duration, frameRate: frameRate,
+                minFrameDuration: minFrameDuration)
+        } catch {
+            // The grid derivation's throw stays typed: an export that cannot lay
+            // out a frame grid is a failed export, not an untyped crash.
+            throw ClipExportError.exportFailed(reason: "could not determine a valid frame duration")
+        }
     }
 
     /// Runs the session to a terminal state, reporting progress along the way.
