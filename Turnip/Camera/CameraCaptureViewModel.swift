@@ -146,6 +146,11 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// never offer 24fps even though it's a perfectly valid rate within that range.
     private nonisolated static let candidateFrameRates = [24, 25, 30, 50, 60, 120, 240]
 
+    /// Prefix for the temp file a recording writes to. `nonisolated` (a pure
+    /// literal) so the launch sweep in `PhotoVideoResolver` can read it from a
+    /// detached task; mirrors `PhotoVideoResolver.temporaryExportFilenamePrefix`.
+    nonisolated static let recordingFilenamePrefix = "turnip-recording-"
+
     var formatGroups: [CameraFormatGroup] {
         let grouped = Dictionary(grouping: availableFormats) { "\($0.width)x\($0.height)" }
         return grouped.keys
@@ -228,7 +233,7 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
         } else {
             guard !isFinishingRecording else { return }
             let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("turnip-recording-\(UUID().uuidString)")
+                .appendingPathComponent("\(Self.recordingFilenamePrefix)\(UUID().uuidString)")
                 .appendingPathExtension("mov")
             // Offline mode never arms the tap: `endRecording()` then returns nil, `onFinished`
             // hands on `detectedClips: nil`, and the take lands on Processing's idle state
@@ -707,9 +712,21 @@ extension CameraCaptureViewModel: AVCaptureFileOutputRecordingDelegate {
             isRecording = false
             livePoseSkeletons = []
             if let error {
-                errorMessage = error.localizedDescription
-                livePoseTap.cancel()
-                return
+                // An interruption (backgrounding, a call, the session stopping
+                // under the recording) finalizes the file and still calls this
+                // delegate with an error — but the file can be playable anyway.
+                // `AVErrorRecordingSuccessfullyFinishedKey` says so; when it does,
+                // fall through to the success path instead of reporting a failure
+                // and orphaning the file. Otherwise delete the unusable file
+                // here: nothing else ever reclaims it.
+                let playable = (error as NSError)
+                    .userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool ?? false
+                if !playable {
+                    try? FileManager.default.removeItem(at: outputFileURL)
+                    errorMessage = error.localizedDescription
+                    livePoseTap.cancel()
+                    return
+                }
             }
             isFinishingRecording = true
             let recording = await finishLivePose(fileURL: outputFileURL)

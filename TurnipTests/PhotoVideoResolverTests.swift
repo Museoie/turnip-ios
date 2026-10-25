@@ -442,6 +442,24 @@ final class PhotoVideoResolverTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: innocent.path))
     }
 
+    /// The recordings sweep removes orphaned camera temp files and leaves everything else alone.
+    func testDeleteOrphanedTemporaryRecordingsSweepsOnlyPrefixedFiles() {
+        let orphan = URL.temporaryDirectory.appending(
+            path: "\(CameraCaptureViewModel.recordingFilenamePrefix)\(UUID().uuidString).mov")
+        let innocent = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).mov")
+        XCTAssertTrue(FileManager.default.createFile(atPath: orphan.path, contents: Data("x".utf8)))
+        XCTAssertTrue(FileManager.default.createFile(atPath: innocent.path, contents: Data("x".utf8)))
+        defer {
+            try? FileManager.default.removeItem(at: orphan)
+            try? FileManager.default.removeItem(at: innocent)
+        }
+
+        PhotoVideoResolver.deleteOrphanedTemporaryRecordings(olderThan: Date())
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: innocent.path))
+    }
+
     /// The sweep must not race in-flight resolutions: an export this session writes while the
     /// detached sweep is still running is created after the launch timestamp, so it survives.
     func testDeleteOrphanedTemporaryExportsKeepsFilesCreatedAfterLaunch() {
