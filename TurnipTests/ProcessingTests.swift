@@ -338,7 +338,11 @@ final class ProcessingPipelineRunTests: XCTestCase {
             assetIdentifier: "test", asset: AVURLAsset(url: videoURL), duration: 3.5)
 
         let viaRun = try await pipeline.run(video: video) { _ in }
-        let viaDetect = pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize)
+        // run() clamps to the asset duration, so the direct route must be given
+        // the same duration: the invariant is run == detectClips(duration:), not
+        // run == bare detectClips.
+        let duration = try await video.asset.load(.duration).seconds
+        let viaDetect = pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize, duration: duration)
 
         XCTAssertFalse(viaRun.clips.isEmpty, "the fixture should yield at least one clip to compare")
         XCTAssertEqual(viaDetect, viaRun.clips)
@@ -407,15 +411,21 @@ final class ProcessingPipelineRunTests: XCTestCase {
         let sampler = ScriptedSampler(renderSize: renderSize, results: fixtures)
         let pipeline = ProcessingPipeline(sampler: sampler, makeInference: { throw TestError.boom })
 
+        let asset = AVURLAsset(url: videoURL)
         let result = try await pipeline.run(video: SelectedVideo(
-            assetIdentifier: "take", asset: AVURLAsset(url: videoURL), duration: 3.5,
+            assetIdentifier: "take", asset: asset, duration: 3.5,
             partialPose: PartialPoseFrames(
                 frames: fixtures.map(MultiPoseFrame.init(single:)), interval: 0.1, renderedPixelSize: renderSize))
         ) { _ in }
 
         XCTAssertTrue(sampler.requests.all.isEmpty)
         XCTAssertEqual(result.detection.poseFrames, fixtures)
-        XCTAssertEqual(result.clips, pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize))
+        // The backfill run clamps to the asset duration, so the direct route
+        // must be given the same duration for the equality to hold.
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(
+            result.clips,
+            pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize, duration: duration))
     }
 }
 
