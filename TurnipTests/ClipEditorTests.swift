@@ -1147,6 +1147,48 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertTrue(viewModel.isAutoFollowApplied)
     }
 
+    /// An ease gives the new pan a generation of its own and hands it the weight, keeping the pan
+    /// it eases from: Still's unshifted picture on the switch to Follow, Auto follow's on Reset
+    /// follow.
+    @MainActor
+    func testAnEaseHandsThePreviewToANewPanAndKeepsTheOldOne() throws {
+        let viewModel = makeFollowViewModel()
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([0: 1]))
+        XCTAssertEqual(viewModel.previewPan.pans, [:])
+
+        viewModel.setFramingMode(.follow)
+        let auto = try XCTUnwrap(viewModel.followPan)
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([1: 1]))
+        XCTAssertEqual(viewModel.previewPan.pans, [1: auto])
+
+        viewModel.resetFollow()
+        let reset = try XCTUnwrap(viewModel.followPan)
+        XCTAssertNotEqual(reset, auto)
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([2: 1]))
+        XCTAssertEqual(viewModel.previewPan.pans, [1: auto, 2: reset])
+    }
+
+    /// A change that doesn't ease of its own replaces the pan on screen in place, and an ease
+    /// onto the pan already on screen starts nothing.
+    @MainActor
+    func testAChangeThatDoesntEaseReplacesThePanOnScreen() throws {
+        let viewModel = makeFollowViewModel()
+        viewModel.setFramingMode(.follow)
+        let weights = viewModel.previewPan.weights
+
+        viewModel.moveFollow(byDisplayedPixels: CGSize(width: 10, height: 0))
+        let moved = try XCTUnwrap(viewModel.followPan)
+        XCTAssertEqual(viewModel.previewPan.weights, weights)
+        XCTAssertEqual(viewModel.previewPan.pans, [1: moved])
+
+        viewModel.autoFollow()
+        let auto = try XCTUnwrap(viewModel.followPan)
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([2: 1]))
+        viewModel.autoFollow()
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([2: 1]))
+        XCTAssertEqual(viewModel.previewPan.pans, [1: moved, 2: auto])
+    }
+
     /// Without pose analysis Follow starts from the whole frame, and Reset follow is enabled
     /// only once a pinch has moved it.
     @MainActor

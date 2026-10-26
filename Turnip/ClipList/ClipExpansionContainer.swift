@@ -257,11 +257,12 @@ struct ClipExpansionContainer: View {
             // the surface itself hides the player until the displayed size is known, so no
             // guessed geometry ever shows over the tile before `prepare()` finishes.
             ClipEditorVideoSurface(
-                player: viewModel.player,
+                frames: viewModel.previewFrames,
+                track: viewModel.trackGeometry,
                 geometry: viewModel.previewOverlay,
                 marker: focus,
                 framing: viewModel.framing,
-                padding: viewModel.previewPadding,
+                pan: viewModel.previewPan,
                 onReadyForDisplay: surfaceDidBecomeReady)
             .opacity(isSeekedToSource ? 1 : 0)
         }

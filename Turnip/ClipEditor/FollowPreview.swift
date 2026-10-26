@@ -8,7 +8,7 @@ import UIKit
 /// onto the clip's crop center, before the zoom and turn apply about it.
 ///
 /// The shift steps once per source frame, on the frame's own presentation time: the preview
-/// draws it into the frames themselves (`FollowPreviewComposition`).
+/// moves the picture with the frame it shows (`EditorPlayerView`).
 struct FollowPan: Equatable {
     /// The shift before the first step.
     let initial: CGPoint
@@ -49,224 +49,247 @@ struct FollowPan: Equatable {
     }
 }
 
-/// What the preview's frames are drawn with: a follow pan held steady (`nil` draws the frame
-/// unshifted, as Still does), or an ease from what the frames showed onto a new one
-/// (`docs/UIUX.md` § "An automatic change moves, it never cuts").
-///
-/// The ease is in the frames too, never in a layer animation over them: a layer animation and
-/// a video frame can't be made to land on the same display refresh, so a hand-over between
-/// the two shows one frame wrong. It runs on the item's clock from `anchor`, the frame on
-/// screen when it starts, so it plays with the picture and freezes with it; while the player is
-/// paused the editor steps `progress` on the wall clock and redraws the frame on screen
-/// (`ClipEditorViewModel`). Frames before the anchor show the new pan: only a loop or a seek
-/// reaches them, and either one ends the ease.
-indirect enum PreviewPan: Equatable {
-    case steady(FollowPan?)
-    /// From `from` onto `target` along the ease curve over `easeDuration` of item time,
-    /// `progress` (0 to 1) of the way at `anchor` and moving on with item time after it.
-    case easing(from: PreviewPan, target: FollowPan?, anchor: TimeInterval, progress: Double)
+/// How much of each pan the preview draws, keyed by the pan's generation
+/// (`PreviewPanBlend.pans`). At rest one generation has all of it; an ease
+/// (`docs/UIUX.md` § "An automatic change moves, it never cuts") hands it to a new generation
+/// along SwiftUI's own animation of this value, in the same transaction that animates the zoom
+/// and the turn, so SwiftUI interpolates the pan's ease and the zoom's on the same frame by the
+/// same curve — an ease that interrupts another included, since SwiftUI adds the animations of a
+/// vector value the way it adds a scale's.
+struct PreviewPanWeights: VectorArithmetic {
+    /// A missing generation weighs nothing.
+    private(set) var values: [Int: Double]
 
-    static let easeDuration = ClipEditorViewModel.fitDuration
-
-    /// The pan this one is, or is easing onto.
-    var target: FollowPan? {
-        switch self {
-        case .steady(let pan): return pan
-        case .easing(_, let target, _, _): return target
-        }
+    init(_ values: [Int: Double] = [:]) {
+        self.values = values.filter { $0.value != 0 }
     }
 
-    var isEasing: Bool {
-        if case .easing = self { return true }
-        return false
+    static var zero: PreviewPanWeights { PreviewPanWeights() }
+
+    static func + (lhs: PreviewPanWeights, rhs: PreviewPanWeights) -> PreviewPanWeights {
+        PreviewPanWeights(lhs.values.merging(rhs.values, uniquingKeysWith: +))
     }
 
-    /// The picture's shift at `time`, in displayed pixels.
-    func shift(at time: TimeInterval) -> CGPoint {
-        switch self {
-        case .steady(let pan):
-            return pan?.shift(at: time) ?? .zero
-        case let .easing(from, target, anchor, progress):
-            let end = target?.shift(at: time) ?? .zero
-            guard time >= anchor else { return end }
-            let travel = Self.easeInOut(min(progress + (time - anchor) / Self.easeDuration, 1))
-            let start = from.shift(at: time)
-            return CGPoint(x: start.x + (end.x - start.x) * travel, y: start.y + (end.y - start.y) * travel)
-        }
+    static func - (lhs: PreviewPanWeights, rhs: PreviewPanWeights) -> PreviewPanWeights {
+        PreviewPanWeights(lhs.values.merging(rhs.values.mapValues { -$0 }, uniquingKeysWith: +))
     }
 
-    /// The ease's progress at `time` on the item's clock, if this is easing; past 1 once it has
-    /// arrived.
-    func progress(at time: TimeInterval) -> Double? {
-        guard case let .easing(_, _, anchor, progress) = self else { return nil }
-        return progress + max(time - anchor, 0) / Self.easeDuration
+    mutating func scale(by rhs: Double) {
+        self = PreviewPanWeights(values.mapValues { $0 * rhs })
     }
 
-    /// Every pan drawn, for the canvas's reach.
-    var pans: [FollowPan] {
-        switch self {
-        case .steady(let pan): return pan.map { [$0] } ?? []
-        case let .easing(from, target, _, _): return from.pans + (target.map { [$0] } ?? [])
-        }
-    }
-
-    /// The stretches of item time an ease is still under way in, where every frame needs its own
-    /// shift.
-    var easingSpans: [ClosedRange<TimeInterval>] {
-        guard case let .easing(from, _, anchor, progress) = self else { return [] }
-        let span = anchor...(anchor + max(1 - progress, 0) * Self.easeDuration)
-        return from.easingSpans + [span]
-    }
-
-    /// The zoom's ease (SwiftUI's `.easeInOut`, a cubic Bézier through (0.42, 0) and (0.58, 1)),
-    /// so the pan and the zoom move as one.
-    static func easeInOut(_ fraction: Double) -> Double {
-        // Exactly the ends at the ends: an ease's first frame is the frame on screen, unchanged.
-        guard fraction > 0 else { return 0 }
-        guard fraction < 1 else { return 1 }
-        let x = fraction
-        func bezier(_ along: Double, _ first: Double, _ second: Double) -> Double {
-            let rest = 1 - along
-            return 3 * rest * rest * along * first + 3 * rest * along * along * second + along * along * along
-        }
-        var low = 0.0, high = 1.0
-        for _ in 0..<30 {
-            let mid = (low + high) / 2
-            if bezier(mid, 0.42, 0.58) < x { low = mid } else { high = mid }
-        }
-        return bezier((low + high) / 2, 0, 1)
+    var magnitudeSquared: Double {
+        values.values.reduce(0) { $0 + $1 * $1 }
     }
 }
 
-/// The preview's frames with the pan drawn into them: an `AVVideoComposition` on the editor's
-/// item that places each source frame, at its own presentation time, shifted by the pan for
-/// that frame. The picture and its pan are one image, so they can't drift apart on any display;
-/// a synchronized layer animation keyed to the item's clock lands a display refresh off the
-/// picture on some playback passes on a device, depending on the pass's phase against the
-/// display (`docs/DESIGN.md` step 6, "Editor preview").
+/// What the preview moves the picture by: a blend of follow pans, `nil` among them meaning the
+/// picture unshifted, as Still draws it. The shift is worked out for the frame on screen at its
+/// own presentation time, so the pan never steps on a different refresh from its frame.
+struct PreviewPanBlend: Equatable {
+    /// The pans by generation; a generation without one draws the picture unshifted.
+    var pans: [Int: FollowPan]
+    var weights: PreviewPanWeights
+
+    /// The picture's shift for the frame presented at `time`, in displayed pixels.
+    func shift(at time: TimeInterval) -> CGPoint {
+        weights.values.reduce(into: CGPoint.zero) { sum, entry in
+            guard let shift = pans[entry.key]?.shift(at: time) else { return }
+            sum.x += shift.x * entry.value
+            sum.y += shift.y * entry.value
+        }
+    }
+}
+
+/// The editor's video frames, taken from the player item one display refresh at a time and handed
+/// to the views that show them (`EditorPlayerView`) — the editor's stage and the expansion
+/// flight's card.
 ///
-/// The canvas is the displayed frame padded on each side by as far as a pan could move it
-/// (`padding(videoSize:cropCenter:pans:)`), so a shifted frame is never cut; the player layer is
-/// laid out padded by the same amount, which puts the unshifted frame exactly on the video
-/// view's own bounds. Still plays through the same canvas unshifted, so a pan change or a mode
-/// switch swaps the composition but never the layout. A canvas past `maximumCanvasDimension`
-/// renders scaled down, which the layer scales back up.
-struct FollowPreviewComposition {
-    let videoComposition: AVVideoComposition
-    /// The canvas's render scale, 1 unless the padded canvas is too large to draw at full size.
-    let renderScale: CGFloat
+/// The frames don't go to an `AVPlayerLayer`: a player layer's frame reaches the screen on the
+/// render server's schedule, off the item's clock, while the zoom, the turn and the pan's ease are
+/// SwiftUI animations committed by the app, and the two land one to four display refreshes apart
+/// on an iPhone, differently on every ease (`docs/DESIGN.md` step 6, "Editor preview"). Here the
+/// frame due at the next refresh becomes a layer's contents in the same Core Animation transaction
+/// as its pan, and SwiftUI's frame carries the zoom, the turn and the pan's weights, so the whole
+/// picture reaches the screen in one commit, on the refresh the frame is due.
+///
+/// The frames keep the source's colour: an HLG take's stay HLG, and the layer tone maps them for
+/// the standard-range display itself, with shadows and midtones about a tenth darker than the
+/// player layer showed them (iPhone 13 mini; highlights and colour unchanged). An SDR take looks
+/// the same either way.
+@MainActor
+final class PreviewFrames {
+    /// The frames are drawn no larger than this on their long side: past it, the preview can't
+    /// show the detail at the editor's zoom range, and the buffers are held in the app.
+    nonisolated static let maximumDimension: CGFloat = 1920
 
-    static let maximumCanvasDimension: CGFloat = 4096
+    /// The frame shown now, and its presentation time on the item's clock.
+    private(set) var latest: (buffer: CVPixelBuffer, time: TimeInterval)?
+    private var output: AVPlayerItemVideoOutput?
+    private weak var item: AVPlayerItem?
+    private var link: CADisplayLink?
+    private var views: [WeakView] = []
 
-    /// How far the canvas reaches past the displayed frame on each side, in displayed pixels: as
-    /// far as the frame's farther edge is from the crop's center, which bounds a pan that keeps
-    /// the curve inside the frame, or further where one of `pans` already reaches further.
-    static func padding(videoSize: CGSize, cropCenter: CGPoint, pans: [FollowPan]) -> CGSize {
-        let shifts = pans.flatMap { [$0.initial] + $0.steps.map(\.shift) }
-        let width = max(cropCenter.x, videoSize.width - cropCenter.x, shifts.map { abs($0.x) }.max() ?? 0)
-        let height = max(cropCenter.y, videoSize.height - cropCenter.y, shifts.map { abs($0.y) }.max() ?? 0)
-        return CGSize(width: width.rounded(.up), height: height.rounded(.up))
+    private struct WeakView {
+        weak var view: EditorPlayerView.PlayerContainerView?
     }
 
-    /// `frames` are the source's frame times across `pan`'s easing spans, where the shift
-    /// changes on every frame; elsewhere it changes only on its pans' own steps.
-    init(
-        pan: PreviewPan, frames: [TimeInterval], padding: CGSize, geometry: VideoTrackGeometry,
-        trackID: CMPersistentTrackID, duration: CMTime, frameRate: Double
-    ) {
-        let size = geometry.displayedSize
-        let canvas = CGSize(width: size.width + 2 * padding.width, height: size.height + 2 * padding.height)
-        let scale = min(1, Self.maximumCanvasDimension / max(canvas.width, canvas.height, 1))
+    /// Takes frames from `item` from now on, as its video composition draws them
+    /// (`composition(track:trackID:duration:frameRate:)`).
+    func attach(to item: AVPlayerItem) {
+        if let output, let attached = self.item {
+            attached.remove(output)
+        }
+        self.item = item
+        let output = AVPlayerItemVideoOutput(outputSettings: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [String: any Sendable]()
+        ])
+        item.add(output)
+        self.output = output
+        latest = nil
+    }
+
+    /// The editor item's video composition: each frame turned upright and drawn at its displayed
+    /// size, within `maximumDimension`, on the source's own frame times. It never changes with the
+    /// framing, so it never has to be swapped on a playing item.
+    nonisolated static func composition(
+        track: VideoTrackGeometry, trackID: CMPersistentTrackID, duration: CMTime, frameRate: Double
+    ) -> AVVideoComposition {
+        let size = track.displayedSize
+        let scale = min(1, maximumDimension / max(size.width, size.height, 1))
         let composition = AVMutableVideoComposition()
-        composition.renderSize = CGSize(
-            width: (canvas.width * scale).rounded(.up), height: (canvas.height * scale).rounded(.up))
+        composition.renderSize = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
         composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(frameRate.rounded(), 1)))
-        // Renders once per source frame, at the source's own times, rather than on a fixed grid.
         composition.sourceTrackIDForFrameTiming = trackID
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
         let layerInstruction = AVMutableVideoCompositionLayerInstruction()
         layerInstruction.trackID = trackID
-        var times = Set(pan.pans.flatMap { $0.steps.map(\.time) })
-        for span in pan.easingSpans {
-            times.insert(span.lowerBound)
-            times.formUnion(frames.filter { span.contains($0) })
-        }
-        layerInstruction.setTransform(Self.transform(pan.shift(at: 0), geometry, padding, scale), at: .zero)
-        for time in times.sorted() where time > 0 {
-            // Just before the frame's own time, so a rounding up never leaves that frame on the
-            // previous transform.
-            let value = CMTimeValue(((time - 0.0005) * 90_000).rounded(.down))
-            layerInstruction.setTransform(
-                Self.transform(pan.shift(at: time), geometry, padding, scale),
-                at: CMTime(value: max(value, 1), timescale: 90_000))
-        }
+        layerInstruction.setTransform(
+            track.uprightTransform.concatenating(CGAffineTransform(scaleX: scale, y: scale)), at: .zero)
         instruction.layerInstructions = [layerInstruction]
         composition.instructions = [instruction]
-        videoComposition = composition
-        renderScale = scale
+        return composition
     }
 
-    /// Uprights the source frame, moves it onto the canvas by the padding and `shift`, and
-    /// scales the canvas to its render size.
-    static func transform(
-        _ shift: CGPoint, _ geometry: VideoTrackGeometry, _ padding: CGSize, _ scale: CGFloat
-    ) -> CGAffineTransform {
-        geometry.uprightTransform
-            .concatenating(CGAffineTransform(translationX: padding.width + shift.x, y: padding.height + shift.y))
-            .concatenating(CGAffineTransform(scaleX: scale, y: scale))
+    func register(_ view: EditorPlayerView.PlayerContainerView) {
+        views.removeAll { $0.view == nil || $0.view === view }
+        views.append(WeakView(view: view))
+        if let latest {
+            view.show(latest.buffer, at: latest.time, on: CACurrentMediaTime())
+        }
+        startLink()
+    }
+
+    func unregister(_ view: EditorPlayerView.PlayerContainerView) {
+        views.removeAll { $0.view == nil || $0.view === view }
+        if views.isEmpty {
+            link?.invalidate()
+            link = nil
+        }
+    }
+
+    private func startLink() {
+        guard link == nil else { return }
+        let link = CADisplayLink(target: DisplayLinkTarget { [weak self] link in self?.step(link) },
+                                 selector: #selector(DisplayLinkTarget.fire(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    /// Takes the frame due at the refresh this one prepares, if it's new, and shows it.
+    private func step(_ link: CADisplayLink) {
+        guard let output else { return }
+        let itemTime = output.itemTime(forHostTime: link.targetTimestamp)
+        guard output.hasNewPixelBuffer(forItemTime: itemTime) else { return }
+        var presentationTime = CMTime.zero
+        guard let buffer = output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: &presentationTime),
+              presentationTime.isNumeric
+        else { return }
+        latest = (buffer, presentationTime.seconds)
+        for entry in views {
+            entry.view?.show(buffer, at: presentationTime.seconds, on: link.targetTimestamp)
+        }
     }
 }
 
-/// The editor's video layer, laid out over the preview composition's padded canvas
-/// (`FollowPreviewComposition`), so the frame itself sits on the view's bounds; the pan and its
-/// eases are already in the frames. Shared by the editor's stage and the expansion flight's
-/// card, each with its own layer on the same player.
-struct EditorPlayerView: UIViewRepresentable {
-    let player: AVPlayer
-    /// The displayed frame's size in pixels, which `padding` is in.
-    let videoSize: CGSize
-    /// The preview composition's canvas padding (`FollowPreviewComposition.padding`).
-    var padding: CGSize = .zero
-    var onReadyForDisplay: (() -> Void)?
+/// A display link's target that runs a closure on each refresh.
+@MainActor
+final class DisplayLinkTarget: NSObject {
+    private let action: (CADisplayLink) -> Void
 
-    func makeUIView(context: Context) -> PlayerContainerView {
-        let view = PlayerContainerView()
-        view.attach(player)
-        view.onReadyForDisplay = onReadyForDisplay
-        view.update(videoSize: videoSize, padding: padding)
-        return view
+    init(_ action: @escaping (CADisplayLink) -> Void) {
+        self.action = action
     }
 
-    func updateUIView(_ view: PlayerContainerView, context: Context) {
-        view.attach(player)
-        view.onReadyForDisplay = onReadyForDisplay
-        view.update(videoSize: videoSize, padding: padding)
+    @objc func fire(_ link: CADisplayLink) {
+        action(link)
+    }
+}
+
+/// The editor's video: the frames `PreviewFrames` hands it, each moved by the pan for its own
+/// presentation time (`PreviewPanBlend`), laid out so the unshifted frame sits exactly on the
+/// view's bounds. Shared by the editor's stage and the expansion flight's card.
+///
+/// `animatableData` is the pan's weights, so SwiftUI hands this view each step of an ease in the
+/// same frame as the zoom and the turn it applies around it.
+struct EditorPlayerView: View, Animatable {
+    let frames: PreviewFrames
+    /// The source track's geometry, for the encoded frame's size and orientation; `nil` until
+    /// media info has loaded.
+    let track: VideoTrackGeometry?
+    var pan: PreviewPanBlend
+    var onReadyForDisplay: (() -> Void)?
+
+    var animatableData: PreviewPanWeights {
+        get { pan.weights }
+        set { pan.weights = newValue }
+    }
+
+    var body: some View {
+        Representable(frames: frames, track: track, pan: pan, onReadyForDisplay: onReadyForDisplay)
+    }
+
+    private struct Representable: UIViewRepresentable {
+        let frames: PreviewFrames
+        let track: VideoTrackGeometry?
+        let pan: PreviewPanBlend
+        let onReadyForDisplay: (() -> Void)?
+
+        func makeUIView(context: Context) -> PlayerContainerView {
+            let view = PlayerContainerView(frames: frames)
+            updateUIView(view, context: context)
+            return view
+        }
+
+        func updateUIView(_ view: PlayerContainerView, context: Context) {
+            view.onReadyForDisplay = onReadyForDisplay
+            view.update(track: track, pan: pan)
+        }
     }
 
     final class PlayerContainerView: UIView {
         var onReadyForDisplay: (() -> Void)?
-        private let playerLayer = AVPlayerLayer()
-        private var player: AVPlayer?
-        private var readyObservation: NSKeyValueObservation?
-        private var videoSize: CGSize = .zero
-        private var padding: CGSize = .zero
+        private let frames: PreviewFrames
+        private let videoLayer = CALayer()
+        private var track: VideoTrackGeometry?
+        private var pan = PreviewPanBlend(pans: [:], weights: .zero)
+        private var frameTime: TimeInterval?
+        /// The frame still on screen until the shown one's refresh.
+        private var outgoing: OutgoingPreviewFrame?
+        /// The frame shown, the one it replaces at its refresh, and the one before, kept until
+        /// replaced: the render server may still be drawing an earlier one when the next arrives.
+        private var heldBuffers: [CVPixelBuffer] = []
+        private var hasShownFrame = false
 
-        override init(frame: CGRect) {
-            super.init(frame: frame)
-            playerLayer.videoGravity = .resizeAspect
-            // `AVPlayerLayer` opts into extended dynamic range by default on an EDR display,
-            // which reads as blown out next to the SDR posters and the Photos player.
-            if #available(iOS 17.0, *) {
-                playerLayer.wantsExtendedDynamicRangeContent = false
-            }
-            layer.addSublayer(playerLayer)
-            readyObservation = playerLayer.observe(
-                \.isReadyForDisplay, options: [.initial, .new]
-            ) { [weak self] layer, _ in
-                guard layer.isReadyForDisplay else { return }
-                DispatchQueue.main.async { self?.onReadyForDisplay?() }
-            }
+        init(frames: PreviewFrames) {
+            self.frames = frames
+            super.init(frame: .zero)
+            videoLayer.contentsGravity = .resize
+            videoLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+            layer.addSublayer(videoLayer)
         }
 
         @available(*, unavailable)
@@ -274,26 +297,110 @@ struct EditorPlayerView: UIViewRepresentable {
             fatalError("init(coder:) is not used")
         }
 
-        func attach(_ player: AVPlayer) {
-            guard self.player !== player else { return }
-            self.player = player
-            playerLayer.player = player
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window != nil {
+                frames.register(self)
+            } else {
+                frames.unregister(self)
+            }
         }
 
-        func update(videoSize: CGSize, padding: CGSize) {
-            guard videoSize != self.videoSize || padding != self.padding else { return }
-            self.videoSize = videoSize
-            self.padding = padding
-            setNeedsLayout()
+        func update(track: VideoTrackGeometry?, pan: PreviewPanBlend) {
+            guard track != self.track || pan != self.pan else { return }
+            self.track = track
+            self.pan = pan
+            placeVideo()
         }
+
+        /// Shows `buffer`, presented at `time`, with the pan for that time, from the display refresh
+        /// at `refresh` on. The layer takes the frame at once and keeps the previous one on screen
+        /// until just before that refresh: a frame swapped in as it arrives sometimes reaches the
+        /// screen a refresh late, holding one frame and skipping the next (an iPhone 13 mini held
+        /// and skipped about one 60 fps frame in seven), while one handed over ahead of its refresh
+        /// is shown on it.
+        func show(_ buffer: CVPixelBuffer, at time: TimeInterval, on refresh: CFTimeInterval) {
+            let now = CACurrentMediaTime()
+            let handOver = refresh - Self.handOverMargin
+            outgoing = videoLayer.contents != nil && handOver - now > Self.handOverMargin
+                ? OutgoingPreviewFrame(contents: videoLayer.contents, time: frameTime, until: handOver)
+                : nil
+            heldBuffers = [buffer] + heldBuffers.prefix(2)
+            frameTime = time
+            videoLayer.contents = CVPixelBufferGetIOSurface(buffer)?.takeUnretainedValue()
+            placeVideo()
+            if !hasShownFrame {
+                hasShownFrame = true
+                DispatchQueue.main.async { [weak self] in self?.onReadyForDisplay?() }
+            }
+        }
+
+        /// How far ahead of its refresh a frame takes over from the one before.
+        private static let handOverMargin: CFTimeInterval = 0.002
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            let scale = videoSize.width > 0 ? bounds.width / videoSize.width : 0
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            playerLayer.frame = bounds.insetBy(dx: -padding.width * scale, dy: -padding.height * scale)
-            CATransaction.commit()
+            placeVideo()
+        }
+
+        /// Moves the video layer by the pan for the frame it shows, and the frame still on screen
+        /// until the new one's refresh by the pan for its own time, so an ease keeps moving the
+        /// picture on every refresh between. Never in a transaction of its own: an explicit
+        /// transaction that isn't nested commits on the spot, which can reach the screen a refresh
+        /// ahead of the zoom SwiftUI commits for the same frame. The changes ride whatever
+        /// transaction is open, SwiftUI's own while it calls `update`, and `actions` keeps them
+        /// from animating.
+        private func placeVideo() {
+            guard let track else { return }
+            let placement = EditorVideoPlacement(track: track, bounds: bounds, shift: shift(for: frameTime))
+            videoLayer.bounds = placement.bounds
+            videoLayer.position = placement.position
+            let now = CACurrentMediaTime()
+            guard let outgoing, outgoing.until > now else {
+                outgoing = nil
+                return
+            }
+            let held = EditorVideoPlacement(track: track, bounds: bounds, shift: shift(for: outgoing.time))
+            let contents = CABasicAnimation(keyPath: "contents")
+            contents.fromValue = outgoing.contents
+            contents.toValue = outgoing.contents
+            let position = CABasicAnimation(keyPath: "position")
+            position.fromValue = NSValue(cgPoint: held.position)
+            position.toValue = NSValue(cgPoint: held.position)
+            let hold = CAAnimationGroup()
+            hold.animations = [contents, position]
+            hold.beginTime = videoLayer.convertTime(now, from: nil)
+            hold.duration = outgoing.until - now
+            videoLayer.add(hold, forKey: "outgoing frame")
+        }
+
+        /// The pan for the frame presented at `time`: a hair past it, so a rounding below the
+        /// frame's own time never draws it with the step before.
+        private func shift(for time: TimeInterval?) -> CGPoint {
+            time.map { pan.shift(at: $0 + 0.0005) } ?? .zero
         }
     }
+}
+
+/// Where the editor's video layer goes in its view: the upright frame (as the item's composition
+/// draws it) the size of the view, moved by `shift` (displayed pixels) at the view's points per
+/// displayed pixel, so the unshifted frame fills the view's bounds.
+struct EditorVideoPlacement: Equatable {
+    let bounds: CGRect
+    let position: CGPoint
+
+    init(track: VideoTrackGeometry, bounds viewBounds: CGRect, shift: CGPoint) {
+        let displayed = track.displayedSize
+        let scale = displayed.width > 0 ? viewBounds.width / displayed.width : 0
+        bounds = CGRect(origin: .zero, size: viewBounds.size)
+        position = CGPoint(x: viewBounds.midX + shift.x * scale, y: viewBounds.midY + shift.y * scale)
+    }
+}
+
+/// A preview frame on screen until the next one's refresh (`EditorPlayerView`): its contents, its
+/// presentation time, and when it gives way, in `CACurrentMediaTime()`'s timeline.
+private struct OutgoingPreviewFrame {
+    let contents: Any?
+    let time: TimeInterval?
+    let until: CFTimeInterval
 }

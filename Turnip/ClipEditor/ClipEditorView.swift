@@ -307,12 +307,13 @@ struct ClipEditorView: View {
             }
             ZStack {
                 ClipEditorVideoSurface(
-                    player: viewModel.player,
+                    frames: viewModel.previewFrames,
+                    track: viewModel.trackGeometry,
                     geometry: viewModel.previewOverlay,
                     marker: marker,
                     layoutMarker: layoutMarker,
                     framing: viewModel.framing,
-                    padding: viewModel.previewPadding,
+                    pan: viewModel.previewPan,
                     gestureScale: gestureScale,
                     gestureRotation: gestureRotation,
                     gestureOffset: gestureOffset)
@@ -409,8 +410,8 @@ struct ClipEditorView: View {
         switch phase {
         case .changed(let translation):
             if follows {
-                // In Follow the move is drawn into the frames with the pan, so the keyframe set
-                // as the finger lifts lands on the very picture on screen.
+                // In Follow the move rides the pan, with each frame, so the keyframe set as the
+                // finger lifts lands on the very picture on screen.
                 viewModel.previewFollowDrag(isFollowDragDropped ? .zero : translation, previewScale: previewScale)
             } else {
                 gestureOffset = translation
@@ -615,15 +616,17 @@ struct ClipEditorView: View {
 /// the whole picture onto Follow's shorter one, so a mode switch animates as a transform — a
 /// player view's frame doesn't animate.
 struct ClipEditorVideoSurface: View {
-    let player: AVPlayer
+    let frames: PreviewFrames
+    /// The source track's geometry (`ClipEditorViewModel.trackGeometry`).
+    let track: VideoTrackGeometry?
     /// `ClipEditorViewModel.previewOverlay`: the displayed frame's size and the crop rect in
     /// it, both in displayed pixels. `nil` until media info has loaded.
     let geometry: (videoSize: CGSize, cropRect: CGRect)?
     let marker: CGRect
     var layoutMarker: CGRect?
     let framing: EditorFraming
-    /// The follow preview composition's canvas padding (`FollowPreviewComposition.padding`).
-    var padding: CGSize = .zero
+    /// Follow's pan (`ClipEditorViewModel.previewPan`).
+    let pan: PreviewPanBlend
     var gestureScale: CGFloat = 1
     var gestureRotation: Angle = .zero
     var gestureOffset: CGSize = .zero
@@ -644,9 +647,7 @@ struct ClipEditorVideoSurface: View {
         } ?? .center
         let markerScale = base.width > 0 ? marker.width / base.width : 1
         let adjustment = framing.adjustment
-        EditorPlayerView(
-            player: player, videoSize: geometry?.videoSize ?? .zero, padding: padding,
-            onReadyForDisplay: onReadyForDisplay)
+        EditorPlayerView(frames: frames, track: track, pan: pan, onReadyForDisplay: onReadyForDisplay)
             .frame(width: frame.width, height: frame.height)
             .scaleEffect(adjustment.scale * gestureScale, anchor: cropCenter)
             .rotationEffect(Angle(radians: adjustment.rotationRadians) + gestureRotation, anchor: cropCenter)

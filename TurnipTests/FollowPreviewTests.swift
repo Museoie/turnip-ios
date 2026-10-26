@@ -2,8 +2,9 @@ import AVFoundation
 import XCTest
 @testable import Turnip
 
-/// The editor's follow preview drawn into the frames: the pan an ease draws at each moment, and
-/// the composition's canvas and per-frame transforms.
+/// The editor's follow preview: the pan a blend of generations draws for a frame, the weights
+/// SwiftUI animates between them, where the video layer goes, and the composition that draws the
+/// frames upright.
 final class FollowPreviewTests: XCTestCase {
     /// A pan that moves the picture 200 px left between 1 s and 2 s, one step per 30 fps frame.
     private let pan: FollowPan = {
@@ -18,58 +19,12 @@ final class FollowPreviewTests: XCTestCase {
         return FollowPan(crop: crop, cropCenter: CGPoint(x: 200, y: 50), frames: frames)
     }()
 
-    private let duration = PreviewPan.easeDuration
-
-    func testASteadyPanDrawsItsOwnShiftAndNoPanDrawsNone() {
-        XCTAssertEqual(PreviewPan.steady(pan).shift(at: 1.5), pan.shift(at: 1.5))
-        XCTAssertEqual(PreviewPan.steady(nil).shift(at: 1.5), .zero)
-    }
-
-    /// An ease starts on exactly what the frames showed, arrives on the target after
-    /// `easeDuration` of item time, and shows the target before its anchor, where only a loop or
-    /// a seek takes the player.
-    func testAnEaseRunsFromTheFramesShiftOntoTheTargetOnTheItemsClock() {
-        let ease = PreviewPan.easing(from: .steady(nil), target: pan, anchor: 1.2, progress: 0)
-        XCTAssertEqual(ease.shift(at: 1.2), .zero)
-        let arrived = 1.2 + duration
-        XCTAssertEqual(ease.shift(at: arrived).x, pan.shift(at: arrived).x, accuracy: 1e-9)
-        XCTAssertEqual(ease.shift(at: 1.0), pan.shift(at: 1.0))
-        let halfway = ease.shift(at: 1.2 + duration / 2)
-        XCTAssertEqual(halfway.x, pan.shift(at: 1.2 + duration / 2).x / 2, accuracy: 1e-6)
-    }
-
-    /// A paused ease is redrawn with its progress stepped on the wall clock and its anchor on the
-    /// frame on screen; resuming carries on from that progress on the item's clock.
-    func testAnEaseCarriesOnFromItsProgressAtTheAnchor() {
-        let ease = PreviewPan.easing(from: .steady(nil), target: pan, anchor: 1.5, progress: 0.75)
-        XCTAssertEqual(ease.progress(at: 1.5), 0.75)
-        XCTAssertEqual(ease.progress(at: 1.5 + duration / 4) ?? 0, 1, accuracy: 1e-9)
-        let travel = PreviewPan.easeInOut(0.75)
-        XCTAssertEqual(ease.shift(at: 1.5).x, pan.shift(at: 1.5).x * travel, accuracy: 1e-6)
-        XCTAssertEqual(ease.easingSpans, [1.5...(1.5 + duration / 4)])
-        XCTAssertNil(PreviewPan.steady(pan).progress(at: 1.5))
-    }
-
-    /// A new ease over one still running starts from wherever the running one has the picture.
-    func testAnEaseOverAnEaseStartsFromTheRunningOne() {
-        let running = PreviewPan.easing(from: .steady(nil), target: pan, anchor: 1.2, progress: 0)
-        let next = PreviewPan.easing(from: running, target: nil, anchor: 1.3, progress: 0)
-        XCTAssertEqual(next.shift(at: 1.3), running.shift(at: 1.3))
-        XCTAssertEqual(next.target, nil)
-        XCTAssertEqual(next.easingSpans.count, 2)
-        XCTAssertEqual(next.pans, [pan])
-    }
-
-    /// The zoom's curve: SwiftUI's `.easeInOut`, the cubic Bézier through (0.42, 0) and (0.58, 1).
-    func testTheEaseCurveIsTheZoomsEaseInOut() {
-        XCTAssertEqual(PreviewPan.easeInOut(0), 0, accuracy: 1e-9)
-        XCTAssertEqual(PreviewPan.easeInOut(1), 1, accuracy: 1e-9)
-        XCTAssertEqual(PreviewPan.easeInOut(0.5), 0.5, accuracy: 1e-6)
-        XCTAssertEqual(PreviewPan.easeInOut(0.25), 0.1291, accuracy: 1e-3)
-        for step in 0...20 {
-            let fraction = Double(step) / 20
-            XCTAssertEqual(PreviewPan.easeInOut(fraction) + PreviewPan.easeInOut(1 - fraction), 1, accuracy: 1e-6)
-        }
+    /// A pan that holds the picture at `shift` throughout.
+    private func still(_ shift: CGPoint) -> FollowPan {
+        let crop = FollowCrop(
+            scale: 1, rotationRadians: 0, keyframes: [], restingCenter: CGPoint(x: -shift.x, y: -shift.y),
+            isAutoFollow: false)
+        return FollowPan(crop: crop, cropCenter: .zero, frames: [])
     }
 
     func testAMovedPanMovesEveryStep() {
@@ -81,55 +36,134 @@ final class FollowPreviewTests: XCTestCase {
         }
     }
 
-    /// The canvas reaches as far as the frame's farther edge from the crop's center, so a curve
-    /// that stays in the frame never pushes the picture off it, or further for a pan that does.
-    func testTheCanvasReachesAsFarAsAPanCanMoveThePicture() {
-        let size = CGSize(width: 640, height: 360)
-        XCTAssertEqual(
-            FollowPreviewComposition.padding(videoSize: size, cropCenter: CGPoint(x: 200, y: 180), pans: []),
-            CGSize(width: 440, height: 180))
-        XCTAssertEqual(
-            FollowPreviewComposition.padding(videoSize: size, cropCenter: CGPoint(x: 600, y: 180), pans: [pan]),
-            CGSize(width: 600, height: 180))
-        let far = pan.moved(by: CGPoint(x: -900, y: 0))
-        XCTAssertEqual(
-            FollowPreviewComposition.padding(videoSize: size, cropCenter: CGPoint(x: 200, y: 180), pans: [far]).width,
-            1000)
-    }
+    /// Each generation's pan counts by its weight, at the frame's own time; a generation without
+    /// a pan, as Still has, draws the picture unshifted.
+    func testABlendDrawsEachPanByItsWeight() {
+        let steady = PreviewPanBlend(pans: [3: pan], weights: PreviewPanWeights([3: 1]))
+        XCTAssertEqual(steady.shift(at: 1.5), pan.shift(at: 1.5))
+        XCTAssertEqual(PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1])).shift(at: 1.5), .zero)
 
-    /// Each frame is drawn at its own shift: uprighted, moved onto the canvas by the padding and
-    /// the pan, and scaled when the canvas is too large to draw at full size.
-    func testTheCompositionDrawsEachFrameAtItsShift() throws {
-        let geometry = VideoTrackGeometry(naturalSize: CGSize(width: 640, height: 360), preferredTransform: .identity)
-        let padding = CGSize(width: 440, height: 180)
-        let preview = PreviewPan.easing(from: .steady(nil), target: pan, anchor: 1.2, progress: 0)
-        let frames = (36...48).map { TimeInterval($0) / 30 }
-        let composition = FollowPreviewComposition(
-            pan: preview, frames: frames, padding: padding, geometry: geometry, trackID: 1,
-            duration: CMTime(value: 6, timescale: 1), frameRate: 30)
-        XCTAssertEqual(composition.renderScale, 1)
-        XCTAssertEqual(composition.videoComposition.renderSize, CGSize(width: 1520, height: 720))
-        let instruction = try XCTUnwrap(
-            composition.videoComposition.instructions.first as? AVVideoCompositionInstruction)
-        let layer = try XCTUnwrap(instruction.layerInstructions.first)
-        for time in [1.0, 1.2, 1.3, 1.5, 1.8] {
-            var start = CGAffineTransform.identity, end = CGAffineTransform.identity
-            var range = CMTimeRange.zero
-            XCTAssertTrue(layer.getTransformRamp(
-                for: CMTime(value: CMTimeValue(time * 90_000) + 1, timescale: 90_000),
-                start: &start, end: &end, timeRange: &range))
-            let expected = preview.shift(at: time)
-            XCTAssertEqual(start.tx, padding.width + expected.x, accuracy: 1e-6, "at \(time) s")
-            XCTAssertEqual(start.ty, padding.height + expected.y, accuracy: 1e-6, "at \(time) s")
+        let easing = PreviewPanBlend(pans: [3: pan], weights: PreviewPanWeights([2: 0.25, 3: 0.75]))
+        for time in [1.2, 1.5, 1.8] {
+            XCTAssertEqual(easing.shift(at: time).x, pan.shift(at: time).x * 0.75, accuracy: 1e-9)
+            XCTAssertEqual(easing.shift(at: time).y, pan.shift(at: time).y * 0.75, accuracy: 1e-9)
         }
     }
 
-    func testALargeCanvasDrawsScaledDown() {
-        let geometry = VideoTrackGeometry(naturalSize: CGSize(width: 3840, height: 2160), preferredTransform: .identity)
-        let composition = FollowPreviewComposition(
-            pan: .steady(nil), frames: [], padding: CGSize(width: 1920, height: 1080), geometry: geometry,
-            trackID: 1, duration: CMTime(value: 6, timescale: 1), frameRate: 30)
-        XCTAssertEqual(composition.renderScale, 4096 / 7680, accuracy: 1e-9)
-        XCTAssertEqual(composition.videoComposition.renderSize, CGSize(width: 4096, height: 2304))
+    /// The weights add, subtract and scale generation by generation, and a generation that comes
+    /// to nothing drops out, so a finished ease compares equal to its target.
+    func testWeightsWorkGenerationByGeneration() {
+        let first = PreviewPanWeights([1: 1])
+        let second = PreviewPanWeights([2: 1])
+        XCTAssertEqual(first + second, PreviewPanWeights([1: 1, 2: 1]))
+        XCTAssertEqual(second - first, PreviewPanWeights([1: -1, 2: 1]))
+        XCTAssertEqual(first - first, .zero)
+        XCTAssertEqual((first - first).values, [:])
+        var scaled = second - first
+        scaled.scale(by: 0.5)
+        XCTAssertEqual(scaled, PreviewPanWeights([1: -0.5, 2: 0.5]))
+        XCTAssertEqual(scaled.magnitudeSquared, 0.5, accuracy: 1e-12)
+        XCTAssertEqual(PreviewPanWeights([1: 0, 2: 1]), second)
+    }
+
+    /// SwiftUI runs an animation that interrupts another by adding it to the one still running:
+    /// the value is the target less what each animation has yet to travel. Done to the weights,
+    /// that moves the pan by the same law as a zoom animated in the same transactions, and the
+    /// weights always add up to the whole picture.
+    func testAnInterruptedEaseMovesThePanAsTheZoomMoves() {
+        let shifts = [CGPoint(x: 0, y: 0), CGPoint(x: 120, y: -30), CGPoint(x: -60, y: 90)]
+        let pans = [0: still(shifts[0]), 1: still(shifts[1]), 2: still(shifts[2])]
+        let targets = [PreviewPanWeights([0: 1]), PreviewPanWeights([1: 1]), PreviewPanWeights([2: 1])]
+        /// A value animated from `values[0]` to `values[1]`, then on to `values[2]` partway.
+        func animated(_ values: [Double], _ first: Double, _ second: Double) -> Double {
+            values[2] - (values[1] - values[0]) * (1 - first) - (values[2] - values[1]) * (1 - second)
+        }
+        // The second ease starts 0.15 s into the first; both run 0.4 s. Before it starts, the
+        // first's target is the value's.
+        for time in stride(from: 0.0, through: 0.6, by: 0.05) {
+            let first = PreviewPanWeights.easeInOut(min(time / 0.4, 1))
+            let second = time < 0.15 ? 0 : PreviewPanWeights.easeInOut(min((time - 0.15) / 0.4, 1))
+            var firstRemaining = targets[1] - targets[0]
+            firstRemaining.scale(by: 1 - first)
+            var secondRemaining = targets[2] - targets[1]
+            secondRemaining.scale(by: 1 - second)
+            let weights = time < 0.15 ? targets[1] - firstRemaining : targets[2] - firstRemaining - secondRemaining
+            XCTAssertEqual(weights.values.values.reduce(0, +), 1, accuracy: 1e-9, "at \(time) s")
+
+            let shift = PreviewPanBlend(pans: pans, weights: weights).shift(at: 0)
+            let expected = CGPoint(
+                x: animated(shifts.map { Double($0.x) }, first, second),
+                y: animated(shifts.map { Double($0.y) }, first, second))
+            XCTAssertEqual(shift.x, expected.x, accuracy: 1e-9, "at \(time) s")
+            XCTAssertEqual(shift.y, expected.y, accuracy: 1e-9, "at \(time) s")
+        }
+    }
+
+    /// The video layer is the view's size, so the upright frame fills it, moved by the pan at the
+    /// view's points per displayed pixel.
+    func testTheVideoLayerFillsTheViewMovedByThePan() {
+        let track = VideoTrackGeometry(
+            naturalSize: CGSize(width: 1920, height: 1080),
+            preferredTransform: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1080, ty: 0))
+        let view = CGRect(x: 0, y: 0, width: 270, height: 480)
+        let placement = EditorVideoPlacement(track: track, bounds: view, shift: CGPoint(x: 40, y: -12))
+        XCTAssertEqual(placement.bounds, CGRect(x: 0, y: 0, width: 270, height: 480))
+        XCTAssertEqual(placement.position.x, 135 + 40 * 0.25, accuracy: 1e-9)
+        XCTAssertEqual(placement.position.y, 240 - 12 * 0.25, accuracy: 1e-9)
+    }
+
+    /// The editor item's composition turns every orientation a camera writes upright, mirrored
+    /// included, and draws a frame larger than the cap scaled down to it.
+    func testTheCompositionDrawsEveryOrientationUprightWithinTheCap() throws {
+        let transforms: [CGAffineTransform] = [
+            .identity,
+            CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1080, ty: 0),
+            CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: 1920, ty: 1080),
+            CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: 1920),
+            CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 1920, ty: 0)
+        ]
+        for (natural, scale) in [(CGSize(width: 1920, height: 1080), 1.0), (CGSize(width: 3840, height: 2160), 0.5)] {
+            for base in transforms {
+                // The same turn for a frame of this size.
+                let transform = CGAffineTransform(
+                    a: base.a, b: base.b, c: base.c, d: base.d,
+                    tx: base.tx * natural.width / 1920, ty: base.ty * natural.width / 1920)
+                let track = VideoTrackGeometry(naturalSize: natural, preferredTransform: transform)
+                let composition = PreviewFrames.composition(
+                    track: track, trackID: 1, duration: CMTime(value: 6, timescale: 1), frameRate: 30)
+                let displayed = track.displayedSize
+                XCTAssertEqual(composition.renderSize.width, displayed.width * scale, accuracy: 1)
+                XCTAssertEqual(composition.renderSize.height, displayed.height * scale, accuracy: 1)
+                let instruction = try XCTUnwrap(composition.instructions.first as? AVVideoCompositionInstruction)
+                let layer = try XCTUnwrap(instruction.layerInstructions.first)
+                var start = CGAffineTransform.identity, end = CGAffineTransform.identity
+                var range = CMTimeRange.zero
+                XCTAssertTrue(layer.getTransformRamp(for: .zero, start: &start, end: &end, timeRange: &range))
+                for corner in [CGPoint.zero, CGPoint(x: natural.width, y: natural.height)] {
+                    let drawn = corner.applying(start)
+                    let upright = corner.applying(track.uprightTransform)
+                    XCTAssertEqual(drawn.x, upright.x * scale, accuracy: 1e-6, "\(transform) \(corner)")
+                    XCTAssertEqual(drawn.y, upright.y * scale, accuracy: 1e-6, "\(transform) \(corner)")
+                }
+            }
+        }
+    }
+}
+
+private extension PreviewPanWeights {
+    /// SwiftUI's `.easeInOut`: the cubic Bézier through (0.42, 0) and (0.58, 1).
+    static func easeInOut(_ fraction: Double) -> Double {
+        guard fraction > 0 else { return 0 }
+        guard fraction < 1 else { return 1 }
+        func bezier(_ along: Double, _ first: Double, _ second: Double) -> Double {
+            let rest = 1 - along
+            return 3 * rest * rest * along * first + 3 * rest * along * along * second + along * along * along
+        }
+        var low = 0.0, high = 1.0
+        for _ in 0..<40 {
+            let mid = (low + high) / 2
+            if bezier(mid, 0.42, 0.58) < fraction { low = mid } else { high = mid }
+        }
+        return bezier((low + high) / 2, 0, 1)
     }
 }

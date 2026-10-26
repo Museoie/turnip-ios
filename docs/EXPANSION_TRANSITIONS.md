@@ -1,5 +1,13 @@
 # Photos-style expansion transitions
 
+*Rev 15 · 2026-10-23.* The editor and the card no longer draw the player
+through `AVPlayerLayer`s: one `AVPlayerItemVideoOutput` hands each frame to
+both video views (`PreviewFrames`), which show it with Follow's pan in the
+app's own commit (`DESIGN.md` step 6, "Editor preview"). The card is still the
+editor's own player, now a second view on the same frames, and the opening
+flight waits for that view to show its first frame where it waited for the
+card's `AVPlayerLayer` to report `isReadyForDisplay`.
+
 *Rev 14 · 2026-10-09.* A released swipe-to-dismiss closes only past a commit
 distance (a quarter of the drag's full travel) or on a flick; a shorter or
 slower one springs back to fully open. See "Rev 14" near the end.
