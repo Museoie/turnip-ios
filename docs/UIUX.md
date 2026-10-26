@@ -1,5 +1,13 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 19 · 2026-10-26 · Planned, not built: Follow mode's keyframes hold the
+zoom and the turn as well as the position (§4, "Zoom and turn by keyframe").
+Pinch and two-finger rotate set the keyframe at the playhead the way a drag
+does, and a long press on a diamond can give every keyframe its zoom and
+turn. Auto follow zooms with the athlete, keeping the still crop's padding and
+never tighter than a crop 1,024 source pixels on its longer side, and writes
+one turn for the whole clip. Decision 8 records the change.*
+
 *Rev 18 · 2026-10-23 · The user chooses whose tricks become clips: the one
 person the pose model is surest of, or everyone it finds, each with clips of
 their own. The choice is a control on the camera (§1b) and a picker above
@@ -44,7 +52,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -707,7 +715,9 @@ default empty state, so it never reads as "your library is empty."
       (in seconds, not frame numbers) and where the video sits under the marker
       at that moment. Zoom and level belong to the whole clip: a zoom per
       keyframe would make the clip breathe in and out, and a turn per keyframe
-      would tilt the horizon partway through. Between keyframes the crop moves
+      would tilt the horizon partway through (*planned, Rev 19:* each keyframe
+      gets its own zoom and turn; see "Zoom and turn by keyframe" below).
+      Between keyframes the crop moves
       on one smooth curve through all of them. It eases out of the first
       keyframe and into the last, and passes through the ones between without
       stopping. Easing each stretch between two keyframes separately would stop
@@ -746,10 +756,11 @@ default empty state, so it never reads as "your library is empty."
       rotate change the whole clip's zoom and level exactly as in Still mode;
       their slide doesn't set a keyframe: a drag during which the pinch or rotate
       reported anything sets none, since real fingers land at different moments.
+      (*Planned, Rev 19:* pinch and rotate set the playhead's keyframe too.)
     - **Auto follow.** Frames the athlete through the window at the current
       rotation: the pipeline's follow path for the window (`DESIGN.md` step 6),
       reduced to a few keyframes, at the zoom that holds the athlete at every
-      moment. Like Auto crop, it keeps the rotation, replaces the zoom and the
+      moment (*planned, Rev 19:* a zoom of its own at each keyframe). Like Auto crop, it keeps the rotation, replaces the zoom and the
       positions, and discards keyframes the user set. The video moves to the
       path at the playhead over the same 0.4 s ease and then follows it.
       Switching a detected clip to Follow when it has no follow crop yet runs
@@ -781,8 +792,9 @@ default empty state, so it never reads as "your library is empty."
     - **Trim.** A trim never moves a keyframe the user set or moved: a trim is
       not a re-crop (Rev 8). One deliberate exception: a follow crop that is
       still entirely Auto follow's, every diamond hollow, re-tracks the new
-      window when the handle is released, positions only and at the same zoom,
-      moving there the way Auto follow does. Rev 15's Clip List refit also
+      window when the handle is released, positions only and at the same zoom
+      (*planned, Rev 19:* positions and zoom, at the same turn), moving there
+      the way Auto follow does. Rev 15's Clip List refit also
       resized the crop, and resizing on a trim is what Rev 8 removed: it made
       the video shrink under the marker as the window grew. Still mode is
       unchanged: its framing never follows a trim.
@@ -797,6 +809,55 @@ default empty state, so it never reads as "your library is empty."
       keyframe, Next keyframe, Add keyframe and Remove keyframe to its actions. The
       lane is adjustable: swiping up or down scrubs a tenth of a second, the trim
       handles' step.
+    - *Planned (Rev 19):* **Zoom and turn by keyframe.** A keyframe holds the
+      whole crop for its moment, as a still crop does: where the video sits
+      under the marker, its zoom and its turn. Everything above holds, with
+      these changes:
+      - **The curve.** Position, zoom and turn each move on their own smooth
+        curve through the keyframes, easing at the ends and passing through
+        the keyframes between without stopping, as the position does now. Zoom
+        moves in proportion, so going from 1× to 2× takes as long as going from
+        2× to 4×.
+      - **Gestures.** A pinch and a two-finger rotate set the keyframe at the
+        playhead exactly as a drag does: within 0.1 s of a keyframe they change
+        it, and anywhere else they add one that starts from where the curves
+        already are, so nothing jumps. One two-finger gesture can move, zoom and
+        turn the same keyframe at once, and the keyframe is written when the
+        fingers lift. Touch-down pauses playback, as for a drag. The rule that a
+        drag sets nothing when a pinch or rotate reported during it goes away,
+        since all three now write the same keyframe.
+      - **Apply to every keyframe.** A long press on a diamond also offers
+        "Apply zoom and turn to all keyframes": every keyframe takes that
+        keyframe's zoom and turn and keeps its own position, moving there over
+        the 0.4 s ease. It is the one way to make the whole clip tighter, wider
+        or more level at once. It counts as the user's change, so the keyframes
+        fill in. The crop area offers the same action to VoiceOver, taking the
+        zoom and turn at the playhead.
+      - **Auto follow** writes positions and zoom from the pose, and one turn
+        for the whole clip: the turn the crop has at the playhead. The zoom keeps
+        the still crop's padding, a tenth of the body's box on each side, and
+        follows the room the athlete needs over a moment rather than each limb:
+        it widens before a reach would leave the crop, ignores small changes, and
+        closes in more slowly than it opens. So it changes as the athlete comes
+        toward the camera or moves away, not with every tuck and extension, which
+        is the breathing that kept the zoom clip-wide until now. It never zooms
+        tighter than a crop whose longer side is 1,024 source pixels, or the
+        frame's own longer side when that is shorter: export enlarges a tighter
+        crop to the clip's output size, and the picture goes soft. It never zooms
+        wider than the frame. Where a crop whose zoom and turn both change would
+        show beyond the frame between two keyframes, it adds a keyframe.
+      - **Auto rotate and Reset rotate** in Follow mode give every keyframe the
+        clip's leveling turn, or none, replacing turns set by hand the way Auto
+        crop replaces a pinch. Positions and zoom stay.
+      - **Diamonds.** A diamond fills once its position, zoom or turn has
+        changed. Removing a keyframe Auto follow wrote and the user changed puts
+        back all three.
+      - **Trim.** A follow crop that is still all Auto follow's re-tracks a
+        trimmed window's positions and zoom, at the same turn. Its zoom follows
+        each moment's own need, so a wider window no longer widens every moment,
+        the effect Rev 8 removed.
+      - **Manual zoom.** A pinch keeps the editor's own zoom range. The 1,024
+        pixel floor bounds only what Auto follow chooses.
 
 ## Out of scope for this doc
 
@@ -914,4 +975,17 @@ Resolved 2026-09-04.
    for both modes, which would shorten Still's too; switching a detected clip
    to Follow runs Auto follow at once rather than waiting for a tap; and an
    Auto follow nobody has touched re-tracks a trimmed window, positions only,
-   while a touched one stays put.
+   while a touched one stays put. *Revised, recorded 2026-10-26 (Rev 19,
+   planned): keyframes hold zoom and turn as well as position. Zoom was kept
+   clip-wide so the clip wouldn't breathe with the athlete's limbs; Auto
+   follow's zoom now follows a smoothed need for room, with the still crop's
+   padding, so it changes with distance rather than with each tuck. A turn
+   stays one value when Auto follow writes it, since the horizon belongs to
+   the camera, and changes over the clip only where the user sets it. Pinch
+   and rotate join the drag in setting the playhead's keyframe, so the three
+   gestures mean one thing, and "Apply zoom and turn to all keyframes" keeps a
+   way to change the whole clip at once. Auto follow never zooms tighter than
+   a crop 1,024 source pixels on its longer side, because export enlarges
+   anything tighter. The rendering worry no longer applies: export draws one
+   transform per frame, so a turn that changes between keyframes is drawn
+   exactly at every frame.*
