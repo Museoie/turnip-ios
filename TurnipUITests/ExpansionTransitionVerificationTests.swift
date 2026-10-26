@@ -2,7 +2,8 @@ import XCTest
 
 /// Verification of the expansion transitions in `docs/EXPANSION_TRANSITIONS.md`: the
 /// containers' geometry, and what their close paths hand back. Runs with the rest of
-/// `TurnipUITests` in the scheme's test action, so CI's `xcodebuild test` covers it. Reads
+/// `TurnipUITests` in the scheme's test action. CI runs unit tests only, so run
+/// this bundle locally. Reads
 /// element frames via the accessibility tree (reported independent of an element's current
 /// opacity) rather than screenshots/pixels, since that gives an exact rect instead of a
 /// color guess.

@@ -86,7 +86,7 @@ struct TurnipApp: App {
             }
             // Forced here, not just in `ContentView`, so the DEBUG-only screenshot
             // harnesses above — which never mount `ContentView` — render dark too.
-            // The app is black-on-dark throughout; CI's PR screenshots are only
+            // The app is black-on-dark throughout; screenshots are only
             // honest about that if the harnesses match what a user actually sees.
             .preferredColorScheme(.dark)
         }
