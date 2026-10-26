@@ -32,6 +32,9 @@ struct CropGestureSurface: UIViewRepresentable {
     /// The first finger landing, before any of the three has recognized anything: where a
     /// gesture that has to know about every finger it saw starts counting.
     var onTouchDown: () -> Void = {}
+    /// The last finger lifting, or the system taking the last touch: with the three's own ends,
+    /// where such a gesture knows it is over.
+    var onTouchesUp: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(surface: self)
@@ -41,6 +44,7 @@ struct CropGestureSurface: UIViewRepresentable {
         let view = TouchView()
         view.backgroundColor = .clear
         view.onTouchDown = onTouchDown
+        view.onTouchesUp = onTouchesUp
         let coordinator = context.coordinator
         let pan = UIPanGestureRecognizer(target: coordinator, action: #selector(Coordinator.pan(_:)))
         pan.maximumNumberOfTouches = 1
@@ -59,11 +63,13 @@ struct CropGestureSurface: UIViewRepresentable {
     func updateUIView(_ uiView: TouchView, context: Context) {
         context.coordinator.surface = self
         uiView.onTouchDown = onTouchDown
+        uiView.onTouchesUp = onTouchesUp
     }
 
-    /// Counts the fingers down, to report the first one landing.
+    /// Counts the fingers down, to report the first one landing and the last one lifting.
     final class TouchView: UIView {
         var onTouchDown: () -> Void = {}
+        var onTouchesUp: () -> Void = {}
         private var touchesDown = 0
 
         override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -72,11 +78,17 @@ struct CropGestureSurface: UIViewRepresentable {
         }
 
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-            touchesDown = max(touchesDown - touches.count, 0)
+            lift(touches.count)
         }
 
         override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-            touchesDown = max(touchesDown - touches.count, 0)
+            lift(touches.count)
+        }
+
+        private func lift(_ count: Int) {
+            guard touchesDown > 0 else { return }
+            touchesDown = max(touchesDown - count, 0)
+            if touchesDown == 0 { onTouchesUp() }
         }
     }
 

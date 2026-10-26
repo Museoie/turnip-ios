@@ -310,11 +310,12 @@ final class FollowCropTests: XCTestCase {
         let pan = FollowPan(crop: crop, cropCenter: CGPoint(x: 200, y: 50), frames: frames)
 
         XCTAssertEqual(frames.count, 32, "thirty-one frames across the span and the first after it")
-        XCTAssertEqual(pan.initial, CGPoint(x: 100, y: 0))
-        XCTAssertEqual(pan.shift(at: 0.5), CGPoint(x: 100, y: 0))
-        XCTAssertEqual(pan.shift(at: 1.5).x, 0, accuracy: 1e-9)
-        XCTAssertEqual(pan.shift(at: 1.5 + 0.5 / 30).x, pan.shift(at: 1.5).x, "steps, not glides")
-        XCTAssertEqual(pan.shift(at: 5), CGPoint(x: -100, y: 0))
+        XCTAssertEqual(pan.initial.shift, CGPoint(x: 100, y: 0))
+        XCTAssertEqual(pan.framing(at: 0.5).shift, CGPoint(x: 100, y: 0))
+        XCTAssertEqual(pan.framing(at: 1.5).shift.x, 0, accuracy: 1e-9)
+        XCTAssertEqual(
+            pan.framing(at: 1.5 + 0.5 / 30).shift.x, pan.framing(at: 1.5).shift.x, "steps, not glides")
+        XCTAssertEqual(pan.framing(at: 5).shift, CGPoint(x: -100, y: 0))
     }
 
     func testAStillFollowCropHasNoSteps() {
@@ -325,7 +326,7 @@ final class FollowCropTests: XCTestCase {
         let pan = FollowPan(crop: crop, cropCenter: CGPoint(x: 30, y: 10), frames: [1, 2, 3])
 
         XCTAssertTrue(pan.steps.isEmpty)
-        XCTAssertEqual(pan.initial, CGPoint(x: 20, y: 0))
+        XCTAssertEqual(pan.initial.shift, CGPoint(x: 20, y: 0))
     }
 
     /// The real times come off the track's own samples: a 30 fps movie reads back on its

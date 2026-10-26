@@ -3,59 +3,76 @@ import QuartzCore
 import SwiftUI
 import UIKit
 
-/// A follow crop's movement in the editor's preview: how far the picture is shifted, in the
-/// source's displayed pixels, at each frame the player can show — the crop's center moved
-/// onto the clip's crop center, before the zoom and turn apply about it.
+/// How the preview draws one frame: the picture shifted, in the source's displayed pixels, so
+/// that the framing's center lands on the clip's crop center, then zoomed and turned about it —
+/// the order a follow crop is exported in (`ClipExportTransform.make(followCrop:…)`).
+struct PreviewFraming: Equatable {
+    var shift: CGPoint
+    /// `CropAdjustment.scale`'s meaning.
+    var scale: CGFloat
+    var rotationRadians: Double
+
+    static let identity = PreviewFraming(shift: .zero, scale: 1, rotationRadians: 0)
+
+    /// A still adjustment's picture in these terms: the source point it puts at the marker's
+    /// center (`FramingConversion.followCenter`) moved onto the crop center, at its zoom and turn.
+    init(still adjustment: CropAdjustment, cropCenter: CGPoint) {
+        let center = FramingConversion.followCenter(of: adjustment, cropCenter: cropCenter)
+        self.init(
+            shift: CGPoint(x: cropCenter.x - center.x, y: cropCenter.y - center.y),
+            scale: adjustment.scale, rotationRadians: adjustment.rotationRadians)
+    }
+
+    init(shift: CGPoint, scale: CGFloat, rotationRadians: Double) {
+        self.shift = shift
+        self.scale = scale
+        self.rotationRadians = rotationRadians
+    }
+}
+
+/// A follow crop's movement in the editor's preview: how the picture is drawn at each frame the
+/// player can show — the crop's center at that frame moved onto the clip's crop center, at that
+/// frame's zoom and turn.
 ///
-/// The shift steps once per source frame, on the frame's own presentation time: the preview
-/// moves the picture with the frame it shows (`EditorPlayerView`).
+/// It steps once per source frame, on the frame's own presentation time: the preview draws the
+/// picture with the frame it shows (`EditorPlayerView`).
 struct FollowPan: Equatable {
-    /// The shift before the first step.
-    let initial: CGPoint
-    /// Each step's frame time and the shift from then on, in time order.
-    let steps: [(time: TimeInterval, shift: CGPoint)]
+    /// The framing before the first step.
+    let initial: PreviewFraming
+    /// Each step's frame time and the framing from then on, in time order.
+    let steps: [(time: TimeInterval, framing: PreviewFraming)]
 
     /// `frames` are the presentation times across the crop's moving span
     /// (`VideoFrameTimes.frames(across:)`); a crop that never moves has no steps.
     init(crop: FollowCrop, cropCenter: CGPoint, frames: [TimeInterval]) {
         let path = crop.path
-        func shift(at time: TimeInterval) -> CGPoint {
-            let center = path.center(at: time)
-            return CGPoint(x: cropCenter.x - center.x, y: cropCenter.y - center.y)
+        func framing(at time: TimeInterval) -> PreviewFraming {
+            let framing = path.framing(at: time)
+            return PreviewFraming(
+                shift: CGPoint(x: cropCenter.x - framing.center.x, y: cropCenter.y - framing.center.y),
+                scale: framing.scale, rotationRadians: framing.rotationRadians)
         }
-        initial = shift(at: path.movingSpan?.lowerBound ?? 0)
-        steps = path.movingSpan == nil ? [] : frames.map { ($0, shift(at: $0)) }
+        initial = framing(at: path.movingSpan?.lowerBound ?? 0)
+        steps = path.movingSpan == nil ? [] : frames.map { ($0, framing(at: $0)) }
     }
 
-    private init(initial: CGPoint, steps: [(time: TimeInterval, shift: CGPoint)]) {
-        self.initial = initial
-        self.steps = steps
-    }
-
-    func shift(at time: TimeInterval) -> CGPoint {
-        steps.last { $0.time <= time }?.shift ?? initial
-    }
-
-    /// The same pan with the picture moved a further `offset` at every moment.
-    func moved(by offset: CGPoint) -> FollowPan {
-        func move(_ shift: CGPoint) -> CGPoint { CGPoint(x: shift.x + offset.x, y: shift.y + offset.y) }
-        return FollowPan(initial: move(initial), steps: steps.map { ($0.time, move($0.shift)) })
+    func framing(at time: TimeInterval) -> PreviewFraming {
+        steps.last { $0.time <= time }?.framing ?? initial
     }
 
     static func == (lhs: FollowPan, rhs: FollowPan) -> Bool {
         lhs.initial == rhs.initial
             && lhs.steps.count == rhs.steps.count
-            && zip(lhs.steps, rhs.steps).allSatisfy { $0.time == $1.time && $0.shift == $1.shift }
+            && zip(lhs.steps, rhs.steps).allSatisfy { $0.time == $1.time && $0.framing == $1.framing }
     }
 }
 
 /// How much of each pan the preview draws, keyed by the pan's generation
 /// (`PreviewPanBlend.pans`). At rest one generation has all of it; an ease
 /// (`docs/UIUX.md` § "An automatic change moves, it never cuts") hands it to a new generation
-/// along SwiftUI's own animation of this value, in the same transaction that animates the zoom
-/// and the turn, so SwiftUI interpolates the pan's ease and the zoom's on the same frame by the
-/// same curve — an ease that interrupts another included, since SwiftUI adds the animations of a
-/// vector value the way it adds a scale's.
+/// along SwiftUI's own animation of this value, so the pan, the zoom and the turn move onto the
+/// new generation's by the same curve on the same frame — an ease that interrupts another
+/// included, since SwiftUI adds the animations of a vector value the way it adds a scale's.
 struct PreviewPanWeights: VectorArithmetic {
     /// A missing generation weighs nothing.
     private(set) var values: [Int: Double]
@@ -83,21 +100,53 @@ struct PreviewPanWeights: VectorArithmetic {
     }
 }
 
-/// What the preview moves the picture by: a blend of follow pans, `nil` among them meaning the
-/// picture unshifted, as Still draws it. The shift is worked out for the frame on screen at its
-/// own presentation time, so the pan never steps on a different refresh from its frame.
+/// What the preview draws the picture with: a blend of follow pans, `nil` among them meaning
+/// Still's framing. Each frame's framing is worked out at the frame's own presentation time, so
+/// the pan, the zoom and the turn never step on a different refresh from their frame.
+///
+/// The blend weighs each generation's shift, zoom and turn and adds them up, so an ease
+/// (`PreviewPanWeights`) moves all three along SwiftUI's curve together, the way SwiftUI used to
+/// animate a zoom and turn of the whole clip.
 struct PreviewPanBlend: Equatable {
-    /// The pans by generation; a generation without one draws the picture unshifted.
+    /// The pans by generation; a generation without one draws Still's framing.
     var pans: [Int: FollowPan]
     var weights: PreviewPanWeights
+    /// Still's framing (`ClipEditorViewModel.cropAdjustment`). SwiftUI animates it, as it animates
+    /// the weights, so Auto crop and Auto rotate move the picture as they always have.
+    var still: CropAdjustment = .identity
 
-    /// The picture's shift for the frame presented at `time`, in displayed pixels.
-    func shift(at time: TimeInterval) -> CGPoint {
-        weights.values.reduce(into: CGPoint.zero) { sum, entry in
-            guard let shift = pans[entry.key]?.shift(at: time) else { return }
-            sum.x += shift.x * entry.value
-            sum.y += shift.y * entry.value
+    /// The picture's framing for the frame presented at `time`, with a live pinch's `gestureScale`
+    /// and a live turn's `gestureRotation` on top. `cropCenter` is the clip's crop center, in
+    /// displayed pixels. A still framing keeps its on-screen offset through a pinch, as Still's
+    /// pinch commits it (`ClipEditorViewModel.applyCropScale`); a follow framing keeps its center.
+    func framing(
+        at time: TimeInterval, cropCenter: CGPoint, gestureScale: CGFloat = 1, gestureRotation: Double = 0
+    ) -> PreviewFraming {
+        var total = PreviewFraming(shift: .zero, scale: 0, rotationRadians: 0)
+        var weight: Double = 0
+        for (generation, share) in weights.values {
+            var framing: PreviewFraming
+            if let pan = pans[generation] {
+                framing = pan.framing(at: time)
+                framing.scale *= gestureScale
+                framing.rotationRadians += gestureRotation
+            } else {
+                var adjustment = still
+                adjustment.scale *= gestureScale
+                adjustment.rotationRadians += gestureRotation
+                framing = PreviewFraming(still: adjustment, cropCenter: cropCenter)
+            }
+            total.shift.x += framing.shift.x * share
+            total.shift.y += framing.shift.y * share
+            total.scale += framing.scale * share
+            total.rotationRadians += framing.rotationRadians * share
+            weight += share
         }
+        // An ease's weights add up to one; this only keeps rounding off the zoom.
+        guard weight > 1e-9 else { return .identity }
+        return PreviewFraming(
+            shift: CGPoint(x: total.shift.x / weight, y: total.shift.y / weight),
+            scale: total.scale / weight, rotationRadians: total.rotationRadians / weight)
     }
 }
 
@@ -106,12 +155,12 @@ struct PreviewPanBlend: Equatable {
 /// flight's card.
 ///
 /// The frames don't go to an `AVPlayerLayer`: a player layer's frame reaches the screen on the
-/// render server's schedule, off the item's clock, while the zoom, the turn and the pan's ease are
-/// SwiftUI animations committed by the app, and the two land one to four display refreshes apart
-/// on an iPhone, differently on every ease (`docs/DESIGN.md` step 6, "Editor preview"). Here the
-/// frame due at the next refresh becomes a layer's contents in the same Core Animation transaction
-/// as its pan, and SwiftUI's frame carries the zoom, the turn and the pan's weights, so the whole
-/// picture reaches the screen in one commit, on the refresh the frame is due.
+/// render server's schedule, off the item's clock, while an ease is a SwiftUI animation committed
+/// by the app, and the two land one to four display refreshes apart on an iPhone, differently on
+/// every ease (`docs/DESIGN.md` step 6, "Editor preview"). Here the frame due at the next refresh
+/// becomes a layer's contents in the same Core Animation transaction as its pan, zoom and turn,
+/// and SwiftUI's frame carries an ease's step and the marker's placement, so the whole picture
+/// reaches the screen in one commit, on the refresh the frame is due.
 ///
 /// The frames keep the source's colour: an HLG take's stay HLG, and the layer tone maps them for
 /// the standard-range display itself, with shadows and midtones about a tenth darker than the
@@ -246,33 +295,57 @@ final class DisplayLinkTarget: NSObject {
     }
 }
 
-/// The editor's video: the frames `PreviewFrames` hands it, each moved by the pan for its own
-/// presentation time (`PreviewPanBlend`), laid out so the unshifted frame sits exactly on the
-/// view's bounds. Shared by the editor's stage and the expansion flight's card.
+/// The editor's video: the frames `PreviewFrames` hands it, each drawn with the framing for its
+/// own presentation time (`PreviewPanBlend`) — shifted, zoomed and turned about the clip's crop
+/// center — laid out so the unshifted frame sits exactly on the view's bounds. Shared by the
+/// editor's stage and the expansion flight's card.
 ///
-/// `animatableData` is the pan's weights, so SwiftUI hands this view each step of an ease in the
-/// same frame as the zoom and the turn it applies around it.
+/// `animatableData` is the pan's weights and Still's framing, so SwiftUI hands this view each
+/// step of an ease, and the view draws it on the frame on screen in the same commit.
 struct EditorPlayerView: View, Animatable {
     let frames: PreviewFrames
     /// The source track's geometry, for the encoded frame's size and orientation; `nil` until
     /// media info has loaded.
     let track: VideoTrackGeometry?
+    /// The clip's crop center, in displayed pixels: what the picture zooms and turns about.
+    let cropCenter: CGPoint
     var pan: PreviewPanBlend
+    /// A live pinch and turn, drawn on top of the framing until they commit
+    /// (`CropGestureSurface`).
+    var gestureScale: CGFloat = 1
+    var gestureRotation: Double = 0
     var onReadyForDisplay: (() -> Void)?
 
-    var animatableData: PreviewPanWeights {
-        get { pan.weights }
-        set { pan.weights = newValue }
+    /// The weights, then Still's zoom, turn and offset.
+    typealias AnimatableData = AnimatablePair<
+        PreviewPanWeights, AnimatablePair<CGFloat, AnimatablePair<Double, CGSize.AnimatableData>>
+    >
+
+    var animatableData: AnimatableData {
+        get {
+            AnimatablePair(pan.weights, AnimatablePair(
+                pan.still.scale, AnimatablePair(pan.still.rotationRadians, pan.still.offset.animatableData)))
+        }
+        set {
+            pan.weights = newValue.first
+            pan.still.scale = newValue.second.first
+            pan.still.rotationRadians = newValue.second.second.first
+            pan.still.offset.animatableData = newValue.second.second.second
+        }
     }
 
     var body: some View {
-        Representable(frames: frames, track: track, pan: pan, onReadyForDisplay: onReadyForDisplay)
+        Representable(
+            frames: frames, track: track,
+            drawing: EditorPlayerDrawing(
+                pan: pan, cropCenter: cropCenter, gestureScale: gestureScale, gestureRotation: gestureRotation),
+            onReadyForDisplay: onReadyForDisplay)
     }
 
     private struct Representable: UIViewRepresentable {
         let frames: PreviewFrames
         let track: VideoTrackGeometry?
-        let pan: PreviewPanBlend
+        let drawing: EditorPlayerDrawing
         let onReadyForDisplay: (() -> Void)?
 
         func makeUIView(context: Context) -> PlayerContainerView {
@@ -283,7 +356,7 @@ struct EditorPlayerView: View, Animatable {
 
         func updateUIView(_ view: PlayerContainerView, context: Context) {
             view.onReadyForDisplay = onReadyForDisplay
-            view.update(track: track, pan: pan)
+            view.update(track: track, drawing: drawing)
         }
     }
 
@@ -292,7 +365,7 @@ struct EditorPlayerView: View, Animatable {
         private let frames: PreviewFrames
         private let videoLayer = CALayer()
         private var track: VideoTrackGeometry?
-        private var pan = PreviewPanBlend(pans: [:], weights: .zero)
+        private var drawing = EditorPlayerDrawing(pan: PreviewPanBlend(pans: [:], weights: .zero), cropCenter: .zero)
         private var frameTime: TimeInterval?
         /// The frame still on screen until the shown one's refresh.
         private var outgoing: OutgoingPreviewFrame?
@@ -305,7 +378,10 @@ struct EditorPlayerView: View, Animatable {
             self.frames = frames
             super.init(frame: .zero)
             videoLayer.contentsGravity = .resize
-            videoLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+            videoLayer.actions = [
+                "contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "anchorPoint": NSNull(),
+                "transform": NSNull()
+            ]
             layer.addSublayer(videoLayer)
         }
 
@@ -323,19 +399,19 @@ struct EditorPlayerView: View, Animatable {
             }
         }
 
-        func update(track: VideoTrackGeometry?, pan: PreviewPanBlend) {
-            guard track != self.track || pan != self.pan else { return }
+        func update(track: VideoTrackGeometry?, drawing: EditorPlayerDrawing) {
+            guard track != self.track || drawing != self.drawing else { return }
             self.track = track
-            self.pan = pan
+            self.drawing = drawing
             placeVideo()
         }
 
-        /// Shows `buffer`, presented at `time`, with the pan for that time, from the display refresh
-        /// at `refresh` on. The layer takes the frame at once and keeps the previous one on screen
-        /// until just before that refresh: a frame swapped in as it arrives sometimes reaches the
-        /// screen a refresh late, holding one frame and skipping the next (an iPhone 13 mini held
-        /// and skipped about one 60 fps frame in seven), while one handed over ahead of its refresh
-        /// is shown on it.
+        /// Shows `buffer`, presented at `time`, with the framing for that time, from the display
+        /// refresh at `refresh` on. The layer takes the frame at once and keeps the previous one on
+        /// screen until just before that refresh: a frame swapped in as it arrives sometimes
+        /// reaches the screen a refresh late, holding one frame and skipping the next (an iPhone 13
+        /// mini held and skipped about one 60 fps frame in seven), while one handed over ahead of
+        /// its refresh is shown on it.
         func show(_ buffer: CVPixelBuffer, at time: TimeInterval, on refresh: CFTimeInterval) {
             let now = CACurrentMediaTime()
             let handOver = refresh - Self.handOverMargin
@@ -360,57 +436,89 @@ struct EditorPlayerView: View, Animatable {
             placeVideo()
         }
 
-        /// Moves the video layer by the pan for the frame it shows, and the frame still on screen
-        /// until the new one's refresh by the pan for its own time, so an ease keeps moving the
-        /// picture on every refresh between. Never in a transaction of its own: an explicit
-        /// transaction that isn't nested commits on the spot, which can reach the screen a refresh
-        /// ahead of the zoom SwiftUI commits for the same frame. The changes ride whatever
+        /// Draws the video layer with the framing for the frame it shows, and the frame still on
+        /// screen until the new one's refresh with the framing for its own time, so an ease keeps
+        /// moving the picture on every refresh between. Never in a transaction of its own: an
+        /// explicit transaction that isn't nested commits on the spot, which can reach the screen a
+        /// refresh ahead of what SwiftUI commits for the same frame. The changes ride whatever
         /// transaction is open, SwiftUI's own while it calls `update`, and `actions` keeps them
         /// from animating.
         private func placeVideo() {
             guard let track else { return }
-            let placement = EditorVideoPlacement(track: track, bounds: bounds, shift: shift(for: frameTime))
+            let placement = placement(for: frameTime, track: track)
             videoLayer.bounds = placement.bounds
+            videoLayer.anchorPoint = placement.anchorPoint
             videoLayer.position = placement.position
+            videoLayer.setAffineTransform(placement.transform)
             let now = CACurrentMediaTime()
             guard let outgoing, outgoing.until > now else {
                 outgoing = nil
                 return
             }
-            let held = EditorVideoPlacement(track: track, bounds: bounds, shift: shift(for: outgoing.time))
+            let held = CATransform3DMakeAffineTransform(self.placement(for: outgoing.time, track: track).transform)
             let contents = CABasicAnimation(keyPath: "contents")
             contents.fromValue = outgoing.contents
             contents.toValue = outgoing.contents
-            let position = CABasicAnimation(keyPath: "position")
-            position.fromValue = NSValue(cgPoint: held.position)
-            position.toValue = NSValue(cgPoint: held.position)
+            let transform = CABasicAnimation(keyPath: "transform")
+            transform.fromValue = NSValue(caTransform3D: held)
+            transform.toValue = NSValue(caTransform3D: held)
             let hold = CAAnimationGroup()
-            hold.animations = [contents, position]
+            hold.animations = [contents, transform]
             hold.beginTime = videoLayer.convertTime(now, from: nil)
             hold.duration = outgoing.until - now
             videoLayer.add(hold, forKey: "outgoing frame")
         }
 
-        /// The pan for the frame presented at `time`: a hair past it, so a rounding below the
-        /// frame's own time never draws it with the step before.
-        private func shift(for time: TimeInterval?) -> CGPoint {
-            time.map { pan.shift(at: $0 + 0.0005) } ?? .zero
+        /// Where the frame presented at `time` goes: drawn with the framing a hair past its time,
+        /// so a rounding below the frame's own time never draws it with the step before.
+        private func placement(for time: TimeInterval?, track: VideoTrackGeometry) -> EditorVideoPlacement {
+            let framing = time.map { drawing.framing(at: $0 + 0.0005) } ?? drawing.framing(at: nil)
+            return EditorVideoPlacement(
+                track: track, bounds: bounds, cropCenter: drawing.cropCenter, framing: framing)
         }
     }
 }
 
-/// Where the editor's video layer goes in its view: the upright frame (as the item's composition
-/// draws it) the size of the view, moved by `shift` (displayed pixels) at the view's points per
-/// displayed pixel, so the unshifted frame fills the view's bounds.
+/// What `EditorPlayerView` draws its frames with: the blend of framings, the crop center they
+/// zoom and turn about, and a live pinch and turn.
+struct EditorPlayerDrawing: Equatable {
+    var pan: PreviewPanBlend
+    var cropCenter: CGPoint
+    var gestureScale: CGFloat = 1
+    var gestureRotation: Double = 0
+
+    /// The framing for the frame presented at `time`; before any frame, the blend at time zero.
+    func framing(at time: TimeInterval?) -> PreviewFraming {
+        pan.framing(
+            at: time ?? 0, cropCenter: cropCenter, gestureScale: gestureScale, gestureRotation: gestureRotation)
+    }
+}
+
+/// Where the editor's video layer goes in its view, and how it is drawn: the upright frame (as the
+/// item's composition draws it) the size of the view, so the unshifted frame fills the view's
+/// bounds, then shifted by the framing's shift (displayed pixels, at the view's points per
+/// displayed pixel) and zoomed and turned about the crop center.
 struct EditorVideoPlacement: Equatable {
     let bounds: CGRect
+    /// The crop center, as a fraction of the layer's bounds: what the transform turns about.
+    let anchorPoint: CGPoint
+    /// The crop center in the view.
     let position: CGPoint
+    let transform: CGAffineTransform
 
-    init(track: VideoTrackGeometry, bounds viewBounds: CGRect, shift: CGPoint) {
+    init(track: VideoTrackGeometry, bounds viewBounds: CGRect, cropCenter: CGPoint, framing: PreviewFraming) {
         let displayed = track.displayedSize
         let scale = displayed.width > 0 ? viewBounds.width / displayed.width : 0
         bounds = CGRect(origin: .zero, size: viewBounds.size)
-        position = CGPoint(x: viewBounds.midX + shift.x * scale, y: viewBounds.midY + shift.y * scale)
+        anchorPoint = displayed.width > 0 && displayed.height > 0
+            ? CGPoint(x: cropCenter.x / displayed.width, y: cropCenter.y / displayed.height)
+            : CGPoint(x: 0.5, y: 0.5)
+        position = CGPoint(
+            x: viewBounds.minX + anchorPoint.x * viewBounds.width,
+            y: viewBounds.minY + anchorPoint.y * viewBounds.height)
+        transform = CGAffineTransform(translationX: framing.shift.x * scale, y: framing.shift.y * scale)
+            .concatenating(CGAffineTransform(scaleX: framing.scale, y: framing.scale))
+            .concatenating(CGAffineTransform(rotationAngle: framing.rotationRadians))
     }
 }
 

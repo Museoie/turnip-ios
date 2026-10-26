@@ -1112,8 +1112,8 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(viewModel.result.framingMode, .follow)
     }
 
-    /// A pinch in Follow zooms the follow crop and hands Auto follow's button back; Still's
-    /// zoom and its Auto crop stay as they were.
+    /// A pinch in Follow zooms the follow crop at the playhead and hands Auto follow's button
+    /// back; Still's zoom and its Auto crop stay as they were.
     @MainActor
     func testAPinchInFollowZoomsTheFollowCropOnly() throws {
         let viewModel = makeFollowViewModel()
@@ -1125,10 +1125,10 @@ final class ClipEditorTests: XCTestCase {
         viewModel.applyCropScale(0.5)
 
         let after = try XCTUnwrap(viewModel.followCrop)
-        XCTAssertEqual(after.keyframes.map(\.center), before.keyframes.map(\.center))
-        for (zoomed, original) in zip(after.keyframes, before.keyframes) {
-            XCTAssertEqual(zoomed.scale, original.scale * 0.5, accuracy: 1e-9)
-        }
+        let time = viewModel.currentTime
+        XCTAssertEqual(
+            after.path.framing(at: time).scale, before.path.framing(at: time).scale * 0.5, accuracy: 1e-6)
+        XCTAssertEqual(after.path.framing(at: time).center.x, before.path.framing(at: time).center.x, accuracy: 1e-6)
         XCTAssertFalse(viewModel.isAutoFollowApplied)
         XCTAssertEqual(viewModel.cropAdjustment, still)
         XCTAssertTrue(viewModel.isAutoCropApplied)
@@ -1365,6 +1365,156 @@ final class ClipEditorTests: XCTestCase {
         let added = try XCTUnwrap(viewModel.followCrop?.keyframes.first { $0.time == 0 })
         XCTAssertNil(added.autoCenter, "the button adds a hand-set keyframe where the curve is")
         XCTAssertEqual(added.center, CGPoint(x: 140, y: 50))
+    }
+
+    /// A pinch and a turn set the playhead's keyframe, as a drag does: within reach of one they
+    /// change it alone, and it fills.
+    @MainActor
+    func testAPinchAndATurnSetThePlayheadsKeyframe() throws {
+        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+
+        viewModel.applyCropScale(1.5)
+        viewModel.applyCropRotation(0.2)
+
+        let crop = try XCTUnwrap(viewModel.followCrop)
+        XCTAssertEqual(crop.keyframes.count, 2)
+        XCTAssertEqual(crop.keyframes[0].scale, 3, accuracy: 1e-9)
+        XCTAssertEqual(crop.keyframes[0].rotationRadians, 0.2, accuracy: 1e-9)
+        XCTAssertEqual(crop.keyframes[0].center, CGPoint(x: 60, y: 50))
+        XCTAssertFalse(crop.keyframes[0].isAutoFollows)
+        XCTAssertEqual(crop.keyframes[1], handFollowCrop().keyframes[1], "the keyframe away from the playhead")
+        XCTAssertFalse(viewModel.isAutoFollowApplied)
+    }
+
+    /// A pinch keeps the editor's own zoom range: the 1,024 pixel floor is only Auto follow's.
+    @MainActor
+    func testAPinchInFollowKeepsTheEditorsZoomRange() throws {
+        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+
+        viewModel.applyCropScale(1000)
+
+        XCTAssertEqual(viewModel.followCrop?.keyframes[0].scale, ClipEditorViewModel.scaleRange.upperBound)
+    }
+
+    /// One two-finger gesture writes its drag, pinch and turn into one keyframe as the fingers
+    /// lift, and the picture it leaves is the one the live gesture drew: the preview's framing
+    /// at the playhead, with the live pinch and turn and the drag on screen on top, lands every
+    /// source point where the committed keyframe draws it.
+    @MainActor
+    func testOneGestureWritesTheKeyframeTheLivePreviewDrew() throws {
+        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+        let previewScale: CGFloat = 0.5
+        let translation = CGSize(width: 20, height: -6)
+        let cropCenter = CGPoint(x: 100, y: 50)
+        let live = viewModel.previewPan.framing(
+            at: viewModel.currentTime, cropCenter: cropCenter, gestureScale: 2, gestureRotation: .pi / 2)
+
+        viewModel.applyFollowGesture(translation: translation, previewScale: previewScale, scale: 2, rotation: .pi / 2)
+
+        let crop = try XCTUnwrap(viewModel.followCrop)
+        XCTAssertEqual(crop.keyframes.count, 2)
+        XCTAssertEqual(crop.keyframes[0].scale, 4, accuracy: 1e-9)
+        XCTAssertEqual(crop.keyframes[0].rotationRadians, .pi / 2, accuracy: 1e-9)
+        let committed = viewModel.previewPan.framing(at: viewModel.currentTime, cropCenter: cropCenter)
+        /// Where a framing draws `point`, in on-screen points from the marker's center, with a
+        /// further on-screen `offset`.
+        func drawn(_ point: CGPoint, _ framing: PreviewFraming, offset: CGSize = .zero) -> CGPoint {
+            let moved = CGPoint(
+                x: (point.x - cropCenter.x + framing.shift.x) * framing.scale * previewScale,
+                y: (point.y - cropCenter.y + framing.shift.y) * framing.scale * previewScale)
+                .applying(CGAffineTransform(rotationAngle: framing.rotationRadians))
+            return CGPoint(x: moved.x + offset.width, y: moved.y + offset.height)
+        }
+        for point in [CGPoint(x: 60, y: 50), CGPoint(x: 0, y: 0), CGPoint(x: 180, y: 90)] {
+            let before = drawn(point, live, offset: translation), after = drawn(point, committed)
+            XCTAssertEqual(after.x, before.x, accuracy: 1e-6, "\(point)")
+            XCTAssertEqual(after.y, before.y, accuracy: 1e-6, "\(point)")
+        }
+    }
+
+    /// Away from every keyframe a pinch adds one from where the curves already are, zoomed.
+    @MainActor
+    func testAPinchAwayFromKeyframesAddsOneFromTheCurves() throws {
+        var crop = handFollowCrop()
+        for index in crop.keyframes.indices {
+            crop.keyframes[index].time += 1
+        }
+        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: crop)
+
+        viewModel.applyCropScale(1.5)
+
+        let after = try XCTUnwrap(viewModel.followCrop)
+        XCTAssertEqual(after.keyframes.count, 3)
+        let added = try XCTUnwrap(after.keyframes.first { $0.time == 0 })
+        XCTAssertEqual(added.center, crop.path.center(at: 0))
+        XCTAssertEqual(added.scale, 3, accuracy: 1e-9)
+        XCTAssertNil(added.autoFraming)
+    }
+
+    /// Removing a keyframe Auto follow wrote, after a drag, a pinch and a turn changed it, puts
+    /// back all three.
+    @MainActor
+    func testRemovingAChangedKeyframeRestoresItsPositionZoomAndTurn() throws {
+        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+        viewModel.applyFollowGesture(
+            translation: CGSize(width: 10, height: 4), previewScale: 1, scale: 1.3, rotation: -0.1)
+        let changed = try XCTUnwrap(viewModel.keyframeAtPlayhead)
+        XCTAssertFalse(changed.isAutoFollows)
+
+        viewModel.removeKeyframe(changed)
+
+        XCTAssertEqual(viewModel.followCrop?.keyframes, handFollowCrop().keyframes)
+    }
+
+    /// "Apply zoom and turn to all keyframes" gives every keyframe one keyframe's zoom and turn and
+    /// keeps every position. The keyframes it changes are the user's, and the picture eases there.
+    @MainActor
+    func testApplyingAKeyframesZoomAndTurnToAllKeepsThePositions() throws {
+        var crop = handFollowCrop()
+        crop.keyframes.append(FollowKeyframe(time: 2, center: CGPoint(x: 90, y: 40), scale: 1.2, rotationRadians: 0))
+        crop.keyframes.sort { $0.time < $1.time }
+        crop.keyframes[0].scale = 3
+        crop.keyframes[0].rotationRadians = 0.25
+        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: crop)
+        let weights = viewModel.previewPan.weights
+
+        viewModel.applyZoomAndTurnToAllKeyframes(from: crop.keyframes[0])
+
+        let applied = try XCTUnwrap(viewModel.followCrop)
+        XCTAssertEqual(applied.keyframes.map(\.center), crop.keyframes.map(\.center))
+        XCTAssertEqual(applied.keyframes.map(\.scale), [3, 3, 3])
+        XCTAssertEqual(applied.keyframes.map(\.rotationRadians), [0.25, 0.25, 0.25])
+        XCTAssertTrue(applied.keyframes.allSatisfy { !$0.isAutoFollows })
+        XCTAssertFalse(viewModel.isAutoFollowApplied)
+        XCTAssertNotEqual(viewModel.previewPan.weights, weights, "it eases onto a new generation")
+
+        viewModel.applyCropScale(2)
+        viewModel.applyZoomAndTurnAtPlayheadToAllKeyframes()
+        XCTAssertEqual(viewModel.followCrop?.keyframes.map(\.scale), [6, 6, 6])
+    }
+
+    /// Without keyframes there is nothing to apply.
+    @MainActor
+    func testApplyingToAllWithoutKeyframesDoesNothing() {
+        let viewModel = makeFollowViewModel(frames: [])
+        viewModel.setFramingMode(.follow)
+        let crop = viewModel.followCrop
+
+        viewModel.applyZoomAndTurnAtPlayheadToAllKeyframes()
+
+        XCTAssertEqual(viewModel.followCrop, crop)
+    }
+
+    /// Still's framing rides the preview's blend, so its eases animate with it.
+    @MainActor
+    func testStillsFramingRidesThePreviewBlend() {
+        let viewModel = makeFollowViewModel()
+
+        viewModel.applyCropScale(2)
+        viewModel.applyCropOffset(CGSize(width: 10, height: 0), previewScale: 1)
+
+        XCTAssertEqual(viewModel.previewPan.still, viewModel.cropAdjustment)
+        XCTAssertNil(viewModel.previewPan.pans[0])
     }
 
     /// In Still a drag moves the whole clip and sets no keyframe.

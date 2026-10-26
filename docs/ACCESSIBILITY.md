@@ -168,15 +168,17 @@ control:
   they step by (`CropAdjustmentDescription`), so a press is heard to have done something.
 - **Still and Follow** (UIUX §4, Rev 16): the mode switch is a standard segmented control,
   and "Edit clip" stays the screen's header, drawn clear in the switch's slot. In Follow the
-  crop area's four moves set or move the keyframe at the playhead, as a one-finger drag does
-  there, and it adds Previous keyframe, Next keyframe, Add keyframe and Remove keyframe;
-  Reset follow stands in for Reset crop. Its value reads the active mode's zoom and turn.
+  crop area's zooms, turns and moves set the keyframe at the playhead, as the gestures do
+  there (UIUX §4, Rev 19), and it adds Previous keyframe, Next keyframe, Add keyframe, Remove
+  keyframe and Apply zoom and turn to all keyframes; Reset follow stands in for Reset crop.
+  Its value reads the active mode's zoom and turn at the playhead.
   The follow lane is one adjustable element labeled "Follow keyframes": its value counts the
   keyframes and says where the playhead is, and a swipe up or down scrubs a tenth of a
   second, the trim handles' step — without it the lane is a pure drag surface. The lane's
   trailing button reads "Add keyframe" or "Remove keyframe" for what a tap does at the
-  playhead, so the long press on a diamond, a gesture VoiceOver can't aim, has a reachable
-  twin. Hollow and filled diamonds differ in fill, not only color. "Nothing to follow" uses
+  playhead, and the crop area's Apply zoom and turn to all keyframes takes the zoom and turn
+  at the playhead, so both choices of the long press on a diamond, a gesture VoiceOver can't
+  aim, have a reachable twin. Hollow and filled diamonds differ in fill, not only color. "Nothing to follow" uses
   the same notice as "No horizon found".
 - Player controls labeled. The scrub track carries a label, its position as a value, and an
   adjustable action seeking ±1 s: without one it is a pure drag surface, where a listener can

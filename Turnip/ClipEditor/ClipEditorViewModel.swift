@@ -47,13 +47,6 @@ enum CropAdjustmentDescription {
     }
 }
 
-/// What the editor's preview draws over the frames for the active framing mode: the zoom, turn
-/// and on-screen offset (`CropAdjustment`'s terms; a follow crop has no offset). Follow's pan
-/// moves each frame with it (`PreviewPanBlend`).
-struct EditorFraming: Equatable {
-    var adjustment: CropAdjustment
-}
-
 /// The clip editor's state (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
 /// Holds the draft trim window, the crop rect the clip opened with, and the crop adjustment
@@ -82,8 +75,10 @@ final class ClipEditorViewModel: ObservableObject {
     let cropRect: NormalizedRect
     /// The adjustment on top of `cropRect` — the user's pinch/rotate/drag, or Auto crop's
     /// and Auto rotate's fits — applied to the video while the crop rect's on-screen
-    /// marker stays fixed. Trimming never touches it.
-    @Published private(set) var cropAdjustment: CropAdjustment
+    /// marker stays fixed. Trimming never touches it. The preview draws it through `previewPan`.
+    @Published private(set) var cropAdjustment: CropAdjustment {
+        didSet { previewPan.still = cropAdjustment }
+    }
     @Published private(set) var duration: TimeInterval?
     @Published private(set) var playbackTime: TimeInterval = 0
     @Published private(set) var isPlaying = false
@@ -115,19 +110,19 @@ final class ClipEditorViewModel: ObservableObject {
     @Published private(set) var framingMode: FramingMode {
         didSet { updatePreviewPan() }
     }
-    /// Follow mode's framing: `nil` until the clip has been in Follow. Its zoom and turn are
-    /// drawn the way Still's are; its keyframes move the picture through `followPan`.
+    /// Follow mode's framing: `nil` until the clip has been in Follow. The preview draws it frame
+    /// by frame through `followPan`.
     @Published private(set) var followCrop: FollowCrop? {
         didSet { rebuildFollowPan() }
     }
-    /// The follow crop's movement, one step per source frame, for the preview to play.
+    /// The follow crop's center, zoom and turn, one step per source frame, for the preview to play.
     @Published private(set) var followPan: FollowPan? {
         didSet { updatePreviewPan() }
     }
-    /// What the preview moves the picture by: the pan it draws now under the current generation,
-    /// and the weights of every generation still on screen. An ease (`easePan(_:)`) gives the new
-    /// pan a new generation and animates the weights onto it; any other change replaces the
-    /// current generation's pan.
+    /// What the preview draws the picture with: the pan it draws now under the current generation
+    /// (none in Still, whose framing it carries as `still`), and the weights of every generation
+    /// still on screen. An ease (`easePan(_:)`) gives the new pan a new generation and animates the
+    /// weights onto it; any other change replaces the current generation's pan.
     @Published private(set) var previewPan = PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1]))
     private var previewGeneration = 0
     /// When each earlier generation was eased away from: its pan is kept until no ease can still
@@ -137,8 +132,6 @@ final class ClipEditorViewModel: ObservableObject {
     let previewFrames = PreviewFrames()
     /// The editor item's composition (`PreviewFrames.composition`), once the track is read.
     private var previewComposition: AVVideoComposition?
-    /// A Follow drag's live move, in displayed pixels (`previewFollowDrag`).
-    private var followDragShift: CGPoint = .zero
     /// Set when Auto follow found nothing that moves, so the view can say why the crop holds
     /// still. Cleared by the notice itself.
     @Published var isShowingNothingToFollowNotice = false
@@ -234,6 +227,7 @@ final class ClipEditorViewModel: ObservableObject {
         self.cropAdjustment = source.cropAdjustment
         self.framingMode = source.framingMode
         self.followCrop = source.followCrop
+        previewPan.still = source.cropAdjustment
     }
 
     /// The committed edits, in the shape the clip list applies to its item.
@@ -275,22 +269,15 @@ final class ClipEditorViewModel: ObservableObject {
 
     /// The crop area's accessibility value (`CropAdjustmentDescription`).
     var cropAdjustmentDescription: String {
-        CropAdjustmentDescription.text(for: framing.adjustment, videoSize: previewOverlay?.videoSize ?? .zero)
+        CropAdjustmentDescription.text(for: framingAtPlayhead, videoSize: previewOverlay?.videoSize ?? .zero)
     }
 
-    /// What the preview draws over the frames: the active mode's zoom, turn and on-screen offset.
-    var framing: EditorFraming {
-        switch framingMode {
-        case .still:
-            return EditorFraming(adjustment: cropAdjustment)
-        case .follow:
-            guard let followCrop else {
-                return EditorFraming(adjustment: cropAdjustment)
-            }
-            let framing = followCrop.path.framing(at: playbackTime)
-            return EditorFraming(adjustment: CropAdjustment(
-                scale: framing.scale, rotationRadians: framing.rotationRadians, offset: .zero))
-        }
+    /// The active mode's zoom, turn and on-screen offset at the playhead, in Still's terms: a
+    /// follow crop's zoom and turn there, with no offset.
+    var framingAtPlayhead: CropAdjustment {
+        guard framingMode == .follow, let followCrop else { return cropAdjustment }
+        let framing = followCrop.path.framing(at: playbackTime)
+        return CropAdjustment(scale: framing.scale, rotationRadians: framing.rotationRadians, offset: .zero)
     }
 
     /// The stage geometry in one value: the displayed (upright) frame size plus the crop
@@ -441,38 +428,29 @@ final class ClipEditorViewModel: ObservableObject {
     /// Applies a pinch's cumulative magnification since the gesture started: `delta`
     /// multiplies onto the committed scale (standard iOS pinch-to-zoom — spreading
     /// fingers zooms in), clamped so the video can't shrink to a sliver or blow up past
-    /// usefulness.
+    /// usefulness. In Follow it zooms the playhead's keyframe (`setFollowKeyframe`).
     func applyCropScale(_ delta: CGFloat) {
         guard delta.isFinite, delta > 0 else { return }
         guard delta != 1 else { return }
-        clearAutoFits()
-        if framingMode == .follow, var followCrop {
-            followCrop.resting.scale = Self.clampedScale(followCrop.resting.scale * delta)
-            for index in followCrop.keyframes.indices {
-                followCrop.keyframes[index].scale = Self.clampedScale(followCrop.keyframes[index].scale * delta)
-            }
-            followCrop.isAutoFollow = false
-            self.followCrop = followCrop
-        } else {
-            cropAdjustment.scale = Self.clampedScale(cropAdjustment.scale * delta)
+        if framingMode == .follow {
+            setFollowKeyframe(zoomedBy: delta)
+            return
         }
+        clearAutoFits()
+        cropAdjustment.scale = Self.clampedScale(cropAdjustment.scale * delta)
     }
 
-    /// Applies a two-finger rotation's cumulative angle since the gesture started.
+    /// Applies a two-finger rotation's cumulative angle since the gesture started. In Follow it
+    /// turns the playhead's keyframe (`setFollowKeyframe`).
     func applyCropRotation(_ deltaRadians: Double) {
         guard deltaRadians.isFinite else { return }
         guard deltaRadians != 0 else { return }
-        clearAutoFits()
-        if framingMode == .follow, var followCrop {
-            followCrop.resting.rotationRadians += deltaRadians
-            for index in followCrop.keyframes.indices {
-                followCrop.keyframes[index].rotationRadians += deltaRadians
-            }
-            followCrop.isAutoFollow = false
-            self.followCrop = followCrop
-        } else {
-            cropAdjustment.rotationRadians += deltaRadians
+        if framingMode == .follow {
+            setFollowKeyframe(turnedBy: deltaRadians)
+            return
         }
+        clearAutoFits()
+        cropAdjustment.rotationRadians += deltaRadians
     }
 
     /// A manual gesture takes over the framing from both automatic fits at once: whatever
@@ -775,16 +753,19 @@ final class ClipEditorViewModel: ObservableObject {
         followCrop?.isAutoFollow == true
     }
 
-    /// Whether the follow crop differs from Reset follow's — the whole frame, no keyframes —
-    /// at the current turn, which a turn alone doesn't change: what enables a clip without
-    /// pose analysis's Reset follow.
+    /// Whether the follow crop shows anything but Reset follow's whole frame — a keyframe or a
+    /// resting framing at another position or zoom — which a turn alone doesn't count as: what
+    /// enables a clip without pose analysis's Reset follow.
     var isFollowAdjusted: Bool {
         guard let followCrop, let overlay = previewOverlay else { return false }
         let whole = FollowCrop.wholeFrame(
-            cropRect: overlay.cropRect, videoSize: overlay.videoSize,
-            rotationRadians: followCrop.resting.rotationRadians, aspectRatio: targetAspectRatio)
-        return !followCrop.keyframes.isEmpty || abs(followCrop.resting.scale - whole.resting.scale) > 1e-6
-            || followCrop.resting.center != whole.resting.center
+            cropRect: overlay.cropRect, videoSize: overlay.videoSize, rotationRadians: 0,
+            aspectRatio: targetAspectRatio).resting
+        func differs(_ framing: FollowFraming) -> Bool {
+            abs(framing.scale - whole.scale) > 1e-6 * whole.scale
+                || hypot(framing.center.x - whole.center.x, framing.center.y - whole.center.y) > 1e-6
+        }
+        return differs(followCrop.resting) || followCrop.keyframes.contains { differs($0.framing) }
     }
 
     /// The Still | Follow switch. Entering Follow the first time on a clip Auto follow can fit
@@ -795,7 +776,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// both modes are turned the same.
     func setFramingMode(_ mode: FramingMode) {
         guard mode != framingMode, let overlay = previewOverlay else { return }
-        let rotationBefore = framing.adjustment.rotationRadians
+        let rotationBefore = framingAtPlayhead.rotationRadians
         var nothingToFollow = false
         if mode == .follow, followCrop == nil {
             let rotation = cropAdjustment.rotationRadians
@@ -814,7 +795,7 @@ final class ClipEditorViewModel: ObservableObject {
         withAnimation(Self.fitAnimation) {
             easePan { framingMode = mode }
         }
-        if framing.adjustment.rotationRadians != rotationBefore {
+        if framingAtPlayhead.rotationRadians != rotationBefore {
             isAutoRotateApplied = false
         }
         if nothingToFollow {
@@ -874,9 +855,9 @@ final class ClipEditorViewModel: ObservableObject {
 
     /// Makes the pan change `change` makes ease in from where the picture is instead of cutting
     /// to it: the pan drawn now keeps its generation, the changed one gets a new one, and the
-    /// weights move onto it along the transaction's animation. Called inside the
-    /// `withAnimation(Self.fitAnimation)` that animates the zoom and turn of the same change, so
-    /// SwiftUI steps the pan's ease and theirs together (`PreviewPanWeights`).
+    /// weights move onto it along the transaction's animation. Called inside a
+    /// `withAnimation(Self.fitAnimation)`, so SwiftUI steps the ease of the pan, the zoom and the
+    /// turn together (`PreviewPanWeights`).
     private func easePan(_ change: () -> Void) {
         let from = previewGeneration
         previewGeneration += 1
@@ -935,7 +916,7 @@ final class ClipEditorViewModel: ObservableObject {
             .min { abs($0.time - time) < abs($1.time - time) }
     }
 
-    /// Touch-down on the crop area in Follow: the drag sets the framing at this moment, so the
+    /// Touch-down on the crop area in Follow: the gesture sets the framing at this moment, so the
     /// clip stops here and stays stopped on release, until Play.
     func beginFollowTouch() {
         guard framingMode == .follow, isPlaying else { return }
@@ -943,24 +924,34 @@ final class ClipEditorViewModel: ObservableObject {
         isPlaying = false
     }
 
-    /// A one-finger drag in Follow, committed as it lifts: `screenPoints` is its translation and
-    /// `previewScale` the stage's points per displayed pixel, as for `applyCropOffset`.
-    func applyFollowDrag(_ screenPoints: CGSize, previewScale: CGFloat) {
-        followDragShift = .zero
-        updatePreviewPan()
+    /// One gesture on the crop area in Follow, committed as the fingers lift: its drag's
+    /// `translation` (on-screen points, at `previewScale` points per displayed pixel, as for
+    /// `applyCropOffset`), its pinch's `scale` and its turn's `rotation`, all written into the
+    /// playhead's keyframe at once (`setFollowKeyframe`).
+    func applyFollowGesture(translation: CGSize, previewScale: CGFloat, scale: CGFloat, rotation: Double) {
         guard previewScale.isFinite, previewScale > 0 else { return }
-        moveFollow(byDisplayedPixels: CGSize(
-            width: screenPoints.width / previewScale, height: screenPoints.height / previewScale))
+        setFollowKeyframe(
+            movedBy: CGSize(width: translation.width / previewScale, height: translation.height / previewScale),
+            zoomedBy: scale, turnedBy: rotation)
     }
 
     /// Places the video at the playhead's moment, `delta` further across the screen in
-    /// displayed pixels — what a drag commits and what VoiceOver's moves step. Within
-    /// `keyframeReach` of a keyframe it moves that keyframe; anywhere else it adds one that
-    /// starts from where the curve already is, so the picture at the playhead is exactly where
-    /// the finger left it. Any keyframe change hands Auto follow's button back.
+    /// displayed pixels — what VoiceOver's moves step (`setFollowKeyframe`).
     func moveFollow(byDisplayedPixels delta: CGSize) {
+        setFollowKeyframe(movedBy: delta)
+    }
+
+    /// Sets the framing at the playhead's moment: the video `delta` further across the screen (in
+    /// displayed pixels, after the zoom and turn), zoomed by `factor` and turned by `radians`
+    /// more. A drag, a pinch and a turn all write it, and one two-finger gesture writes all three
+    /// at once. Within `keyframeReach` of a keyframe it changes that keyframe; anywhere else it
+    /// adds one that starts from where the curves already are, so the picture at the playhead is
+    /// exactly where the fingers left it. The zoom stays within `scaleRange`. Any keyframe change
+    /// hands Auto follow's button back.
+    func setFollowKeyframe(movedBy delta: CGSize = .zero, zoomedBy factor: CGFloat = 1, turnedBy radians: Double = 0) {
         guard framingMode == .follow, var crop = followCrop,
-              delta.width.isFinite, delta.height.isFinite, delta != .zero
+              delta.width.isFinite, delta.height.isFinite, factor.isFinite, factor > 0, radians.isFinite,
+              delta != .zero || factor != 1 || radians != 0
         else { return }
         let time = currentTime
         let index: Int
@@ -971,22 +962,52 @@ final class ClipEditorViewModel: ObservableObject {
             crop.keyframes.sort { $0.time < $1.time }
             index = crop.keyframes.lastIndex { $0.time == time } ?? crop.keyframes.count - 1
         }
-        let keyframe = crop.keyframes[index]
-        guard keyframe.scale > 0 else { return }
-        // The video moved `delta` on screen, after the keyframe's zoom and turn; the source point
-        // at the marker's center moved the other way by that much undone.
+        var keyframe = crop.keyframes[index]
+        keyframe.scale = Self.clampedScale(keyframe.scale * factor)
+        keyframe.rotationRadians += radians
+        // The video moved `delta` on screen, after the new zoom and turn: the source point at
+        // the marker's center moved the other way by that much undone.
         let unturned = CGPoint(x: delta.width, y: delta.height)
             .applying(CGAffineTransform(rotationAngle: -keyframe.rotationRadians))
-        crop.keyframes[index].center.x -= unturned.x / keyframe.scale
-        crop.keyframes[index].center.y -= unturned.y / keyframe.scale
+        keyframe.center.x -= unturned.x / keyframe.scale
+        keyframe.center.y -= unturned.y / keyframe.scale
+        crop.keyframes[index] = keyframe
         crop.isAutoFollow = false
         clearAutoFits()
         followCrop = crop
     }
 
-    /// The lane's trailing button, and a long press on a diamond: adds a keyframe at the
-    /// playhead where the curve already is — the picture doesn't move — or, with one within
-    /// `keyframeReach`, removes that one.
+    /// "Apply zoom and turn to all keyframes": every keyframe takes `keyframe`'s zoom and turn and
+    /// keeps its own position, the one way to make the whole clip tighter, wider or more level at
+    /// once. It is the user's change, so every keyframe it changes fills in, and the picture
+    /// moves there over `fitAnimation`.
+    func applyZoomAndTurnToAllKeyframes(from keyframe: FollowKeyframe) {
+        applyZoomAndTurnToAllKeyframes(scale: keyframe.scale, rotationRadians: keyframe.rotationRadians)
+    }
+
+    /// The crop area's VoiceOver "Apply zoom and turn to all keyframes": the zoom and turn at the
+    /// playhead.
+    func applyZoomAndTurnAtPlayheadToAllKeyframes() {
+        guard let framing = followCrop?.path.framing(at: currentTime) else { return }
+        applyZoomAndTurnToAllKeyframes(scale: framing.scale, rotationRadians: framing.rotationRadians)
+    }
+
+    private func applyZoomAndTurnToAllKeyframes(scale: CGFloat, rotationRadians: Double) {
+        guard framingMode == .follow, var crop = followCrop, !crop.keyframes.isEmpty else { return }
+        for index in crop.keyframes.indices {
+            crop.keyframes[index].scale = scale
+            crop.keyframes[index].rotationRadians = rotationRadians
+        }
+        guard crop != followCrop else { return }
+        crop.isAutoFollow = false
+        clearAutoFits()
+        withAnimation(Self.fitAnimation) {
+            easePan { followCrop = crop }
+        }
+    }
+
+    /// The lane's trailing button: adds a keyframe at the playhead where the curves already are
+    /// — the picture doesn't move — or, with one within `keyframeReach`, removes that one.
     func toggleKeyframeAtPlayhead() {
         if let keyframe = keyframeAtPlayhead {
             removeKeyframe(keyframe)
@@ -1057,31 +1078,9 @@ final class ClipEditorViewModel: ObservableObject {
         }
     }
 
-    /// Follow's pan (`nil` in Still), with a Follow drag's live move on it.
+    /// Follow's pan; `nil` in Still, whose framing the blend draws itself.
     private var previewTarget: FollowPan? {
-        guard framingMode == .follow, let followPan else { return nil }
-        return followDragShift == .zero ? followPan : followPan.moved(by: followDragShift)
-    }
-
-    /// A Follow drag's move while the finger is down, moving each frame with the pan, so the
-    /// keyframe it sets as it lifts lands on the very picture on screen. `screenPoints` and
-    /// `previewScale` are as for `applyFollowDrag`; `.zero` takes the move off.
-    func previewFollowDrag(_ screenPoints: CGSize, previewScale: CGFloat) {
-        let shift = followShift(forScreenPoints: screenPoints, previewScale: previewScale) ?? .zero
-        guard shift != followDragShift else { return }
-        followDragShift = shift
-        updatePreviewPan()
-    }
-
-    /// How far a drag of `screenPoints` moves the picture in displayed pixels, before the zoom
-    /// and turn: the move on screen with the turn undone and the zoom divided out.
-    private func followShift(forScreenPoints screenPoints: CGSize, previewScale: CGFloat) -> CGPoint? {
-        guard let framing = followCrop?.path.framing(at: currentTime), framing.scale > 0,
-              previewScale.isFinite, previewScale > 0, screenPoints.width.isFinite, screenPoints.height.isFinite
-        else { return nil }
-        let unturned = CGPoint(x: screenPoints.width / previewScale, y: screenPoints.height / previewScale)
-            .applying(CGAffineTransform(rotationAngle: -framing.rotationRadians))
-        return CGPoint(x: unturned.x / framing.scale, y: unturned.y / framing.scale)
+        framingMode == .follow ? followPan : nil
     }
 
     private func loadFrameTimes(covering span: ClosedRange<TimeInterval>) {

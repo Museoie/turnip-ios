@@ -11,7 +11,8 @@ import SwiftUI
 ///
 /// - `-screenshotClipEditorFollow`: the editor over the take's middle, in Still (add
 ///   `-follow` to open it in Follow, the way Settings' Follow the athlete opens a detected
-///   clip).
+///   clip, or `-keyframedZoom` to open it in Follow on `keyframedCrop`, whose zoom and turn
+///   change from keyframe to keyframe).
 /// - `-screenshotClipListFollow`: the Clip List with that clip in Follow, for the tile, its
 ///   poster and the expansion flight's card.
 enum FollowHarness {
@@ -48,6 +49,21 @@ enum FollowHarness {
                 confidence: point.confidence)
         }
         return PoseFrameResult(frameIndex: index * 3, timestamp: time, keypoints: keypoints)
+    }
+
+    /// A follow crop on the bar whose zoom and turn change between its keyframes: 0.8× level,
+    /// then 1.5× turned 0.5 rad clockwise, then 1× turned 0.3 rad back past level, then 0.8×
+    /// level. The whole bar stays inside the marker throughout.
+    static var keyframedCrop: FollowCrop {
+        let zooms: [(scale: CGFloat, rotation: Double)] = [(0.8, 0), (1.5, 0.5), (1, -0.3), (0.8, 0)]
+        return FollowCrop(
+            keyframes: zip([1.5, 2.5, 3.5, 4.5], zooms).map { time, zoom in
+                FollowKeyframe(
+                    time: time, center: CGPoint(x: barCenterX(at: time), y: 180), scale: zoom.scale,
+                    rotationRadians: zoom.rotation)
+            },
+            resting: FollowFraming(center: CGPoint(x: size.width / 2, y: 180), scale: 1, rotationRadians: 0),
+            isAutoFollow: false)
     }
 
     /// Detection's crop for the window: the static rect around every joint in it.
@@ -159,6 +175,8 @@ enum FollowHarness {
 
 /// `-screenshotClipEditorFollow`: see `FollowHarness`.
 struct ScreenshotFollowEditorHarness: View {
+    private static let isKeyframed = CommandLine.arguments.contains("-keyframedZoom")
+
     var body: some View {
         HarnessMovieGate(FollowHarness.movie) { movie in
             NavigationStack {
@@ -166,7 +184,8 @@ struct ScreenshotFollowEditorHarness: View {
                     source: ClipEditorSource(
                         window: FollowHarness.window,
                         cropRect: FollowHarness.cropRect,
-                        framingMode: CommandLine.arguments.contains("-follow") ? .follow : .still,
+                        framingMode: CommandLine.arguments.contains("-follow") || Self.isKeyframed ? .follow : .still,
+                        followCrop: Self.isKeyframed ? FollowHarness.keyframedCrop : nil,
                         asset: AVURLAsset(url: movie.url),
                         poseFrames: FollowHarness.poseFrames),
                     onCommit: { _ in },

@@ -168,6 +168,52 @@ final class FollowModeTests: XCTestCase {
         XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
     }
 
+    /// A pinch in Follow sets the framing at the playhead the way a drag does: from Reset
+    /// follow's empty lane, it leaves one keyframe where the playhead is.
+    func testAPinchInFollowSetsAKeyframeAtThePlayhead() throws {
+        let app = launchEditor(["-screenshotClipEditorFollow", "-follow"])
+        let lane = element("follow-lane", in: app)
+        XCTAssertTrue(lane.waitForExistence(timeout: 10))
+        let follow = app.buttons["auto-follow-button"]
+        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        follow.tap()
+        XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
+        lane.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+
+        element("clip-editor-crop-surface", in: app).pinch(withScale: 1.5, velocity: 1)
+
+        XCTAssertTrue(
+            waitUntil { self.keyframeCount(in: lane) == 1 }, "lane reads \(lane.value as? String ?? "nothing")")
+        XCTAssertTrue(waitUntil { app.buttons["follow-keyframe-button"].label == "Remove keyframe" })
+    }
+
+    /// A long press on a diamond offers both of its choices: giving every keyframe its zoom and
+    /// turn, and removing it.
+    func testALongPressOnADiamondOffersApplyToAllAndRemove() throws {
+        let app = launchEditor(["-screenshotClipEditorFollow", "-follow"])
+        let lane = element("follow-lane", in: app)
+        XCTAssertTrue(lane.waitForExistence(timeout: 10))
+        let follow = app.buttons["auto-follow-button"]
+        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        follow.tap()
+        XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
+        let spot = lane.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
+        spot.tap()
+        app.buttons["follow-keyframe-button"].tap()
+        XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 1 })
+
+        spot.press(forDuration: 0.9)
+
+        // The dialog's buttons can show up twice in the tree while it presents.
+        let apply = app.buttons.matching(identifier: "follow-apply-to-all-button").firstMatch
+        XCTAssertTrue(apply.waitForExistence(timeout: 5), "the long press offered no choices")
+        XCTAssertEqual(apply.label, "Apply zoom and turn to all keyframes")
+        let remove = app.buttons.matching(identifier: "follow-remove-keyframe-button").firstMatch
+        XCTAssertTrue(remove.exists)
+        remove.tap()
+        XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
+    }
+
     /// Following an athlete who stays put leaves one keyframe and says so. The notice stays up
     /// (`-noticesStay`): on its own timer it can be gone before a loaded runner answers the query.
     func testAnAthleteWhoStaysPutHasNothingToFollow() throws {

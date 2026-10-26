@@ -20,35 +20,89 @@ final class FollowPreviewTests: XCTestCase {
         return FollowPan(crop: crop, cropCenter: CGPoint(x: 200, y: 50), frames: frames)
     }()
 
-    /// A pan that holds the picture at `shift` throughout.
-    private func still(_ shift: CGPoint) -> FollowPan {
+    /// A pan that holds the picture at `shift` and `scale` throughout.
+    private func still(_ shift: CGPoint, scale: CGFloat = 1) -> FollowPan {
         let crop = FollowCrop.uniform(
-            scale: 1, rotationRadians: 0, keyframes: [], restingCenter: CGPoint(x: -shift.x, y: -shift.y),
+            scale: scale, rotationRadians: 0, keyframes: [], restingCenter: CGPoint(x: -shift.x, y: -shift.y),
             isAutoFollow: false)
         return FollowPan(crop: crop, cropCenter: .zero, frames: [])
     }
 
-    func testAMovedPanMovesEveryStep() {
-        let moved = pan.moved(by: CGPoint(x: 10, y: -4))
-        XCTAssertEqual(moved.initial, CGPoint(x: pan.initial.x + 10, y: pan.initial.y - 4))
-        for (step, original) in zip(moved.steps, pan.steps) {
-            XCTAssertEqual(step.time, original.time)
-            XCTAssertEqual(step.shift, CGPoint(x: original.shift.x + 10, y: original.shift.y - 4))
+    /// A crop whose zoom and turn change between keyframes steps them with its center, frame by
+    /// frame, each at the frame's own time.
+    func testAPanStepsTheZoomAndTurnWithTheCenter() {
+        let crop = FollowCrop(
+            keyframes: [
+                FollowKeyframe(time: 1, center: CGPoint(x: 100, y: 50), scale: 1, rotationRadians: 0),
+                FollowKeyframe(time: 2, center: CGPoint(x: 300, y: 50), scale: 2, rotationRadians: 0.4)
+            ],
+            resting: FollowFraming(center: .zero, scale: 1, rotationRadians: 0), isAutoFollow: false)
+        let frames = (30...60).map { TimeInterval($0) / 30 }
+        let pan = FollowPan(crop: crop, cropCenter: CGPoint(x: 200, y: 50), frames: frames)
+
+        XCTAssertEqual(pan.initial, PreviewFraming(shift: CGPoint(x: 100, y: 0), scale: 1, rotationRadians: 0))
+        for time in frames {
+            let expected = crop.path.framing(at: time)
+            let framing = pan.framing(at: time + 0.4 / 30)
+            XCTAssertEqual(framing.shift.x, 200 - expected.center.x, accuracy: 1e-9)
+            XCTAssertEqual(framing.scale, expected.scale, accuracy: 1e-9)
+            XCTAssertEqual(framing.rotationRadians, expected.rotationRadians, accuracy: 1e-9)
         }
+        XCTAssertEqual(pan.framing(at: 9).scale, 2, accuracy: 1e-9)
     }
 
-    /// Each generation's pan counts by its weight, at the frame's own time; a generation without
-    /// a pan, as Still has, draws the picture unshifted.
+    /// Each generation's framing counts by its weight, at the frame's own time; a generation
+    /// without a pan draws Still's framing.
     func testABlendDrawsEachPanByItsWeight() {
+        let center = CGPoint(x: 200, y: 50)
         let steady = PreviewPanBlend(pans: [3: pan], weights: PreviewPanWeights([3: 1]))
-        XCTAssertEqual(steady.shift(at: 1.5), pan.shift(at: 1.5))
-        XCTAssertEqual(PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1])).shift(at: 1.5), .zero)
+        XCTAssertEqual(steady.framing(at: 1.5, cropCenter: center), pan.framing(at: 1.5))
+        XCTAssertEqual(
+            PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1])).framing(at: 1.5, cropCenter: center),
+            .identity)
 
-        let easing = PreviewPanBlend(pans: [3: pan], weights: PreviewPanWeights([2: 0.25, 3: 0.75]))
-        for time in [1.2, 1.5, 1.8] {
-            XCTAssertEqual(easing.shift(at: time).x, pan.shift(at: time).x * 0.75, accuracy: 1e-9)
-            XCTAssertEqual(easing.shift(at: time).y, pan.shift(at: time).y * 0.75, accuracy: 1e-9)
-        }
+        let zoomed = still(CGPoint(x: 40, y: 0), scale: 3)
+        let easing = PreviewPanBlend(pans: [3: zoomed], weights: PreviewPanWeights([2: 0.25, 3: 0.75]))
+        let framing = easing.framing(at: 1.5, cropCenter: center)
+        XCTAssertEqual(framing.shift.x, 40 * 0.75, accuracy: 1e-9)
+        XCTAssertEqual(framing.scale, 0.25 * 1 + 0.75 * 3, accuracy: 1e-9)
+    }
+
+    /// Still's framing is drawn as the same picture its zoom, turn and on-screen offset make: the
+    /// shift, zoomed and turned, lands where the offset puts the crop center.
+    func testAStillFramingDrawsTheStillPicture() {
+        let adjustment = CropAdjustment(scale: 1.6, rotationRadians: 0.4, offset: CGSize(width: 37, height: -12))
+        let blend = PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1]), still: adjustment)
+
+        let framing = blend.framing(at: 0, cropCenter: CGPoint(x: 700, y: 400))
+
+        let drawn = CGPoint(x: framing.shift.x * framing.scale, y: framing.shift.y * framing.scale)
+            .applying(CGAffineTransform(rotationAngle: framing.rotationRadians))
+        XCTAssertEqual(drawn.x, 37, accuracy: 1e-9)
+        XCTAssertEqual(drawn.y, -12, accuracy: 1e-9)
+        XCTAssertEqual(framing.scale, 1.6, accuracy: 1e-9)
+        XCTAssertEqual(framing.rotationRadians, 0.4, accuracy: 1e-9)
+    }
+
+    /// A live pinch and turn draw what each mode commits: Still keeps its on-screen offset, as
+    /// its pinch leaves it; Follow keeps the crop's center, as its keyframe does.
+    func testALivePinchAndTurnDrawWhatEachModeCommits() {
+        let adjustment = CropAdjustment(scale: 1.6, rotationRadians: 0.4, offset: CGSize(width: 37, height: -12))
+        let cropCenter = CGPoint(x: 700, y: 400)
+        let stillBlend = PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1]), still: adjustment)
+
+        let live = stillBlend.framing(at: 0, cropCenter: cropCenter, gestureScale: 1.5, gestureRotation: 0.2)
+
+        var committed = adjustment
+        committed.scale *= 1.5
+        committed.rotationRadians += 0.2
+        XCTAssertEqual(live, PreviewFraming(still: committed, cropCenter: cropCenter))
+
+        let followBlend = PreviewPanBlend(pans: [1: pan], weights: PreviewPanWeights([1: 1]))
+        let follow = followBlend.framing(at: 1.5, cropCenter: cropCenter, gestureScale: 1.5, gestureRotation: 0.2)
+        XCTAssertEqual(follow.shift, pan.framing(at: 1.5).shift)
+        XCTAssertEqual(follow.scale, pan.framing(at: 1.5).scale * 1.5, accuracy: 1e-9)
+        XCTAssertEqual(follow.rotationRadians, pan.framing(at: 1.5).rotationRadians + 0.2, accuracy: 1e-9)
     }
 
     /// The weights add, subtract and scale generation by generation, and a generation that comes
@@ -91,7 +145,7 @@ final class FollowPreviewTests: XCTestCase {
             let weights = time < 0.15 ? targets[1] - firstRemaining : targets[2] - firstRemaining - secondRemaining
             XCTAssertEqual(weights.values.values.reduce(0, +), 1, accuracy: 1e-9, "at \(time) s")
 
-            let shift = PreviewPanBlend(pans: pans, weights: weights).shift(at: 0)
+            let shift = PreviewPanBlend(pans: pans, weights: weights).framing(at: 0, cropCenter: .zero).shift
             let expected = CGPoint(
                 x: animated(shifts.map { Double($0.x) }, first, second),
                 y: animated(shifts.map { Double($0.y) }, first, second))
@@ -100,17 +154,39 @@ final class FollowPreviewTests: XCTestCase {
         }
     }
 
-    /// The video layer is the view's size, so the upright frame fills it, moved by the pan at the
-    /// view's points per displayed pixel.
-    func testTheVideoLayerFillsTheViewMovedByThePan() {
+    /// The video layer is the view's size, so the unshifted upright frame fills it, and a
+    /// framing draws its center on the crop center and the rest of the frame zoomed and turned
+    /// about it, at the view's points per displayed pixel.
+    func testTheVideoLayerDrawsTheFramingAboutTheCropCenter() {
         let track = VideoTrackGeometry(
             naturalSize: CGSize(width: 1920, height: 1080),
             preferredTransform: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1080, ty: 0))
         let view = CGRect(x: 0, y: 0, width: 270, height: 480)
-        let placement = EditorVideoPlacement(track: track, bounds: view, shift: CGPoint(x: 40, y: -12))
+        let cropCenter = CGPoint(x: 400, y: 1100)
+        let center = CGPoint(x: 600, y: 900)
+        let framing = PreviewFraming(
+            shift: CGPoint(x: cropCenter.x - center.x, y: cropCenter.y - center.y), scale: 2, rotationRadians: 0.3)
+
+        let placement = EditorVideoPlacement(track: track, bounds: view, cropCenter: cropCenter, framing: framing)
+
         XCTAssertEqual(placement.bounds, CGRect(x: 0, y: 0, width: 270, height: 480))
-        XCTAssertEqual(placement.position.x, 135 + 40 * 0.25, accuracy: 1e-9)
-        XCTAssertEqual(placement.position.y, 240 - 12 * 0.25, accuracy: 1e-9)
+        /// Where the layer draws the source point `point`, in the view.
+        func drawn(_ point: CGPoint) -> CGPoint {
+            let inLayer = CGPoint(
+                x: point.x * 0.25 - placement.anchorPoint.x * 270, y: point.y * 0.25 - placement.anchorPoint.y * 480)
+                .applying(placement.transform)
+            return CGPoint(x: placement.position.x + inLayer.x, y: placement.position.y + inLayer.y)
+        }
+        let marker = CGPoint(x: cropCenter.x * 0.25, y: cropCenter.y * 0.25)
+        XCTAssertEqual(drawn(center).x, marker.x, accuracy: 1e-9)
+        XCTAssertEqual(drawn(center).y, marker.y, accuracy: 1e-9)
+        // 100 displayed pixels along the turned crop's own width axis lands 100 × 2 × 0.25 points
+        // across the screen from the marker's center.
+        let along = CGPoint(x: center.x + 100 * cos(-0.3), y: center.y + 100 * sin(-0.3))
+        XCTAssertEqual(drawn(along).x, marker.x + 50, accuracy: 1e-9)
+        XCTAssertEqual(drawn(along).y, marker.y, accuracy: 1e-9)
+        let unshifted = EditorVideoPlacement(track: track, bounds: view, cropCenter: cropCenter, framing: .identity)
+        XCTAssertEqual(unshifted.transform, .identity)
     }
 
     /// The editor item's composition draws a frame larger than the cap scaled down to it, and only

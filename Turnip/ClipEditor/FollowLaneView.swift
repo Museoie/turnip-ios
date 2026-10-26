@@ -10,8 +10,9 @@ import SwiftUI
 /// scrubs the playhead through the window with the trim timeline's vertical drag-to-slow
 /// precision (`ScrubCalculator`), and pauses playback; tapping a diamond jumps to it. The
 /// button at the trailing end adds a keyframe at the playhead or removes the one under it, and
-/// a long press on a diamond removes that one. For VoiceOver the lane is adjustable, a tenth
-/// of a second a swipe, the trim handles' step.
+/// a long press on a diamond jumps to it and offers to remove it or to give every keyframe its
+/// zoom and turn. For VoiceOver the lane is adjustable, a tenth of a second a swipe, the trim
+/// handles' step.
 struct FollowLaneView: View {
     @ObservedObject var viewModel: ClipEditorViewModel
 
@@ -34,6 +35,8 @@ struct FollowLaneView: View {
     @State private var longPress: Task<Void, Never>?
     /// Set once a press has acted as a long press, so lifting doesn't also jump the playhead.
     @State private var didLongPress = false
+    /// The keyframe a long press is offering choices for.
+    @State private var pressedKeyframe: FollowKeyframe?
     private static let longPressDuration: TimeInterval = 0.5
     /// How far a touch may sit from a diamond's center and still be on it.
     private static let diamondReach: CGFloat = 22
@@ -44,6 +47,23 @@ struct FollowLaneView: View {
             keyframeButton
         }
         .frame(height: Self.height)
+        .confirmationDialog(
+            "Keyframe", isPresented: isOfferingKeyframeChoices, titleVisibility: .hidden,
+            presenting: pressedKeyframe
+        ) { keyframe in
+            Button("Apply zoom and turn to all keyframes") {
+                viewModel.applyZoomAndTurnToAllKeyframes(from: keyframe)
+            }
+            .accessibilityIdentifier("follow-apply-to-all-button")
+            Button("Remove keyframe", role: .destructive) {
+                viewModel.removeKeyframe(keyframe)
+            }
+            .accessibilityIdentifier("follow-remove-keyframe-button")
+        }
+    }
+
+    private var isOfferingKeyframeChoices: Binding<Bool> {
+        Binding(get: { pressedKeyframe != nil }, set: { if !$0 { pressedKeyframe = nil } })
     }
 
     private var track: some View {
@@ -156,8 +176,9 @@ struct FollowLaneView: View {
             }
     }
 
-    /// A still press on a diamond, held: the playhead goes to its keyframe and the keyframe
-    /// is removed, as the trailing button would remove it there.
+    /// A still press on a diamond, held: the playhead goes to its keyframe, and a choice opens
+    /// between removing it, as the trailing button would there, and giving every keyframe its
+    /// zoom and turn.
     private func armLongPress(at locationX: CGFloat, in window: TrickWindow, width: CGFloat) {
         longPress?.cancel()
         guard let keyframe = diamond(at: locationX, in: window, width: width) else { return }
@@ -166,7 +187,7 @@ struct FollowLaneView: View {
             guard !Task.isCancelled else { return }
             didLongPress = true
             viewModel.scrubFollowLane(to: keyframe.time)
-            viewModel.removeKeyframe(keyframe)
+            pressedKeyframe = keyframe
         }
     }
 

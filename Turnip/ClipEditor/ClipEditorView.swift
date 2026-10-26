@@ -47,10 +47,9 @@ struct ClipEditorView: View {
     @State private var gestureScale: CGFloat = 1
     @State private var gestureRotation: Angle = .zero
     @State private var gestureOffset: CGSize = .zero
-    /// Set when a pinch or turn reports during the gesture the drag is part of, in Follow:
-    /// the drag then sets no keyframe, so a two-finger gesture never leaves one behind.
-    /// Cleared as the first finger of the next gesture lands.
-    @State private var isFollowDragDropped = false
+    /// A gesture on the crop area in Follow, from its first finger down to its last one up: it
+    /// writes the playhead's keyframe once, when both are over (`commitFollowGesture`).
+    @State private var followGesture = FollowGestureProgress()
     /// Where the layout placeholder in `chrome` sits (global space), and whether the follow
     /// lane was in the layout it was measured in: the stage band of the mode it was measured
     /// in, from which both modes' bands are derived (`stillStage`, `followStage`). Fixed per
@@ -312,7 +311,6 @@ struct ClipEditorView: View {
                     geometry: viewModel.previewOverlay,
                     marker: marker,
                     layoutMarker: layoutMarker,
-                    framing: viewModel.framing,
                     pan: viewModel.previewPan,
                     gestureScale: gestureScale,
                     gestureRotation: gestureRotation,
@@ -385,23 +383,33 @@ struct ClipEditorView: View {
     }
 
     /// The pinch (zoom), two-finger rotate, and one-finger drag gestures, all able to run at
-    /// once. Each draws its live delta over the committed adjustment while the fingers move,
-    /// then commits it into the view model as they lift, in the same update, so the picture
-    /// doesn't move at the hand-over; a cancelled gesture leaves nothing behind.
-    /// `previewScale` (on-screen points per displayed pixel) only matters to the drag —
+    /// once. Each draws its live delta over the committed framing while the fingers move. In
+    /// Still each commits into the view model as it ends, in the same update that takes its live
+    /// delta off, so the picture doesn't move at the hand-over; a cancelled gesture leaves nothing
+    /// behind. `previewScale` (on-screen points per displayed pixel) only matters to the drag —
     /// scale and rotation are unit-agnostic.
     ///
-    /// In Follow a drag places the video at the playhead's moment instead of moving it for the
-    /// whole clip: touch-down pauses, and the drag sets or moves a keyframe there as it lifts
-    /// (`ClipEditorViewModel.moveFollow`), unless a pinch or turn reported during it.
+    /// In Follow the three set the framing at the playhead's moment instead of for the whole
+    /// clip: touch-down pauses, and once every finger has lifted and every one of them has ended,
+    /// the drag, pinch and turn are written into the playhead's keyframe together
+    /// (`ClipEditorViewModel.applyFollowGesture`).
     private func cropGestureSurface(previewScale: CGFloat) -> some View {
         CropGestureSurface(
             onDrag: { handleDrag($0, previewScale: previewScale) },
-            onPinch: handlePinch,
-            onRotate: handleRotate,
+            onPinch: { handlePinch($0, previewScale: previewScale) },
+            onRotate: { handleRotate($0, previewScale: previewScale) },
             onTouchDown: {
-                isFollowDragDropped = false
+                if viewModel.framingMode == .follow {
+                    // A gesture whose last touch never reported its end still commits before the
+                    // next begins, rather than leaving its live delta on the picture.
+                    if followGesture.active.isEmpty { commitFollowGesture(previewScale: previewScale) }
+                    followGesture = FollowGestureProgress(fingersDown: true)
+                }
                 viewModel.beginFollowTouch()
+            },
+            onTouchesUp: {
+                followGesture.fingersDown = false
+                commitFollowGesture(previewScale: previewScale)
             })
     }
 
@@ -409,61 +417,98 @@ struct ClipEditorView: View {
         let follows = viewModel.framingMode == .follow
         switch phase {
         case .changed(let translation):
-            if follows {
-                // In Follow the move rides the pan, with each frame, so the keyframe set as the
-                // finger lifts lands on the very picture on screen.
-                viewModel.previewFollowDrag(isFollowDragDropped ? .zero : translation, previewScale: previewScale)
-            } else {
-                gestureOffset = translation
-            }
+            gestureOffset = translation
+            if follows { followGesture.active.insert(.drag) }
         case .ended(let translation):
-            if !follows {
-                viewModel.applyCropOffset(translation, previewScale: previewScale)
-            } else if !isFollowDragDropped {
-                viewModel.applyFollowDrag(translation, previewScale: previewScale)
+            if follows {
+                gestureOffset = translation
+                followGesture.active.remove(.drag)
+                commitFollowGesture(previewScale: previewScale)
             } else {
-                viewModel.previewFollowDrag(.zero, previewScale: previewScale)
+                viewModel.applyCropOffset(translation, previewScale: previewScale)
+                gestureOffset = .zero
             }
-            gestureOffset = .zero
         case .cancelled:
-            viewModel.previewFollowDrag(.zero, previewScale: previewScale)
-            gestureOffset = .zero
+            if follows {
+                cancelFollowGesture()
+            } else {
+                gestureOffset = .zero
+            }
         }
     }
 
-    private func handlePinch(_ phase: CropGestureSurface.Phase<CGFloat>) {
+    private func handlePinch(_ phase: CropGestureSurface.Phase<CGFloat>, previewScale: CGFloat) {
+        let follows = viewModel.framingMode == .follow
         switch phase {
         case .changed(let scale):
-            dropFollowDrag()
             gestureScale = scale
+            if follows { followGesture.active.insert(.pinch) }
         case .ended(let scale):
-            viewModel.applyCropScale(scale)
-            gestureScale = 1
+            if follows {
+                gestureScale = scale
+                followGesture.active.remove(.pinch)
+                commitFollowGesture(previewScale: previewScale)
+            } else {
+                viewModel.applyCropScale(scale)
+                gestureScale = 1
+            }
         case .cancelled:
-            gestureScale = 1
+            if follows {
+                cancelFollowGesture()
+            } else {
+                gestureScale = 1
+            }
         }
     }
 
-    private func handleRotate(_ phase: CropGestureSurface.Phase<Double>) {
+    private func handleRotate(_ phase: CropGestureSurface.Phase<Double>, previewScale: CGFloat) {
+        let follows = viewModel.framingMode == .follow
         switch phase {
         case .changed(let radians):
-            dropFollowDrag()
             gestureRotation = .radians(radians)
+            if follows { followGesture.active.insert(.rotate) }
         case .ended(let radians):
-            viewModel.applyCropRotation(radians)
-            gestureRotation = .zero
+            if follows {
+                gestureRotation = .radians(radians)
+                followGesture.active.remove(.rotate)
+                commitFollowGesture(previewScale: previewScale)
+            } else {
+                viewModel.applyCropRotation(radians)
+                gestureRotation = .zero
+            }
         case .cancelled:
-            gestureRotation = .zero
+            if follows {
+                cancelFollowGesture()
+            } else {
+                gestureRotation = .zero
+            }
         }
     }
 
-    /// In Follow, a pinch or turn during a drag drops the drag's keyframe and takes its live
-    /// offset off the picture, so the preview never shows a move that won't be kept.
-    private func dropFollowDrag() {
-        guard viewModel.framingMode == .follow, !isFollowDragDropped else { return }
-        isFollowDragDropped = true
+    /// Writes a Follow gesture into the playhead's keyframe once its fingers are up and its drag,
+    /// pinch and turn have all ended, taking their live deltas off in the same update, so the
+    /// keyframe lands on the picture already on screen.
+    private func commitFollowGesture(previewScale: CGFloat) {
+        guard viewModel.framingMode == .follow, followGesture.active.isEmpty, !followGesture.fingersDown
+        else { return }
+        if !followGesture.isCancelled {
+            viewModel.applyFollowGesture(
+                translation: gestureOffset, previewScale: previewScale, scale: gestureScale,
+                rotation: gestureRotation.radians)
+        }
         gestureOffset = .zero
-        viewModel.previewFollowDrag(.zero, previewScale: 1)
+        gestureScale = 1
+        gestureRotation = .zero
+        followGesture.isCancelled = false
+    }
+
+    /// The system took a Follow gesture's touches: nothing it did is kept.
+    private func cancelFollowGesture() {
+        followGesture.isCancelled = true
+        followGesture.active = []
+        gestureOffset = .zero
+        gestureScale = 1
+        gestureRotation = .zero
     }
 
     /// Stands in for the default player chrome this editor doesn't show: play/pause and
@@ -601,9 +646,9 @@ struct ClipEditorView: View {
 
 /// The video under the editor's crop marker: the player laid out at
 /// `ClipEditorStage.videoPlacement`'s frame — the whole displayed frame, placed so the
-/// crop rect fills the marker — and transformed by the active framing about the crop rect's
-/// center: Still's zoom, turn and offset, or Follow's zoom and turn about a center the pan
-/// moves through the clip (`EditorPlayerView`). Never clipped: whatever the framing pushes
+/// crop rect fills the marker — and drawn by `EditorPlayerView` with the active framing about
+/// the crop rect's center, frame by frame: Still's zoom, turn and offset, or Follow's center,
+/// zoom and turn at each frame (`PreviewPanBlend`). Never clipped: whatever the framing pushes
 /// outside the frame's own rect stays visible, the way the export and the tile show it.
 /// Shared by the editor's stage and by `ClipExpansionContainer`'s flying card, so the card
 /// shows exactly the picture the editor will show — the same player, the same placement —
@@ -624,8 +669,7 @@ struct ClipEditorVideoSurface: View {
     let geometry: (videoSize: CGSize, cropRect: CGRect)?
     let marker: CGRect
     var layoutMarker: CGRect?
-    let framing: EditorFraming
-    /// Follow's pan (`ClipEditorViewModel.previewPan`).
+    /// The framings the preview draws (`ClipEditorViewModel.previewPan`).
     let pan: PreviewPanBlend
     var gestureScale: CGFloat = 1
     var gestureRotation: Angle = .zero
@@ -638,22 +682,13 @@ struct ClipEditorVideoSurface: View {
             ClipEditorStage.videoPlacement(videoSize: $0.videoSize, cropRect: $0.cropRect, marker: base)
         }
         let frame = placement?.frame ?? base
-        // The committed offset is in displayed pixels (`applyCropOffset`'s contract).
-        let pointsPerDisplayedPixel = placement?.pointsPerDisplayedPixel ?? 0
-        // The crop rect's center as a fraction of the frame — resolution-independent, so the
-        // gesture's anchor matches `ClipExportTransform.make`'s anchor at any on-screen size.
-        let cropCenter = geometry.map {
-            UnitPoint(x: $0.cropRect.midX / $0.videoSize.width, y: $0.cropRect.midY / $0.videoSize.height)
-        } ?? .center
+        // In displayed pixels, the zoom and turn's anchor `ClipExportTransform.make` uses.
+        let cropCenter = geometry.map { CGPoint(x: $0.cropRect.midX, y: $0.cropRect.midY) } ?? .zero
         let markerScale = base.width > 0 ? marker.width / base.width : 1
-        let adjustment = framing.adjustment
-        EditorPlayerView(frames: frames, track: track, pan: pan, onReadyForDisplay: onReadyForDisplay)
+        EditorPlayerView(
+            frames: frames, track: track, cropCenter: cropCenter, pan: pan, gestureScale: gestureScale,
+            gestureRotation: gestureRotation.radians, onReadyForDisplay: onReadyForDisplay)
             .frame(width: frame.width, height: frame.height)
-            .scaleEffect(adjustment.scale * gestureScale, anchor: cropCenter)
-            .rotationEffect(Angle(radians: adjustment.rotationRadians) + gestureRotation, anchor: cropCenter)
-            .offset(
-                x: adjustment.offset.width * pointsPerDisplayedPixel,
-                y: adjustment.offset.height * pointsPerDisplayedPixel)
             .position(x: frame.midX, y: frame.midY)
             // Onto the marker the crop shows in: about the space's origin, then across, so the
             // layout marker's center lands on the marker's.
@@ -663,6 +698,18 @@ struct ClipEditorVideoSurface: View {
                 y: marker.midY - base.midY * markerScale + gestureOffset.height)
             .opacity(placement == nil ? 0 : 1)
     }
+}
+
+/// Where a gesture on the crop area in Follow has got to: which of its recognizers are still
+/// reporting, whether a finger is still down, and whether the system took it.
+private struct FollowGestureProgress {
+    enum Recognizer {
+        case drag, pinch, rotate
+    }
+
+    var active: Set<Recognizer> = []
+    var fingersDown = false
+    var isCancelled = false
 }
 
 /// The stage placeholder's on-screen frame (global space), and whether the follow lane was
@@ -729,9 +776,10 @@ private struct CropOverlayShape: Shape {
 /// purpose unreachable without sight. Each action drives the same view-model call the matching
 /// gesture commits, so the two paths cannot diverge.
 ///
-/// In Follow the moves set or move the keyframe at the playhead, as a drag does there, and
-/// the keyframe actions step the playhead between keyframes and add or remove the one at it;
-/// Reset follow stands in for Reset crop.
+/// In Follow the zooms, turns and moves set the keyframe at the playhead, as the gestures do
+/// there; the keyframe actions step the playhead between keyframes and add or remove the one at
+/// it, "Apply zoom and turn to all keyframes" gives every keyframe the zoom and turn at the
+/// playhead, and Reset follow stands in for Reset crop.
 private struct CropAdjustmentActions: ViewModifier {
     let viewModel: ClipEditorViewModel
     let framingMode: FramingMode
@@ -772,6 +820,9 @@ private struct CropAdjustmentActions: ViewModifier {
                     if let keyframe = viewModel.keyframeAtPlayhead {
                         viewModel.removeKeyframe(keyframe)
                     }
+                }
+                .accessibilityAction(named: "Apply zoom and turn to all keyframes") {
+                    viewModel.applyZoomAndTurnAtPlayheadToAllKeyframes()
                 }
                 .accessibilityAction(named: "Reset follow") { viewModel.resetFollow() }
         } else {
