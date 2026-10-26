@@ -805,10 +805,10 @@ final class ClipEditorViewModel: ObservableObject {
         }
     }
 
-    /// "Auto follow": frames the athlete through the window at the current turn — the
-    /// pipeline's follow path reduced to a few keyframes (`AutoFollow`), at the zoom that
-    /// holds the athlete at every moment. Keeps the turn and replaces the zoom and every
-    /// keyframe, the user's too. The picture moves to the new path at the playhead over
+    /// "Auto follow": frames the athlete through the window at the turn the crop has at the
+    /// playhead — the pipeline's follow path reduced to a few keyframes (`AutoFollow`), each
+    /// zoomed to the room the athlete needs around then. Keeps the turn and replaces the zoom
+    /// and every keyframe, the user's too. The picture moves to the new path at the playhead over
     /// `fitAnimation` and then follows it. A path that never moves frames the athlete with
     /// one keyframe and raises "Nothing to follow"; a window with nothing located changes
     /// nothing but the notice.
@@ -1148,9 +1148,9 @@ final class ClipEditorViewModel: ObservableObject {
     /// Called when a handle drag ends: resumes the preview loop from the new start,
     /// unless the user had manually paused — dragging a handle must not overrule Pause.
     ///
-    /// In Follow, a follow crop still all Auto follow's — every keyframe where Auto follow put
-    /// it — re-tracks the new window, positions only, at the same zoom and turn, moving there
-    /// the way Auto follow does. A keyframe the user set never moves on a trim.
+    /// In Follow, a follow crop still all Auto follow's — every keyframe as Auto follow wrote
+    /// it — re-tracks the new window, positions and zoom, at the same turn, moving there the way
+    /// Auto follow does. A keyframe the user set never moves on a trim.
     func finishTrim() {
         isTrimming = false
         retrackFollowCrop()
@@ -1164,10 +1164,9 @@ final class ClipEditorViewModel: ObservableObject {
         guard framingMode == .follow, supportsAutoCrop, let followCrop, followCrop.isUntouchedAutoFollow,
               let overlay = previewOverlay
         else { return }
-        let framing = followCrop.path.framing(at: currentTime)
         guard let fit = autoFollower.fit(
             frames: framesInWindow, cropRect: overlay.cropRect, videoSize: overlay.videoSize,
-            rotationRadians: framing.rotationRadians, scale: framing.scale)
+            rotationRadians: followRotationAtPlayhead)
         else { return }
         var retracked = fit.crop
         retracked.isAutoFollow = followCrop.isAutoFollow

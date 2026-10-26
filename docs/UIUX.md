@@ -11,10 +11,10 @@ name" entry stay planned.*
 *Rev 19 · 2026-10-26 · Follow mode's keyframes hold the zoom and the turn as
 well as the position (§4, "Zoom and turn by keyframe"). Pinch and two-finger
 rotate set the keyframe at the playhead the way a drag does, and a long press
-on a diamond can give every keyframe its zoom and turn. Auto follow writes one
-turn for the whole clip. Planned, not built yet: Auto follow zooms with the
-athlete, keeping the still crop's padding and never tighter than a crop 1,024
-source pixels on its longer side. Decision 8 records the change.*
+on a diamond can give every keyframe its zoom and turn. Auto follow zooms with
+the athlete, keeping the still crop's padding and never tighter than a crop
+768 source pixels on its longer side, and writes one turn for the whole clip.
+Decision 8 records the change.*
 
 *Rev 18 · 2026-10-23 · The user chooses whose tricks become clips: the one
 person the pose model is surest of, or everyone it finds, each with clips of
@@ -780,10 +780,9 @@ default empty state, so it never reads as "your library is empty."
     - **Auto follow.** Frames the athlete through the window at one turn for
       the whole clip, the turn the crop has at the playhead: the pipeline's
       follow path for the window (`DESIGN.md` step 6), reduced to a few
-      keyframes, at the zoom that holds the athlete at every moment
-      (*planned, Rev 19:* a zoom of its own at each keyframe). Like Auto crop,
-      it keeps the turn, replaces the zoom and the positions, and discards
-      keyframes the user set. The video moves to the
+      keyframes, each with a zoom of its own (Rev 19, "Zoom and turn by
+      keyframe" below). Like Auto crop, it keeps the turn, replaces the zoom
+      and the positions, and discards keyframes the user set. The video moves to the
       path at the playhead over the same 0.4 s ease and then follows it.
       Switching a detected clip to Follow when it has no follow crop yet runs
       Auto follow at once: Follow means following the athlete, and waiting for
@@ -799,10 +798,11 @@ default empty state, so it never reads as "your library is empty."
       keyframes and enabled once a pinch, a drag or a keyframe has moved it (a
       turn alone doesn't count), as Rev 13's Reset crop is; Follow mode is
       entirely manual there.
-    - **Nothing to follow.** When the path Auto follow finds doesn't move,
-      because the athlete stays put or a portrait take leaves a 9:16 crop no
-      room at the fitted zoom, it frames the athlete with one keyframe, as Auto
-      crop would, and says "Nothing to follow" in a notice where "No horizon
+    - **Nothing to follow.** When the crop Auto follow finds neither moves
+      nor zooms, because the athlete stays put or a portrait take leaves a 9:16
+      crop no room, it frames the athlete with one keyframe, as Auto crop
+      would (no tighter than Auto follow's zoom allows), and says "Nothing to
+      follow" in a notice where "No horizon
       found" appears. Follow stays usable by hand: pinch in, then drag at a few
       moments.
     - **Switching back and forth.** Each mode keeps its own framing for the
@@ -814,9 +814,9 @@ default empty state, so it never reads as "your library is empty."
     - **Trim.** A trim never moves a keyframe the user set or moved: a trim is
       not a re-crop (Rev 8). One deliberate exception: a follow crop that is
       still entirely Auto follow's, every diamond hollow, re-tracks the new
-      window when the handle is released, positions only and at the same zoom
-      (*planned, Rev 19:* positions and zoom, at the same turn), moving there
-      the way Auto follow does. Rev 15's Clip List refit also
+      window when the handle is released, positions and zoom, at the same
+      turn, moving there the way Auto follow does. Its zoom follows each
+      moment's own need, so a wider window doesn't widen every moment. Rev 15's Clip List refit also
       resized the crop, and resizing on a trim is what Rev 8 removed: it made
       the video shrink under the marker as the window grew. Still mode is
       unchanged: its framing never follows a trim.
@@ -857,25 +857,27 @@ default empty state, so it never reads as "your library is empty."
         changed. Removing a keyframe Auto follow wrote and the user changed puts
         back all three.
       - **Manual zoom.** A pinch keeps the editor's own zoom range.
-      - *Planned:* **Auto follow** writes positions and zoom from the pose, and
-        one turn for the whole clip: the turn the crop has at the playhead (the
-        turn is built). The zoom keeps the still crop's padding, a tenth of the
-        body's box on each side, and follows the room the athlete needs over a
-        moment rather than each limb: it widens before a reach would leave the
-        crop, ignores small changes, and closes in more slowly than it opens. So
-        it changes as the athlete comes toward the camera or moves away, not
-        with every tuck and extension, which is the breathing that kept the zoom
-        clip-wide until now. It never zooms tighter than a crop whose longer
-        side is 1,024 source pixels, or the frame's own longer side when that is
-        shorter: export enlarges a tighter crop to the clip's output size, and
-        the picture goes soft. It never zooms wider than the frame. Where a crop
-        whose zoom and turn both change would show beyond the frame between two
-        keyframes, it adds a keyframe. The 1,024 pixel floor bounds only what
-        Auto follow chooses.
-      - *Planned:* **Trim.** A follow crop that is still all Auto follow's
-        re-tracks a trimmed window's positions and zoom, at the same turn. Its
-        zoom follows each moment's own need, so a wider window no longer widens
-        every moment, the effect Rev 8 removed.
+      - **Auto follow** writes positions and zoom from the pose, and one turn
+        for the whole clip: the turn the crop has at the playhead. The zoom
+        keeps the still crop's padding, a tenth of the body's box on each side,
+        and follows the room the athlete needs over a moment rather than each
+        limb: it widens before a reach would leave the crop, ignores small
+        changes, and closes in more slowly than it opens. So it changes as the
+        athlete comes toward the camera or moves away, not with every tuck and
+        extension, which is the breathing that kept the zoom clip-wide until
+        now. It never zooms tighter than a crop whose longer side is 768
+        source pixels, or the frame's own longer side when that is shorter:
+        export enlarges a tighter crop to the clip's output size, and the
+        picture goes soft. It never zooms wider than the frame. Where a crop
+        whose zoom and position both change would show beyond the frame between
+        two keyframes, it adds a keyframe. The 768 pixel floor bounds only what
+        Auto follow chooses. On 1080p takes the floor still decides many clips:
+        when the athlete is far, Auto follow frames a region 768 pixels tall
+        and holds that zoom, a little looser than the old clip-wide zoom and
+        less enlarged (`DESIGN.md` step 6, "Zoom tuning"). The floor was 1,024
+        pixels at first, which held almost every 1080p clip at one looser zoom.
+      - **Trim.** A follow crop that is still all Auto follow's re-tracks a
+        trimmed window's positions and zoom, at the same turn (above).
 
 ## Out of scope for this doc
 
@@ -994,8 +996,8 @@ Resolved 2026-09-04.
    for both modes, which would shorten Still's too; switching a detected clip
    to Follow runs Auto follow at once rather than waiting for a tap; and an
    Auto follow nobody has touched re-tracks a trimmed window, positions only,
-   while a touched one stays put. *Revised, recorded 2026-10-26 (Rev 19; Auto
-   follow's zoom planned): keyframes hold zoom and turn as well as position.
+   while a touched one stays put. *Revised, recorded 2026-10-26 (Rev 19):
+   keyframes hold zoom and turn as well as position.
    Zoom was kept clip-wide so the clip wouldn't breathe with the athlete's
    limbs; Auto
    follow's zoom now follows a smoothed need for room, with the still crop's
@@ -1005,7 +1007,8 @@ Resolved 2026-09-04.
    and rotate join the drag in setting the playhead's keyframe, so the three
    gestures mean one thing, and "Apply zoom and turn to all keyframes" keeps a
    way to change the whole clip at once. Auto follow never zooms tighter than
-   a crop 1,024 source pixels on its longer side, because export enlarges
-   anything tighter. The rendering worry no longer applies: export draws one
+   a crop 768 source pixels on its longer side, because export enlarges
+   anything tighter; 1,024, the first floor, held almost every 1080p clip at
+   one zoom looser than before. The rendering worry no longer applies: export draws one
    transform per frame, so a turn that changes between keyframes is drawn
    exactly at every frame.*

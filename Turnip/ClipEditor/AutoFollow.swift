@@ -2,85 +2,111 @@ import CoreGraphics
 import Foundation
 
 /// Auto follow (`docs/UIUX.md` § "Two framing modes, Still and Follow"): frames the athlete
-/// through a window at the current rotation, as a follow crop of a few keyframes.
+/// through a window at one turn for the whole clip, as a follow crop of a few keyframes.
 ///
 /// The pipeline's follow path (`CropPathCalculator`) is analysis output, one center per pose
-/// sample. Nobody edits forty keyframes with a thumb, so the path is reduced: keyframes start
-/// where the path starts and stops moving, and one more goes in at the worst sample until the
-/// curve through them (`FollowPath`) keeps every joint the path itself kept inside the crop,
-/// and strays from no sample's center by more than `driftTolerance` of the crop's width.
-/// Containment comes first, since a cut limb is worse than a lagging crop.
+/// sample. Each sample also gets a zoom of its own (`ZoomEnvelope`): the room the athlete needs
+/// over a moment, with the static crop's padding, smoothed so the crop changes as the athlete
+/// comes closer or moves away rather than with every tuck. Nobody edits forty keyframes with a
+/// thumb, so the samples are reduced: keyframes start where the crop starts and stops moving,
+/// and one more goes in at the worst sample until the curves through them (`FollowPath`) never
+/// show beyond the frame, keep every joint each sample's own crop kept, stray from no sample's
+/// center by more than `driftTolerance` of the crop's width, and from no sample's zoom by more
+/// than the envelope's `zoomTolerance`. Showing beyond the frame comes first, then a cut limb,
+/// since both are worse than a lagging crop.
 struct AutoFollow {
     /// How far the curve may stray from a sample's own center, as a fraction of the crop's
     /// width, before a keyframe goes in at that sample.
     static let driftTolerance: CGFloat = 0.1
-
     var pathCalculator = CropPathCalculator()
+    /// The tightest crop Auto follow chooses, as the longer side of the source region it shows,
+    /// in displayed pixels: export renders a follow clip at its crop rect's size, so a tighter
+    /// region is enlarged into it and goes soft. A pinch isn't bound by it.
+    var tightestLongerSide: CGFloat = 768
     /// The marker's width over height, which the follow crop's box keeps.
     var aspectRatio = CGFloat(CropRectCalculator().targetAspectRatio)
+    var zoom = ZoomEnvelope()
 
     /// Auto follow's crop and whether it moves at all.
     struct Fit: Equatable {
         let crop: FollowCrop
         /// False when the crop holds one framing — the athlete stays put, or a portrait take
-        /// leaves the crop no room at the fitted zoom: "Nothing to follow".
+        /// leaves the crop no room: "Nothing to follow".
         let moves: Bool
     }
 
     /// The fit for `frames` (the window's pose samples) on a clip whose crop rect is
     /// `cropRect`, both in the displayed frame's pixels (`videoSize`), turned by
-    /// `rotationRadians`. With a `scale` the zoom stays and only the positions are refitted —
-    /// a trim re-tracking an untouched Auto follow; without one the zoom is the path's, the
-    /// widest the athlete needs at any one moment, shrunk until the turned crop fits the
-    /// frame. `nil` when no frame located a joint.
+    /// `rotationRadians` throughout. Each sample's zoom comes from the envelope, no wider than
+    /// the turned crop can be inside the frame and no tighter than `tightestLongerSide`. `nil`
+    /// when no frame located a joint.
     func fit(
-        frames: [PoseFrameResult], cropRect: CGRect, videoSize: CGSize, rotationRadians: Double,
-        scale fixedScale: CGFloat? = nil
+        frames: [PoseFrameResult], cropRect: CGRect, videoSize: CGSize, rotationRadians: Double
     ) -> Fit? {
         let sorted = frames.sorted { $0.timestamp < $1.timestamp }
         guard videoSize.width > 0, videoSize.height > 0,
-              let path = pathCalculator.cropPath(for: sorted, renderedPixelSize: videoSize),
-              let first = path.keyframes.first
+              let path = pathCalculator.cropPath(for: sorted, renderedPixelSize: videoSize)
         else { return nil }
         let marker = ClipEditorViewModel.markerBox(around: cropRect, aspectRatio: aspectRatio)
         guard marker.width > 0, marker.height > 0 else { return nil }
         let ratio = marker.width / marker.height
-        let pathWidth = CGFloat(first.rect.maxX - first.rect.minX) * videoSize.width
         let widest = Self.widestFitting(ratio: ratio, rotationRadians: rotationRadians, in: videoSize)
-        let scale = ClipEditorViewModel.clampedScale(fixedScale ?? marker.width / min(pathWidth, widest))
-        let box = CGSize(width: marker.width / scale, height: marker.width / scale / ratio)
-
-        let samples = zip(path.keyframes, sorted).map { keyframe, frame in
-            let rect = keyframe.rect
-            let center = CGPoint(
-                x: CGFloat(rect.minX + rect.maxX) / 2 * videoSize.width,
-                y: CGFloat(rect.minY + rect.maxY) / 2 * videoSize.height)
-            let framed = Self.slidIntoFrame(center, box: box, rotationRadians: rotationRadians, in: videoSize)
-            return Sample(
-                time: keyframe.time, center: framed,
-                joints: Self.jointCorners(in: frame, videoSize: videoSize))
-        }
+        let tightest = min(tightestLongerSide / max(1, 1 / ratio), widest)
+        let samples = samples(
+            of: path, frames: sorted, marker: marker, widths: tightest...widest, rotationRadians: rotationRadians,
+            videoSize: videoSize)
         let resting = CGPoint(x: videoSize.width / 2, y: videoSize.height / 2)
         guard let moving = movingRange(of: samples) else {
             return Fit(
                 crop: stillCrop(
                     frames: sorted, samples: samples, cropRect: cropRect, videoSize: videoSize,
-                    rotationRadians: rotationRadians, fixedScale: fixedScale, scale: scale, resting: resting),
+                    rotationRadians: rotationRadians, widths: tightest...widest, resting: resting),
                 moves: false)
         }
-        let kept = reduced(samples, moving: moving, box: box, rotationRadians: rotationRadians)
+        let kept = reduced(samples, moving: moving, marker: marker, rotationRadians: rotationRadians, in: videoSize)
         let keyframes = kept.map {
             FollowKeyframe(
                 time: samples[$0].time,
-                framing: FollowFraming(center: samples[$0].center, scale: scale, rotationRadians: rotationRadians),
+                framing: FollowFraming(
+                    center: samples[$0].center, scale: samples[$0].scale, rotationRadians: rotationRadians),
                 isAuto: true)
         }
-        return Fit(
-            crop: FollowCrop(
-                keyframes: keyframes,
-                resting: FollowFraming(center: resting, scale: scale, rotationRadians: rotationRadians),
-                isAutoFollow: true),
-            moves: true)
+        let restingFraming = FollowFraming(
+            center: resting, scale: samples[kept[0]].scale, rotationRadians: rotationRadians)
+        return Fit(crop: FollowCrop(keyframes: keyframes, resting: restingFraming, isAutoFollow: true), moves: true)
+    }
+
+    // swiftlint:disable function_parameter_count
+    /// One sample per pose frame: its zoom from the envelope, clamped to `widths`, and the path's
+    /// center shifted to hold that frame's de-spiked joints in its own crop and slid inside the
+    /// frame.
+    private func samples(
+        of path: CropPath, frames: [PoseFrameResult], marker: CGRect, widths: ClosedRange<CGFloat>,
+        rotationRadians: Double, videoSize: CGSize
+    ) -> [Sample] {
+        // swiftlint:enable function_parameter_count
+        let ratio = marker.width / marker.height
+        let athletes = pathCalculator.athletes(for: frames, renderedPixelSize: videoSize)
+        let envelope = zoom.widths(
+            times: frames.map(\.timestamp),
+            needs: athletes.map { $0.map { CGFloat($0.room.maxX - $0.room.minX) * videoSize.width } })
+        return zip(path.keyframes, frames).enumerated().map { index, pair in
+            let (keyframe, frame) = pair
+            let width = min(max(envelope[index], widths.lowerBound), widths.upperBound)
+            let scale = ClipEditorViewModel.clampedScale(marker.width / width)
+            let box = CGSize(width: marker.width / scale, height: marker.width / scale / ratio)
+            let rect = keyframe.rect
+            var center = CGPoint(
+                x: CGFloat(rect.minX + rect.maxX) / 2 * videoSize.width,
+                y: CGFloat(rect.minY + rect.maxY) / 2 * videoSize.height)
+            if let joints = athletes[index]?.joints {
+                center = Self.shifted(center, toContain: joints.denormalized(in: videoSize), box: box)
+            }
+            return Sample(
+                time: keyframe.time,
+                center: Self.slidIntoFrame(center, box: box, rotationRadians: rotationRadians, in: videoSize),
+                scale: scale, joints: Self.jointCorners(in: frame, videoSize: videoSize))
+        }
     }
 
     /// What a clip in Follow shows before it has a follow crop of its own: Auto follow's fit
@@ -103,78 +129,114 @@ struct AutoFollow {
     private struct Sample {
         let time: TimeInterval
         let center: CGPoint
+        let scale: CGFloat
         /// The located joints' bounding-box corners, in displayed pixels; empty when the
         /// sample located none.
         let joints: [CGPoint]
     }
 
-    /// From the last sample of the path's opening hold to the first of its closing hold: the
-    /// stretch where it moves. `nil` when it never does.
+    /// From the last sample of the crop's opening hold to the first of its closing hold: the
+    /// stretch where it moves or zooms. `nil` when it never does.
     private func movingRange(of samples: [Sample]) -> ClosedRange<Int>? {
-        guard let opening = samples.first?.center, let closing = samples.last?.center else { return nil }
-        guard let firstMove = samples.firstIndex(where: { $0.center != opening }),
-              let lastMove = samples.lastIndex(where: { $0.center != closing })
+        guard let opening = samples.first, let closing = samples.last else { return nil }
+        func holds(_ sample: Sample, _ end: Sample) -> Bool {
+            sample.center == end.center && sample.scale == end.scale
+        }
+        guard let firstMove = samples.firstIndex(where: { !holds($0, opening) }),
+              let lastMove = samples.lastIndex(where: { !holds($0, closing) })
         else { return nil }
         return (firstMove - 1)...(lastMove + 1)
     }
 
     // swiftlint:disable function_parameter_count
-    /// One keyframe, mid-window. With the zoom free, it is Auto crop's framing for the whole
-    /// window (every joint at once); a re-track at a kept zoom holds the path's own center.
+    /// One keyframe, mid-window, framed as Auto crop frames the whole window (every joint at
+    /// once), within the zoom Auto follow allows.
     private func stillCrop(
         frames: [PoseFrameResult], samples: [Sample], cropRect: CGRect, videoSize: CGSize,
-        rotationRadians: Double, fixedScale: CGFloat?, scale: CGFloat, resting: CGPoint
+        rotationRadians: Double, widths: ClosedRange<CGFloat>, resting: CGPoint
     ) -> FollowCrop {
         // swiftlint:enable function_parameter_count
-        let time = samples[samples.count / 2].time
-        var center = samples[samples.count / 2].center
-        var stillScale = scale
-        if fixedScale == nil,
-           let fit = ClipEditorViewModel.autoCropAdjustment(
-               normalizedKeypoints: CropRectCalculator.locatedPoints(in: frames), cropRect: cropRect,
-               videoSize: videoSize, rotationRadians: rotationRadians,
-               calculator: pathCalculator.rectCalculator) {
-            let still = FramingConversion.followCenter(
-                of: fit, cropCenter: CGPoint(x: cropRect.midX, y: cropRect.midY))
-            center = still
-            stillScale = fit.scale
+        let middle = samples[samples.count / 2]
+        var center = middle.center
+        var scale = middle.scale
+        if let fit = ClipEditorViewModel.autoCropAdjustment(
+            normalizedKeypoints: CropRectCalculator.locatedPoints(in: frames), cropRect: cropRect,
+            videoSize: videoSize, rotationRadians: rotationRadians, calculator: pathCalculator.rectCalculator) {
+            let marker = ClipEditorViewModel.markerBox(around: cropRect, aspectRatio: aspectRatio)
+            let width = min(max(marker.width / fit.scale, widths.lowerBound), widths.upperBound)
+            scale = ClipEditorViewModel.clampedScale(marker.width / width)
+            let box = CGSize(width: marker.width / scale, height: marker.height / scale)
+            center = Self.slidIntoFrame(
+                FramingConversion.followCenter(of: fit, cropCenter: CGPoint(x: cropRect.midX, y: cropRect.midY)),
+                box: box, rotationRadians: rotationRadians, in: videoSize)
         }
         return FollowCrop(
             keyframes: [FollowKeyframe(
-                time: time,
-                framing: FollowFraming(center: center, scale: stillScale, rotationRadians: rotationRadians),
+                time: middle.time,
+                framing: FollowFraming(center: center, scale: scale, rotationRadians: rotationRadians),
                 isAuto: true)],
-            resting: FollowFraming(center: resting, scale: stillScale, rotationRadians: rotationRadians),
+            resting: FollowFraming(center: resting, scale: scale, rotationRadians: rotationRadians),
             isAutoFollow: true)
     }
 
     private func reduced(
-        _ samples: [Sample], moving: ClosedRange<Int>, box: CGSize, rotationRadians: Double
+        _ samples: [Sample], moving: ClosedRange<Int>, marker: CGRect, rotationRadians: Double, in frame: CGSize
     ) -> [Int] {
+        func box(_ scale: CGFloat) -> CGSize {
+            CGSize(width: marker.width / scale, height: marker.height / scale)
+        }
         var kept = [moving.lowerBound, moving.upperBound]
         let held = samples.map {
-            Self.overflow(of: $0.joints, around: $0.center, box: box, rotationRadians: rotationRadians) <= 1e-6
+            Self.overflow(
+                of: $0.joints, around: $0.center, box: box($0.scale), rotationRadians: rotationRadians) <= 1e-6
         }
+        let zoomTolerance = log(1 + zoom.zoomTolerance)
         while true {
             let path = FollowPath(
-                keyframes: kept.map { FollowKeyframe(time: samples[$0].time, center: samples[$0].center) },
+                keyframes: kept.map {
+                    FollowKeyframe(
+                        time: samples[$0].time, center: samples[$0].center, scale: samples[$0].scale,
+                        rotationRadians: rotationRadians)
+                },
                 resting: FollowFraming(center: samples[moving.lowerBound].center, scale: 1, rotationRadians: 0))
-            var worstCut: (index: Int, amount: CGFloat)?
-            var worstDrift: (index: Int, amount: CGFloat)?
+            var worst: [(index: Int, amount: CGFloat)?] = [nil, nil, nil, nil]
+            func note(_ rank: Int, _ index: Int, _ amount: CGFloat) {
+                if amount > worst[rank]?.amount ?? 0 { worst[rank] = (index, amount) }
+            }
             for index in moving where !kept.contains(index) {
-                let center = path.center(at: samples[index].time)
+                let sample = samples[index]
+                let framing = path.framing(at: sample.time)
+                let size = box(framing.scale)
+                let outside = Self.outsideFrame(
+                    center: framing.center, box: size, rotationRadians: rotationRadians, in: frame)
+                if outside > 0.5 { note(0, index, outside) }
                 if held[index] {
                     let cut = Self.overflow(
-                        of: samples[index].joints, around: center, box: box, rotationRadians: rotationRadians)
-                    if cut > 1e-6, cut > worstCut?.amount ?? 0 { worstCut = (index, cut) }
+                        of: sample.joints, around: framing.center, box: size, rotationRadians: rotationRadians)
+                    if cut > 1e-6 { note(1, index, cut) }
                 }
-                let drift = hypot(center.x - samples[index].center.x, center.y - samples[index].center.y) / box.width
-                if drift > Self.driftTolerance, drift > worstDrift?.amount ?? 0 { worstDrift = (index, drift) }
+                let drift = hypot(framing.center.x - sample.center.x, framing.center.y - sample.center.y) / size.width
+                if drift > Self.driftTolerance { note(2, index, drift) }
+                let stray = abs(log(framing.scale / sample.scale))
+                if stray > zoomTolerance { note(3, index, stray) }
             }
-            guard let worst = worstCut ?? worstDrift else { return kept }
-            kept.append(worst.index)
+            guard let next = worst.compactMap({ $0 }).first else { return kept }
+            kept.append(next.index)
             kept.sort()
         }
+    }
+
+    /// How far, in displayed pixels, a crop of `box` centered on `center` and turned by the
+    /// rotation reaches past the frame's edge at its farthest corner; 0 when it is inside.
+    private static func outsideFrame(
+        center: CGPoint, box: CGSize, rotationRadians: Double, in frame: CGSize
+    ) -> CGFloat {
+        let cosine = abs(cos(rotationRadians)), sine = abs(sin(rotationRadians))
+        let halfAcross = (cosine * box.width + sine * box.height) / 2
+        let halfDown = (sine * box.width + cosine * box.height) / 2
+        return max(
+            0, halfAcross - center.x, center.x + halfAcross - frame.width,
+            halfDown - center.y, center.y + halfDown - frame.height)
     }
 
     /// How far the farthest of `joints` lies outside a crop of `box` centered on `center` and
@@ -189,6 +251,18 @@ struct AutoFollow {
             worst = max(worst, abs(onScreen.x) - box.width / 2, abs(onScreen.y) - box.height / 2)
         }
         return worst / box.width
+    }
+
+    /// The nearest center whose unturned `box` holds `joints` on each axis, as the path's own
+    /// containment shift does at the path's size; an axis the joints overfill centers on them.
+    private static func shifted(_ center: CGPoint, toContain joints: CGRect, box: CGSize) -> CGPoint {
+        func shifted(_ value: CGFloat, lower: CGFloat, upper: CGFloat, length: CGFloat) -> CGFloat {
+            if upper - lower > length { return (lower + upper) / 2 }
+            return min(max(value, upper - length / 2), lower + length / 2)
+        }
+        return CGPoint(
+            x: shifted(center.x, lower: joints.minX, upper: joints.maxX, length: box.width),
+            y: shifted(center.y, lower: joints.minY, upper: joints.maxY, length: box.height))
     }
 
     /// The widest box of `ratio` whose turned footprint fits inside the frame.

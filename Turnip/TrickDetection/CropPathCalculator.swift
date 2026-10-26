@@ -7,6 +7,17 @@ struct CropKeyframe: Hashable, Sendable {
     let rect: NormalizedRect
 }
 
+/// One pose sample's athlete as the follow crop sees it, its joint box de-spiked
+/// (`CropPathCalculator.despikeSamples`), in the decoded frames' normalized space.
+struct CropPathAthlete: Hashable, Sendable {
+    let time: TimeInterval
+    /// The located joints' bounding box.
+    let joints: NormalizedRect
+    /// The rect the static calculator would draw around those joints — its padding, floor and
+    /// aspect ratio — not slid into the frame: the room the athlete needs at this moment.
+    let room: NormalizedRect
+}
+
 /// A crop that moves over a trick window to follow the athlete, one keyframe per pose sample.
 /// Every keyframe holds a rect of the same size, so the clip never zooms partway through. It is
 /// analysis output: Auto follow reduces it to the few keyframes a follow crop is drawn from
@@ -97,17 +108,27 @@ struct CropPathCalculator: Sendable {
         self.despikeSamples = despikeSamples
     }
 
+    /// Each frame's athlete, in time order, the same samples `cropPath` is built from: `nil` for
+    /// a frame that located no keypoint, and all `nil` when the rendered frame size is unknown.
+    func athletes(for frames: [PoseFrameResult], renderedPixelSize: CGSize) -> [CropPathAthlete?] {
+        guard renderedPixelSize.width > 0, renderedPixelSize.height > 0 else {
+            return Array(repeating: nil, count: frames.count)
+        }
+        return despikedSamples(of: frames).map { sample in
+            locatedSample(from: sample, renderedPixelSize: renderedPixelSize).map {
+                CropPathAthlete(
+                    time: $0.time, joints: $0.joints, room: Self.rect(centeredOn: $0.center, size: $0.size))
+            }
+        }
+    }
+
     /// `nil` when no frame holds a keypoint above the confidence threshold, or when the rendered
     /// frame size is unknown. Otherwise one keyframe per frame, in time order — a frame with no
     /// located keypoint still gets one, placed by its neighbours — or, before the first located
     /// sample or after the last, holding that end's keyframe.
     func cropPath(for frames: [PoseFrameResult], renderedPixelSize: CGSize) -> CropPath? {
         guard renderedPixelSize.width > 0, renderedPixelSize.height > 0 else { return nil }
-        let samples = Self.despiked(
-            frames
-                .sorted { $0.timestamp < $1.timestamp }
-                .map { Sample(time: $0.timestamp, joints: Self.jointBox(in: $0)) },
-            width: despikeSamples)
+        let samples = despikedSamples(of: frames)
         let located = samples.compactMap { locatedSample(from: $0, renderedPixelSize: renderedPixelSize) }
         guard !located.isEmpty else { return nil }
 
@@ -137,6 +158,14 @@ struct CropPathCalculator: Sendable {
             }
         }
         return CropPath(keyframes: keyframes)
+    }
+
+    private func despikedSamples(of frames: [PoseFrameResult]) -> [Sample] {
+        Self.despiked(
+            frames
+                .sorted { $0.timestamp < $1.timestamp }
+                .map { Sample(time: $0.timestamp, joints: Self.jointBox(in: $0)) },
+            width: despikeSamples)
     }
 
     private struct Sample {
