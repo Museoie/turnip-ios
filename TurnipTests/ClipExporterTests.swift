@@ -180,12 +180,14 @@ final class ClipExporterTests: XCTestCase {
 
     // MARK: - A follow crop
 
+    private let thirtieth = CMTime(value: 1, timescale: 30)
+
     /// A 9:16 crop rect, the height of the 1920 × 1080 frame.
     private let followCropRect = NormalizedRect(minX: 0.2, maxX: 0.2 + 607.5 / 1920, minY: 0, maxY: 1)
 
     /// Keyframes at 2, 3 and 4 s, the center crossing the frame at mid-height.
     private func followCrop(scale: CGFloat = 1, rotationRadians: Double = 0) -> FollowCrop {
-        FollowCrop(
+        FollowCrop.uniform(
             scale: scale, rotationRadians: rotationRadians,
             keyframes: [(2.0, 400.0), (3, 960), (4, 1500)].map {
                 FollowKeyframe(time: $0.0, center: CGPoint(x: $0.1, y: 540), autoCenter: CGPoint(x: $0.1, y: 540))
@@ -198,7 +200,8 @@ final class ClipExporterTests: XCTestCase {
     private func boxTransform(
         _ crop: FollowCrop, at time: TimeInterval, naturalSize: CGSize = CGSize(width: 1920, height: 1080)
     ) throws -> CGAffineTransform {
-        let center = crop.path.center(at: time)
+        let framing = crop.path.framing(at: time)
+        let center = framing.center
         let box = CGSize(width: 607.5, height: 1080)
         let rect = NormalizedRect(
             minX: Float((center.x - box.width / 2) / naturalSize.width),
@@ -207,7 +210,8 @@ final class ClipExporterTests: XCTestCase {
             maxY: Float((center.y + box.height / 2) / naturalSize.height))
         return try XCTUnwrap(ClipExportTransform.make(
             cropRect: rect, naturalSize: naturalSize, preferredTransform: .identity,
-            cropAdjustment: CropAdjustment(scale: crop.scale, rotationRadians: crop.rotationRadians, offset: .zero))
+            cropAdjustment: CropAdjustment(
+                scale: framing.scale, rotationRadians: framing.rotationRadians, offset: .zero))
         ).layerTransform
     }
 
@@ -217,7 +221,7 @@ final class ClipExporterTests: XCTestCase {
     func testAFollowCropRampsOncePerFrameWhileItMoves() throws {
         let crop = followCrop()
         let transform = try XCTUnwrap(ClipExportTransform.make(
-            followCrop: crop, cropRect: followCropRect, over: 1...5, frameRate: 30,
+            followCrop: crop, cropRect: followCropRect, over: 1...5, frameDuration: thirtieth,
             naturalSize: landscape, preferredTransform: .identity))
 
         XCTAssertEqual(transform.renderSize, CGSize(width: 608, height: 1080))
@@ -242,7 +246,7 @@ final class ClipExporterTests: XCTestCase {
     func testAFollowCropZoomsAndTurnsAboutItsMovingCenter() throws {
         let crop = followCrop(scale: 2, rotationRadians: 0.3)
         let transform = try XCTUnwrap(ClipExportTransform.make(
-            followCrop: crop, cropRect: followCropRect, over: 1...5, frameRate: 30,
+            followCrop: crop, cropRect: followCropRect, over: 1...5, frameDuration: thirtieth,
             naturalSize: landscape, preferredTransform: .identity))
 
         for ramp in transform.ramps {
@@ -256,7 +260,7 @@ final class ClipExporterTests: XCTestCase {
     func testAFollowCropCutsItsRampsAtTheSpansEnds() throws {
         let crop = followCrop()
         let transform = try XCTUnwrap(ClipExportTransform.make(
-            followCrop: crop, cropRect: followCropRect, over: 2.5...3.5, frameRate: 30,
+            followCrop: crop, cropRect: followCropRect, over: 2.5...3.5, frameDuration: thirtieth,
             naturalSize: landscape, preferredTransform: .identity))
 
         XCTAssertEqual(transform.ramps.count, 30)
@@ -268,7 +272,7 @@ final class ClipExporterTests: XCTestCase {
 
     func testAFollowCropIsNilForAnUnknownSourceSize() {
         XCTAssertNil(ClipExportTransform.make(
-            followCrop: followCrop(), cropRect: followCropRect, over: 1...5, frameRate: 30,
+            followCrop: followCrop(), cropRect: followCropRect, over: 1...5, frameDuration: thirtieth,
             naturalSize: .zero, preferredTransform: .identity))
     }
 
@@ -282,7 +286,7 @@ final class ClipExporterTests: XCTestCase {
 
         let transform = try ClipExporter.renderTransform(
             for: spec, staticTransform: still, videoRange: secondsRange(1, 5), frameRate: 30,
-            naturalSize: landscape, preferredTransform: .identity)
+            minFrameDuration: .invalid, naturalSize: landscape, preferredTransform: .identity)
 
         XCTAssertEqual(transform.layerTransform, still.layerTransform)
         XCTAssertTrue(transform.ramps.isEmpty)
@@ -299,7 +303,7 @@ final class ClipExporterTests: XCTestCase {
 
         let transform = try ClipExporter.renderTransform(
             for: spec, staticTransform: still, videoRange: secondsRange(1.5, 4.5), frameRate: 30,
-            naturalSize: landscape, preferredTransform: .identity)
+            minFrameDuration: .invalid, naturalSize: landscape, preferredTransform: .identity)
 
         assertRange(transform.ramps[0].timeRange, start: 0, end: 0.5)
         try assertTransform(transform.layerTransform, equals: boxTransform(crop, at: 1.5), "at the start")
@@ -323,13 +327,13 @@ final class ClipExporterTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let track = try await AVURLAsset(url: url).loadTracks(withMediaType: .video)[0]
         let transform = try XCTUnwrap(ClipExportTransform.make(
-            followCrop: FollowCrop(
+            followCrop: FollowCrop.uniform(
                 scale: 1, rotationRadians: 0,
                 keyframes: [FollowKeyframe(time: 2, center: CGPoint(x: 16, y: 18)),
                             FollowKeyframe(time: 4, center: CGPoint(x: 48, y: 18))],
                 restingCenter: CGPoint(x: 32, y: 18), isAutoFollow: false),
             cropRect: NormalizedRect(minX: 0.3, maxX: 0.3 + 20.25 / 64, minY: 0, maxY: 1),
-            over: 1...5, frameRate: 30, naturalSize: CGSize(width: 64, height: 36),
+            over: 1...5, frameDuration: thirtieth, naturalSize: CGSize(width: 64, height: 36),
             preferredTransform: .identity))
 
         let composition = try transform.makeVideoComposition(
@@ -350,6 +354,133 @@ final class ClipExporterTests: XCTestCase {
             XCTAssertEqual(end, expected.end)
             XCTAssertEqual(range, expected.timeRange)
         }
+    }
+
+    /// Keyframes whose zoom and turn change from one to the next, so a frame drawn partway
+    /// through a ramp would be sheared rather than merely a little off.
+    private func zoomingAndTurningCrop() -> FollowCrop {
+        FollowCrop(
+            keyframes: [
+                FollowKeyframe(time: 2, center: CGPoint(x: 400, y: 540), scale: 1, rotationRadians: 0),
+                FollowKeyframe(time: 3, center: CGPoint(x: 960, y: 540), scale: 2, rotationRadians: 0.3),
+                FollowKeyframe(time: 4, center: CGPoint(x: 1500, y: 540), scale: 1.2, rotationRadians: -0.2)
+            ],
+            resting: FollowFraming(center: CGPoint(x: 960, y: 540), scale: 1, rotationRadians: 0),
+            isAutoFollow: false)
+    }
+
+    /// Every frame the composition renders, on its own frame grid, lands exactly on one of the
+    /// moving crop's stops: at a ramp's end points, or inside a hold whose two ends are the same.
+    /// The grid comes from the track's `minFrameDuration` when it has one and from the nominal
+    /// rate otherwise, and the stops have to come from the same place.
+    private func assertEveryFrameLandsOnAStop(
+        _ composition: AVMutableVideoComposition, duration: CMTime, _ message: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let instruction = try XCTUnwrap(
+            composition.instructions.first as? AVMutableVideoCompositionInstruction, file: file, line: line)
+        let layerInstruction = try XCTUnwrap(instruction.layerInstructions.first, file: file, line: line)
+        var movingFrames = 0
+        var index: Int32 = 0
+        while true {
+            let time = CMTimeMultiply(composition.frameDuration, multiplier: index)
+            guard CMTimeCompare(time, duration) < 0 else { break }
+            var start = CGAffineTransform.identity, end = CGAffineTransform.identity
+            var range = CMTimeRange(start: .zero, duration: .zero)
+            XCTAssertTrue(
+                layerInstruction.getTransformRamp(for: time, start: &start, end: &end, timeRange: &range),
+                "\(message): no ramp at \(time.seconds)", file: file, line: line)
+            let onAnEnd = CMTimeCompare(range.start, time) == 0 || CMTimeCompare(range.end, time) == 0
+            if start != end {
+                movingFrames += 1
+                XCTAssertTrue(
+                    onAnEnd, "\(message): the frame at \(time.seconds) s falls inside the ramp \(range.start.seconds)"
+                        + "–\(range.end.seconds) s", file: file, line: line)
+            }
+            index += 1
+        }
+        XCTAssertGreaterThan(movingFrames, 10, "\(message): the crop never moved", file: file, line: line)
+    }
+
+    /// The export's frame grid and its moving crop's stops agree for every kind of take: an
+    /// even 30 fps one, an NTSC 29.97 fps one, a variable-frame-rate one whose shortest frame
+    /// is shorter than its nominal rate's, and one with no usable timing at all (the export's
+    /// 30 fps fallback).
+    func testAFollowCropsStopsLandOnTheCompositionsFrames() async throws {
+        let url = try await TestVideoWriter.writeTestVideo(frameCount: 30, width: 64, height: 36, fps: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let track = try await AVURLAsset(url: url).loadTracks(withMediaType: .video)[0]
+        let still = try XCTUnwrap(ClipExportTransform.make(
+            cropRect: followCropRect, naturalSize: landscape, preferredTransform: .identity))
+        let spec = ClipSpec(
+            window: TrickWindow(startTime: 1, endTime: 5), cropRect: followCropRect,
+            followCrop: zoomingAndTurningCrop())
+        let videoRange = secondsRange(1.5, 4.5)
+        struct Timing {
+            let name: String
+            let nominal: Float
+            let minFrameDuration: CMTime
+        }
+        let timings = [
+            Timing(name: "30 fps", nominal: 30, minFrameDuration: CMTime(value: 1, timescale: 30)),
+            Timing(name: "29.97 fps", nominal: 29.97, minFrameDuration: CMTime(value: 1001, timescale: 30000)),
+            Timing(name: "variable", nominal: 29.6, minFrameDuration: CMTime(value: 1, timescale: 60)),
+            Timing(name: "nominal only", nominal: 24, minFrameDuration: .invalid),
+            Timing(name: "no timing", nominal: 0, minFrameDuration: .invalid)
+        ]
+        for timing in timings {
+            let frameRate = ClipExporter.exportFrameRate(
+                nominalFrameRate: timing.nominal, minFrameDuration: timing.minFrameDuration)
+            let transform = try ClipExporter.renderTransform(
+                for: spec, staticTransform: still, videoRange: videoRange, frameRate: frameRate,
+                minFrameDuration: timing.minFrameDuration, naturalSize: landscape, preferredTransform: .identity)
+            let composition = try transform.makeVideoComposition(
+                for: track, duration: videoRange.duration, frameRate: frameRate,
+                minFrameDuration: timing.minFrameDuration)
+            try assertEveryFrameLandsOnAStop(composition, duration: videoRange.duration, timing.name)
+        }
+    }
+
+    /// The same on a real variable-frame-rate movie, timed as AVFoundation reads it: frames a
+    /// sixtieth and a twentieth of a second apart in turn, thirty a second on average.
+    func testAVariableFrameRateTakesStopsLandOnItsFrames() async throws {
+        var times: [CMTime] = []
+        var value: CMTimeValue = 0
+        for index in 0..<180 {
+            times.append(CMTime(value: value, timescale: 600))
+            value += index % 2 == 0 ? 10 : 30
+        }
+        let url = try await TestVideoWriter.writeTestVideo(
+            frameCount: times.count, width: 64, height: 36, fps: 30, frameTimes: times)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let asset = AVURLAsset(url: url)
+        let track = try await asset.loadTracks(withMediaType: .video)[0]
+        let (nominal, minFrameDuration, trackRange) = try await track.load(
+            .nominalFrameRate, .minFrameDuration, .timeRange)
+        XCTAssertLessThan(
+            minFrameDuration.seconds, 1 / Double(nominal) - 0.005,
+            "the fixture's shortest frame is shorter than its nominal rate's")
+        let size = CGSize(width: 64, height: 36)
+        let cropRect = NormalizedRect(minX: 0.3, maxX: 0.3 + 20.25 / 64, minY: 0, maxY: 1)
+        let still = try XCTUnwrap(ClipExportTransform.make(
+            cropRect: cropRect, naturalSize: size, preferredTransform: .identity))
+        let crop = FollowCrop(
+            keyframes: [
+                FollowKeyframe(time: 1, center: CGPoint(x: 16, y: 18), scale: 1, rotationRadians: 0),
+                FollowKeyframe(time: 4, center: CGPoint(x: 48, y: 18), scale: 1.5, rotationRadians: 0.4)
+            ],
+            resting: FollowFraming(center: CGPoint(x: 32, y: 18), scale: 1, rotationRadians: 0), isAutoFollow: false)
+        let spec = ClipSpec(window: TrickWindow(startTime: 0, endTime: 5), cropRect: cropRect, followCrop: crop)
+        let frameRate = ClipExporter.exportFrameRate(nominalFrameRate: nominal, minFrameDuration: minFrameDuration)
+
+        let transform = try ClipExporter.renderTransform(
+            for: spec, staticTransform: still, videoRange: trackRange, frameRate: frameRate,
+            minFrameDuration: minFrameDuration, naturalSize: size, preferredTransform: .identity)
+        let composition = try transform.makeVideoComposition(
+            for: track, duration: trackRange.duration, frameRate: frameRate, minFrameDuration: minFrameDuration)
+
+        XCTAssertEqual(composition.frameDuration, minFrameDuration)
+        try assertEveryFrameLandsOnAStop(composition, duration: trackRange.duration, "variable-frame-rate movie")
     }
 
     /// The grid derivation the exporter shares with the sampler rejects a rate

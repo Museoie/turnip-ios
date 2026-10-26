@@ -9,7 +9,7 @@ import XCTest
 final class FollowPreviewTests: XCTestCase {
     /// A pan that moves the picture 200 px left between 1 s and 2 s, one step per 30 fps frame.
     private let pan: FollowPan = {
-        let crop = FollowCrop(
+        let crop = FollowCrop.uniform(
             scale: 1, rotationRadians: 0,
             keyframes: [
                 FollowKeyframe(time: 1, center: CGPoint(x: 100, y: 50)),
@@ -22,7 +22,7 @@ final class FollowPreviewTests: XCTestCase {
 
     /// A pan that holds the picture at `shift` throughout.
     private func still(_ shift: CGPoint) -> FollowPan {
-        let crop = FollowCrop(
+        let crop = FollowCrop.uniform(
             scale: 1, rotationRadians: 0, keyframes: [], restingCenter: CGPoint(x: -shift.x, y: -shift.y),
             isAutoFollow: false)
         return FollowPan(crop: crop, cropCenter: .zero, frames: [])

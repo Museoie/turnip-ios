@@ -70,12 +70,16 @@ struct AutoFollow {
         }
         let kept = reduced(samples, moving: moving, box: box, rotationRadians: rotationRadians)
         let keyframes = kept.map {
-            FollowKeyframe(time: samples[$0].time, center: samples[$0].center, autoCenter: samples[$0].center)
+            FollowKeyframe(
+                time: samples[$0].time,
+                framing: FollowFraming(center: samples[$0].center, scale: scale, rotationRadians: rotationRadians),
+                isAuto: true)
         }
         return Fit(
             crop: FollowCrop(
-                scale: scale, rotationRadians: rotationRadians, keyframes: keyframes,
-                restingCenter: resting, isAutoFollow: true),
+                keyframes: keyframes,
+                resting: FollowFraming(center: resting, scale: scale, rotationRadians: rotationRadians),
+                isAutoFollow: true),
             moves: true)
     }
 
@@ -136,9 +140,12 @@ struct AutoFollow {
             stillScale = fit.scale
         }
         return FollowCrop(
-            scale: stillScale, rotationRadians: rotationRadians,
-            keyframes: [FollowKeyframe(time: time, center: center, autoCenter: center)],
-            restingCenter: resting, isAutoFollow: true)
+            keyframes: [FollowKeyframe(
+                time: time,
+                framing: FollowFraming(center: center, scale: stillScale, rotationRadians: rotationRadians),
+                isAuto: true)],
+            resting: FollowFraming(center: resting, scale: stillScale, rotationRadians: rotationRadians),
+            isAutoFollow: true)
     }
 
     private func reduced(
@@ -151,7 +158,7 @@ struct AutoFollow {
         while true {
             let path = FollowPath(
                 keyframes: kept.map { FollowKeyframe(time: samples[$0].time, center: samples[$0].center) },
-                restingCenter: samples[moving.lowerBound].center)
+                resting: FollowFraming(center: samples[moving.lowerBound].center, scale: 1, rotationRadians: 0))
             var worstCut: (index: Int, amount: CGFloat)?
             var worstDrift: (index: Int, amount: CGFloat)?
             for index in moving where !kept.contains(index) {
@@ -262,7 +269,10 @@ extension FollowCrop {
             around: CGRect(origin: .zero, size: videoSize), aspectRatio: aspectRatio)
         let scale = frame.width > 0 ? ClipEditorViewModel.clampedScale(marker.width / frame.width) : 1
         return FollowCrop(
-            scale: scale, rotationRadians: rotationRadians, keyframes: [],
-            restingCenter: CGPoint(x: videoSize.width / 2, y: videoSize.height / 2), isAutoFollow: false)
+            keyframes: [],
+            resting: FollowFraming(
+                center: CGPoint(x: videoSize.width / 2, y: videoSize.height / 2), scale: scale,
+                rotationRadians: rotationRadians),
+            isAutoFollow: false)
     }
 }

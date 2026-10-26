@@ -70,9 +70,10 @@ actor ClipThumbnailLoader {
             if let followCrop, let rect = Self.followRect(
                 followCrop, at: midpoint, cropRect: item.cropRect,
                 naturalSize: naturalSize, preferredTransform: preferredTransform) {
+                let framing = followCrop.path.framing(at: midpoint)
                 cropRect = rect
                 cropAdjustment = CropAdjustment(
-                    scale: followCrop.scale, rotationRadians: followCrop.rotationRadians, offset: .zero)
+                    scale: framing.scale, rotationRadians: framing.rotationRadians, offset: .zero)
             }
             return Self.adjustedThumbnail(
                 from: image,

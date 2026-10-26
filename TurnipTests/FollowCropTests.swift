@@ -56,9 +56,11 @@ final class FollowCropTests: XCTestCase {
     // MARK: - FollowPath
 
     func testAPathWithNoKeyframesHoldsItsRestingCenter() {
-        let path = FollowPath(keyframes: [], restingCenter: CGPoint(x: 5, y: 6))
+        let resting = FollowFraming(center: CGPoint(x: 5, y: 6), scale: 1.5, rotationRadians: 0.2)
+        let path = FollowPath(keyframes: [], resting: resting)
 
         XCTAssertEqual(path.center(at: 3), CGPoint(x: 5, y: 6))
+        XCTAssertEqual(path.framing(at: 3), resting)
         XCTAssertNil(path.movingSpan)
     }
 
@@ -68,12 +70,89 @@ final class FollowCropTests: XCTestCase {
                 FollowKeyframe(time: 4, center: CGPoint(x: 30, y: 0)),
                 FollowKeyframe(time: 2, center: CGPoint(x: 10, y: 0))
             ],
-            restingCenter: .zero)
+            resting: FollowFraming(center: .zero, scale: 1, rotationRadians: 0))
 
         XCTAssertEqual(path.movingSpan, 2...4)
         XCTAssertEqual(path.center(at: 1).x, 10, accuracy: 1e-9)
         XCTAssertEqual(path.center(at: 3).x, 20, accuracy: 1e-9)
         XCTAssertEqual(path.center(at: 5).x, 30, accuracy: 1e-9)
+    }
+
+    /// The zoom moves in proportion: on a curve through 1× and 4×, halfway in time is 2×, not
+    /// 2.5×, so 1× to 2× takes as long as 2× to 4×.
+    func testAPathZoomsInProportion() {
+        let path = FollowPath(
+            keyframes: [
+                FollowKeyframe(time: 0, center: .zero, scale: 1),
+                FollowKeyframe(time: 2, center: .zero, scale: 4)
+            ],
+            resting: FollowFraming(center: .zero, scale: 1, rotationRadians: 0))
+
+        XCTAssertEqual(path.framing(at: 1).scale, 2, accuracy: 1e-9)
+        XCTAssertEqual(path.framing(at: -1).scale, 1, accuracy: 1e-9)
+        XCTAssertEqual(path.framing(at: 3).scale, 4, accuracy: 1e-9)
+    }
+
+    /// Each value moves on its own curve through the keyframes: the turn eases in and out of
+    /// its keyframes like the center, independently of it, and isn't wrapped to a half turn.
+    func testAPathTurnsOnItsOwnCurve() {
+        let path = FollowPath(
+            keyframes: [
+                FollowKeyframe(time: 0, center: CGPoint(x: 0, y: 0), rotationRadians: 0),
+                FollowKeyframe(time: 1, center: CGPoint(x: 100, y: 0), rotationRadians: 0),
+                FollowKeyframe(time: 2, center: CGPoint(x: 100, y: 0), rotationRadians: 4)
+            ],
+            resting: FollowFraming(center: .zero, scale: 1, rotationRadians: 0))
+
+        XCTAssertEqual(path.framing(at: 0.5).rotationRadians, 0, accuracy: 1e-9)
+        XCTAssertEqual(path.framing(at: 1.5).rotationRadians, 2, accuracy: 1e-9)
+        XCTAssertEqual(path.framing(at: 1.5).center.x, 100, accuracy: 1e-9)
+        XCTAssertEqual(path.framing(at: 2).rotationRadians, 4, accuracy: 1e-9, "a turn past π stays unwrapped")
+    }
+
+    // MARK: - FollowKeyframe
+
+    /// A keyframe is Auto follow's while its position, zoom and turn are all as Auto follow
+    /// wrote them; a change to any one fills it.
+    func testAKeyframeIsAutoFollowsUntilAnyOfItsThreeValuesChanges() {
+        let auto = FollowKeyframe(
+            time: 1, framing: FollowFraming(center: CGPoint(x: 10, y: 20), scale: 2, rotationRadians: 0.1),
+            isAuto: true)
+        XCTAssertTrue(auto.isAutoFollows)
+
+        var moved = auto
+        moved.center.x += 1
+        var zoomed = auto
+        zoomed.scale *= 1.1
+        var turned = auto
+        turned.rotationRadians += 0.01
+        for changed in [moved, zoomed, turned] {
+            XCTAssertFalse(changed.isAutoFollows)
+            XCTAssertEqual(changed.autoFraming, auto.framing)
+        }
+        XCTAssertFalse(FollowKeyframe(time: 1, center: .zero).isAutoFollows, "one the user added")
+        XCTAssertNil(FollowKeyframe(time: 1, center: .zero).autoFraming)
+    }
+
+    /// Auto rotate and Reset rotate turn every keyframe and the resting framing; a keyframe Auto
+    /// follow wrote takes the turn as Auto follow's, so it stays hollow.
+    func testSettingTheRotationTurnsEveryKeyframe() {
+        var crop = FollowCrop(
+            keyframes: [
+                FollowKeyframe(
+                    time: 0, framing: FollowFraming(center: .zero, scale: 2, rotationRadians: 0), isAuto: true),
+                FollowKeyframe(time: 1, center: CGPoint(x: 5, y: 0), scale: 3, rotationRadians: 0.4)
+            ],
+            resting: FollowFraming(center: .zero, scale: 1, rotationRadians: 0), isAutoFollow: true)
+
+        crop.setRotation(-0.05)
+
+        XCTAssertEqual(crop.keyframes.map(\.rotationRadians), [-0.05, -0.05])
+        XCTAssertEqual(crop.resting.rotationRadians, -0.05)
+        XCTAssertTrue(crop.keyframes[0].isAutoFollows)
+        XCTAssertNil(crop.keyframes[1].autoRotationRadians)
+        XCTAssertEqual(crop.keyframes.map(\.scale), [2, 3])
+        XCTAssertTrue(crop.isAutoFollow)
     }
 
     // MARK: - AutoFollow
@@ -111,7 +190,8 @@ final class FollowCropTests: XCTestCase {
             frames: frames, cropRect: fullFrame, videoSize: landscape, rotationRadians: 0))
         let path = fit.crop.path
         let marker = ClipEditorViewModel.markerBox(around: fullFrame, aspectRatio: 9.0 / 16.0)
-        let box = CGSize(width: marker.width / fit.crop.scale, height: marker.height / fit.crop.scale)
+        let scale = fit.crop.keyframes[0].scale
+        let box = CGSize(width: marker.width / scale, height: marker.height / scale)
         for frame in frames {
             let center = path.center(at: frame.timestamp)
             for point in CropRectCalculator.locatedPoints(in: [frame]) {
@@ -135,7 +215,7 @@ final class FollowCropTests: XCTestCase {
 
         XCTAssertFalse(fit.moves)
         XCTAssertEqual(fit.crop.keyframes.count, 1)
-        XCTAssertEqual(fit.crop.scale, autoCrop.scale, accuracy: 1e-9)
+        XCTAssertEqual(fit.crop.keyframes[0].scale, autoCrop.scale, accuracy: 1e-9)
         let center = FramingConversion.followCenter(of: autoCrop, cropCenter: CGPoint(x: 960, y: 540))
         XCTAssertEqual(fit.crop.keyframes[0].center.x, center.x, accuracy: 1e-6)
         XCTAssertEqual(fit.crop.keyframes[0].center.y, center.y, accuracy: 1e-6)
@@ -146,7 +226,7 @@ final class FollowCropTests: XCTestCase {
         let fit = try XCTUnwrap(AutoFollow().fit(
             frames: crossingAthlete(), cropRect: fullFrame, videoSize: landscape, rotationRadians: 0, scale: 1.7))
 
-        XCTAssertEqual(fit.crop.scale, 1.7)
+        XCTAssertEqual(fit.crop.keyframes.map(\.scale), Array(repeating: 1.7, count: fit.crop.keyframes.count))
     }
 
     func testAutoFollowWithNothingLocatedIsNil() {
@@ -162,7 +242,8 @@ final class FollowCropTests: XCTestCase {
         let fit = try XCTUnwrap(AutoFollow().fit(
             frames: crossingAthlete(), cropRect: fullFrame, videoSize: landscape, rotationRadians: rotation))
         let marker = ClipEditorViewModel.markerBox(around: fullFrame, aspectRatio: 9.0 / 16.0)
-        let box = CGSize(width: marker.width / fit.crop.scale, height: marker.height / fit.crop.scale)
+        let scale = fit.crop.keyframes[0].scale
+        let box = CGSize(width: marker.width / scale, height: marker.height / scale)
         let turn = CGAffineTransform(rotationAngle: -rotation)
         for keyframe in fit.crop.keyframes {
             for corner in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
@@ -181,11 +262,11 @@ final class FollowCropTests: XCTestCase {
             rotationRadians: 0.1, aspectRatio: 9.0 / 16.0)
 
         XCTAssertTrue(crop.keyframes.isEmpty)
-        XCTAssertEqual(crop.restingCenter, CGPoint(x: 960, y: 540))
-        XCTAssertEqual(crop.rotationRadians, 0.1)
+        XCTAssertEqual(crop.resting.center, CGPoint(x: 960, y: 540))
+        XCTAssertEqual(crop.resting.rotationRadians, 0.1)
         XCTAssertFalse(crop.isAutoFollow)
         // The whole landscape frame's 9:16 box is 1920 wide; the marker's is 607.5.
-        XCTAssertEqual(crop.scale, 607.5 / 1920, accuracy: 1e-9)
+        XCTAssertEqual(crop.resting.scale, 607.5 / 1920, accuracy: 1e-9)
     }
 
     // MARK: - FramingConversion
@@ -217,7 +298,7 @@ final class FollowCropTests: XCTestCase {
     /// One step per frame across the moving span, each the shift that puts the crop's center
     /// on the clip's crop center at that frame; before the first step the first keyframe's.
     func testThePanStepsOncePerFrame() {
-        let crop = FollowCrop(
+        let crop = FollowCrop.uniform(
             scale: 1, rotationRadians: 0,
             keyframes: [
                 FollowKeyframe(time: 1, center: CGPoint(x: 100, y: 50)),
@@ -237,7 +318,7 @@ final class FollowCropTests: XCTestCase {
     }
 
     func testAStillFollowCropHasNoSteps() {
-        let crop = FollowCrop(
+        let crop = FollowCrop.uniform(
             scale: 1, rotationRadians: 0, keyframes: [FollowKeyframe(time: 1, center: CGPoint(x: 10, y: 10))],
             restingCenter: .zero, isAutoFollow: false)
 
@@ -275,13 +356,27 @@ final class FollowCropTests: XCTestCase {
     // MARK: - Export sampling
 
     func testExportSamplesEveryFrameWhereTheCropMovesAndTheSpansEnds() {
-        let times = ClipExportTransform.sampleTimes(over: 0...3, moving: 1.01...1.09, frameRate: 30)
+        let thirtieth = CMTime(value: 1, timescale: 30)
+        let times = ClipExportTransform.sampleTimes(over: 0...3, moving: 1.01...1.09, frameDuration: thirtieth)
 
         XCTAssertEqual(times.count, 2 + 4)
-        XCTAssertEqual(times[0], 0)
-        XCTAssertEqual(times[1], 30.0 / 30, accuracy: 1e-9)
-        XCTAssertEqual(times[4], 33.0 / 30, accuracy: 1e-9)
-        XCTAssertEqual(times[5], 3)
-        XCTAssertEqual(ClipExportTransform.sampleTimes(over: 0...3, moving: nil, frameRate: 30), [0, 3])
+        XCTAssertEqual(times[0], .zero)
+        XCTAssertEqual(times[1], CMTime(value: 30, timescale: 30))
+        XCTAssertEqual(times[4], CMTime(value: 33, timescale: 30))
+        XCTAssertEqual(times[5].seconds, 3)
+        XCTAssertEqual(
+            ClipExportTransform.sampleTimes(over: 0...3, moving: nil, frameDuration: thirtieth).map(\.seconds), [0, 3])
+    }
+
+    /// The frames are exact multiples of the frame duration, never rounded: a 29.97 fps grid
+    /// isn't a whole number of 600ths of a second.
+    func testExportSamplesAnNTSCGridExactly() {
+        let frame = CMTime(value: 1001, timescale: 30000)
+        let times = ClipExportTransform.sampleTimes(over: 10...14, moving: 11...12, frameDuration: frame)
+
+        for time in times.dropFirst().dropLast() {
+            XCTAssertEqual(time.timescale, 30000)
+            XCTAssertEqual(time.value % 1001, 0, "\(time.value) isn't on the grid")
+        }
     }
 }

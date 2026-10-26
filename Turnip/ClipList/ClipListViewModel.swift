@@ -471,9 +471,14 @@ final class ClipListViewModel: ObservableObject {
            let followCrop = await followCrop(
                mode: geometry.framingMode, followCrop: geometry.followCrop,
                window: geometry.window, cropRect: geometry.cropRect, personID: geometry.personID) {
+            // The composition's own grid (`makeVideoComposition` below), so every frame it renders
+            // lands on a sample of the moving crop.
+            guard let frameDuration = try? VideoFrameSampler.compositionFrameDuration(
+                minFrameDuration: track.minFrameDuration, nominalFrameRate: track.frameRate)
+            else { return nil }
             transform = ClipExportTransform.make(
                 followCrop: followCrop, cropRect: geometry.cropRect, over: 0...max(duration.seconds, 0),
-                frameRate: track.frameRate, naturalSize: track.naturalSize,
+                frameDuration: frameDuration, naturalSize: track.naturalSize,
                 preferredTransform: track.preferredTransform)
         } else {
             transform = ClipExportTransform.make(

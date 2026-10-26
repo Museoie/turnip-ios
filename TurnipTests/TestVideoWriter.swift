@@ -10,11 +10,14 @@ enum TestVideoWriter {
     /// Writes a `frameCount`-frame solid-color movie. `transform` is written as the track's
     /// preferredTransform — e.g. a 90° rotation to mimic an iPhone portrait recording stored
     /// as landscape-encoded frames. `rollSamples`, when given, become a `RollTrack` metadata
-    /// track like the one the in-app camera writes, one sample per (time, tilt).
+    /// track like the one the in-app camera writes, one sample per (time, tilt). `frameTimes`,
+    /// when given, are the frames' presentation times in place of `fps`'s even grid — a
+    /// variable-frame-rate take.
     static func writeTestVideo(
         frameCount: Int, width: Int, height: Int, fps: Int32,
         transform: CGAffineTransform = .identity,
-        rollSamples: [(time: TimeInterval, tilt: Double)]? = nil
+        rollSamples: [(time: TimeInterval, tilt: Double)]? = nil,
+        frameTimes: [CMTime]? = nil
     ) async throws -> URL {
         let url = URL.temporaryDirectory.appending(path: "TestVideoWriter-\(UUID().uuidString).mov")
 
@@ -46,8 +49,7 @@ enum TestVideoWriter {
         writer.startSession(atSourceTime: .zero)
 
         try await appendFrames(
-            frameCount: frameCount,
-            fps: fps,
+            frameTimes: frameTimes ?? (0..<frameCount).map { CMTime(value: CMTimeValue($0), timescale: fps) },
             input: input,
             adaptor: adaptor,
             writer: writer
@@ -80,13 +82,12 @@ enum TestVideoWriter {
     }
 
     private static func appendFrames(
-        frameCount: Int,
-        fps: Int32,
+        frameTimes: [CMTime],
         input: AVAssetWriterInput,
         adaptor: AVAssetWriterInputPixelBufferAdaptor,
         writer: AVAssetWriter
     ) async throws {
-        for frameIndex in 0..<frameCount {
+        for (frameIndex, presentationTime) in frameTimes.enumerated() {
             // Bounded on writer status: if the writer fails mid-write, `isReadyForMoreMediaData`
             // never becomes true, and without this check the loop would spin until XCTest's
             // timeout with no cause. Exiting instead lets `append` below surface `writer.error`.
@@ -110,7 +111,6 @@ enum TestVideoWriter {
             }
             CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
 
-            let presentationTime = CMTime(value: CMTimeValue(frameIndex), timescale: fps)
             guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
                 throw writer.error ?? PoseError.videoLoadFailed(underlying: nil)
             }

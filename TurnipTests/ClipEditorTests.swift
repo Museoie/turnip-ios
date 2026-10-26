@@ -1124,8 +1124,11 @@ final class ClipEditorTests: XCTestCase {
 
         viewModel.applyCropScale(0.5)
 
-        XCTAssertEqual(viewModel.followCrop?.scale ?? 0, before.scale * 0.5, accuracy: 1e-9)
-        XCTAssertEqual(viewModel.followCrop?.keyframes, before.keyframes)
+        let after = try XCTUnwrap(viewModel.followCrop)
+        XCTAssertEqual(after.keyframes.map(\.center), before.keyframes.map(\.center))
+        for (zoomed, original) in zip(after.keyframes, before.keyframes) {
+            XCTAssertEqual(zoomed.scale, original.scale * 0.5, accuracy: 1e-9)
+        }
         XCTAssertFalse(viewModel.isAutoFollowApplied)
         XCTAssertEqual(viewModel.cropAdjustment, still)
         XCTAssertTrue(viewModel.isAutoCropApplied)
@@ -1140,7 +1143,7 @@ final class ClipEditorTests: XCTestCase {
 
         let crop = try XCTUnwrap(viewModel.followCrop)
         XCTAssertTrue(crop.keyframes.isEmpty)
-        XCTAssertEqual(crop.restingCenter, CGPoint(x: 100, y: 50))
+        XCTAssertEqual(crop.resting.center, CGPoint(x: 100, y: 50))
         XCTAssertFalse(viewModel.isAutoFollowApplied)
         XCTAssertEqual(viewModel.framingMode, .follow)
         viewModel.autoFollow()
@@ -1246,21 +1249,28 @@ final class ClipEditorTests: XCTestCase {
     }
 
     /// A follow crop still all Auto follow's re-tracks a trimmed window, positions only, at the
-    /// same zoom; one with a keyframe the user set stays put.
+    /// same zoom; one with a keyframe the user set or changed stays put.
     @MainActor
     func testATrimRetracksOnlyAnUntouchedAutoFollow() throws {
         let viewModel = makeFollowViewModel()
         viewModel.setFramingMode(.follow)
-        viewModel.applyCropScale(1.3)
-        let zoomed = try XCTUnwrap(viewModel.followCrop)
+        let auto = try XCTUnwrap(viewModel.followCrop)
 
         viewModel.trimEnd(to: 2.2)
         viewModel.finishTrim()
 
         let retracked = try XCTUnwrap(viewModel.followCrop)
-        XCTAssertEqual(retracked.scale, zoomed.scale)
-        XCTAssertNotEqual(retracked.keyframes, zoomed.keyframes)
+        for keyframe in retracked.keyframes {
+            XCTAssertEqual(keyframe.scale, auto.keyframes[0].scale, accuracy: 1e-9)
+        }
+        XCTAssertNotEqual(retracked.keyframes, auto.keyframes)
         XCTAssertTrue(retracked.isUntouchedAutoFollow)
+
+        viewModel.applyCropScale(1.3)
+        let zoomed = try XCTUnwrap(viewModel.followCrop)
+        viewModel.trimEnd(to: 3)
+        viewModel.finishTrim()
+        XCTAssertEqual(viewModel.followCrop, zoomed, "a zoomed keyframe is the user's")
 
         var handSet = retracked
         handSet.keyframes.append(FollowKeyframe(time: 3, center: CGPoint(x: 120, y: 50)))
@@ -1275,7 +1285,7 @@ final class ClipEditorTests: XCTestCase {
     /// A crop at zoom 2 with one keyframe Auto follow wrote at the window's start, where these
     /// tests' playhead sits (the player has no item, so it reads as the window's start).
     private func handFollowCrop(rotationRadians: Double = 0) -> FollowCrop {
-        FollowCrop(
+        FollowCrop.uniform(
             scale: 2, rotationRadians: rotationRadians,
             keyframes: [
                 FollowKeyframe(time: 0, center: CGPoint(x: 60, y: 50), autoCenter: CGPoint(x: 60, y: 50)),
@@ -1318,8 +1328,8 @@ final class ClipEditorTests: XCTestCase {
     @MainActor
     func testADragAwayFromKeyframesAddsOneFromTheCurve() throws {
         var crop = handFollowCrop()
-        crop.keyframes = crop.keyframes.map {
-            FollowKeyframe(time: $0.time + 1, center: $0.center, autoCenter: $0.autoCenter)
+        for index in crop.keyframes.indices {
+            crop.keyframes[index].time += 1
         }
         let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: crop)
         let before = crop.path.center(at: 0)

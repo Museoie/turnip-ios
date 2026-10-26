@@ -163,19 +163,21 @@ struct ClipExportTransform {
     /// for a player over the untrimmed source.
     ///
     /// At every moment the crop is a box of the marker's size (`cropRect`'s marker box)
-    /// centered on the follow crop's center then, zoomed and turned about that center — the
-    /// order the editor's preview draws. The curve is sampled once per frame of `frameRate`
-    /// wherever the center moves, one ramp per frame: the zoom and turn are the same at every
-    /// sample, so only the translation changes within a ramp and the composition's linear
-    /// interpolation between its two ends is exact at the frames it renders. Where the
-    /// center holds, one ramp covers the hold.
+    /// centered on the follow crop's center then, zoomed and turned about that center by the
+    /// zoom and turn then — the order the editor's preview draws. Wherever the crop moves, it is
+    /// sampled on every frame of the composition's grid, `frameDuration` apart from composition
+    /// time zero, one ramp per frame. The composition interpolates a ramp's matrix linearly
+    /// between its two ends, which shears the picture partway through a ramp whose turn or zoom
+    /// changes, so each frame the composition renders has to land on a ramp's start, drawn
+    /// exactly: `frameDuration` must be the composition's own (`makeVideoComposition`). Where
+    /// the crop holds, one ramp covers the hold.
     ///
     /// `nil` when the source dimensions are unknown or the crop rect is degenerate.
     static func make(
         followCrop: FollowCrop,
         cropRect: NormalizedRect,
         over span: ClosedRange<TimeInterval>,
-        frameRate: Float,
+        frameDuration: CMTime,
         naturalSize: CGSize,
         preferredTransform: CGAffineTransform
     ) -> ClipExportTransform? {
@@ -185,26 +187,22 @@ struct ClipExportTransform {
         let box = ClipEditorViewModel.markerBox(
             around: crop, aspectRatio: CGFloat(CropRectCalculator().targetAspectRatio)).size
         let path = followCrop.path
-        let adjustment = CropAdjustment(
-            scale: followCrop.scale, rotationRadians: followCrop.rotationRadians, offset: .zero)
-        var stops: [(time: TimeInterval, transform: ClipExportTransform)] = []
-        for time in sampleTimes(over: span, moving: path.movingSpan, frameRate: frameRate) {
-            let center = path.center(at: time)
+        var stops: [(time: CMTime, transform: ClipExportTransform)] = []
+        for time in sampleTimes(over: span, moving: path.movingSpan, frameDuration: frameDuration) {
+            let framing = path.framing(at: span.lowerBound + time.seconds)
             let rect = CGRect(
-                x: center.x - box.width / 2, y: center.y - box.height / 2, width: box.width, height: box.height)
+                x: framing.center.x - box.width / 2, y: framing.center.y - box.height / 2,
+                width: box.width, height: box.height)
+            let adjustment = CropAdjustment(
+                scale: framing.scale, rotationRadians: framing.rotationRadians, offset: .zero)
             guard let transform = make(displayedCrop: rect, geometry: geometry, cropAdjustment: adjustment)
             else { return nil }
             stops.append((time, transform))
         }
         guard let first = stops.first else { return nil }
-        // Rounded to the timescale rather than through `CMTime(seconds:preferredTimescale:)`,
-        // which truncates: a frame at 1/15 s would start its ramp a 600th of a second early.
-        func compositionTime(_ time: TimeInterval) -> CMTime {
-            CMTime(value: CMTimeValue(((time - span.lowerBound) * 600).rounded()), timescale: 600)
-        }
         let ramps = zip(stops, stops.dropFirst()).map { earlier, later in
             ClipTransformRamp(
-                timeRange: CMTimeRange(start: compositionTime(earlier.time), end: compositionTime(later.time)),
+                timeRange: CMTimeRange(start: earlier.time, end: later.time),
                 start: earlier.transform.layerTransform,
                 end: later.transform.layerTransform)
         }
@@ -213,23 +211,26 @@ struct ClipExportTransform {
             ramps: ramps)
     }
 
-    /// Where a follow crop is sampled: the span's two ends, plus every frame of the span — on
-    /// the composition's own frame grid, counted from the span's start — from the last frame
-    /// before the center starts moving to the first after it stops.
+    /// Where a follow crop is sampled, in composition time: zero, the span's end, and every frame
+    /// of the composition's grid — whole multiples of `frameDuration`, exact rather than rounded
+    /// — from the last frame before the crop starts moving to the first after it stops.
     static func sampleTimes(
-        over span: ClosedRange<TimeInterval>, moving: ClosedRange<TimeInterval>?, frameRate: Float
-    ) -> [TimeInterval] {
-        var times = [span.lowerBound]
-        if let moving, frameRate > 0 {
-            let frame = 1 / TimeInterval(frameRate)
+        over span: ClosedRange<TimeInterval>, moving: ClosedRange<TimeInterval>?, frameDuration: CMTime
+    ) -> [CMTime] {
+        // Rounded to the timescale rather than through `CMTime(seconds:preferredTimescale:)`,
+        // which truncates.
+        let end = CMTime(value: CMTimeValue(((span.upperBound - span.lowerBound) * 600).rounded()), timescale: 600)
+        var times = [CMTime.zero]
+        let frame = frameDuration.seconds
+        if let moving, frameDuration.isNumeric, frame > 0 {
             let firstIndex = Int(((moving.lowerBound - span.lowerBound) / frame).rounded(.down))
             let lastIndex = Int(((moving.upperBound - span.lowerBound) / frame).rounded(.up))
             for index in max(firstIndex, 1)...max(lastIndex, 1) {
-                let time = span.lowerBound + TimeInterval(index) * frame
-                if time < span.upperBound - 1e-9 { times.append(time) }
+                let time = CMTimeMultiply(frameDuration, multiplier: Int32(clamping: index))
+                if CMTimeCompare(time, end) < 0 { times.append(time) }
             }
         }
-        if span.upperBound > span.lowerBound { times.append(span.upperBound) }
+        if let last = times.last, CMTimeCompare(end, last) > 0 { times.append(end) }
         return times
     }
 
@@ -413,11 +414,10 @@ actor ClipExporter {
         else {
             throw ClipExportError.invalidTimeRange(window: spec.window)
         }
-        let frameRate = try await videoTrack.load(.nominalFrameRate)
-        let minFrameDuration = try await videoTrack.load(.minFrameDuration)
+        let (frameRate, minFrameDuration) = try await Self.frameTiming(of: videoTrack)
         let transform = try Self.renderTransform(
             for: spec, staticTransform: staticTransform, videoRange: ranges.video, frameRate: frameRate,
-            naturalSize: naturalSize, preferredTransform: preferredTransform)
+            minFrameDuration: minFrameDuration, naturalSize: naturalSize, preferredTransform: preferredTransform)
         let composition = try makeComposition(
             videoTrack: videoTrack, audioTrack: audioTrack, ranges: ranges)
         let videoComposition = try makeVideoComposition(
@@ -443,21 +443,51 @@ actor ClipExporter {
 
     // swiftlint:disable function_parameter_count
     /// The static crop's transform, or — for a spec with a follow crop — the moving crop's,
-    /// timed against the composition, which starts where the trimmed video range does.
+    /// timed against the composition, which starts where the trimmed video range does, and
+    /// sampled on the composition's own frame grid: the one `makeVideoComposition` derives from
+    /// the same `frameRate` and `minFrameDuration`.
     static func renderTransform(
         for spec: ClipSpec, staticTransform: ClipExportTransform, videoRange: CMTimeRange, frameRate: Float,
-        naturalSize: CGSize, preferredTransform: CGAffineTransform
+        minFrameDuration: CMTime, naturalSize: CGSize, preferredTransform: CGAffineTransform
     ) throws -> ClipExportTransform {
         // swiftlint:enable function_parameter_count
         guard let followCrop = spec.followCrop else { return staticTransform }
+        let frameDuration: CMTime
+        do {
+            frameDuration = try VideoFrameSampler.compositionFrameDuration(
+                minFrameDuration: minFrameDuration, nominalFrameRate: frameRate)
+        } catch {
+            throw ClipExportError.exportFailed(reason: "could not determine a valid frame duration")
+        }
         guard let moving = ClipExportTransform.make(
             followCrop: followCrop, cropRect: spec.cropRect,
-            over: videoRange.start.seconds...videoRange.end.seconds, frameRate: frameRate,
+            over: videoRange.start.seconds...videoRange.end.seconds, frameDuration: frameDuration,
             naturalSize: naturalSize, preferredTransform: preferredTransform)
         else {
             throw ClipExportError.invalidCropRect(window: spec.window)
         }
         return moving
+    }
+
+    /// The track's timing values the export lays its frame grid out from: `exportFrameRate`'s rate
+    /// and the track's own `minFrameDuration`.
+    private static func frameTiming(
+        of track: AVAssetTrack
+    ) async throws -> (frameRate: Float, minFrameDuration: CMTime) {
+        let (nominalFrameRate, minFrameDuration) = try await track.load(.nominalFrameRate, .minFrameDuration)
+        let frameRate = exportFrameRate(nominalFrameRate: nominalFrameRate, minFrameDuration: minFrameDuration)
+        return (frameRate, minFrameDuration)
+    }
+
+    /// The nominal rate the export lays its frame grid out from: the track's own, or 30 fps for a
+    /// track with no usable timing value at all (nominal rate 0 and no usable
+    /// `minFrameDuration`), which exports on a 30 fps grid. Only the export path falls back: the
+    /// shared derivation (`VideoFrameSampler.compositionFrameDuration`) keeps its throw contract,
+    /// so the preview still drops to the uncomposed player, and sub-0.5 fps or over-`Int32.max`
+    /// rates still throw.
+    static func exportFrameRate(nominalFrameRate: Float, minFrameDuration: CMTime) -> Float {
+        let hasUsableSpacing = minFrameDuration.isNumeric && minFrameDuration.seconds > 0
+        return (!hasUsableSpacing && nominalFrameRate <= 0) ? 30 : nominalFrameRate
     }
 
     /// Deletes any file already at `url`. Export sessions refuse to write over an
@@ -506,7 +536,8 @@ actor ClipExporter {
     /// The crop: one instruction covering the whole composition, applying the render
     /// transform at time zero, or a moving crop's ramps from there. The instruction's range is
     /// the composition's full duration — the composition holds exactly one trimmed clip, so
-    /// there is nothing else to cover.
+    /// there is nothing else to cover. `frameRate` is `exportFrameRate`'s, as `renderTransform`
+    /// sampled the moving crop on.
     private func makeVideoComposition(
         in composition: AVMutableComposition,
         transform: ClipExportTransform,
@@ -516,17 +547,9 @@ actor ClipExporter {
         guard let compositionTrack = composition.tracks(withMediaType: .video).first else {
             throw ClipExportError.exportFailed(reason: "composition lost its video track")
         }
-        // The export path keeps the old 30 fps fallback for a track with no
-        // usable timing value at all (nominal rate 0 and no usable
-        // `minFrameDuration`): such a track previously exported on a 30 fps
-        // grid. Only the export path restores it — the shared derivation keeps
-        // its throw contract, so the preview still drops to the uncomposed
-        // player and sub-0.5 fps / over-`Int32.max` rates still throw here.
-        let hasUsableSpacing = minFrameDuration.isNumeric && minFrameDuration.seconds > 0
-        let exportFrameRate = (!hasUsableSpacing && frameRate <= 0) ? 30 : frameRate
         do {
             return try transform.makeVideoComposition(
-                for: compositionTrack, duration: composition.duration, frameRate: exportFrameRate,
+                for: compositionTrack, duration: composition.duration, frameRate: frameRate,
                 minFrameDuration: minFrameDuration)
         } catch {
             // The grid derivation's throw stays typed: an export that cannot lay

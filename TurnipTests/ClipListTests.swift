@@ -1162,7 +1162,7 @@ final class ClipListTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let item = ClipListItem(window: followedWindow, cropRect: fullFrame, isSaved: true)
         let viewModel = followViewModel(items: [item], poseFrames: crossingAthlete(), url: url, follow: false)
-        let followCrop = FollowCrop(
+        let followCrop = FollowCrop.uniform(
             scale: 2, rotationRadians: 0,
             keyframes: [FollowKeyframe(time: 1, center: CGPoint(x: 20, y: 18), autoCenter: nil)],
             restingCenter: CGPoint(x: 32, y: 18), isAutoFollow: false)
