@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 import XCTest
 @testable import Turnip
 
@@ -112,41 +113,124 @@ final class FollowPreviewTests: XCTestCase {
         XCTAssertEqual(placement.position.y, 240 - 12 * 0.25, accuracy: 1e-9)
     }
 
-    /// The editor item's composition turns every orientation a camera writes upright, mirrored
-    /// included, and draws a frame larger than the cap scaled down to it.
-    func testTheCompositionDrawsEveryOrientationUprightWithinTheCap() throws {
-        let transforms: [CGAffineTransform] = [
-            .identity,
-            CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1080, ty: 0),
-            CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: 1920, ty: 1080),
-            CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: 1920),
-            CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 1920, ty: 0)
-        ]
+    /// The editor item's composition draws a frame larger than the cap scaled down to it, and only
+    /// an HDR track's through the tone mapping compositor, from iOS 18.
+    func testTheCompositionDrawsWithinTheCap() throws {
+        let turn = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 1080, ty: 0)
         for (natural, scale) in [(CGSize(width: 1920, height: 1080), 1.0), (CGSize(width: 3840, height: 2160), 0.5)] {
-            for base in transforms {
-                // The same turn for a frame of this size.
-                let transform = CGAffineTransform(
-                    a: base.a, b: base.b, c: base.c, d: base.d,
-                    tx: base.tx * natural.width / 1920, ty: base.ty * natural.width / 1920)
-                let track = VideoTrackGeometry(naturalSize: natural, preferredTransform: transform)
+            let transform = CGAffineTransform(
+                a: turn.a, b: turn.b, c: turn.c, d: turn.d, tx: turn.tx * natural.width / 1920, ty: 0)
+            let track = VideoTrackGeometry(naturalSize: natural, preferredTransform: transform)
+            for isHDR in [false, true] {
                 let composition = PreviewFrames.composition(
-                    track: track, trackID: 1, duration: CMTime(value: 6, timescale: 1), frameRate: 30)
-                let displayed = track.displayedSize
-                XCTAssertEqual(composition.renderSize.width, displayed.width * scale, accuracy: 1)
-                XCTAssertEqual(composition.renderSize.height, displayed.height * scale, accuracy: 1)
-                let instruction = try XCTUnwrap(composition.instructions.first as? AVVideoCompositionInstruction)
-                let layer = try XCTUnwrap(instruction.layerInstructions.first)
-                var start = CGAffineTransform.identity, end = CGAffineTransform.identity
-                var range = CMTimeRange.zero
-                XCTAssertTrue(layer.getTransformRamp(for: .zero, start: &start, end: &end, timeRange: &range))
-                for corner in [CGPoint.zero, CGPoint(x: natural.width, y: natural.height)] {
-                    let drawn = corner.applying(start)
-                    let upright = corner.applying(track.uprightTransform)
-                    XCTAssertEqual(drawn.x, upright.x * scale, accuracy: 1e-6, "\(transform) \(corner)")
-                    XCTAssertEqual(drawn.y, upright.y * scale, accuracy: 1e-6, "\(transform) \(corner)")
+                    track: track, trackID: 1, duration: CMTime(value: 6, timescale: 1), frameRate: 30, isHDR: isHDR)
+                XCTAssertEqual(composition.renderSize.width, track.displayedSize.width * scale, accuracy: 1)
+                XCTAssertEqual(composition.renderSize.height, track.displayedSize.height * scale, accuracy: 1)
+                guard #available(iOS 18.0, *), isHDR else {
+                    XCTAssertNil(composition.customVideoCompositorClass)
+                    let instruction = try XCTUnwrap(composition.instructions.first as? AVVideoCompositionInstruction)
+                    var start = CGAffineTransform.identity, end = CGAffineTransform.identity
+                    var range = CMTimeRange.zero
+                    XCTAssertTrue(try XCTUnwrap(instruction.layerInstructions.first)
+                        .getTransformRamp(for: .zero, start: &start, end: &end, timeRange: &range))
+                    let upright = track.uprightTransform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+                    XCTAssertEqual(start, upright)
+                    continue
                 }
+                XCTAssertTrue(composition.customVideoCompositorClass == PreviewCompositor.self)
+                let instruction = try XCTUnwrap(composition.instructions.first as? PreviewCompositionInstruction)
+                XCTAssertEqual(instruction.transform, PreviewCompositor.transform(track: track, scale: scale))
             }
         }
+    }
+
+    /// The compositor turns every orientation a camera writes upright, mirrored included: a mark in
+    /// the encoded frame's top-left corner lands where the track's upright transform puts it.
+    @available(iOS 18.0, *)
+    func testTheCompositorDrawsEveryOrientationUpright() {
+        let transforms: [CGAffineTransform] = [
+            .identity,
+            CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 4, ty: 0),
+            CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: 8, ty: 4),
+            CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: 8),
+            CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: 8, ty: 0)
+        ]
+        let source = pixelBuffer(width: 8, height: 4) { x, y in x < 2 && y < 2 ? 255 : 0 }
+        for transform in transforms {
+            let track = VideoTrackGeometry(naturalSize: CGSize(width: 8, height: 4), preferredTransform: transform)
+            let upright = PreviewCompositor.transform(track: track, scale: 1)
+            let image = PreviewCompositor.frame(from: source, transform: upright).image
+            let drawn = render(image, size: track.displayedSize)
+            let mark = CGPoint(x: 0.5, y: 0.5).applying(track.uprightTransform)
+            let away = CGPoint(x: 6.5, y: 2.5).applying(track.uprightTransform)
+            XCTAssertGreaterThan(value(in: drawn, at: mark), 200, "\(transform)")
+            XCTAssertLessThan(value(in: drawn, at: away), 50, "\(transform)")
+        }
+    }
+
+    /// A frame in standard range comes through as it was; an HLG frame is tone mapped into it.
+    @available(iOS 18.0, *)
+    func testTheCompositorTonemapsOnlyAnHDRFrame() {
+        let standard = pixelBuffer(width: 2, height: 2) { _, _ in 85 }
+        let square = CGSize(width: 2, height: 2)
+        let kept = PreviewCompositor.frame(from: standard, transform: .identity)
+        XCTAssertFalse(kept.isToneMapped)
+        let drawn = render(kept.image, size: square)
+        XCTAssertEqual(Double(value(in: drawn, at: CGPoint(x: 0.5, y: 0.5))), 85, accuracy: 1)
+
+        let hlg = pixelBuffer(width: 2, height: 2) { _, _ in 230 }
+        CVBufferSetAttachment(
+            hlg, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_2020, .shouldPropagate)
+        CVBufferSetAttachment(
+            hlg, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_2100_HLG, .shouldPropagate)
+        CVBufferSetAttachment(
+            hlg, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_2020, .shouldPropagate)
+        XCTAssertGreaterThan(
+            CIImage(cvPixelBuffer: hlg, options: [.colorSpace: CGColorSpace(name: CGColorSpace.itur_2100_HLG) as Any])
+                .contentHeadroom, 1)
+        let mapped = PreviewCompositor.frame(from: hlg, transform: .identity)
+        XCTAssertEqual(mapped.image.contentHeadroom, 1, accuracy: 1e-6)
+        XCTAssertTrue(mapped.isToneMapped)
+        XCTAssertTrue(mapped.colorSpace === PreviewCompositor.colorSpace)
+    }
+
+    /// A BGRA buffer whose every channel at `(x, y)` (y down) is `level(x, y)`.
+    private func pixelBuffer(width: Int, height: Int, level: (Int, Int) -> UInt8 = { _, _ in 0 }) -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(
+            nil, width, height, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [String: Any]()] as CFDictionary, &buffer)
+        let pixels = buffer!
+        CVPixelBufferLockBaseAddress(pixels, [])
+        let base = CVPixelBufferGetBaseAddress(pixels)!.assumingMemoryBound(to: UInt8.self)
+        let rowBytes = CVPixelBufferGetBytesPerRow(pixels)
+        for y in 0..<height {
+            for x in 0..<width {
+                let pixel = base + y * rowBytes + x * 4
+                pixel[0] = level(x, y)
+                pixel[1] = level(x, y)
+                pixel[2] = level(x, y)
+                pixel[3] = 255
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(pixels, [])
+        return pixels
+    }
+
+    @available(iOS 18.0, *)
+    private func render(_ image: CIImage, size: CGSize) -> CVPixelBuffer {
+        let output = pixelBuffer(width: Int(size.width), height: Int(size.height))
+        CIContext().render(
+            image, to: output, bounds: CGRect(origin: .zero, size: size), colorSpace: PreviewCompositor.colorSpace)
+        return output
+    }
+
+    /// The green channel of the pixel containing `point` (y down).
+    private func value(in buffer: CVPixelBuffer, at point: CGPoint) -> UInt8 {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+        return base[Int(point.y) * CVPixelBufferGetBytesPerRow(buffer) + Int(point.x) * 4 + 1]
     }
 }
 

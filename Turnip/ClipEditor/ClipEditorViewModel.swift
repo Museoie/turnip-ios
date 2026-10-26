@@ -327,9 +327,11 @@ final class ClipEditorViewModel: ObservableObject {
             preferredTransform: preferredTransform,
             frameRate: frameRate > 0 ? frameRate : 30)
         if previewComposition == nil {
+            let characteristics = (try? await track.load(.mediaCharacteristics)) ?? []
             previewComposition = PreviewFrames.composition(
                 track: VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform),
-                trackID: track.trackID, duration: assetDuration, frameRate: frameRate > 0 ? frameRate : 30)
+                trackID: track.trackID, duration: assetDuration, frameRate: frameRate > 0 ? frameRate : 30,
+                isHDR: characteristics.contains(.containsHDRVideo))
         }
         // The frames come upright only through the composition.
         if let item = player.currentItem, item.videoComposition == nil {
@@ -369,13 +371,14 @@ final class ClipEditorViewModel: ObservableObject {
     private func loadPreviewComposition() async -> AVVideoComposition? {
         guard let track = try? await source.asset.loadTracks(withMediaType: .video).first,
               let duration = try? await source.asset.load(.duration), duration.isValid,
-              let (naturalSize, transform, frameRate) = try? await track.load(
-                  .naturalSize, .preferredTransform, .nominalFrameRate),
+              let (naturalSize, transform, frameRate, characteristics) = try? await track.load(
+                  .naturalSize, .preferredTransform, .nominalFrameRate, .mediaCharacteristics),
               naturalSize.width > 0, naturalSize.height > 0
         else { return nil }
         return PreviewFrames.composition(
             track: VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: transform),
-            trackID: track.trackID, duration: duration, frameRate: frameRate > 0 ? Double(frameRate) : 30)
+            trackID: track.trackID, duration: duration, frameRate: frameRate > 0 ? Double(frameRate) : 30,
+            isHDR: characteristics.contains(.containsHDRVideo))
     }
 
     /// Ends `holdPlayback(at:)`'s hold: starts the preview loop from the window's start if
