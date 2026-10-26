@@ -1,6 +1,7 @@
 # Turnip iOS — On-Device Personalization Design
 
-*Draft · 2026-10-21*
+*Draft · 2026-10-21 · Revised 2026-10-26: the model's embedding
+output is built (turnip-ml#58).*
 
 **Scope.** A companion to `docs/DESIGN.md`. The trick-detection model
 the app downloads (the central model, turnip-ml's champion, trained on
@@ -24,12 +25,12 @@ trick-model loader. Nothing here crosses the network, so neither the
 farm nor the master plan changes. Where this doc makes a call none of
 those cover, it says so as *(judgment call)*.
 
-**Status.** Nothing here is built, and nothing it stands on is built
-yet either. That includes the trick-model loader
-(`CONTRIBUTION_DESIGN.md` §7.2), the clip library (`PROFILE_DESIGN.md`
-§2), and the model's embedding output. `Training/export_coreml.py`
-does not emit that output yet (`MODEL_CONTRACT.md` §3.2.2). This lands
-after Phase 4 (master plan §7) and is iOS-only.
+**Status.** Nothing here is built. Of what it stands on, only the
+model's embedding output exists: `Training/export_coreml.py` emits
+`window_embeddings` for the baseline (`MODEL_CONTRACT.md` §3.2.2).
+The trick-model loader (`CONTRIBUTION_DESIGN.md` §7.2) and the clip
+library (`PROFILE_DESIGN.md` §2) are not built yet. This lands after
+Phase 4 (master plan §7) and is iOS-only.
 
 ---
 
@@ -383,7 +384,8 @@ on the main thread.
 - **Then the keep layer** (§4.3), with dismissed windows recorded from
   the same release. Recording them earlier would keep data with no
   use yet.
-- **The farm changes nothing.** turnip-ml changes its export only.
+- **The farm changes nothing.** turnip-ml's only change, its export,
+  is built.
 
 ---
 
