@@ -36,6 +36,58 @@ labeling platform" means: users label their own confirmed clips with
 free-text trick names; the farm trains trick detection from pose
 sequences, never from video.
 
+**Status (2026-10-24).** Built, in `Turnip/Contribution/` and
+`Turnip/NameClips/`, against the farm at `https://turnip.hoie.kim`:
+
+- **The farm account** (§5.4) in Settings' Contribution section: Sign in
+  with Apple with a fresh nonce and no scopes, the session token and every
+  source key in the Keychain (`AfterFirstUnlockThisDeviceOnly`), sign-out,
+  and account deletion that deletes every keyed source first. The Apple
+  credential state is checked on every foreground; a revoked or missing
+  credential signs out, and so does any `401`. The simulator skips that
+  check: it is never a trusted device, and Apple reports every credential
+  there as revoked, a just-issued one included.
+- **`video_id`** (§1.1) for Photos-backed videos, `VideoIdentity`.
+- **The contribute toggle** on Name Clips and **the confirmation sheet**
+  (§3.3), which opens once the save finishes, with the clips and their
+  names, the someone-else flag, the disclosure, and the pose-quality gate
+  of §2.3 (warn over 30% gaps, refuse over 60%).
+- **The upload** (§5.1): register with the source key, PUT the gzipped TKP1
+  blob with a `Content-MD5` header (the presigned URL signs only `host`, so
+  the unsigned-safe checksum), re-register until the farm's
+  ingest (a 30-second sweep) reports `blob_present`, send the clips, then
+  `GET /api/sources/:id` and report what the farm holds: the sheet says
+  done only when every clip came back with the names it was sent with. The canonical
+  `frame_count` is computed exactly as the farm's ingest computes it; a
+  window maps to canonical frames start-floor, end-ceiling, clamped inside
+  the sequence.
+- **The vocabulary fetch** (`GET /api/taxonomy/current`) when Name Clips
+  opens, at most every six hours, kept in `Application Support/` and used
+  over the bundled seed when its `taxonomy_version` is greater.
+- **Where the farm is**: the `TURNIP_FARM_ENDPOINT` Info.plist key. It is
+  apart from `TURNIP_MODEL_UPDATE_ENDPOINT`, so pointing contribution at
+  the farm doesn't also start the model poll, which waits on a promoted
+  model. Blank, every farm control is hidden and no farm call is made.
+
+Until the clip library lands ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §2),
+the built flow differs from this doc:
+
+- The pose is encoded when the sheet opens, from the analysis still in
+  memory, not read from the library. So a clip can be contributed only in
+  the save that names it: no "Contribute named clips" on the Profile and no
+  toggle on a Clip view yet.
+- No outbox (§5.3). A failed upload is retried from the sheet ("Try
+  Again") while it is open; closing it drops the upload. No
+  `contributed_at` or dirty flag (§5.2), so an edit after contributing is
+  not re-sent, and no label-only update (`POST /api/clips/:id/labels`).
+- One pose sequence per source, the first contributed clip's person's
+  (`MULTI_PERSON.md`); a clip of another person in the same video stays
+  behind, marked so in the sheet. *(Judgment call, until the farm holds
+  more than one track per video.)*
+- Not built: reinstall reconciliation (§6), `video_id` for file imports
+  (§1.1), an observer for `credentialRevokedNotification` (the foreground
+  check stands in), and the OTA trick model (§7).
+
 ---
 
 ## 1. Deterministic video identity

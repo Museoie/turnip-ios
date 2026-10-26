@@ -15,9 +15,9 @@ import UIKit
 /// the original tile isn't tappable, since editing the source video isn't a thing this
 /// screen does.
 ///
-/// "Save Clips" exports and saves every non-trashed, not-yet-saved derived clip to Photos,
-/// deletes the original from Photos if its tile was trashed, and pops back to Home —
-/// there is no separate export/confirmation screen.
+/// "Next: name clips" pushes Name Clips, where the clips are named and saved; "Save without
+/// names" under it exports and saves every non-trashed, not-yet-saved derived clip to Photos,
+/// deletes the original from Photos if its tile was trashed, and pops back to Home.
 ///
 /// An analysis that detected zero tricks still lands here — the original tile and the
 /// "+" tile, same as any other triage — rather than on a dead-end screen of its own;
@@ -39,6 +39,8 @@ struct ClipListView: View {
     /// Whether the "No tricks found" glass notice is up — seeded from `showsNoTricksFound`
     /// at init, then owned here so a tap or the notice's own timeout can dismiss it.
     @State private var isShowingNoTricksNotice: Bool
+    /// Whether Name Clips is pushed over the grid.
+    @State private var isNaming = false
     let popToRoot: () -> Void
 
     /// How the grid reflows when a derived clip is removed: the tiles after it (and the "+"
@@ -136,21 +138,14 @@ struct ClipListView: View {
                 ToolbarItem(placement: .navigationBarLeading) { backButton }
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            PrimaryActionBar("Save Clips", isEnabled: !viewModel.isSaving) {
-                Task {
-                    if await viewModel.save() {
-                        popToRoot()
-                    }
-                }
-            }
-            .accessibilityValue(saveClipsAccessibilityValue)
-            .accessibilityIdentifier("save-clips")
-        }
+        .safeAreaInset(edge: .bottom) { actionBar }
         .overlay {
             if viewModel.isSaving {
-                savingOverlay
+                SavingOverlay()
             }
+        }
+        .navigationDestination(isPresented: $isNaming) {
+            NameClipsView(viewModel: viewModel, popToRoot: popToRoot)
         }
         .errorAlert("Couldn't save clips", message: $viewModel.saveFailureMessage)
         .fullScreenCover(item: $expandTarget, onDismiss: { hiddenItemID = nil }, content: { target in
@@ -189,14 +184,27 @@ struct ClipListView: View {
             clipCount: scope.clipCount, deletesOriginal: scope.deletesOriginal)
     }
 
-    private var savingOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.4).ignoresSafeArea()
-            ProgressView {
-                Text("Saving to Photos…")
+    /// "Next: name clips" opens Name Clips, where the save happens; "Save without names" under it
+    /// saves straight away. With no derived clip left to name, the one button is "Save Clips".
+    private var actionBar: some View {
+        let hasClipsToName = !viewModel.clipsToName.isEmpty
+        let saveWithoutNames = PrimaryActionBar.SecondaryAction(String(localized: "Save without names"), action: save)
+        return PrimaryActionBar(
+            hasClipsToName ? String(localized: "Next: name clips") : String(localized: "Save Clips"),
+            isEnabled: !viewModel.isSaving,
+            secondary: hasClipsToName ? saveWithoutNames : nil
+        ) {
+            if hasClipsToName { isNaming = true } else { save() }
+        }
+        .accessibilityValue(saveClipsAccessibilityValue)
+        .accessibilityIdentifier("save-clips")
+    }
+
+    private func save() {
+        Task {
+            if await viewModel.save() {
+                popToRoot()
             }
-            .tint(.white)
-            .foregroundStyle(.white)
         }
     }
 

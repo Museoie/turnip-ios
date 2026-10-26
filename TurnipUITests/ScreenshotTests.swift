@@ -116,8 +116,8 @@ final class ScreenshotTests: XCTestCase {
 
     /// Trashing the original tile flips its icon button's accessibility label rather
     /// than removing it, and the screen carries no leftover select-all affordance —
-    /// the triage screen's toolbar has only the back chevron, and "Save Clips" is
-    /// the screen's action. The original tile is always the first of the
+    /// the triage screen's toolbar has only the back chevron, and "Next: name clips", with
+    /// "Save without names" under it, is the screen's action. The original tile is always the first of the
     /// grid's "Trash clip" buttons, since `ClipListViewModel` prepends it to `items`.
     func testTrashButtonTogglesToRestoreOnTheOriginalTile() throws {
         let app = XCUIApplication()
@@ -135,7 +135,8 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["original-deletion-notice"].label, "Will be deleted")
         XCTAssertFalse(app.buttons["Select All"].exists)
         XCTAssertFalse(app.buttons["Deselect All"].exists)
-        XCTAssertTrue(app.buttons["Save Clips"].exists)
+        XCTAssertTrue(app.buttons["Next: name clips"].exists)
+        XCTAssertTrue(app.buttons["Save without names"].exists)
         addScreenshot(named: "clip-list-original-trashed")
     }
 

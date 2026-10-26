@@ -41,6 +41,9 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_FILE: Turnip/Resources/Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        # Sign in with Apple, the farm account contribution signs in with
+        # (docs/CONTRIBUTION_DESIGN.md §5.4).
+        CODE_SIGN_ENTITLEMENTS: Turnip/Resources/Turnip.entitlements
     dependencies: []
 
   TurnipTests:

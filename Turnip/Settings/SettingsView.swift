@@ -8,6 +8,7 @@ import SwiftUI
 /// video, get clips" and has nothing to hand back to that flow.
 struct SettingsView: View {
     @ObservedObject var settings: TurnipSettingsStore
+    var account: FarmAccount = .shared
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -72,6 +73,10 @@ struct SettingsView: View {
                         Frames sampled per second of footage. Higher can catch faster motion; \
                         lower analyzes faster. Defaults to \(TurnipSettings.defaultGranularity).
                         """)
+                }
+
+                if account.isAvailable {
+                    FarmAccountSection(account: account)
                 }
             }
             .navigationTitle("Settings")

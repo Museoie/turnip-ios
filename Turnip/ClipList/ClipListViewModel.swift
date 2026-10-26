@@ -312,7 +312,8 @@ final class ClipListViewModel: ObservableObject {
     /// The item's `isTrashed` carries over unchanged — the editor doesn't own that decision.
     /// `isSaved` carries over only while the result still describes the video that landed:
     /// a clip the user retrimmed or recropped is not the one in Photos, so Save Clips has to
-    /// export and save it again. A no-op for unknown ids.
+    /// export and save it again. Names and the contribute choice carry over; the window stays
+    /// detection's only while the editor left it as it was. A no-op for unknown ids.
     func applyEditorResult(_ result: ClipEditorResult, to id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let item = items[index]
@@ -325,7 +326,11 @@ final class ClipListViewModel: ObservableObject {
             followCrop: result.followCrop,
             isTrashed: item.isTrashed,
             isSaved: item.isSaved && describesTheSameVideo(result, as: item),
-            personID: item.personID)
+            personID: item.personID,
+            names: item.names,
+            isMe: item.isMe,
+            contributes: item.contributes,
+            isAutoDetected: item.isAutoDetected && isSameWindow(result.window, as: item.window))
     }
 
     /// Whether `result` would export the same video as `item`. The editor commits on every
@@ -335,15 +340,21 @@ final class ClipListViewModel: ObservableObject {
     /// changing what an export of it contains. That clamp uses the asset's own duration, so the
     /// comparison does too; until the cards have loaded it, only an identical window matches.
     private func describesTheSameVideo(_ result: ClipEditorResult, as item: ClipListItem) -> Bool {
-        var sameWindow = result.window == item.window
-        if !sameWindow, let loadedAssetDuration {
-            sameWindow = result.window == ClipEditorViewModel.clamped(window: item.window, to: loadedAssetDuration)
-        }
-        guard sameWindow, result.cropRect == item.cropRect, result.framingMode == item.framingMode else { return false }
+        guard isSameWindow(result.window, as: item.window),
+              result.cropRect == item.cropRect, result.framingMode == item.framingMode
+        else { return false }
         switch result.framingMode {
         case .still: return result.cropAdjustment == item.cropAdjustment
         case .follow: return result.followCrop == item.followCrop
         }
+    }
+
+    /// Whether the editor's `window` is `previous` as it was, allowing for the clamp to the
+    /// video's end the editor applies on load.
+    private func isSameWindow(_ window: TrickWindow, as previous: TrickWindow) -> Bool {
+        if window == previous { return true }
+        guard let loadedAssetDuration else { return false }
+        return window == ClipEditorViewModel.clamped(window: previous, to: loadedAssetDuration)
     }
 
     /// Removes the item with the given id entirely: the editor's Delete action, and
@@ -633,5 +644,84 @@ final class ClipListViewModel: ObservableObject {
         default:
             return error.localizedDescription
         }
+    }
+}
+
+// MARK: - Naming
+
+/// What Name Clips writes (`docs/UIUX.md` § "Name Clips", `docs/PROFILE_DESIGN.md` §4): names on
+/// the items themselves, so going back to Clip List keeps every name given so far.
+extension ClipListViewModel {
+    /// The clips Name Clips pages through: every derived clip, in grid order. A trashed derived
+    /// clip is already gone from `items`.
+    var clipsToName: [ClipListItem] { items.filter { !$0.isOriginal } }
+
+    /// Whether the video has pose analysis to contribute. A video reached by "Clip manually" has
+    /// none, so its clips can be named but not contributed.
+    var hasPose: Bool { !poseFrames.isEmpty }
+
+    /// The names already given on this video, each once, in the order first given — the first
+    /// suggestions, since a session is mostly repeats of a few tricks.
+    var namesUsedOnVideo: [String] {
+        var seen = Set<String>()
+        return clipsToName.flatMap(\.names).map(\.name).filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
+    }
+
+    /// Adds a trick name to a clip, trimmed; a blank name, or one the clip already has in any
+    /// case, changes nothing.
+    func addName(_ name: String, origin: LabelOrigin, to id: UUID) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let key = TrickVocabulary.normalized(trimmed)
+        guard !items[index].names.contains(where: { TrickVocabulary.normalized($0.name) == key }) else { return }
+        items[index].names.append(ClipName(name: trimmed, origin: origin))
+    }
+
+    /// Removes a name. A clip left with none can't be contributed, so its toggle goes off too.
+    func removeName(_ name: ClipName, from id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].names.removeAll { $0 == name }
+        if items[index].names.isEmpty { items[index].contributes = false }
+    }
+
+    /// "Did you mean": puts the vocabulary's spelling in the typed name's place, as a pick.
+    func replaceName(_ name: ClipName, with canonical: String, in id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }),
+              let position = items[index].names.firstIndex(of: name)
+        else { return }
+        let key = TrickVocabulary.normalized(canonical)
+        items[index].names.removeAll { $0 != name && TrickVocabulary.normalized($0.name) == key }
+        let slot = items[index].names.firstIndex(of: name) ?? position
+        items[index].names[slot] = ClipName(name: canonical, origin: .vocabulary)
+    }
+
+    /// Who is in a clip. A change on a person's first clip carries to that person's later clips
+    /// that still read the way the first one did, so one choice covers a take while any clip set
+    /// apart keeps its own.
+    func setIsMe(_ isMe: Bool, for id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let item = items[index]
+        let samePerson = clipsToName.filter { $0.personID == item.personID }
+        if samePerson.first?.id == id {
+            for other in samePerson.dropFirst() where other.isMe == item.isMe {
+                if let otherIndex = items.firstIndex(where: { $0.id == other.id }) { items[otherIndex].isMe = isMe }
+            }
+        }
+        items[index].isMe = isMe
+    }
+
+    /// The per-clip opt-in. Only a named clip can be turned on.
+    func setContributes(_ contributes: Bool, for id: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].contributes = contributes && !items[index].names.isEmpty
+    }
+
+    /// The contribution the saved clips toggled on make, laid out for the confirmation sheet.
+    func contributionPlan() -> ContributionPlan {
+        ContributionPlan(
+            clips: items.filter { !$0.isOriginal && $0.isSaved && $0.contributes && !$0.names.isEmpty },
+            videoID: VideoIdentity.videoID(forAssetIdentifier: assetIdentifier),
+            duration: loadedAssetDuration ?? items.first?.window.endTime ?? 0,
+            poseFrames: poseFrames(forPerson:))
     }
 }

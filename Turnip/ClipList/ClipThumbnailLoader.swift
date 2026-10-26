@@ -52,10 +52,19 @@ actor ClipThumbnailLoader {
             // returns, so a 90°/270°-rotated track needs it transposed — otherwise a
             // portrait-shaped bound clips a landscape-encoded frame's long edge.
             generator.maximumSize = Self.encodedMaxPixelSize(preferredTransform: preferredTransform)
-            let image = try generator.copyCGImage(
-                at: CMTime(seconds: midpoint, preferredTimescale: 600),
-                actualTime: nil
-            )
+            let time = CMTime(seconds: midpoint, preferredTimescale: 600)
+            let image: CGImage
+            do {
+                image = try generator.copyCGImage(at: time, actualTime: nil)
+            } catch {
+                // Some exact seeks fail to decode ("Cannot Decode", -11821) where a frame a
+                // tenth of a second away decodes; the simulator does it for some clips every time. A
+                // poster a frame or two off, still inside the window, beats an empty tile — and
+                // the contribution sheet, which has no loop to cover the gap, draws only this.
+                generator.requestedTimeToleranceBefore = Self.fallbackSeekTolerance
+                generator.requestedTimeToleranceAfter = Self.fallbackSeekTolerance
+                image = try generator.copyCGImage(at: time, actualTime: nil)
+            }
             var cropRect = item.cropRect
             var cropAdjustment = item.cropAdjustment
             if let followCrop, let rect = Self.followRect(
@@ -77,6 +86,9 @@ actor ClipThumbnailLoader {
             return nil
         }
     }
+
+    /// How far from the window's midpoint a poster may come when the exact frame won't decode.
+    static let fallbackSeekTolerance = CMTime(seconds: 0.1, preferredTimescale: 600)
 
     /// A follow crop's box at `time`, normalized: the marker's size around `cropRect`, centered
     /// where the crop's center is then — the rect `ClipExportTransform.make(followCrop:…)`

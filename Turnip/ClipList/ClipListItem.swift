@@ -27,6 +27,12 @@ import Foundation
 /// drawn (`ClipListViewModel.followCrop(for:)`): a detected clip starts that way when Settings'
 /// Follow the athlete is on.
 ///
+/// `names`, `isMe` and `contributes` are what Name Clips gives a clip (`docs/UIUX.md` § "Name
+/// Clips"): its trick names with how each was given, whether it shows the user, and whether it
+/// goes to the farm once saved. `contributes` is only ever on while the clip has a name.
+/// `isAutoDetected` says the window is still the one detection proposed — the farm's
+/// `auto_detected` — and goes off for a clip added by hand or retrimmed in the editor.
+///
 /// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
 /// stands for the source video already in Photos rather than a derived clip: it
 /// carries the full-video window and full-frame crop, is never opened in the
@@ -49,6 +55,10 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     /// person's pose. `nil` for the original, a clip added by hand, and every clip of a video
     /// analyzed following one person, which read every scored frame.
     let personID: Int?
+    var names: [ClipName]
+    var isMe: Bool
+    var contributes: Bool
+    let isAutoDetected: Bool
 
     init(
         id: UUID = UUID(),
@@ -60,7 +70,11 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         isTrashed: Bool = false,
         isSaved: Bool = false,
         isOriginal: Bool = false,
-        personID: Int? = nil
+        personID: Int? = nil,
+        names: [ClipName] = [],
+        isMe: Bool = true,
+        contributes: Bool = false,
+        isAutoDetected: Bool = false
     ) {
         self.id = id
         self.window = window
@@ -72,6 +86,10 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.isSaved = isSaved
         self.isOriginal = isOriginal
         self.personID = personID
+        self.names = names
+        self.isMe = isMe
+        self.contributes = contributes
+        self.isAutoDetected = isAutoDetected
     }
 
     /// "2.4s"-style duration label for the card, via the one shared clip-duration

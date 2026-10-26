@@ -82,6 +82,7 @@ struct TurnipApp: App {
                     for: UIApplication.didBecomeActiveNotification)
             ) { _ in
                 ModelUpdateLifecycle.checkForUpdates()
+                Task { await FarmAccount.shared.verifyAppleCredential() }
             }
             // Forced here, not just in `ContentView`, so the DEBUG-only screenshot
             // harnesses above — which never mount `ContentView` — render dark too.

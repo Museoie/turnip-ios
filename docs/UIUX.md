@@ -1,5 +1,13 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 20 · 2026-10-26 · Name Clips (§3a) is built: Clip List's main button is
+"Next: name clips" with "Save without names" under it, and Name Clips names
+each clip, carries its contribute toggle, saves, and then opens the
+contribution confirmation sheet when any saved clip was toggled
+([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §3.3). The clip library the
+save also writes, the names in each exported file, and the Profile's "Needs a
+name" entry stay planned.*
+
 *Rev 19 · 2026-10-26 · Planned, not built: Follow mode's keyframes hold the
 zoom and the turn as well as the position (§4, "Zoom and turn by keyframe").
 Pinch and two-finger rotate set the keyframe at the playhead the way a drag
@@ -52,7 +60,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -112,7 +120,7 @@ Where it applies today:
 | Tile ↔ Processing (§1, §2) | Swipe down anywhere on the page | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
 | Clip List tile ↔ Clip Editor (§3, §4) | Swipe down above the crop marker | Back chevron | Same, with the card showing the editor's own player |
 | *Planned:* Home ↔ Profile (Root navigation) | Horizontal page swipe | Floating bar's gallery / profile icons | The pager's horizontal slide (`RootTabView.slide(to:)`) |
-| *Planned:* Name Clips, one clip ↔ the next (§3a) | Horizontal swipe | "Next" / "Skip" | The page slide between clips |
+| Name Clips, one clip ↔ the next (§3a) | Horizontal swipe | "Next" / "Skip" | The page slide between clips (`NameClipsView.go(to:)`) |
 | *Planned:* Profile clip tile ↔ Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe down | Back chevron | The tile's expansion card, showing the clip's own player |
 
 Not every state change has a gesture counterpart that it owes an animation.
@@ -182,12 +190,11 @@ flowchart TD
     C -->|tap a derived clip's tile| D[Clip Detail / Editor]
     D -->|back, commits edits| C
     D -->|delete| C
-    C -->|tap Save Clips| A
     C -->|back| A
-    C -.->|planned: Next: name clips| N[Name Clips]
-    C -.->|planned: Save without names| A
-    N -.->|planned: Save Clips| A
-    N -.->|planned: back| C
+    C -->|Next: name clips| N[Name Clips]
+    C -->|Save without names| A
+    N -->|Save Clips, then contribution sheet if any clip is toggled| A
+    N -->|back| C
     P -.->|planned: Needs a name| N
 ```
 
@@ -348,6 +355,11 @@ default empty state, so it never reads as "your library is empty."
   person / Everyone, default One person), whose tricks a take or an analysis is cut into clips
   for. It is chosen where it takes effect, on the camera before recording (§1b) and on
   Processing before "Analyze clips" (§2), and remembered between them.
+- Under the preferences, when the build points at a farm (`TURNIP_FARM_ENDPOINT`), a
+  **Contribution** section: Sign in with Apple while signed out; "Signed in with Apple", Sign
+  Out and Delete Account once signed in, deletion confirming with the farm's disclosure first
+  ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §5.4). It is an account, not a
+  preference, and nothing outside contribution reads it.
 - Further settings beyond these six are out of scope for this doc's current revision.
 
 ### 1b. Camera
@@ -514,17 +526,18 @@ default empty state, so it never reads as "your library is empty."
   the retry writes the new version and the pre-edit copy stays in Photos.
   Nothing in the app can take that copy back; the user deletes it in Photos. The app tracks no identifier for an asset it wrote, so it can't
   offer to.
-- *Planned* ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §2.3, §4): "Save Clips"
-  becomes "Next: name clips", which opens Name Clips (§3a), where the save now
-  happens. Under it, in the same bar, a quieter "Save without names" text
-  button — `PrimaryActionBar`'s secondary action, styled like Processing's
-  "Clip manually" — does exactly what Save Clips does today, skipping the
-  naming step; its clips wait in the Profile's "Needs a name". Either way the
-  save also writes each saved clip, its saved Photos asset and the video's
-  pose to the on-device clip library the Profile reads. With no derived clip
-  left to name (every one trashed), the button reads "Save Clips" as today
-  and the secondary is not shown. The tiles are unchanged, and no
-  contribution control is added here.
+- "Save Clips" is now "Next: name clips", which opens Name Clips (§3a), where
+  the save happens ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4). Under it, in
+  the same bar, a quieter "Save without names" text button —
+  `PrimaryActionBar`'s secondary action, styled like Processing's "Clip
+  manually" — does exactly what Save Clips did, skipping the naming step. With
+  no derived clip left to name (every one trashed), the button reads "Save
+  Clips" and the secondary is not shown. The tiles are unchanged, and no
+  contribution control is added here. *Planned*
+  ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §2.3): either save also writes each
+  saved clip, its saved Photos asset and the video's pose to the on-device clip
+  library the Profile reads, and clips saved without names wait in the
+  Profile's "Needs a name".
 - The back chevron pops to Home, not to Processing; the title sits centered
   inline on the same line as the chevron, Photos-app style. The chevron is
   the same glass circle every other screen's chevron is (`ScrimIconButton`),
@@ -535,13 +548,12 @@ default empty state, so it never reads as "your library is empty."
   video's tile, since this screen's tiles are the clips cut from the video,
   not the video itself (`EXPANSION_TRANSITIONS.md`, Rev 9).
 
-### 3a. Name Clips *(planned — [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4)*
+### 3a. Name Clips *([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4)*
 
 - Pushed from Clip List's "Next: name clips" (§3) with the usual sideways
   slide. The back chevron pops back to Clip List with every name given so
-  far kept, since nothing has been saved yet. The same
-  screen opens from the Profile's "Needs a name" for clips saved without
-  names.
+  far kept, since nothing has been saved yet. *Planned:* the same screen
+  opens from the Profile's "Needs a name" for clips saved without names.
 - One clip at a time, full width, looping its window with the framing export
   uses — its Clip List tile's picture, larger. No editing controls: trimming
   and framing stay in the editor (§4), which this screen doesn't open.
@@ -549,12 +561,18 @@ default empty state, so it never reads as "your library is empty."
   - the trick-name field ("What trick is this? e.g. cork"); each committed
     name becomes a removable chip, and a combo takes several;
   - suggestion chips — names already used on this video first, then the
-    trick vocabulary as the user types; once the trick model ships, the names
-    it is confident in arrive already filled in;
+    trick vocabulary as the user types, led by the vocabulary name a typed
+    near miss is closest to; once the trick model ships, the names it is
+    confident in arrive already filled in. Chips wrap into rows rather than
+    scroll sideways, since the paging owns horizontal drags;
+  - "Did you mean **gainer**?" under the chips when the newest typed name is
+    a near miss of a vocabulary name; a tap puts the vocabulary's spelling in
+    its place;
   - who's in it — me (default) or someone else. The first clip's choice
     carries to the rest of the video's clips; any clip can change it;
-  - once contribution ships, a "Contribute this clip" toggle, off by
-    default and disabled until the clip has a name
+  - when the build points at a farm, a "Contribute this clip" toggle, off by
+    default and disabled until the clip has a name, and for a clip added by
+    hand, which has no pose to send
     ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §3.3).
 - A counter in the header ("2 of 4") and horizontal paging: a swipe left goes
   to the next clip, a swipe right to the previous one, and the "Next" button
@@ -564,21 +582,25 @@ default empty state, so it never reads as "your library is empty."
   gives only a little. The button reads "Skip" while the clip has no name;
   naming is never required.
 - On the last clip the button reads "Save Clips" and does what Clip List's
-  Save Clips does today — the full-screen spinner, the export, the save to
-  Photos, deleting a trashed original only once every clip has saved, the
-  failure alert and retry — then writes the clip library, with each clip's
-  names also in its exported file, and pops to Home. Under the button, from
-  the first clip on, a quieter "Save now" (`PrimaryActionBar`'s secondary)
-  saves at once and leaves the clips not reached yet unnamed, so a long take
-  never costs a row of Skips. *(Judgment call.)* If any clip was toggled
-  to contribute, the contribution confirmation sheet opens once the save
-  has finished, before Home; cancelling it sends nothing.
+  Save Clips did — the full-screen spinner, the export, the save to Photos,
+  deleting a trashed original only once every clip has saved, the failure
+  alert and retry — and pops to Home. *Planned:* it then writes the clip
+  library, with each clip's names also in its exported file; until that
+  lands, names reach nothing but a contribution. Under the button, from the
+  first clip on, a quieter "Save now" (`PrimaryActionBar`'s secondary) saves
+  at once and leaves the clips not reached yet unnamed, so a long take never
+  costs a row of Skips. *(Judgment call.)* It steps aside while the name field
+  has focus, to leave the keyboard room. A name typed and left without
+  pressing return still counts: "Next", a swipe, the chevron and a save all
+  commit it as typed. If any saved clip was toggled to contribute, the
+  contribution confirmation sheet opens once the save has finished, before
+  Home; "Not Now" sends nothing.
 - When the name field has focus, the field and its chips ride above the
   keyboard and the clip shrinks to fit the space above them; this screen has
   no crop marker to hold in place.
-- Opened from "Needs a name", the clips are already in Photos: the last
-  button reads "Done" and writes names to the clip library only, and there is
-  no "Save now".
+- *Planned:* opened from "Needs a name", the clips are already in Photos: the
+  last button reads "Done" and writes names to the clip library only, and
+  there is no "Save now".
 
 ### 4. Clip Detail / Editor
 
@@ -863,12 +885,13 @@ default empty state, so it never reads as "your library is empty."
 
 - Accessibility acceptance criteria per screen — those live in
   [`ACCESSIBILITY.md`](ACCESSIBILITY.md) (issue #22) and are checked on each screen's PR.
-- Community upload opt-in — v2, layered onto this flow later
-  ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md)).
+- The contribution confirmation sheet and the farm account in Settings —
+  [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §3.3 and §5.4. This doc
+  carries only where the sheet opens (§3a).
 - The Profile tab's own screens — Needs a name, achievements, the gallery by
   trick, highlights, the Clip view — live in
   [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5–§8; this doc carries only the
-  changes to the v1 flow marked *Planned*, Name Clips (§3a) among them.
+  changes to the v1 flow, the ones not built yet marked *Planned*.
 - Further Settings options beyond the five §1a covers — aspect ratio, buffer
   duration, and whatever else a future issue asks for stay out of scope until
   one does; the per-clip crop/trim adjustment in Clip Detail's drag handles

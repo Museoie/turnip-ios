@@ -13,6 +13,14 @@ it's summarized from — keep both in sync when data handling changes.
 
 ## App Store "nutrition label" answers (v1)
 
+These answers describe v1. The contribution code is now built and the
+committed Info.plist points it at the farm (`TURNIP_FARM_ENDPOINT`), so a
+build from this tree makes the calls listed under "Contribution" below:
+**before such a build is submitted, the label, the manifest's collected data
+types, `site/privacy.html` and the Photos usage string ("Nothing leaves your
+device") have to change.** Until then, these are the answers for the release
+in the store.
+
 **Data Not Collected.** The v1 app collects no data, full stop:
 
 - No accounts, no sign-in, no identifiers.
@@ -174,6 +182,41 @@ The OTA model-update client now on `main` refuses any scheme but `https`, which
 is exempt as well, so the flag stays `NO` once an endpoint is configured.
 Revisit only if non-exempt encryption or non-HTTPS networking is introduced.
 
+## Contribution (built; changes the answers above before it ships)
+
+What a build with `TURNIP_FARM_ENDPOINT` set sends to the farm
+(`CONTRIBUTION_DESIGN.md` §5, §8), all over HTTPS through an ephemeral
+`URLSession` (no cache, no cookies on disk):
+
+- **The vocabulary fetch**, `GET /api/taxonomy/current`, when Name Clips
+  opens, at most every six hours. No identifier and no session go with it.
+- **Sign in with Apple**, from Settings or the contribution sheet, at the
+  user's tap. No name or email scope is requested; the farm sees the
+  identity token, whose only claim it keeps is the per-app `sub`.
+- **A contribution**, only from the confirmation sheet, only for clips the
+  user named and toggled, and only on Confirm: the video's `video_id`
+  (SHA-256 of the Photos identifier, never the identifier), its pose
+  keypoints as a TKP1 blob, each clip's window in pose frames, its trick
+  names with how each was given, the session token and the source's key.
+  Never the video, a thumbnail, whether a clip shows the user, or a
+  location.
+- **Account deletion**, from Settings: `DELETE /api/sources/:id` for every
+  source the app holds a key for, then `DELETE /api/account`.
+
+On the device: the session token, the Apple user ID it belongs to (for the
+credential-state check) and one random key per contributed source live in
+the Keychain, readable after first unlock and never migrated off the device.
+The fetched vocabulary is cached in `Application Support/turnip-vocabulary.json`.
+Nothing is written to `Documents/`. No required-reason API was added: the
+Keychain isn't one, and the vocabulary cache is read and written without
+file metadata.
+
+What changes before release, and is not decided here: the nutrition label
+(the Apple `sub` and pose keypoints, linked to the account for 30 days after
+a contribution's last edit), `NSPrivacyCollectedDataTypes` in the manifest,
+`site/privacy.html`, and the Photos usage string. `ITSAppUsesNonExemptEncryption`
+stays `NO`: HTTPS only.
+
 ## Planned: the clip library and the Profile (not built)
 
 The first v2 release (master plan Phase 2a; [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md))
@@ -181,13 +224,10 @@ changes on-device data handling only. Nothing below is collected in the App
 Store sense: it is processed and stored on the device, and none of it is sent
 to a Turnip-controlled server.
 
-- **No network.** That release gets trick-name suggestions from a vocabulary
-  bundled with the app, so "no calls to any Turnip-controlled server" above
-  and the "Data Not Collected" label stay true. The vocabulary fetch
-  (`GET /api/taxonomy/current`) arrives with contribution: it carries no
-  identifier and no session, and the farm's access logs, kept 30 days at most
-  (`BACKEND_DESIGN.md` §8), are its only record. Revisit the label then, with
-  contribution's own changes (`CONTRIBUTION_DESIGN.md` §8).
+- **No network of its own.** The library adds no farm call. The vocabulary
+  fetch it suggests names from arrived with contribution (above): it carries
+  no identifier and no session, and the farm's access logs, kept 30 days at
+  most (`BACKEND_DESIGN.md` §8), are its only record.
 - **The first persistent user data.** The clip library — saved clips' trick
   names, whether each shows the user, favorites, spot names, dates, a copy of
   the source video's location when it has one, and each source's pose

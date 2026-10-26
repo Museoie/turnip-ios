@@ -47,6 +47,8 @@
 	     endpoint stays empty and the update service is inert — nothing leaves
 	     the device. Set this to the deployment's https base URL (e.g. via an
 	     xcconfig) to activate; https is enforced by ModelUpdateConfiguration. -->
+	<key>TURNIP_FARM_ENDPOINT</key>
+	<string>https://turnip.hoie.kim</string>
 	<key>TURNIP_MODEL_UPDATE_ENDPOINT</key>
 	<string></string>
 </dict>
