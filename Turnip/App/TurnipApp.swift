@@ -11,6 +11,7 @@ struct TurnipApp: App {
         let launchDate = Date()
         Task.detached(priority: .utility) {
             PhotoVideoResolver.deleteOrphanedTemporaryExports(olderThan: launchDate)
+            PhotoVideoResolver.deleteOrphanedTemporaryRecordings(olderThan: launchDate)
         }
         #if DEBUG
         if CommandLine.arguments.contains("-screenshotClipEditor")

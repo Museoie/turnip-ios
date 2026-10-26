@@ -139,10 +139,23 @@ struct PhotoVideoResolver {
     /// still running. To close that race, only files whose creation date predates `launchDate`
     /// are deleted; anything written after launch belongs to this session and is left alone.
     static func deleteOrphanedTemporaryExports(olderThan launchDate: Date) {
+        deleteOrphanedTemporaryFiles(withPrefix: temporaryExportFilenamePrefix, olderThan: launchDate)
+    }
+
+    /// Removes recordings orphaned by sessions that never reached the delegate's
+    /// cleanup (crash, force-quit, watchdog kill) — the same leak the export sweep
+    /// bounds, for the camera's temp files. Called once at launch from `TurnipApp`
+    /// beside the export sweep, with the same launch-date bound.
+    static func deleteOrphanedTemporaryRecordings(olderThan launchDate: Date) {
+        deleteOrphanedTemporaryFiles(
+            withPrefix: CameraCaptureViewModel.recordingFilenamePrefix, olderThan: launchDate)
+    }
+
+    private static func deleteOrphanedTemporaryFiles(withPrefix prefix: String, olderThan launchDate: Date) {
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: URL.temporaryDirectory, includingPropertiesForKeys: [.creationDateKey])
         else { return }
-        for url in urls where url.lastPathComponent.hasPrefix(temporaryExportFilenamePrefix) {
+        for url in urls where url.lastPathComponent.hasPrefix(prefix) {
             // If the creation date is unreadable, treat the file as an orphan: the sweep's
             // job is to bound accumulation, and a file with no date cannot be proven new.
             let created = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate)
