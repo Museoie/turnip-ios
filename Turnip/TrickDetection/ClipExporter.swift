@@ -237,14 +237,13 @@ struct ClipExportTransform {
     /// `duration` from the start with a single instruction — shared by `ClipExporter`
     /// (over a trimmed composition track) and the clip list's live preview player (over
     /// the untrimmed source track; `AVPlayerLooper`'s own `timeRange` bounds what
-    /// actually loops, this only shapes the frame). The output grid is the one
-    /// `VideoFrameSampler` derives, not a second copy: the hand-rolled version this
-    /// replaces accepted a `frameRate` in (0, 0.5) (rounded to a timescale of 0, a
-    /// non-numeric `frameDuration` that raises, uncatchable, when attached), trapped
-    /// on rates past `Int32.max`, and pinned the grid to the nominal average instead
-    /// of the track's exact `minFrameDuration`. Throws `PoseError.videoLoadFailed`
-    /// when neither timing value yields a valid grid; callers map that onto their
-    /// own error type.
+    /// actually loops, this only shapes the frame). The output grid comes from
+    /// `VideoFrameSampler.compositionFrameDuration`: the track's exact
+    /// `minFrameDuration` when it is usable, otherwise the nominal rate's grid.
+    /// The derivation rejects a rate that rounds below 1 fps, a rate past
+    /// `Int32.max`, and the nominal average when an exact spacing exists.
+    /// Throws `PoseError.videoLoadFailed` when neither timing value yields a
+    /// valid grid; callers map that onto their own error type.
     func makeVideoComposition(
         for track: AVAssetTrack, duration: CMTime, frameRate: Float, minFrameDuration: CMTime
     ) throws -> AVMutableVideoComposition {
@@ -517,9 +516,17 @@ actor ClipExporter {
         guard let compositionTrack = composition.tracks(withMediaType: .video).first else {
             throw ClipExportError.exportFailed(reason: "composition lost its video track")
         }
+        // The export path keeps the old 30 fps fallback for a track with no
+        // usable timing value at all (nominal rate 0 and no usable
+        // `minFrameDuration`): such a track previously exported on a 30 fps
+        // grid. Only the export path restores it — the shared derivation keeps
+        // its throw contract, so the preview still drops to the uncomposed
+        // player and sub-0.5 fps / over-`Int32.max` rates still throw here.
+        let hasUsableSpacing = minFrameDuration.isNumeric && minFrameDuration.seconds > 0
+        let exportFrameRate = (!hasUsableSpacing && frameRate <= 0) ? 30 : frameRate
         do {
             return try transform.makeVideoComposition(
-                for: compositionTrack, duration: composition.duration, frameRate: frameRate,
+                for: compositionTrack, duration: composition.duration, frameRate: exportFrameRate,
                 minFrameDuration: minFrameDuration)
         } catch {
             // The grid derivation's throw stays typed: an export that cannot lay
