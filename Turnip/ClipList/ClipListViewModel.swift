@@ -201,6 +201,9 @@ final class ClipListViewModel: ObservableObject {
         let naturalSize: CGSize
         let preferredTransform: CGAffineTransform
         let frameRate: Float
+        /// The track's exact frame spacing; `.invalid` when it can't be read, which
+        /// the shared grid derivation treats as "fall back to the nominal rate".
+        let minFrameDuration: CMTime
     }
     private var trackGeometryTask: Task<TrackGeometry?, Never>?
 
@@ -421,9 +424,14 @@ final class ClipListViewModel: ObservableObject {
                       let preferredTransform = try? await track.load(.preferredTransform),
                       let frameRate = try? await track.load(.nominalFrameRate)
                 else { return nil }
+                // `.invalid` keeps the preview available when only this read fails:
+                // the grid derivation falls back to the nominal rate for it, exactly
+                // as it does for a track that reports no usable spacing.
+                let minFrameDuration = (try? await track.load(.minFrameDuration)) ?? .invalid
                 return TrackGeometry(
                     track: track, naturalSize: naturalSize,
-                    preferredTransform: preferredTransform, frameRate: frameRate)
+                    preferredTransform: preferredTransform, frameRate: frameRate,
+                    minFrameDuration: minFrameDuration)
             }
         }
         guard let trackGeometryTask else { return nil }
@@ -461,7 +469,13 @@ final class ClipListViewModel: ObservableObject {
                 cropRect: geometry.cropRect, naturalSize: track.naturalSize,
                 preferredTransform: track.preferredTransform, cropAdjustment: geometry.cropAdjustment)
         }
-        return transform?.makeVideoComposition(for: track.track, duration: duration, frameRate: track.frameRate)
+        guard let transform else { return nil }
+        // A grid the shared derivation rejects (no usable timing value) drops the
+        // composed preview the same way an unloadable track does — the caller
+        // falls back to an uncomposed player rather than showing nothing.
+        return try? transform.makeVideoComposition(
+            for: track.track, duration: duration, frameRate: track.frameRate,
+            minFrameDuration: track.minFrameDuration)
     }
 
     /// The follow crop a clip draws, or `nil` for one in Still: its own, or — for a clip in

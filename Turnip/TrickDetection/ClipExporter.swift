@@ -237,16 +237,20 @@ struct ClipExportTransform {
     /// `duration` from the start with a single instruction — shared by `ClipExporter`
     /// (over a trimmed composition track) and the clip list's live preview player (over
     /// the untrimmed source track; `AVPlayerLooper`'s own `timeRange` bounds what
-    /// actually loops, this only shapes the frame). `frameRate` falls back to 30 when the
-    /// track doesn't report one, rather than a 1 fps timescale, to keep the render clock
-    /// sane.
+    /// actually loops, this only shapes the frame). The output grid comes from
+    /// `VideoFrameSampler.compositionFrameDuration`: the track's exact
+    /// `minFrameDuration` when it is usable, otherwise the nominal rate's grid.
+    /// The derivation rejects a rate that rounds below 1 fps, a rate past
+    /// `Int32.max`, and the nominal average when an exact spacing exists.
+    /// Throws `PoseError.videoLoadFailed` when neither timing value yields a
+    /// valid grid; callers map that onto their own error type.
     func makeVideoComposition(
-        for track: AVAssetTrack, duration: CMTime, frameRate: Float
-    ) -> AVMutableVideoComposition {
+        for track: AVAssetTrack, duration: CMTime, frameRate: Float, minFrameDuration: CMTime
+    ) throws -> AVMutableVideoComposition {
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
-        let timescale = frameRate > 0 ? Int32(frameRate.rounded()) : 30
-        videoComposition.frameDuration = CMTime(value: 1, timescale: timescale)
+        videoComposition.frameDuration = try VideoFrameSampler.compositionFrameDuration(
+            minFrameDuration: minFrameDuration, nominalFrameRate: frameRate)
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
@@ -410,13 +414,15 @@ actor ClipExporter {
             throw ClipExportError.invalidTimeRange(window: spec.window)
         }
         let frameRate = try await videoTrack.load(.nominalFrameRate)
+        let minFrameDuration = try await videoTrack.load(.minFrameDuration)
         let transform = try Self.renderTransform(
             for: spec, staticTransform: staticTransform, videoRange: ranges.video, frameRate: frameRate,
             naturalSize: naturalSize, preferredTransform: preferredTransform)
         let composition = try makeComposition(
             videoTrack: videoTrack, audioTrack: audioTrack, ranges: ranges)
         let videoComposition = try makeVideoComposition(
-            in: composition, transform: transform, frameRate: frameRate)
+            in: composition, transform: transform, frameRate: frameRate,
+            minFrameDuration: minFrameDuration)
 
         guard let session = AVAssetExportSession(
             asset: composition, presetName: AVAssetExportPresetHighestQuality)
@@ -504,13 +510,29 @@ actor ClipExporter {
     private func makeVideoComposition(
         in composition: AVMutableComposition,
         transform: ClipExportTransform,
-        frameRate: Float
+        frameRate: Float,
+        minFrameDuration: CMTime
     ) throws -> AVMutableVideoComposition {
         guard let compositionTrack = composition.tracks(withMediaType: .video).first else {
             throw ClipExportError.exportFailed(reason: "composition lost its video track")
         }
-        return transform.makeVideoComposition(
-            for: compositionTrack, duration: composition.duration, frameRate: frameRate)
+        // The export path keeps the old 30 fps fallback for a track with no
+        // usable timing value at all (nominal rate 0 and no usable
+        // `minFrameDuration`): such a track previously exported on a 30 fps
+        // grid. Only the export path restores it — the shared derivation keeps
+        // its throw contract, so the preview still drops to the uncomposed
+        // player and sub-0.5 fps / over-`Int32.max` rates still throw here.
+        let hasUsableSpacing = minFrameDuration.isNumeric && minFrameDuration.seconds > 0
+        let exportFrameRate = (!hasUsableSpacing && frameRate <= 0) ? 30 : frameRate
+        do {
+            return try transform.makeVideoComposition(
+                for: compositionTrack, duration: composition.duration, frameRate: exportFrameRate,
+                minFrameDuration: minFrameDuration)
+        } catch {
+            // The grid derivation's throw stays typed: an export that cannot lay
+            // out a frame grid is a failed export, not an untyped crash.
+            throw ClipExportError.exportFailed(reason: "could not determine a valid frame duration")
+        }
     }
 
     /// Runs the session to a terminal state, reporting progress along the way.
