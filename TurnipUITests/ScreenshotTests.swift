@@ -3,10 +3,8 @@ import XCTest
 /// Screenshot automation for UI-change PRs (CONTRIBUTING.md asks for screenshots
 /// on UI changes): launches the app into scripted states via launch arguments
 /// (see `ScreenshotHarness.swift`) and captures XCUITest screenshots. Each test
-/// prints its PNG as base64 to stdout (TURNIP_SCREENSHOT:<name>:<base64>); the CI
-/// screenshots job greps the log and uploads the PNGs as the pr-screenshots
-/// artifact, and the screenshots-comment workflow posts them on the PR — so
-/// nobody needs a local simulator to produce PR screenshots.
+/// prints its PNG as base64 to stdout (TURNIP_SCREENSHOT:<name>:<base64>), so
+/// screenshots can be captured from a local simulator run.
 final class ScreenshotTests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -498,9 +496,9 @@ final class ScreenshotTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
-        // Print base64 PNG to stdout for CI extraction (env vars don't propagate
-        // to the test runner, and xcresult parsing is fragile).
-        // The workflow greps for TURNIP_SCREENSHOT:<name>:<base64>.
+        // Print base64 PNG to stdout so a local run can capture it (env vars
+        // don't propagate to the test runner, and xcresult parsing is fragile).
+        // The log line format is TURNIP_SCREENSHOT:<name>:<base64>.
         let b64 = screenshot.pngRepresentation.base64EncodedString()
         print("TURNIP_SCREENSHOT:\(name):\(b64)")
     }
