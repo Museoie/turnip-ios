@@ -1,6 +1,9 @@
 # Turnip iOS — Profile Design
 
-*Draft · 2026-10-15*
+*Draft · 2026-10-15 · Revised 2026-10-21: on-device personalization
+([`PERSONALIZATION_DESIGN.md`](PERSONALIZATION_DESIGN.md)) reads the
+library, keeps trashed proposals' windows (§2.3), and adds a tier to
+the naming suggestions (§4.2).*
 
 **Scope.** A companion to `docs/DESIGN.md`. This doc specifies the
 Profile tab and what it stands on: the on-device clip library, naming
@@ -131,8 +134,11 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
   List's "Save without names" (UIUX §3, §3a). Each saved derived clip
   gets a clip record with its `export_asset_id` and whatever names it
   was given; its source gets a source record and its pose. Trashed clips
-  are not stored. A trashed original is still deleted from Photos as
-  today; its source record and pose stay.
+  are not stored. The one exception is on-device personalization: a
+  trashed trick-model proposal on a saved source leaves its window's
+  two frame indices behind, and nothing else
+  (`PERSONALIZATION_DESIGN.md` §3). A trashed original is still deleted
+  from Photos as today; its source record and pose stay.
 - Backing out of Clip List without saving stores nothing.
 - A saved clip can later have its names, `is_me` and `favorite`
   changed from the Clip view (§5.2). Its window and crop cannot: the
@@ -286,6 +292,11 @@ already full with triage, trimming and framing controls.
   model-proposed clips that get a window but no names. The user is
   never told which clips are blind, and the Profile treats them like
   any other (rule 3).
+- **Personal ranking (after Phase 4)** follows the names already used
+  on this video: the user's own names closest to the clip being named,
+  learned on the device. It only ranks: it never pre-fills, is
+  withheld on blind clips, and leaves origin as above
+  (`PERSONALIZATION_DESIGN.md` §4.2).
 
 ### 4.3 Whose clip
 
@@ -495,7 +506,9 @@ rendering is a required-reason API (PRIVACY.md).
   key of a source the user already contributed.
 - **New data on the device:** the library — names, `is_me`, favorites,
   spots, dates, copied locations, pose sequences — in
-  `Application Support/` and therefore in device backups.
+  `Application Support/` and therefore in device backups. After Phase
+  4, personalization adds trashed proposals' windows to it and keeps
+  a rebuildable cache in `Caches/` (`PERSONALIZATION_DESIGN.md` §7).
 - **New data in the user's files:** each exported clip's Turnip record
   and `turnip-clip-<clip_id>` filename (§3.2).
 - **New reads,** under the existing Photos grant with no new prompt:
@@ -513,7 +526,9 @@ The iOS side of master plan §7:
   network.
 - **2b** — contribution from the library; the vocabulary fetch.
 - **3** — impact feedback (§9) and the tricks-still-learning list (§6.6).
-- **4** — model pre-fill and the blind sample in naming (§4.2).
+- **4** — model pre-fill and the blind sample in naming (§4.2). After
+  it, on-device personalization (`PERSONALIZATION_DESIGN.md` §10),
+  which needs no farm change.
 - **5** — Highlights (§8).
 
 ---

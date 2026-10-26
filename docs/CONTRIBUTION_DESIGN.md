@@ -3,7 +3,9 @@
 *Draft · 2026-10-06 · Revised 2026-10-15 for master plan Rev 5: naming
 moves to the core clip flow ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4)
 and contribution uploads clips already named there, from the on-device
-clip library; uploads carry label provenance.*
+clip library; uploads carry label provenance. Revised 2026-10-21: §7.2
+and §8 point to on-device personalization
+([`PERSONALIZATION_DESIGN.md`](PERSONALIZATION_DESIGN.md)).*
 
 **Scope.** This is a companion to `docs/DESIGN.md`, not a rewrite of it.
 `DESIGN.md` specifies the on-device pipeline (capture → pose → clip
@@ -482,6 +484,14 @@ distinguishes proposal sources.
   suggestions (`PROFILE_DESIGN.md` §4.2), which use whichever
   vocabulary the app holds is newest; the farm stamps
   `taxonomy_version` at contribution time (§4).
+- **On-device personalization** (`PERSONALIZATION_DESIGN.md`,
+  bounded by `MODEL_CONTRACT.md` §3.5) sits on top of this model. It
+  re-ranks name suggestions and decides segments scoring 0.3–0.7 from
+  the user's own library. It never pre-fills a name and adds nothing to
+  the upload: provenance stays the central model's. Its rebuild after
+  a model update is the one other pass over pose, a background task on
+  external power, so the once-per-analysis rule above still holds for
+  analysis.
 
 ---
 
@@ -494,7 +504,9 @@ change here):
 **Never leaves the device** — video pixels, audio, location,
 photo-library identifiers (the raw `localIdentifier` — only its
 one-way SHA-256 derivative, the `video_id`, ever leaves), device
-identifiers, contacts, thumbnails, the video file itself.
+identifiers, contacts, thumbnails, the video file itself, and the
+on-device personal layer with everything it learns from
+(`PERSONALIZATION_DESIGN.md` §7, §9).
 
 **Leaves only on explicit per-clip opt-in** (the Contribute
 confirmation, §3.3):

@@ -220,6 +220,29 @@ to a Turnip-controlled server.
 - **`site/privacy.html`** changes when this ships, not before: it describes
   what the shipped app does.
 
+## Planned: on-device personalization (not built)
+
+After the on-device trick model (master plan Phase 4), the app adapts it
+to its user on the device ([`PERSONALIZATION_DESIGN.md`](PERSONALIZATION_DESIGN.md)).
+Nothing below is collected in the App Store sense.
+
+- **No network.** Training runs on the device from the user's own clip
+  library. Nothing it learns or reads is uploaded, and it adds no field
+  to a contribution, so no App Store answer changes.
+- **New data on the device.**
+  - Each trashed trick-model proposal on a source the library keeps
+    leaves two frame indices behind, in the clip library in
+    `Application Support/`, so it is in device backups.
+  - A derived, rebuildable cache (clip embeddings, per-name prototypes,
+    a small keep-layer model) lives in `Caches/`, outside backups.
+- **Deleting it.** Settings' "Learn from my clips" toggle deletes both
+  when turned off; deleting the app deletes both. The farm holds none of
+  it.
+- **Background work.** A rebuild after each model update runs as a
+  `BGProcessingTask` on external power. BackgroundTasks is not a
+  required-reason API, so the privacy manifest is unchanged.
+- **`site/privacy.html`** changes when this ships, not before.
+
 ## Deferred to v2 / later
 
 - Server-side data handling for uploaded clips (retention, deletion
