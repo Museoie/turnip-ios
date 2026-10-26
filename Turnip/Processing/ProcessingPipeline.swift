@@ -222,8 +222,15 @@ struct ProcessingPipeline: Sendable {
         // `.zero` marks it unknown, which the calculator treats as unlocatable and buildClips
         // turns into the full-frame fallback.
         let renderedPixelSize = await accumulator.renderSize ?? .zero
+        // The asset's duration, loaded here so the detected windows are
+        // clamped before they reach triage: without it the trailing buffer
+        // lets the last window run past the file, and the card labels a
+        // longer clip than the export produces.
+        let duration = try await asset.load(.duration).seconds
         return ProcessingResult(
-            detection: detect(in: frames, people: mode, renderedPixelSize: renderedPixelSize), asset: asset)
+            detection: detect(
+                in: frames, people: mode, renderedPixelSize: renderedPixelSize, duration: duration),
+            asset: asset)
     }
 
     /// A take the camera scored live in part: scores only the times `PoseBackfill` plans for the
@@ -263,7 +270,9 @@ struct ProcessingPipeline: Sendable {
         // live pass's own measure of the same picture otherwise.
         let renderedPixelSize = await accumulator.renderSize ?? partial.renderedPixelSize
         return ProcessingResult(
-            detection: detect(in: frames, people: mode, renderedPixelSize: renderedPixelSize), asset: asset)
+            detection: detect(
+                in: frames, people: mode, renderedPixelSize: renderedPixelSize, duration: duration),
+            asset: asset)
     }
 
     /// Steps 4-6 for a take whose frames hold everyone the model found. Following one person,
@@ -271,16 +280,27 @@ struct ProcessingPipeline: Sendable {
     /// the people are tracked across the take (`PersonTracker`) and they run once per person, so
     /// each person's speed is measured against their own activity and each clip frames its own
     /// person. Both frame sources call this: the file sampler above and the camera's hand-off.
-    func detect(in frames: [MultiPoseFrame], people mode: PersonMode, renderedPixelSize: CGSize) -> DetectedClips {
+    /// `duration` is the asset's length in seconds when the caller knows it
+    /// (the file runs); `nil` for the camera's live inference, where no file
+    /// exists yet and the windows reach triage unclamped. A non-nil duration
+    /// clamps every window at the pipeline boundary, so the triage card, the
+    /// export confirmation row, and the exported file all read the same
+    /// window instead of the card labelling up to the trailing buffer past
+    /// the clip that actually exports.
+    func detect(
+        in frames: [MultiPoseFrame], people mode: PersonMode, renderedPixelSize: CGSize,
+        duration: TimeInterval? = nil
+    ) -> DetectedClips {
         let primary = frames.map(\.primary)
         guard mode == .everyone else {
             return DetectedClips(
-                clips: detectClips(in: primary, renderedPixelSize: renderedPixelSize), poseFrames: primary)
+                clips: detectClips(in: primary, renderedPixelSize: renderedPixelSize, duration: duration),
+                poseFrames: primary)
         }
         var clips: [ProcessedClip] = []
         var people: [PoseTrack] = []
         for track in personTracker.tracks(in: frames, renderedPixelSize: renderedPixelSize) {
-            let found = detectClips(in: track.frames, renderedPixelSize: renderedPixelSize)
+            let found = detectClips(in: track.frames, renderedPixelSize: renderedPixelSize, duration: duration)
             guard !found.isEmpty else { continue }
             people.append(track)
             clips += found.map { ProcessedClip(window: $0.window, cropRect: $0.cropRect, personID: track.id) }
@@ -293,22 +313,34 @@ struct ProcessingPipeline: Sendable {
     /// rects. The one detection implementation for both frame sources — the file sampler above
     /// and the camera's live inference, whose results arrive in the same frame-normalized,
     /// display-orientation space with file-relative timestamps at the same sample rate.
-    func detectClips(in frames: [PoseFrameResult], renderedPixelSize: CGSize) -> [ProcessedClip] {
+    func detectClips(
+        in frames: [PoseFrameResult], renderedPixelSize: CGSize, duration: TimeInterval? = nil
+    ) -> [ProcessedClip] {
         let windows = windowDetector.detectWindows(
             in: MotionSignalBuilder.buildSignal(from: frames, renderedPixelSize: renderedPixelSize))
-        return buildClips(windows: windows, frames: frames, renderedPixelSize: renderedPixelSize)
+        return buildClips(windows: windows, frames: frames, renderedPixelSize: renderedPixelSize, duration: duration)
     }
 
     /// Pairs each detected window with the sampled frames inside it and computes its crop
     /// rect. A window whose frames carry no usable keypoints still becomes a clip, with a
     /// full-frame rect: the trick was detected from the motion signal, so dropping it would
     /// hide a real candidate from triage; the editor can tighten the crop.
+    /// With a duration, windows are clamped to the asset first, and a window
+    /// with nothing inside the asset is dropped: it cannot become a clip,
+    /// and a zero-length window would break the looper and the export.
     func buildClips(
         windows: [TrickWindow],
         frames: [PoseFrameResult],
-        renderedPixelSize: CGSize
+        renderedPixelSize: CGSize,
+        duration: TimeInterval? = nil
     ) -> [ProcessedClip] {
-        windows.map { window in
+        let clampedWindows: [TrickWindow]
+        if let duration {
+            clampedWindows = windows.compactMap { $0.clamped(to: duration) }
+        } else {
+            clampedWindows = windows
+        }
+        return clampedWindows.map { window in
             let inWindow = frames.filter {
                 $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
             }

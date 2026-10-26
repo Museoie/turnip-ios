@@ -265,3 +265,27 @@ final class TrickWindowDetectorTests: XCTestCase {
         XCTAssertEqual(window.endTime, end, accuracy: 0.0001, file: file, line: line)
     }
 }
+
+final class TrickWindowClampedTests: XCTestCase {
+    func testClampsEndToTheDuration() {
+        XCTAssertEqual(
+            TrickWindow(startTime: 4, endTime: 9).clamped(to: 6),
+            TrickWindow(startTime: 4, endTime: 6))
+    }
+
+    func testFloorsStartAtZero() {
+        XCTAssertEqual(
+            TrickWindow(startTime: -1, endTime: 3).clamped(to: 6),
+            TrickWindow(startTime: 0, endTime: 3))
+    }
+
+    func testLeavesAWindowInsideTheAssetAlone() {
+        let window = TrickWindow(startTime: 1, endTime: 3)
+        XCTAssertEqual(window.clamped(to: 6), window)
+    }
+
+    func testReturnsNilWhenNothingLiesInsideTheAsset() {
+        XCTAssertNil(TrickWindow(startTime: 7, endTime: 9).clamped(to: 6))
+        XCTAssertNil(TrickWindow(startTime: 6, endTime: 9).clamped(to: 6))
+    }
+}

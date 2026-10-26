@@ -162,6 +162,33 @@ final class ProcessingPipelineClipTests: XCTestCase {
         let clips = ProcessingPipeline().buildClips(windows: [], frames: frames, renderedPixelSize: size)
         XCTAssertTrue(clips.isEmpty)
     }
+
+    func testBuildClipsClampsWindowsToTheAssetDuration() {
+        // The detector's trailing buffer runs the last window past the file:
+        // triage must see the clamped window, not the raw one, or the card
+        // labels a longer clip than the export produces.
+        let clips = ProcessingPipeline().buildClips(
+            windows: [TrickWindow(startTime: 4, endTime: 9)],
+            frames: frames, renderedPixelSize: size, duration: 6)
+        XCTAssertEqual(clips.count, 1)
+        XCTAssertEqual(clips[0].window, TrickWindow(startTime: 4, endTime: 6))
+    }
+
+    func testBuildClipsDropsWindowsWithNothingInsideTheAsset() {
+        let clips = ProcessingPipeline().buildClips(
+            windows: [TrickWindow(startTime: 7, endTime: 9)],
+            frames: frames, renderedPixelSize: size, duration: 6)
+        XCTAssertTrue(clips.isEmpty)
+    }
+
+    func testBuildClipsWithoutADurationLeavesWindowsUnclamped() {
+        // The camera's live path has no file yet, so no duration exists to
+        // clamp to — that call site keeps the raw windows.
+        let window = TrickWindow(startTime: 4, endTime: 9)
+        let clips = ProcessingPipeline().buildClips(
+            windows: [window], frames: frames, renderedPixelSize: size)
+        XCTAssertEqual(clips.map(\.window), [window])
+    }
 }
 
 /// A scripted `FrameSampling` that emits canned frames with a fixed `renderSize`, ignoring the
@@ -311,7 +338,11 @@ final class ProcessingPipelineRunTests: XCTestCase {
             assetIdentifier: "test", asset: AVURLAsset(url: videoURL), duration: 3.5)
 
         let viaRun = try await pipeline.run(video: video) { _ in }
-        let viaDetect = pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize)
+        // run() clamps to the asset duration, so the direct route must be given
+        // the same duration: the invariant is run == detectClips(duration:), not
+        // run == bare detectClips.
+        let duration = try await video.asset.load(.duration).seconds
+        let viaDetect = pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize, duration: duration)
 
         XCTAssertFalse(viaRun.clips.isEmpty, "the fixture should yield at least one clip to compare")
         XCTAssertEqual(viaDetect, viaRun.clips)
@@ -380,15 +411,21 @@ final class ProcessingPipelineRunTests: XCTestCase {
         let sampler = ScriptedSampler(renderSize: renderSize, results: fixtures)
         let pipeline = ProcessingPipeline(sampler: sampler, makeInference: { throw TestError.boom })
 
+        let asset = AVURLAsset(url: videoURL)
         let result = try await pipeline.run(video: SelectedVideo(
-            assetIdentifier: "take", asset: AVURLAsset(url: videoURL), duration: 3.5,
+            assetIdentifier: "take", asset: asset, duration: 3.5,
             partialPose: PartialPoseFrames(
                 frames: fixtures.map(MultiPoseFrame.init(single:)), interval: 0.1, renderedPixelSize: renderSize))
         ) { _ in }
 
         XCTAssertTrue(sampler.requests.all.isEmpty)
         XCTAssertEqual(result.detection.poseFrames, fixtures)
-        XCTAssertEqual(result.clips, pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize))
+        // The backfill run clamps to the asset duration, so the direct route
+        // must be given the same duration for the equality to hold.
+        let duration = try await asset.load(.duration).seconds
+        XCTAssertEqual(
+            result.clips,
+            pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize, duration: duration))
     }
 }
 
