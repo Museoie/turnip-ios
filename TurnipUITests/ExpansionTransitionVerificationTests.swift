@@ -68,7 +68,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
@@ -118,9 +118,9 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
         let listBack = settledFrame(of: app.buttons["Back to Home"].firstMatch)
-        let listTitle = settledFrame(of: app.navigationBars["Clips"].staticTexts["Clips"].firstMatch)
+        let listTitle = settledFrame(of: app.navigationBars["1 of 2"].staticTexts["1 of 2"].firstMatch)
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
@@ -158,7 +158,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListFollow"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["1 of 1"].waitForExistence(timeout: 15))
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
@@ -177,16 +177,20 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
 
     /// Swipe-to-dismiss is the editor's back-navigation by another route, so it has to hand
     /// the edits back the way the back chevron does: trim the clip, swipe down from the
-    /// header band, and the tile's caption must show the new duration. The harness's two
-    /// clips both last 1.5s; dragging the end handle right lengthens the first one.
+    /// header band, and the card's timeline must describe the new window. Dragging the end
+    /// handle right lengthens the harness's first clip.
     func testSwipeToDismissCommitsTheEdit() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["1.5s"].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
+        let timeline = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == 'clip-card-1' AND value BEGINSWITH 'Clip from'"))
+            .firstMatch
+        XCTAssertTrue(timeline.waitForExistence(timeout: 15))
+        let windowBefore = timeline.value as? String
         tile.tap()
         XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
         let trimEnd = app.descendants(matching: .any)
@@ -214,13 +218,10 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         // `ClipExpansionContainer.dismissAfterLanding` disables UIKit animations for ~0.5s
         // after the flight, during which accessibility queries can't complete — wait it out.
         Thread.sleep(forTimeInterval: 2)
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 10))
-        let captions = app.staticTexts
-            .matching(NSPredicate(format: "label MATCHES '[0-9.]+s'"))
-            .allElementsBoundByIndex.map(\.label)
-        print("VERIFY_CAPTIONS_AFTER_SWIPE:\(captions)")
-        XCTAssertEqual(captions.count, 2)
-        XCTAssertTrue(captions.contains { $0 != "1.5s" }, "the swipe-dismissed edit never reached the tile")
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 10))
+        let windowAfter = timeline.value as? String
+        print("VERIFY_WINDOW_BEFORE:\(windowBefore ?? "-") VERIFY_WINDOW_AFTER:\(windowAfter ?? "-")")
+        XCTAssertNotEqual(windowAfter, windowBefore, "the swipe-dismissed edit never reached the card")
     }
 
     /// A swipe that stops short of `ExpansionFlightGeometry.dismissCommitDistance` and is held
@@ -229,7 +230,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()

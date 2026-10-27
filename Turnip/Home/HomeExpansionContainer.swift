@@ -6,7 +6,7 @@ import SwiftUI
 /// name this parameter's type without first naming the container's own `Content` generic.
 /// `onRequestClose` covers a plain back button; `dismissTranslationChanged`/`dismissEnded`/
 /// `dismissCancelled` cover a destination with its own live vertical-drag gesture
-/// (`ProcessingView`) — a destination without one (`ClipListView`) simply never calls them.
+/// (`ProcessingView`) — a destination without one (`NameClipsView`) simply never calls them.
 /// `onRequestSlideClose` is the clip list's back action: a sideways pop rather than a flight
 /// back into the tile, see `HomeExpansionContainer.slideClose()`.
 struct HomeExpansionCloseHandlers {
@@ -18,7 +18,7 @@ struct HomeExpansionCloseHandlers {
 }
 
 /// Home's Photos-style open/close flight: a tapped grid tile flies open into its full-screen
-/// destination (`ProcessingView`, or `ClipListView` directly for a video the camera already
+/// destination (`ProcessingView`, or `NameClipsView` directly for a video the camera already
 /// analyzed), and back-button/swipe-down close flies the reverse, landing on the tile for
 /// whichever video is actually on screen — not necessarily the one first tapped, since
 /// `ProcessingView`'s own swipe-to-browse can move to a neighbor first.
@@ -29,7 +29,7 @@ struct HomeExpansionCloseHandlers {
 /// video's frame, with the full-frame poster and — once `ProcessingView` reports one — the
 /// live player underneath it filling the rest, so the card uncrops from the tile's square
 /// into the whole video as it grows and shows the video's current frame as it shrinks. The
-/// destination defaults to the full screen edge-to-edge (`ProcessingView`/`ClipListView`
+/// destination defaults to the full screen edge-to-edge (`ProcessingView`/`NameClipsView`
 /// both already `ignoresSafeArea()`), but Home's destination can be a *letterboxed* video:
 /// `ProcessingView`'s player uses `.resizeAspect` gravity, so a video whose aspect ratio
 /// doesn't match the screen's only occupies a smaller centered rect within it.
@@ -38,7 +38,7 @@ struct HomeExpansionCloseHandlers {
 /// math run against `initialAspectRatio` (known synchronously, unlike the real measurement —
 /// see that property's own doc comment), rather than the full screen, so the open flight
 /// grows toward roughly the right rect from the first frame instead of only snapping to it
-/// once the real measurement eventually lands. `ClipListView` as a destination never reports
+/// once the real measurement eventually lands. `NameClipsView` as a destination never reports
 /// a measurement (it has no single video frame, just its own grid), so the full-screen default
 /// stands unchanged for that case. This container gains two more things `ClipExpansionContainer`
 /// didn't need: a `sourceFrame` that's a live lookup rather than a one-shot capture (the close
@@ -65,7 +65,7 @@ struct HomeExpansionContainer<Content: View>: View {
     /// The video's pixel dimensions (`PHAsset.pixelWidth`/`pixelHeight`), known synchronously
     /// from the tapped tile's own asset — used to letterbox the fallback destination (see
     /// `body`'s `destination`) while `measuredDestination` is still nil, instead of guessing the
-    /// full screen. `nil` for a destination that never letterboxes (`ClipListView` directly, the
+    /// full screen. `nil` for a destination that never letterboxes (`NameClipsView` directly, the
     /// camera-originated case) so that destination's correct full-screen default isn't
     /// second-guessed with an aspect ratio that doesn't apply to it. `ProcessingView`'s own
     /// measurement needs the asset's *track* to have loaded, which can't even start until the
@@ -77,7 +77,7 @@ struct HomeExpansionContainer<Content: View>: View {
     let initialAspectRatio: CGSize?
     /// Builds the destination content, given the handlers it should wire into its own
     /// back-button/dismiss-gesture. `ProcessingView` (via its `onRequestClose`/
-    /// `dismissGestureHooks`) or a `NavigationStack { ClipListView(...) }` (via
+    /// `dismissGestureHooks`) or a `NavigationStack { NameClipsView(...) }` (via
     /// `onRequestSlideClose` alone — it has no swipe-to-dismiss of its own) both fit this
     /// shape.
     @ViewBuilder let content: (HomeExpansionCloseHandlers) -> Content
@@ -124,7 +124,7 @@ struct HomeExpansionContainer<Content: View>: View {
     /// `ProcessingPlayerPreferenceKey`: the card renders it too, so the card shows the very
     /// frame the destination is showing when one replaces the other, and a closing flight can
     /// scrub it back to the poster frame the tile shows. `nil` for a destination without a
-    /// player (`ClipListView`, or `ProcessingView` still resolving its video).
+    /// player (`NameClipsView`, or `ProcessingView` still resolving its video).
     @State private var destinationPlayer: AVPlayer?
     @StateObject private var scrubber = FlightScrubber()
     /// Whether the player was playing when a presenter scrub began, so a cancelled dismiss
@@ -307,7 +307,7 @@ struct HomeExpansionContainer<Content: View>: View {
     /// The destination before `measuredDestination` has a real report: the known aspect ratio's
     /// letterboxed rect (matching what `ProcessingView` will eventually measure) when one's
     /// available, else the full screen — correct as-is for a destination that never letterboxes
-    /// (`ClipListView` directly).
+    /// (`NameClipsView` directly).
     private func fallbackDestination(in size: CGSize) -> CGRect {
         guard let initialAspectRatio, initialAspectRatio.width > 0, initialAspectRatio.height > 0
         else { return CGRect(origin: .zero, size: size) }

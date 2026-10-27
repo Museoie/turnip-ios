@@ -88,7 +88,7 @@ final class ScreenshotTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipList"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["1 of 3"].waitForExistence(timeout: 15))
         let placeholder = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS 'thumbnail placeholder'"))
             .firstMatch
@@ -96,73 +96,58 @@ final class ScreenshotTests: XCTestCase {
         addScreenshot(named: "clip-list-triage")
     }
 
-    /// Clip list over real media: the `/dev/null` asset in `testClipListTriage` never
-    /// loads a duration, so its tiles' read-only range timeline stays hidden behind its
+    /// Name Clips over real media: the `/dev/null` asset in `testClipListTriage` never
+    /// loads a duration, so its card's read-only range timeline stays hidden behind its
     /// `if let duration` guard — this proves the timeline actually renders once the
-    /// asset loads for real.
+    /// asset loads for real. The card is one accessibility element, and carries the
+    /// timeline's words as its value.
     func testClipListMedia() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
         let rangeTimeline = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH 'Clip from'"))
+            .matching(NSPredicate(format: "value BEGINSWITH 'Clip from'"))
             .firstMatch
         XCTAssertTrue(rangeTimeline.waitForExistence(timeout: 15))
         addScreenshot(named: "clip-list-media")
     }
 
-    /// Trashing the original tile flips its icon button's accessibility label rather
-    /// than removing it, and the screen carries no leftover select-all affordance —
-    /// the triage screen's toolbar has only the back chevron, and "Next: name clips", with
-    /// "Save without names" under it, is the screen's action. The original tile is always the first of the
-    /// grid's "Trash clip" buttons, since `ClipListViewModel` prepends it to `items`.
-    func testTrashButtonTogglesToRestoreOnTheOriginalTile() throws {
+    /// The original video is marked for deletion from the header's "More" menu — the clip
+    /// screen has no tile of its own for it — and the screen then says in words, above the
+    /// save, what saving will do.
+    func testDeleteOriginalMenuSaysTheOriginalWillBeDeleted() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
-        let trashButtons = app.buttons.matching(NSPredicate(format: "label == 'Trash clip'"))
-        let originalTrashButton = trashButtons.element(boundBy: 0)
-        XCTAssertTrue(originalTrashButton.waitForExistence(timeout: 15))
-        originalTrashButton.tap()
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        let notice = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == 'original-deletion-notice'"))
+            .firstMatch
+        XCTAssertFalse(notice.exists)
+        let more = app.buttons["name-clips-more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        more.tap()
+        let option = app.buttons["Delete original after saving"].firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 5))
+        option.tap()
 
-        XCTAssertTrue(app.buttons["Restore clip"].firstMatch.waitForExistence(timeout: 5))
-        // The dimmed tile says in words what trashing the original means.
-        XCTAssertTrue(app.staticTexts["original-deletion-notice"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["original-deletion-notice"].label, "Will be deleted")
-        XCTAssertFalse(app.buttons["Select All"].exists)
-        XCTAssertFalse(app.buttons["Deselect All"].exists)
-        XCTAssertTrue(app.buttons["Next: name clips"].exists)
-        XCTAssertTrue(app.buttons["Save without names"].exists)
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
         addScreenshot(named: "clip-list-original-trashed")
     }
 
-    /// A derived clip's trash button removes its tile from the grid outright (a 150ms
-    /// fade-and-reflow, which the poll below outlasts), unlike the original tile's
-    /// reversible toggle above — no "Restore clip" label ever appears for it.
+    /// A clip's trash button discards it outright, with no restore: the pager counts one
+    /// clip fewer and the one after it takes its place.
     func testTrashButtonRemovesADerivedClipImmediately() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
-        let trashButtons = app.buttons.matching(NSPredicate(format: "label == 'Trash clip'"))
-        XCTAssertEqual(trashButtons.count, 3) // original tile + two derived clips
-        let derivedTrashButton = trashButtons.element(boundBy: 1)
-        XCTAssertTrue(derivedTrashButton.waitForExistence(timeout: 15))
-        derivedTrashButton.tap()
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        let trash = app.buttons.matching(NSPredicate(format: "identifier == 'name-clips-trash'")).firstMatch
+        XCTAssertTrue(trash.waitForExistence(timeout: 15))
+        trash.tap()
 
-        // Waits for the "Trash clip" count to actually settle at 2 before checking
-        // for "Restore clip": asserting immediately after `.tap()`, before SwiftUI
-        // re-renders, would pass under either implementation — the toggle bug drops
-        // this same count by relabeling one button to "Restore clip", not by
-        // removing it. Only once the count has settled does the absence of
-        // "Restore clip" distinguish outright removal from a relabel.
-        let deadline = Date().addingTimeInterval(5)
-        while trashButtons.count != 2, Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.2)
-        }
-        XCTAssertEqual(trashButtons.count, 2)
+        XCTAssertTrue(app.navigationBars["1 of 1"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Restore clip"].exists)
     }
 
@@ -269,15 +254,14 @@ final class ScreenshotTests: XCTestCase {
         return condition()
     }
 
-    /// Tapping a tile opens the full `ClipEditorView` directly — the tile itself is
-    /// the single entry point into detail/editing, not a separate expand icon and not
-    /// an intermediate full-screen viewer. Reached by identifier rather than by label,
-    /// since a card's label counts off its position and duration.
+    /// Tapping the clip's card opens the full `ClipEditorView` directly — the card itself is
+    /// the single entry point into editing, not a separate expand icon. Reached by identifier
+    /// rather than by label, since a card's label counts off its position and duration.
     func testClipListTapOpensEditor() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
         let tile = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier == 'clip-card-1'"))
             .firstMatch
@@ -287,23 +271,21 @@ final class ScreenshotTests: XCTestCase {
         addScreenshot(named: "clip-list-expand-to-editor")
     }
 
-    /// A tile whose video is already in Photos draws the saved badge, and tapping the badge
-    /// still opens the editor. Both halves need the badge on screen:
-    /// `testClipListTapOpensEditor` above taps the tile's centre, so it cannot see a dead
-    /// zone in a 28pt corner — and a decorative overlay sibling is hit-testable by default,
-    /// which is what would create one. The tap lands on the badge's own centre rather than
-    /// an offset into the tile, so it hits the point the badge covers whatever area the
-    /// tile's accessibility frame spans.
+    /// A card whose video is already in Photos says so, and tapping the saved badge's corner
+    /// still opens the editor: `testClipListTapOpensEditor` above taps the card's centre, so
+    /// it cannot see a dead zone in the corner — and a decorative overlay sibling is
+    /// hit-testable by default, which is what would create one. The badge sits 8 pt in from
+    /// the card's top-leading corner, 32 pt across.
     func testSavedBadgeRendersAndLeavesItsCornerTappable() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
-        let badge = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == 'Saved to Photos'"))
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        let card = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier == 'clip-card-1' AND label CONTAINS 'saved to Photos'"))
             .firstMatch
-        XCTAssertTrue(badge.waitForExistence(timeout: 15))
-        badge.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 15))
+        card.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 24, dy: 24)).tap()
         XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
     }
 

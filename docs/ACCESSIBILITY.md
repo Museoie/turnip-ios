@@ -89,17 +89,20 @@ control:
 - The failed state is announced with the reason the screen shows. It replaces the page content
   in place rather than pushing, so there is no screen-change notification either — the
   announcement is the only signal a listener gets.
-- The empty result is announced on the Clip List instead, where the zero-tricks notice lives:
-  a run that detects nothing still navigates, and an announcement posted into a simultaneous
-  screen change is the one VoiceOver drops. A run that *did* find clips is read off the Clip
-  List grid's own count label for the same reason — see that section below.
+- The empty result is announced on Name Clips instead, where its "No tricks found" empty state
+  lives: a run that detects nothing still navigates, and an announcement posted into a
+  simultaneous screen change is the one VoiceOver drops. A run that *did* find clips is read
+  off Name Clips' title ("1 of 3") for the same reason — see that section below.
 - The progress bar carries the frame counter as its `accessibilityValue`, so the count is
   reachable from the bar itself and not only from the `Text` beside it.
 - Cancel is reachable and labeled throughout the run.
 - Identifiers: `processing-cancel`, `processing-back`, `start-analysis`, `analysis-progress`,
   `processing-retry`, `processing-back-home`, `cancel-browsing`.
 
-### Clip List (#11) — done
+### Clip List (#11) — retired
+
+Clip List became part of Name Clips on 2026-10-27 (UIUX §3, §3a). The items below are its
+history; what carried over is listed under Name Clips.
 
 - **The grid states its count on entry** ("3 clips" / "1 clip" / "No clips"), the same way
   Home's does. This is how a run's *result* reaches a listener: a run that found clips announces
@@ -200,26 +203,42 @@ control:
 
 ### Export Confirmation (#19) — retired
 
-- The screen is gone (UIUX decision 6): Clip List's "Save Clips" saves inline. Its one item moved
-  there — see the Clip List section's save announcements above.
+- The screen is gone (UIUX decision 6): the save happens inline, now on Name Clips. Its one item
+  moved there — see the save announcements under Name Clips.
 
-### Name Clips (planned — UIUX §3a, `PROFILE_DESIGN.md` §4)
+### Name Clips (UIUX §3a, `PROFILE_DESIGN.md` §4)
 
-- Clip List's "Next: name clips" and "Save without names" are both labeled buttons; the
-  secondary keeps `PrimaryActionBar`'s plain-text style, so it must still meet the 44 pt
-  target.
-- The counter is read with the clip ("Clip 2 of 4"), and paging has buttons ("Next" /
-  "Skip", "Save Clips" on the last clip, "Save now"), so moving between clips never
-  depends on the swipe.
-- The trick-name field is labeled "Trick name"; each chip is one element with a "Remove"
-  action (`accessibilityAction(named:)`), not a tiny × target; suggestions are buttons
-  announced with their position ("gainer, suggestion 1 of 3").
-- The me / someone-else control announces its state as a value ("Who's in this clip: me"),
-  never color alone.
-- The contribute toggle is a labeled switch ("Contribute this clip"); while disabled it says
-  why ("Name the clip first") rather than only dimming.
-- The looping clip follows Clip List's rule: no auto-playing loop under Reduce Motion or
-  with video autoplay off.
+Built:
+
+- The screen's title is the count ("2 of 4"), read on the screen change, which is how a run's
+  result reaches a listener; a run that found nothing lands on an empty state whose "No tricks
+  found" is announced once the push has settled.
+- Each clip's card is one element: "Clip 2 of 4, 1.5 seconds, kept", with ", saved to Photos"
+  after a partial failure, `.isButton` with the hint "Opens the clip in the editor". Its value
+  is the timeline's words ("Clip from 3.0s to 4.5s of 6.0s"), the bar drawn over the card
+  having no other way to be heard. "Discard clip" is a custom action on the card as well as
+  its own labeled button, a 44 pt target. The card's element is the picture alone, so its
+  frame is the card's and the trash button stays separate.
+- The header's controls are labeled: "Back to Home", "Add clip", and "More", whose menu holds
+  "Delete original after saving" as a toggle; with it on, the line above the save says so in
+  words, and Save Clips' value says it too ("Saves 2 clips to Photos, and deletes the original
+  video").
+- The save keeps Clip List's announcements: starting, finished, and each failure numbered by
+  the clip it belongs to.
+- Paging has buttons ("Next" / "Skip", "Save Clips" on the last clip, "Save now"), so moving
+  between clips never depends on the swipe.
+- Each name chip is a button labeled with the name, hinted "Removes this name".
+- No auto-playing loop under Reduce Motion or with video autoplay off, for the current clip and
+  for the one prepared beside it alike; the card shows its poster.
+
+Not yet, from the plan:
+
+- The trick-name field is labeled by its placeholder, not "Trick name"; suggestions don't
+  announce their position ("gainer, suggestion 1 of 3").
+- The me / someone-else control reads as a segmented control with its selected segment, not
+  as a value ("Who's in this clip: me").
+- The disabled contribute toggle shows why in a footnote under it, which VoiceOver reads as a
+  separate element rather than as part of the switch.
 
 ### Profile (planned — `PROFILE_DESIGN.md` §5–§8)
 
@@ -229,7 +248,7 @@ control:
   `.isButton`. Progress bars carry the same figures as `accessibilityValue`; the bar's fill
   is never the only signal.
 - An achievement reached is announced once, when it is earned, not on every visit.
-- Gallery tiles follow Clip List's rules: one element per tile, no auto-playing loops under
+- Gallery tiles follow Name Clips' card rules: one element per tile, no auto-playing loops under
   Reduce Motion or with video autoplay off.
 - Highlights: no autoplay under Reduce Motion; a side-by-side "then and now" reads as one
   element naming both dates ("Gainer, March 2025 and September 2026"); locked highlights

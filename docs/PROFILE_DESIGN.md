@@ -11,8 +11,8 @@ clips in the core clip flow, achievements per trick, the gallery
 grouped by trick, highlight videos, how the library survives a
 reinstall, and how the Profile hands named clips to contribution and
 shows what they did. The parts of the v1 flow it changes — the root
-pager, Clip List's save action, and the Name Clips screen that action
-opens — are specified in `docs/UIUX.md`; contribution itself in
+pager and the Name Clips screen an analysis lands on — are specified in
+`docs/UIUX.md`; contribution itself in
 `docs/CONTRIBUTION_DESIGN.md`.
 
 **Authority.** The contract is the
@@ -87,8 +87,8 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
   - `recorded_at` (`PHAsset.creationDate`), duration, analysis rate;
   - the pose sequence (§2.2);
   - `location`, copied from `PHAsset.location` when the asset has one,
-    because the original may be deleted later (Clip List deletes it
-    when its tile is trashed);
+    because the original may be deleted later (Name Clips' save deletes
+    it when it is marked for deletion);
   - `spot`, an optional name the user gives the place (§8.1);
   - `source_id`, the contribution identity (`CONTRIBUTION_DESIGN.md`
     §1), computed the first time a clip of it is contributed.
@@ -115,8 +115,8 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
 - The source's pose sequence is stored as the TKP1 blob contribution
   would upload: encoded once at the analysis rate, gap frames as all
   zeros (`CONTRIBUTION_DESIGN.md` §2.2), gzip-compressed.
-- Why keep it: Clip List deletes the original from Photos when its
-  tile is trashed, and with it any way to re-run pose. Without the
+- Why keep it: Name Clips' save deletes the original from Photos when
+  it is marked for deletion, and with it any way to re-run pose. Without the
   stored pose a clip named today could never be contributed later.
   The same pose aligns "then and now" highlights (§8.1) and draws
   skeleton previews for clips whose video is gone.
@@ -130,8 +130,8 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
 
 ### 2.3 When it is written
 
-- **Saving writes it** — Name Clips' "Save Clips" or "Save now", or Clip
-  List's "Save without names" (UIUX §3, §3a). Each saved derived clip
+- **Saving writes it** — Name Clips' "Save Clips" or "Save now" (UIUX
+  §3a). Each saved derived clip
   gets a clip record with its `export_asset_id` and whatever names it
   was given; its source gets a source record and its pose. Trashed clips
   are not stored. The one exception is on-device personalization: a
@@ -139,7 +139,7 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
   two frame indices behind, and nothing else
   (`PERSONALIZATION_DESIGN.md` §3). A trashed original is still deleted
   from Photos as today; its source record and pose stay.
-- Backing out of Clip List without saving stores nothing.
+- Backing out of Name Clips without saving stores nothing.
 - A saved clip can later have its names, `is_me` and `favorite`
   changed from the Clip view (§5.2). Its window and crop cannot: the
   export is what it is. *(Judgment call; re-cutting from the source
@@ -250,22 +250,23 @@ exported clips and their records to the user's other devices, so
 Naming moves out of the contribution path, where
 `CONTRIBUTION_DESIGN.md` §4 first placed it, into the clip flow itself:
 every saved clip can carry names, contributed or not. It gets a screen
-of its own rather than space on Clip List or the Clip Editor, which are
-already full with triage, trimming and framing controls.
+of its own rather than space on the Clip Editor, which is already full
+with trimming and framing controls. *(Since 2026-10-27 that screen is
+also where an analysis lands: Clip List's triage moved onto it, UIUX
+§3.)*
 
 ### 4.1 Where names are given
 
-- **Name Clips** (UIUX §3a) sits between Clip List and the save.
-  Clip List's main button becomes "Next: name clips"; a quieter "Save
-  without names" under it saves straight away, as Save Clips does
-  today. Name Clips shows one clip at a time, larger, with a free-text
+- **Name Clips** (UIUX §3a) is where an analysis lands, before the
+  save. It shows one clip at a time, larger, with a free-text
   field ("What trick is this? e.g. cork"); committing adds a chip;
   chips are removable; a combo is N chips on one clip (no
   sub-segmentation, matching the model's `trick_names`). Its last
-  button saves, and "Save now" saves early.
+  button saves, and "Save now" saves early — from the first clip on,
+  which is how a user saves without naming.
 - The same screen names clips saved without names, opened from the
   Profile's "Needs a name" (§5.1), ending in "Done" instead of a save.
-- Clip List's tiles and the Clip Editor are unchanged.
+- The Clip Editor is unchanged.
 - Naming is optional. Nothing blocks on it ("Skip" moves on); unnamed
   clips land in the Profile's "Needs a name".
 - No batch naming in v1: one name applied to a whole video's clips
@@ -348,7 +349,7 @@ names and `is_me` (editable), date and spot; holds the clip's
 Contribute toggle once contribution ships; and deletes the clip from
 the library, asking whether to delete its video from Photos too. While
 one of these is pushed, `PageSwipeLock` keeps the root pager from
-taking horizontal drags, as it does for Processing, Clip List and the
+taking horizontal drags, as it does for Processing, Name Clips and the
 editor.
 
 ---
@@ -417,7 +418,7 @@ contributing those tricks earns nothing extra (rule 3).
 - Saved clips grouped by canonical trick (§4.4): one row per trick on
   the Profile page with its clip count, opening a grid of that trick's
   clips, newest first. A combo clip appears under each of its tricks.
-- Tiles loop their clip inline like Clip List's tiles, accessibility
+- Tiles loop their clip inline like Name Clips' card, accessibility
   permitting (ACCESSIBILITY.md). A tile opens the Clip view (§5.2) with
   the tile-to-screen expansion transition the app already uses
   (`EXPANSION_TRANSITIONS.md`), the card being the clip's own player.
@@ -478,7 +479,7 @@ rendering is a required-reason API (PRIVACY.md).
   Clips (UIUX §3a) and on the Clip view, and a "Contribute named clips"
   action on the Profile page, feed `CONTRIBUTION_DESIGN.md`'s flow
   (§3.3), which uploads the library's stored pose and each clip's names
-  and provenance. Clip List and the Clip Editor carry no contribution
+  and provenance. The Clip Editor carries no contribution
   controls. Nothing in the Profile depends on contributing.
 - **Asking.** At most one dismissible card on the Profile page, never a
   modal, and not again for a week once dismissed. *(Judgment call.)*

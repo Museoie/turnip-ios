@@ -143,6 +143,17 @@ final class NameClipsTests: XCTestCase {
         XCTAssertNil(plan.source)
     }
 
+    // MARK: - Card size
+
+    /// The card's side depends on the screen alone: the width less its insets, giving up height
+    /// only where the naming controls wouldn't fit below it, and never below a usable floor.
+    func testCardSideIsTheWidthUnlessTheControlsWouldNotFit() {
+        XCTAssertEqual(NameClipsLayout.cardSide(for: CGSize(width: 440, height: 700)), 408)
+        XCTAssertEqual(NameClipsLayout.cardSide(for: CGSize(width: 393, height: 585)), 345)
+        XCTAssertEqual(NameClipsLayout.cardSide(for: CGSize(width: 375, height: 473)), 233)
+        XCTAssertEqual(NameClipsLayout.cardSide(for: CGSize(width: 320, height: 400)), 220)
+    }
+
     // MARK: - Vocabulary
 
     func testVocabularyResolvesSpellingsAndSuggestsCorrections() {

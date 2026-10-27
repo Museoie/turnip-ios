@@ -121,7 +121,7 @@ truth — it is recomputed on demand, which is the whole point.
 A small `VideoIdentityResolver` (new, beside the existing
 `PhotoVideoResolver`) called from the video-select path
 (`VideoLibraryViewModel.select(_:)`). The resulting `source_id` travels
-with the existing `SelectedVideo` value through Processing → Clip List,
+with the existing `SelectedVideo` value through Processing → Name Clips,
 so every downstream screen can reference it without recomputing.
 
 ### 1.3 Edge cases
@@ -167,7 +167,7 @@ camera takes where live inference covered the take (`LIVE_POSE.md`),
 those live results are the input — again, no re-decode. The encoding
 happens once, when saving writes the source to the clip library
 (`PROFILE_DESIGN.md` §2.2), so a clip saved today can be contributed
-later even after Clip List has deleted its original from Photos.
+later even after the save has deleted its original from Photos.
 
 Keypoint order is MoveNet 17 in COCO order, exactly as the farm expects:
 `0 nose, 1 left_eye, 2 right_eye, 3 left_ear, 4 right_ear,
@@ -231,17 +231,15 @@ training. When pose quality is poor:
 
 The flow rides the existing screens from `UIUX.md`:
 
-- **Processing (§2)** — analysis runs as today; proposals land on Clip
-  List.
-- **Clip List (§3, triage)** — proposals appear as derived clip tiles
-  exactly as the heuristic's do today. The "+" tile, trash toggles, and
-  read-only timelines are unchanged, and no contribution control is
-  added: the screen is already full.
+- **Processing (§2)** — analysis runs as today; proposals land on Name
+  Clips.
+- **Name Clips** (`UIUX.md` §3a, `PROFILE_DESIGN.md` §4) — the screen an
+  analysis lands on, one clip at a time, where clips are triaged (open
+  in the editor, discard, add), named, contributed or not, and saved.
+  Each clip there carries its contribute toggle (§3.3). It took over
+  Clip List's triage on 2026-10-27 (`UIUX.md` §3).
 - **Clip Detail / Editor (§4)** — window trimming via the scrub-bar
   handles and crop editing are unchanged.
-- **Name Clips** (`UIUX.md` §3a, `PROFILE_DESIGN.md` §4) — the step
-  between Clip List and the save where clips are named, contributed or
-  not. Each clip there also carries its contribute toggle (§3.3).
 - **The Profile's Clip view** (`PROFILE_DESIGN.md` §5.2) — a saved
   clip's contribute toggle, and a "Contribute named clips" action on
   the Profile page, for clips saved before the user chose to
@@ -252,20 +250,19 @@ The flow rides the existing screens from `UIUX.md`:
 - **Today**: the heuristic (`MotionSignalBuilder`,
   `TrickWindowDetector` in `Turnip/TrickDetection/`) proposes windows.
 - **Later**: the OTA trick model (§7) proposes windows *and* suggested
-  names. Both generations surface identically in Clip List; the
+  names. Both generations surface identically on Name Clips; the
   proposal source is not a user-facing distinction.
 
 ### 3.3 The confirmation step (new)
 
 Confirmation is the farm boundary: **only confirmed clips + labels are
-uploaded; nothing else ever is.** Trashed clips and the original tile
-can never be confirmed.
+uploaded; nothing else ever is.** Discarded clips and the original
+video can never be confirmed.
 
 - Each clip on Name Clips, and each saved clip's Clip view in the
   Profile, gains a **contribute toggle** ("Contribute this clip",
   persisted in the clip library, default off, disabled until the clip
-  has a name). Toggling is per-clip opt-in. Clip List and the Clip
-  Editor get none.
+  has a name). Toggling is per-clip opt-in. The Clip Editor gets none.
 - The **confirmation sheet** opens in two ways: by itself when the user
   finishes Name Clips with any clip toggled — once the save has
   finished, so saving and contributing stay separate steps — or from
@@ -275,8 +272,8 @@ can never be confirmed.
   clip windows, labels — video never leaves your device"), and a
   Confirm button. Cancelling sends nothing; the clips stay saved and
   can be contributed later from the Profile. *(Judgment call on
-  placement: contribution never sits on Clip List or the editor, which
-  are already full. The exact affordance is UI polish; the boundary
+  placement: contribution never sits on the editor, which is already
+  full. The exact affordance is UI polish; the boundary
   semantics are not.)*
 - The sheet also carries the disclosure the farm requires
   (`BACKEND_DESIGN.md` §7.1):
@@ -524,7 +521,7 @@ distinguishes proposal sources.
   **source-frame coordinates** (canonical 10 Hz indices) with
   `trick_names`, per-name `name_scores`, and `is_combo`.
 - **Mapping to the UI**: convert segment frames → seconds at canonical
-  10 Hz, then onto the local analysis-rate timeline for Clip List tiles
+  10 Hz, then onto the local analysis-rate timeline for Name Clips' cards
   *(judgment call)*. Names the model is confident in arrive as
   **pre-filled chips** on Name Clips — editable and
   removable, recorded as `origin: model` if kept — and a random tenth

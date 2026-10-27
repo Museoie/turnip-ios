@@ -116,7 +116,7 @@ Almost everything is already in the clip library (`PROFILE_DESIGN.md`
   deleted" still counts, since its source's pose remains. Sources
   reached by "Clip manually" have no pose and contribute nothing.
 - **Dismissed windows (new).** For each source a save writes to the
-  library, one record per trick-model proposal shown on Clip List and
+  library, one record per trick-model proposal shown on Name Clips and
   trashed there: the source, the proposed `start_frame` and
   `end_frame` in canonical 10 Hz frames, and nothing else. Kept
   proposals and "+" clips need no new record, because they are saved
@@ -125,7 +125,7 @@ Almost everything is already in the clip library (`PROFILE_DESIGN.md`
   "Trashed clips are not stored": a trashed tile leaves two frame
   indices behind, not a clip, an export or a name. It does so only on
   a source whose pose the library already keeps. A source with nothing
-  saved stores nothing, and backing out of Clip List stores nothing, as
+  saved stores nothing, and backing out of Name Clips stores nothing, as
   today.)* A source's dismissed windows are deleted with its pose,
   when its last clip leaves the library (`PROFILE_DESIGN.md` §2.2).
 - **Name weights by origin:** `typed` and `vocabulary` names count 1,

@@ -382,6 +382,67 @@ final class ClipCardPlaybackTests: XCTestCase {
         XCTAssertIdentical(playback.loop as? FakeLoop, recorder.loops[1])
     }
 
+    // MARK: - Prepared cards beside the current page
+
+    /// A neighbour page's card builds its loop without playing it, so it slides in on its own
+    /// first frame; becoming the current page plays that same loop rather than building another.
+    func testPrepareBuildsAPausedLoopThatResumingPlays() async {
+        let recorder = LoopRecorder()
+        let playback = makePlayback(recorder)
+
+        playback.prepare(geometry: geometry())
+        await settle(playback)
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].playCount, 0)
+        XCTAssertIdentical(playback.loop as? FakeLoop, recorder.loops[0])
+
+        playback.setSuspended(false)
+        await settle(playback)
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].playCount, 1)
+    }
+
+    /// The current card swiped away mid-build becomes a prepared one: it keeps the loop it was
+    /// building, paused, instead of dropping it the way a covered card does.
+    func testAStartedCardPreparedMidBuildKeepsItsLoopPaused() async {
+        let recorder = LoopRecorder()
+        let playback = makePlayback(recorder)
+
+        playback.start(geometry: geometry(), isSuspended: false)
+        playback.prepare(geometry: geometry())
+        await settle(playback)
+
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].playCount, 0)
+        XCTAssertNotNil(playback.loop)
+    }
+
+    /// Swiping back to a card already playing pauses it and keeps it mounted.
+    func testPreparingAPlayingCardPausesItWithoutRebuilding() async {
+        let recorder = LoopRecorder()
+        let playback = makePlayback(recorder)
+        playback.start(geometry: geometry(), isSuspended: false)
+        await settle(playback)
+
+        playback.prepare(geometry: geometry())
+        await settle(playback)
+
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].pauseCount, 1)
+        XCTAssertEqual(recorder.loops[0].stopCount, 0)
+    }
+
+    func testPrepareBuildsNoLoopWhenLoopsMayNotAutoplay() async {
+        let recorder = LoopRecorder()
+        recorder.isReduceMotionEnabled = true
+        let playback = makePlayback(recorder)
+
+        playback.prepare(geometry: geometry())
+        await settle(playback)
+
+        XCTAssertTrue(recorder.loops.isEmpty)
+    }
+
     // MARK: - Suspension while the editor covers the grid
 
     func testSuspendingPausesWithoutReleasingTheLoop() async {

@@ -31,10 +31,14 @@ struct ClipRangeTimelineView: View {
         }
         .frame(height: Self.trackHeight)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            "Clip from \(ClipDurationFormatter.string(from: window.startTime)) to "
-                + ClipDurationFormatter.string(from: window.endTime)
-                + " of \(ClipDurationFormatter.string(from: duration))")
+        .accessibilityLabel(Self.accessibilityDescription(window: window, duration: duration))
+    }
+
+    /// Where the window sits in the video, in words: what the bar draws.
+    static func accessibilityDescription(window: TrickWindow, duration: TimeInterval) -> String {
+        "Clip from \(ClipDurationFormatter.string(from: window.startTime)) to "
+            + ClipDurationFormatter.string(from: window.endTime)
+            + " of \(ClipDurationFormatter.string(from: duration))"
     }
 
     private func position(of time: TimeInterval, span: TimeInterval, width: CGFloat) -> CGFloat {

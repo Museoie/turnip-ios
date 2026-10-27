@@ -110,7 +110,9 @@ private func deleteOriginalVideo(_ assetIdentifier: String) async throws {
     try await PhotoAssetDeleter().delete(assetIdentifier: assetIdentifier)
 }
 
-/// Backing store for `ClipListView` (`docs/UIUX.md` § "Clip List (triage)").
+/// Backing store for Name Clips (`NameClipsView`, `docs/UIUX.md` § "Name Clips"): the video's
+/// clips with their windows, framing, trash and save state, and the names given them. `items[0]`
+/// stands for the source video itself, whose trash flag is "delete the original after saving".
 @MainActor
 final class ClipListViewModel: ObservableObject {
     @Published private(set) var items: [ClipListItem]
@@ -153,7 +155,7 @@ final class ClipListViewModel: ObservableObject {
     /// of `poseFrames`.
     private let people: [PoseTrack]
     /// The source video's `PHAsset.localIdentifier`, for deleting it from Photos
-    /// when the original tile is trashed at `save()` time.
+    /// when the original is marked for deletion at `save()` time.
     private let assetIdentifier: String
     private let loader: ClipThumbnailLoader
     /// One in-flight decode per id, tagged with the key it was started for — a caller
@@ -210,8 +212,7 @@ final class ClipListViewModel: ObservableObject {
     /// Prepends the original-video item to `items`: the invariant that
     /// `items[0]` always stands for the source video, enforced in one place rather
     /// than left to every call site to remember. `duration` seeds its full-video
-    /// window; the original tile never opens the editor, so this never needs
-    /// re-deriving.
+    /// window; the original never opens the editor, so this never needs re-deriving.
     ///
     /// `items` are the detected clips, which start in the framing mode Settings' Follow the
     /// athlete gives them — read once, here — when the video has pose analysis for Auto follow
@@ -288,7 +289,7 @@ final class ClipListViewModel: ObservableObject {
     /// Builds the editor's input for one list item: its window, crop rect, and crop
     /// adjustment plus the analyzed asset and the video's scored frames. Trash stays the
     /// list's own decision — the editor neither surfaces nor edits it. Never called for
-    /// the original item — its tile doesn't open the editor.
+    /// the original item, which never opens the editor.
     func editorSource(for item: ClipListItem) -> ClipEditorSource {
         ClipEditorSource(
             window: item.window,
@@ -358,7 +359,7 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// Removes the item with the given id entirely: the editor's Delete action, and
-    /// — for a derived clip — also what the list's own trash button routes to
+    /// — for a derived clip — also what the card's trash button routes to
     /// via `trash(_:)`, since a derived clip has no restore once trashed. The
     /// original item can never be removed this way — it can only be soft-trashed —
     /// since deleting a `PHAsset` needs `save()`'s confirmation-and-cleanup flow, not
@@ -373,16 +374,16 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// Flips one item's reversible trash flag — the primitive `trash(_:)` composes
-    /// for the original tile. A no-op for unknown ids.
+    /// for the original, behind Name Clips' "Delete original after saving". A no-op for
+    /// unknown ids.
     func toggleTrash(_ item: ClipListItem) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index].isTrashed.toggle()
     }
 
-    /// The per-card trash button's action: the original tile's trash is reversible
-    /// (`toggleTrash`, read by `save()` to decide whether to delete the source video
-    /// from Photos), while a derived clip's trash removes its tile from the grid
-    /// immediately (`delete(_:)`) — there is no restore for a derived clip once
+    /// Trash for any item: the original's is reversible (`toggleTrash`, read by `save()` to
+    /// decide whether to delete the source video from Photos), while a derived clip's
+    /// removes it immediately (`delete(_:)`) — there is no restore for a derived clip once
     /// trashed.
     func trash(_ item: ClipListItem) {
         if item.isOriginal {
@@ -392,7 +393,7 @@ final class ClipListViewModel: ObservableObject {
         }
     }
 
-    /// The "+" tile's action: appends a new clip covering the first few seconds of the
+    /// The "+" button's action: appends a new clip covering the first few seconds of the
     /// asset (or its full duration if shorter), full-frame crop. The user trims it in the
     /// editor like any other clip; there's no separate creation UI.
     func addClip() async {
@@ -563,7 +564,7 @@ final class ClipListViewModel: ObservableObject {
 
     /// The "Save Clips" action: exports and saves every non-trashed derived clip that has not
     /// already landed in Photos, then — only once every one of them has succeeded —
-    /// deletes the original video from Photos if its tile was trashed. Returns `true`
+    /// deletes the original video from Photos if it was marked for deletion. Returns `true`
     /// when the screen should pop to Home; `false` when a clip failed, in which case
     /// `saveFailureMessage` is set and the screen stays up so Save Clips can be retried.
     ///
@@ -655,9 +656,9 @@ final class ClipListViewModel: ObservableObject {
 // MARK: - Naming
 
 /// What Name Clips writes (`docs/UIUX.md` § "Name Clips", `docs/PROFILE_DESIGN.md` §4): names on
-/// the items themselves, so going back to Clip List keeps every name given so far.
+/// the items themselves, so an editor commit or a page change keeps every name given so far.
 extension ClipListViewModel {
-    /// The clips Name Clips pages through: every derived clip, in grid order. A trashed derived
+    /// The clips Name Clips pages through: every derived clip, in order. A trashed derived
     /// clip is already gone from `items`.
     var clipsToName: [ClipListItem] { items.filter { !$0.isOriginal } }
 

@@ -53,8 +53,7 @@ struct VideoTileView: View {
             // the source isn't square. That overflow still hit-tests even though it
             // isn't drawn, so a later tile in the grid can end up with an earlier
             // tile's overflow sitting on top of it. Pinning the shape here to the
-            // drawn square is the same fix `ClipListView.tile` already uses for its
-            // tiles' media layer.
+            // drawn square is the same fix `NameClipCard` uses for its media layer.
             .contentShape(Rectangle())
             .onAppear { load(targetSize: proxy.size) }
             .onChange(of: revision) { _ in load(targetSize: proxy.size, replacingCurrentImage: true) }

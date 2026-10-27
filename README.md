@@ -30,7 +30,7 @@ Turnip never sends your videos anywhere. v1 has no accounts, no uploads
 and no analytics; contribution, built but not yet released, adds an opt-in
 Sign in with Apple account that sends a named clip's pose keypoints and
 trick names to `turnip-farm`, only from its confirmation sheet. The app asks for Photos access to show your videos, save the
-clips you export, and delete an original you trash in the clip list, and
+clips you export, and delete an original you mark for deletion when saving clips, and
 for camera and microphone access to record takes in the app. The App
 Store privacy answers, the privacy manifest, and temp-file hygiene are
 documented in
@@ -42,10 +42,10 @@ before contribution ships.
 Very early, but the v1 flow now runs end to end. Home (a grid of every
 video in your Photos library — the first of the v1 screens in
 [`docs/UIUX.md`](docs/UIUX.md)) pushes `Processing` when you tap a video;
-`Processing` runs the detection pipeline and pushes `ClipList`, whose
-triage grid opens `ClipEditor` for a derived clip. "Next: name clips" opens
-Name Clips, where each clip gets its trick names and the clips are saved to
-Photos ("Save without names" skips it). A clip toggled to contribute goes
+`Processing` runs the detection pipeline and pushes Name Clips: one detected
+clip at a time, where a tap opens `ClipEditor`, clips can be discarded or
+added, each gets its trick names, and the clips are saved to Photos ("Save
+now" saves without going through every clip). A clip toggled to contribute goes
 to `turnip-farm` from a confirmation sheet after the save
 ([`docs/CONTRIBUTION_DESIGN.md`](docs/CONTRIBUTION_DESIGN.md), not yet
 released).

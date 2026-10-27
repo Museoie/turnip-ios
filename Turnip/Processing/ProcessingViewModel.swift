@@ -20,8 +20,8 @@ final class ProcessingViewModel: ObservableObject {
     @Published private(set) var state: State = .idle
     @Published private(set) var result: ProcessingResult?
     /// Drives the navigation to the success destination once a run finishes — including a
-    /// run that detected zero tricks: its empty `ProcessingResult` still navigates, and the
-    /// clip list itself puts up the "no tricks found" notice (`ClipListView`).
+    /// run that detected zero tricks: its empty `ProcessingResult` still navigates, and Name
+    /// Clips itself says "No tricks found" (`NameClipsView`).
     @Published var isShowingClips = false
 
     var isRunning: Bool {

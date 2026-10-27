@@ -56,7 +56,7 @@ in the store.
   needs no `NSMotionUsageDescription` and raises no prompt (unlike the
   pedometer and activity APIs), and the angles live only inside the user's
   own video file in their Photos library. If the user
-  trashes the original video's tile in Clip List, the original is deleted
+  marks the original video for deletion on Name Clips, the original is deleted
   from Photos too — a user-initiated, on-device change to their own library,
   not data leaving the device.
 - Nothing is uploaded, shared, or transmitted to any Turnip-controlled server.
@@ -103,7 +103,7 @@ require a manifest/signature. If a dependency is added, check both.
   read-only level — the choices are add-only (can't enumerate the
   library) or read/write — and exporting clips back to Photos needs the
   write half anyway, so one honest prompt covers both. The write half is
-  also what lets Clip List delete the original video (`PhotoAssetDeleter`,
+  also what lets Name Clips delete the original video (`PhotoAssetDeleter`,
   `PHAssetChangeRequest.deleteAssets`) when the user trashes its tile and
   taps Save Clips — PhotoKit shows its own "Allow Turnip to delete?" system
   confirmation before the deletion happens, on top of the one-time
@@ -111,7 +111,7 @@ require a manifest/signature. If a dependency is added, check both.
 - `NSPhotoLibraryUsageDescription` explains the read side in plain
   language. `NSPhotoLibraryAddUsageDescription` ships alongside it
   because the clip-save path — reachable from Home through Processing and
-  the clip list — calls `requestAuthorization(for: .addOnly)`, and iOS
+  Name Clips — calls `requestAuthorization(for: .addOnly)`, and iOS
   terminates the app on that call when the string is absent. A user does
   not normally see the string: reaching a save means the read/write
   grant from Home is already in place, which determines add-only as
@@ -147,7 +147,7 @@ require a manifest/signature. If a dependency is added, check both.
   never accumulates files. `TurnipApp` sweeps orphans left by crashed sessions
   at launch. The prefix is what makes both the delete and the sweep recognize
   only our files.
-- **Clip exports.** Tapping "Save Clips" in Clip List (`ClipListViewModel.save()`)
+- **Clip exports.** Tapping "Save Clips" on Name Clips (`ClipListViewModel.save()`)
   stages every non-trashed derived clip in a fresh `tmp/turnip-export-<uuid>/`
   scratch directory, hands each one to Photos through `ClipPhotosSaver`
   (add-only), and deletes the whole directory once the run ends — success or
@@ -157,7 +157,7 @@ require a manifest/signature. If a dependency is added, check both.
   the sweep recognize only our directories.
 - **Thumbnails** are in-memory only — `PHCachingImageManager` for the
   Home grid (`ThumbnailLoader`) and `AVAssetImageGenerator` frames for
-  the clip list (`ClipThumbnailLoader`). There is no on-disk thumbnail
+  Name Clips' cards (`ClipThumbnailLoader`). There is no on-disk thumbnail
   cache. If one ever lands, it belongs in `Caches/`, never `Documents/`,
   so iOS can evict it and it isn't backed up.
 - **Partial live pose.** When live inference covers a take only in part,
@@ -168,7 +168,7 @@ require a manifest/signature. If a dependency is added, check both.
 - **Everyone in frame.** The pose model finds up to six people per frame, so
   bystanders' keypoints are computed and held in memory alongside the
   athlete's, in either person mode (`docs/MULTI_PERSON.md`). Following
-  everyone, the poses of the people who own a clip travel with the clip list.
+  everyone, the poses of the people who own a clip travel with the clips to Name Clips.
   None of it is written to disk, and all of it is gone when the app quits.
 - **Logs** go to `os.Logger` only; nothing is written to log files.
 - Nothing is written to `Documents/` anywhere in v1.
@@ -233,7 +233,7 @@ to a Turnip-controlled server.
   the source video's location when it has one, and each source's pose
   keypoint sequence — lives in `Application Support/`: not `Documents/`,
   which stays empty, and not `Caches/`, since the pose there is the only copy
-  once Clip List has deleted an original. It is in the user's iCloud and
+  once the save has deleted an original. It is in the user's iCloud and
   Finder device backups, which is how it survives a reinstall.
 - **Data written into the user's own files.** Each clip Save Clips exports
   carries a small Turnip metadata item (its clip ID, trick names, and whether

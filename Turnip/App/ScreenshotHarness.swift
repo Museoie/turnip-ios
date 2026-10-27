@@ -70,15 +70,15 @@ struct ScreenshotGalleryFilterHarness: View {
     }
 }
 
-// MARK: - Clip list
+// MARK: - Name Clips
 
-/// Clip list triage (`-screenshotClipList`): three detected windows, one trashed.
-/// Thumbnails render as their placeholder tiles — `/dev/null` decodes nothing, and
-/// the loader fails gracefully to the placeholder (the honest fallback).
+/// Name Clips (`-screenshotClipList`): three detected windows. Cards render as their placeholder
+/// — `/dev/null` decodes nothing, and the loader fails gracefully to the placeholder (the honest
+/// fallback).
 struct ScreenshotClipListHarness: View {
     var body: some View {
         NavigationStack {
-            ClipListView(
+            NameClipsView(
                 items: [
                     ClipListItem(
                         window: TrickWindow(startTime: 2, endTime: 5),
@@ -88,8 +88,7 @@ struct ScreenshotClipListHarness: View {
                         cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)),
                     ClipListItem(
                         window: TrickWindow(startTime: 20, endTime: 22.4),
-                        cropRect: NormalizedRect(minX: 0.1, maxX: 0.9, minY: 0.2, maxY: 0.8),
-                        isTrashed: true)
+                        cropRect: NormalizedRect(minX: 0.1, maxX: 0.9, minY: 0.2, maxY: 0.8))
                 ],
                 asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
                 assetIdentifier: "screenshot",
@@ -98,18 +97,16 @@ struct ScreenshotClipListHarness: View {
     }
 }
 
-/// Clip list over real media (`-screenshotClipListMedia`): two clips within the
-/// generated sample movie's six seconds, so — unlike `-screenshotClipList`'s `/dev/null`
-/// asset — the asset duration actually loads and each tile's range timeline
-/// renders instead of staying hidden behind its `if let duration` guard. Shares
+/// Name Clips over real media (`-screenshotClipListMedia`): two clips within the generated
+/// sample movie's six seconds, so — unlike `-screenshotClipList`'s `/dev/null` asset — the asset
+/// duration actually loads and each card's range timeline renders. Shares
 /// `ScreenshotClipEditorHarness`'s sample-movie writer and warm-up.
 ///
-/// The first clip is seeded as already saved, which is the state the grid is left in by
-/// a Save Clips that partially failed: it is the only way the saved badge reaches a rendered
-/// screen, since nothing a UI test can drive from a cold launch performs a real Photos
-/// write. This harness rather than `-screenshotClipList` because the editor needs real
-/// media to open, and opening it from the badge's own corner is what proves the badge
-/// does not shadow the tile's tap.
+/// The first clip is seeded as already saved, the state a save that partially failed leaves:
+/// it is the only way the saved badge reaches a rendered screen, since nothing a UI test can
+/// drive from a cold launch performs a real Photos write. Real media because the editor needs
+/// it to open, and opening it from the badge's own corner proves the badge does not shadow the
+/// card's tap.
 struct ScreenshotClipListMediaHarness: View {
     var body: some View {
         HarnessMovieGate(ScreenshotClipEditorHarness.sampleMovie) { movie in
@@ -120,7 +117,7 @@ struct ScreenshotClipListMediaHarness: View {
     }
 
     private func clipList(asset: AVURLAsset) -> some View {
-        ClipListView(
+        NameClipsView(
                 items: [
                     ClipListItem(
                         window: TrickWindow(startTime: 0.5, endTime: 2),

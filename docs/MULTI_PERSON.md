@@ -76,7 +76,7 @@ Two clips of different people may overlap in time, or cover the same moments. Ea
 - **Camera:** a person control leads the top-right group, one figure for one person and two for everyone (`UIUX.md` §1b). It is read at the Record tap and disabled while recording.
 - **Processing:** a segmented picker, "One person | Everyone", sits between the scrub bar and "Analyze clips" (`UIUX.md` §2). A run starts, and a retry restarts, in the mode it shows. A take the camera scored in part is detected in Processing's mode, not the camera's.
 - **One setting behind both** (`TurnipSettings.personMode`, default one person), so the choice carries from one screen to the other and to the next session.
-- **Clip List:** one tile per detected clip in start order, as before. Clips of different people can overlap, and each tile's crop shows whose it is. No label or grouping by person: tracks have no stable identity across takes, and nothing in v1 needs one. "No tricks found" is unchanged.
+- **Name Clips** (Clip List until 2026-10-27): one clip per detected trick in start order, as before. Clips of different people can overlap, and each card's crop shows whose it is. No label or grouping by person: tracks have no stable identity across takes, and nothing in v1 needs one. "No tricks found" is unchanged.
 - **Processing's progress overlay and the camera overlay** draw the followed person's skeleton, or everyone's.
 - **Editor:** Auto crop and Auto follow frame the clip's own person. A hand-added clip keeps Reset crop (`UIUX.md` Rev 13).
 

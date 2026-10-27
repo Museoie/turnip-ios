@@ -54,10 +54,10 @@ final class AVPlayerLoop: ClipLooping {
     }
 }
 
-/// The playback lifecycle of one Clip List tile: builds the tile's loop when it should
-/// be running, pauses it while the editor covers the grid, releases it when the tile
-/// scrolls away, and rebuilds it over the new geometry when an editor commit changes the
-/// window or the framing.
+/// The playback lifecycle of one clip card on Name Clips: builds the card's loop when it should
+/// be running — or ahead of time, paused on its first frame, for the page beside the current one
+/// (`prepare`) — pauses it while the editor covers the screen, releases it when the page leaves,
+/// and rebuilds it over the new geometry when an editor commit changes the window or the framing.
 ///
 /// A reference type outside the view rather than `@State` on it, for two reasons. The
 /// system accessibility reads, the composition load and the loop construction become
@@ -99,6 +99,10 @@ final class ClipCardPlayback: ObservableObject {
     private let loadDuration: LoadDuration
     private let makeLoop: MakeLoop
     private var isSuspended = false
+    /// Whether a loop built while the card is suspended is kept, paused: true once `prepare`
+    /// asks for one, false once `start` does. Read when a build finishes rather than when it
+    /// starts, so a card swiped away mid-build keeps what it was building.
+    private var keepsLoopWhileSuspended = false
     private var geometry: ClipCardPlaybackGeometry?
     /// The geometry `loop` is actually built to show, or `nil` while there is no loop.
     private var loopGeometry: ClipCardPlaybackGeometry?
@@ -137,7 +141,21 @@ final class ClipCardPlayback: ObservableObject {
     func start(geometry: ClipCardPlaybackGeometry, isSuspended: Bool) {
         self.geometry = geometry
         self.isSuspended = isSuspended
+        keepsLoopWhileSuspended = false
         resume()
+    }
+
+    /// Builds the loop for `geometry` without playing it, so a card that is about to become the
+    /// one on screen already shows its first frame through its own player — the frame and tone
+    /// it will play — instead of a poster that cuts to the video once it starts. Leaves the card
+    /// suspended; `setSuspended(false)` plays it.
+    func prepare(geometry: ClipCardPlaybackGeometry) {
+        self.geometry = geometry
+        isSuspended = true
+        keepsLoopWhileSuspended = true
+        guard mayAutoplayLoops() else { return }
+        loop?.pause()
+        build(geometry)
     }
 
     /// Releases the tile's decoder entirely rather than just pausing, so a tile scrolled
@@ -197,11 +215,18 @@ final class ClipCardPlayback: ObservableObject {
     /// already-built loop.
     private func resume() {
         guard let target = geometry, mayAutoplayLoops(), !isSuspended else { return }
+        build(target)
+    }
+
+    /// Makes sure a loop over `target` is mounted or building, and plays it once the card isn't
+    /// suspended. A build a suspension overtakes assigns its loop paused for a prepared card and
+    /// nothing for one that was started (`keepsLoopWhileSuspended`).
+    private func build(_ target: ClipCardPlaybackGeometry) {
         if clipCardPlaybackNeedsRebuild(builtFor: loopGeometry, target: target) {
             teardown()
         }
         if let loop {
-            loop.play()
+            if !isSuspended { loop.play() }
             return
         }
         guard buildingGeometry != target else { return }
@@ -220,7 +245,7 @@ final class ClipCardPlayback: ObservableObject {
             // Both loads are awaited before this check, not between them: a suspension
             // point after the guard would let a teardown/suspend that lands during the
             // second await slip past it, assigning a loop behind the editor's cover.
-            guard !Task.isCancelled, !isSuspended else {
+            guard !Task.isCancelled, keepsLoopWhileSuspended || !isSuspended else {
                 releaseBuildSlot(token)
                 return
             }
@@ -229,7 +254,8 @@ final class ClipCardPlayback: ObservableObject {
             loop = built
             loopGeometry = target
             releaseBuildSlot(token)
-            built.play()
+            // A prepared card that became the current one while it built plays straight away.
+            if !isSuspended { built.play() }
         }
     }
 

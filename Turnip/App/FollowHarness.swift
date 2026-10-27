@@ -200,7 +200,7 @@ struct ScreenshotFollowClipListHarness: View {
     var body: some View {
         HarnessMovieGate(FollowHarness.movie) { movie in
             NavigationStack {
-                ClipListView(
+                NameClipsView(
                     items: [
                         ClipListItem(
                             window: FollowHarness.window, cropRect: FollowHarness.cropRect, framingMode: .follow)

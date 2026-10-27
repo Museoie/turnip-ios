@@ -60,7 +60,7 @@ struct HomeView: View {
                 presentationSlot = nil
             } else if presentationSlot == nil, let video = viewModel.path.last {
                 // `detectedClips` already non-nil here means this lands straight on
-                // `ClipListView` (the full-screen fallback is already correct for that), so no
+                // `NameClipsView` (the full-screen fallback is already correct for that), so no
                 // aspect-ratio guess — only a video headed for `ProcessingView` needs one.
                 let aspectRatio = video.detectedClips == nil
                     ? viewModel.asset(withIdentifier: video.assetIdentifier).flatMap(Self.pixelAspectRatio)
@@ -106,17 +106,18 @@ struct HomeView: View {
         { pixelSize in await viewModel.thumbnails.poster(for: asset, pixelSize: pixelSize) }
     }
 
+    /// Where a video lands once it has clips to name: Name Clips, over the detection's clips.
     /// `analysisSkipped` is Processing's "Clip manually" path: the detection is empty because
-    /// nothing looked, not because nothing was found, so the "No tricks found" notice stays
-    /// down. The camera path never skips; it always has a real detection.
-    private func clipList(
+    /// nothing looked, not because nothing was found, so Name Clips doesn't say "No tricks found".
+    /// The camera path never skips; it always has a real detection.
+    private func labeling(
         for video: SelectedVideo,
         detection: DetectedClips,
         asset: AVURLAsset,
         analysisSkipped: Bool = false,
         popToRoot: @escaping () -> Void
-    ) -> ClipListView {
-        ClipListView(
+    ) -> NameClipsView {
+        NameClipsView(
             items: detection.clips.map {
                 ClipListItem(
                     window: $0.window, cropRect: $0.cropRect, personID: $0.personID, isAutoDetected: true)
@@ -187,7 +188,7 @@ struct HomeView: View {
             Group {
                 if let video = viewModel.path.last {
                     if let detection = video.detectedClips {
-                        clipList(
+                        labeling(
                             for: video, detection: detection, asset: video.asset,
                             popToRoot: handlers.onRequestSlideClose)
                             // The list has no backdrop of its own and the stack's is made
@@ -219,7 +220,7 @@ struct HomeView: View {
                             onEnded: handlers.dismissEnded,
                             onCancelled: handlers.dismissCancelled),
                             destination: { result, popToRoot in
-                                clipList(
+                                labeling(
                                     for: video, detection: result.detection, asset: result.asset,
                                     analysisSkipped: result.analysisSkipped, popToRoot: popToRoot)
                             }
@@ -307,7 +308,7 @@ private final class HomePresentationSlot: Identifiable {
     let id = UUID()
     let tappedAssetIdentifier: String
     /// See `HomeExpansionContainer.initialAspectRatio`'s own doc comment — `nil` when this
-    /// slot's video is already known to land straight on `ClipListView`, which never
+    /// slot's video is already known to land straight on `NameClipsView`, which never
     /// letterboxes.
     let initialAspectRatio: CGSize?
     init(tappedAssetIdentifier: String, initialAspectRatio: CGSize?) {
@@ -511,8 +512,8 @@ struct HomeHeader: View {
 struct VideoGalleryView: View {
     @ObservedObject var viewModel: VideoLibraryViewModel
     /// The identifier of the video currently expanded (`HomeView.currentIdentifier(for:)`) —
-    /// that tile hides rather than un-rendering, the same reasoning as `ClipListView`'s own
-    /// `ClipCardView.isHidden`: `HomeExpansionContainer`'s flying card stands in at this tile's
+    /// that tile hides rather than un-rendering, the same reasoning as `NameClipCard.isHidden`:
+    /// `HomeExpansionContainer`'s flying card stands in at this tile's
     /// exact frame, so hiding avoids any grid reflow underneath it.
     let hiddenAssetIdentifier: String?
     /// Whether the expansion cover is presented over this grid. The grid shows through the

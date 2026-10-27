@@ -1,5 +1,15 @@
 # Photos-style expansion transitions
 
+*Rev 16 · 2026-10-27.* Clip List is retired (`UIUX.md` §3): the editor's
+flight now starts from Name Clips' card (`NameClipCard`, presented by
+`NameClipsView`), one clip at a time, instead of a grid tile. The container,
+the card it flies and the close paths are unchanged; the source frame is the
+card's, which has a fixed size, so a close lands exactly where the open
+started. Wherever the sections below describe the source as Clip List's tile
+or `ClipListView`, that is the history this doc records; the live call site is
+`NameClipsView.open(_:from:thumbnail:at:)` and the hidden slot is
+`NameClipCard.isHidden`.
+
 *Rev 15 · 2026-10-23.* The editor and the card no longer draw the player
 through `AVPlayerLayer`s: one `AVPlayerItemVideoOutput` hands each frame to
 both video views (`PreviewFrames`), which show it with Follow's pan in the
@@ -129,8 +139,9 @@ destination and a back action returns to the grid. This doc specifies *how*:
 the custom tap-to-expand / swipe-or-back-to-collapse animation that replaced a
 plain system push/sheet for two navigations —
 
-- **Clip List → Clip Editor** (`Turnip/ClipList/ClipExpansionContainer.swift`)
-- **Home → Processing** (and Home → Clip List directly, for a camera take
+- **Name Clips card → Clip Editor** (`Turnip/ClipList/ClipExpansionContainer.swift`;
+  a Clip List tile until Rev 16)
+- **Home → Processing** (and Home → Name Clips directly, for a camera take
   live inference already covered) (`Turnip/Home/HomeExpansionContainer.swift`)
 
 Both replicate the real Photos app: tapping a tile grows it smoothly into the
@@ -256,8 +267,8 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
   underneath is hidden outright, not faded, the instant the opening flight
   starts moving: each container calls its `onFlightStarted`, which sets
   `HomeView`'s `hidesSourceTile` (read by `VideoGalleryView` as
-  `hiddenAssetIdentifier`) or `ClipListView`'s `hiddenItemID` (read by
-  `ClipCardView.isHidden`). Not at presentation: the cover takes a few frames
+  `hiddenAssetIdentifier`) or `NameClipsView`'s `hiddenItemID` (read by
+  `NameClipCard.isHidden`). Not at presentation: the cover takes a few frames
   to present, and `ClipExpansionContainer` also waits for its card's video
   surface to show the tile's frame (or a 0.3s timeout) before it starts the
   flight, and until then the tile itself is what's on screen.
@@ -294,7 +305,7 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
 
 | | `ClipExpansionContainer` | `HomeExpansionContainer` |
 |---|---|---|
-| Destination frame | The editor's fixed crop marker (`destination = measuredMarker ?? fallbackMarker`): the card is laid out at the marker, with the video placed in it exactly as the editor places it under the marker (`ClipEditorStage.videoPlacement`), so inside the marker the settled card and the editor's own surface are the same picture, and the flight shows the crop alone. The marker is reported via a `PreferenceKey` (`ClipEditorCropMarkerFramePreferenceKey`), independent of media and so available from the editor's first layout pass; a fallback marker over a rough stage band stands in only until then. Live through the opening flight, frozen once a close can begin (`acceptsDestinationUpdates`). Revs 2–11 measured the editor's aspect-fit preview frame as the destination instead; see "Measuring the destination without a race or a feedback loop" below for how that measurement was made reliable | Defaults to a synchronous aspect-ratio estimate from the tapped `PHAsset`'s own pixel dimensions (full screen only when no estimate applies, e.g. a destination that goes straight to `ClipListView`), narrowing to `ProcessingView`'s real, letterboxed video rect once it reports one via `ProcessingVideoFramePreferenceKey` — see "Matching the destination's real content rect" and "Measuring the destination without a race or a feedback loop" below. Never locked — stays live, so browsing to a neighbor with a different aspect ratio retargets it rather than flying toward the first video's letterbox rect |
+| Destination frame | The editor's fixed crop marker (`destination = measuredMarker ?? fallbackMarker`): the card is laid out at the marker, with the video placed in it exactly as the editor places it under the marker (`ClipEditorStage.videoPlacement`), so inside the marker the settled card and the editor's own surface are the same picture, and the flight shows the crop alone. The marker is reported via a `PreferenceKey` (`ClipEditorCropMarkerFramePreferenceKey`), independent of media and so available from the editor's first layout pass; a fallback marker over a rough stage band stands in only until then. Live through the opening flight, frozen once a close can begin (`acceptsDestinationUpdates`). Revs 2–11 measured the editor's aspect-fit preview frame as the destination instead; see "Measuring the destination without a race or a feedback loop" below for how that measurement was made reliable | Defaults to a synchronous aspect-ratio estimate from the tapped `PHAsset`'s own pixel dimensions (full screen only when no estimate applies, e.g. a destination that goes straight to `NameClipsView`), narrowing to `ProcessingView`'s real, letterboxed video rect once it reports one via `ProcessingVideoFramePreferenceKey` — see "Matching the destination's real content rect" and "Measuring the destination without a race or a feedback loop" below. Never locked — stays live, so browsing to a neighbor with a different aspect ratio retargets it rather than flying toward the first video's letterbox rect |
 | Card content | The editor's own `ClipEditorVideoSurface`, rendering the container-owned `ClipEditorViewModel`'s `AVPlayer` (the editor renders the same object), over the tile's poster thumbnail placed at the crop marker. The window starts on the marker's center square (what the tile's aspect-filled loop shows) | The tile's square thumbnail at the frame's center square, the cached full-frame poster where there is one, and `ProcessingView`'s live player once reported |
 | Source frame / time | Both captured once, at tap time: `sourceFrame: CGRect`, and `sourceTime` — the tile's paused loop position (the tile pauses *before* reading it), or its poster's midpoint time without a loop | A **live closure** (`sourceFrame: () -> CGRect?`), re-read on every render until a close begins — a close after `ProcessingView`'s own swipe-to-browse-neighbors must land on whichever tile is *now* current, not the one first tapped. It stays live through an interactive drag; a non-interactive close (the back button, or a committed swipe) latches it into `lockedSourceFrame` for the rest of that flight |
 | Dismiss gesture | Owns one itself, planted into `ClipEditorView`'s background (see "Gesture ownership" below) | Doesn't own one — the destination (`ProcessingView`) already has its own vertical swipe, reported *into* the container via `HomeExpansionCloseHandlers` |
@@ -327,9 +338,9 @@ Unlike that key's reports, though, it's never locked — see the table above for
 container applies no transform for a lock to protect against, and the live
 update is what lets a browse-to-neighbor with a different aspect ratio
 retarget correctly instead of flying toward a stale video's letterbox rect.
-`ClipListView` as a destination never reports a frame through this key at
-all (it has no single video, just its own grid), so the full-screen default
-stands unchanged for that case.
+`NameClipsView` as a destination never reports a frame through this key at
+all (it has no single video to letterbox), so the full-screen default stands
+unchanged for that case.
 
 Verified by seeding the simulator's Photos library with a synthetic
 landscape test video (`xcrun simctl addmedia`, a solid-color clip rendered
@@ -372,7 +383,7 @@ frame — and still retargets live if the real measurement, once it lands,
 differs at all. This estimate is only correct for a destination that will
 letterbox, so `HomeView` only supplies one when the tapped video is actually
 headed for `ProcessingView` — for the camera-originated case that goes
-straight to `ClipListView` (never measured, correctly full screen), it's
+straight to `NameClipsView` (never measured, correctly full screen), it's
 `nil`, and the full-screen default stands exactly as before.
 
 *Revs 2–7, superseded: the rest of this subsection describes a measurement

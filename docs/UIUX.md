@@ -1,5 +1,13 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 21 · 2026-10-27 · Clip List is retired: an analysis lands on Name Clips
+(§3a), which now carries the triage Clip List did. Tapping the clip opens the
+editor, its trash button discards it, the header's "+" adds one, and the
+header's menu marks the original for deletion after saving. Name Clips' card
+has a fixed size, so a swipe, a name added or the keyboard can't resize it, and
+the clip beside the current one waits paused on its first frame, so a swipe
+slides in the video it is about to play.*
+
 *Rev 20 · 2026-10-26 · Name Clips (§3a) is built: Clip List's main button is
 "Next: name clips" with "Save without names" under it, and Name Clips names
 each clip, carries its contribute toggle, saves, and then opens the
@@ -60,7 +68,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -73,9 +81,9 @@ recording" to "clips are in my Photos library," and is scoped to v1
 labeling, following/feed) — those get their own flow notes once the v1 screens
 exist and v2 work starts. The first of them is the Profile tab, whose screens
 live in [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5–§8; this doc carries only
-what it changes in the v1 flow, each marked *Planned*: the root pager's third
-page, Clip List's save action, the Name Clips screen it opens (§3a), and
-saving into the clip library. OTA model updates were scoped here as v2 and have
+what it changes in the v1 flow — the root pager's third page, the Name Clips
+screen an analysis lands on (§3a), and saving into the clip library — the
+parts not built yet marked *Planned*. OTA model updates were scoped here as v2 and have
 since been built ahead of that; see "Built ahead of this doc" below.
 
 ## Why this doc exists
@@ -118,7 +126,7 @@ Where it applies today:
 |---|---|---|---|
 | Home ↔ Camera (Root navigation) | Horizontal page swipe | Floating bar's camera / gallery icons; Camera's cancel chevron | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Tile ↔ Processing (§1, §2) | Swipe down anywhere on the page | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
-| Clip List tile ↔ Clip Editor (§3, §4) | Swipe down above the crop marker | Back chevron | Same, with the card showing the editor's own player |
+| Name Clips card ↔ Clip Editor (§3a, §4) | Swipe down above the crop marker | Back chevron | Same, with the card showing the editor's own player |
 | *Planned:* Home ↔ Profile (Root navigation) | Horizontal page swipe | Floating bar's gallery / profile icons | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Name Clips, one clip ↔ the next (§3a) | Horizontal swipe | "Next" / "Skip" | The page slide between clips (`NameClipsView.go(to:)`) |
 | *Planned:* Profile clip tile ↔ Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe down | Back chevron | The tile's expansion card, showing the clip's own player |
@@ -181,20 +189,17 @@ flowchart TD
     G -->|tap gallery icon / swipe left| A
     A -.->|planned: tap profile icon / swipe left| P[Profile]
     P -.->|planned: tap gallery icon / swipe right| A
-    G -->|recording saved, analyzed live| C
+    G -->|recording saved, analyzed live| N
     G -->|recording saved, live analysis incomplete| B
-    B -->|clips found, or none| C[Clip List]
+    B -->|clips found, or none| N[Name Clips]
     B -->|pipeline error| E2[Error state]
     B -->|cancel| A
     E2 -->|retry / back to Home| A
-    C -->|tap a derived clip's tile| D[Clip Detail / Editor]
-    D -->|back, commits edits| C
-    D -->|delete| C
-    C -->|back| A
-    C -->|Next: name clips| N[Name Clips]
-    C -->|Save without names| A
-    N -->|Save Clips, then contribution sheet if any clip is toggled| A
-    N -->|back| C
+    N -->|tap the clip| D[Clip Detail / Editor]
+    D -->|back, commits edits| N
+    D -->|delete| N
+    N -->|back| A
+    N -->|Save Clips or Save now, then contribution sheet if any clip is toggled| A
     P -.->|planned: Needs a name| N
 ```
 
@@ -276,7 +281,7 @@ standing in for one gets no glass at all, and a non-text bar item only a dim
 gradient). The glass stays hidden until the content actually scrolls, since
 the header rests inside the bar's band — no custom landing state, no
 swipe-to-reveal. Tapping a tile flies it open, Photos-style, into Processing
-for that video (straight to Clip List instead, for a camera take live
+for that video (straight to Name Clips instead, for a camera take live
 inference already covered — §1b) — the tile grows smoothly to fill the
 screen rather than the screen pushing in from the side, landing on the
 tile's own thumbnail immediately rather than waiting on the tap's resolve
@@ -284,7 +289,7 @@ tile's own thumbnail immediately rather than waiting on the tap's resolve
 resolve's own progress, if it takes a moment, shows on that growing card
 instead of a separate loading screen. The reverse — Processing's back
 control, or a swipe down anywhere on it — shrinks the same way back into the
-tile (Clip List's back slides sideways instead, §3), landing on whichever tile is actually current if
+tile (Name Clips' back slides sideways instead, §3a), landing on whichever tile is actually current if
 Processing's own swipe-to-browse-neighbors (§2) moved on from the one first
 tapped. See [`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md) for the
 mechanics.
@@ -336,8 +341,8 @@ default empty state, so it never reads as "your library is empty."
   each taking effect at its own integration point rather than needing a restart:
   - **Analysis mode** (segmented Real-time / Offline) — whether the camera scores pose live while
     recording (§1b below) or always defers to Processing (§2). Real-time is the default.
-  - **Save to an album**, with a name field shown once it's on — whether Clip List's Save Clips action
-    (§3) adds each saved clip to a named Photos album (created on first use) instead of landing
+  - **Save to an album**, with a name field shown once it's on — whether Name Clips' save
+    (§3a) adds each saved clip to a named Photos album (created on first use) instead of landing
     with no album, the default. Scoped to the curated clip exports only: a camera recording's raw
     take, saved to Photos the moment recording stops (§1b), never goes in the album.
   - **Analysis granularity** (stepper, 1-30, default 10) — frames sampled per second of footage,
@@ -391,14 +396,14 @@ default empty state, so it never reads as "your library is empty."
   only inside the user's own video file. The editor's Auto rotate (§4)
   levels an in-app take by it, instead of guessing from the picture.
 - A finished recording is saved to the Photos library (via the same
-  `ClipPhotosSaver` Clip List uses) rather than kept as a private file —
+  `ClipPhotosSaver` Name Clips' save uses) rather than kept as a private file —
   that turns it into an ordinary `PHAsset`, so it re-enters the flow the
   way a tapped gallery tile does: `RootTabView` calls
   `VideoLibraryViewModel.select(_:detectedClips:)` on the newly-created
   asset and switches to the gallery tab. When live inference covered the
   whole take, its clips travel with the selection — with the scored
   frames they were cut from, which the editor's crop fits need — and the
-  take lands on Clip List directly (§3) with no analysis step; otherwise it lands on
+  take lands on Name Clips directly (§3a) with no analysis step; otherwise it lands on
   Processing's idle state as if the user had tapped a tile, carrying the
   frames live inference did score, so "Analyze clips" analyzes only the
   stretches it missed and its progress starts where live inference left off.
@@ -415,9 +420,8 @@ default empty state, so it never reads as "your library is empty."
   manually" text button under that, in the same bar — black background, no title,
   no caption text, back chevron to Home. The user watches the autoplaying
   video, pausing/scrubbing it via the scrub bar if they want, and starts
-  analysis when ready — or skips it: "Clip manually" goes straight to Clip
-  List (§3) with no detected clips and no notice, for cutting clips by hand
-  from the "+" tile. The back chevron, and a swipe down anywhere on the
+  analysis when ready — or skips it: "Clip manually" goes straight to Name
+  Clips (§3a) with no detected clips, for cutting clips by hand with its "+". The back chevron, and a swipe down anywhere on the
   page, video included (see the swipe bullet below), both shrink the
   screen back into Home's tile rather than popping or dismissing outright —
   [`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md) covers the mechanics
@@ -427,10 +431,10 @@ default empty state, so it never reads as "your library is empty."
   "Analyzing frame 400 of 1,200" — overlays the bottom of the still-visible video,
   dimmed behind it. This is not instant for a multi-minute input video, so
   needs real progress feedback, not just a spinner.
-- On success the pipeline navigates to Clip List — even a run that finds zero trick
+- On success the pipeline navigates to Name Clips — even a run that finds zero trick
   windows (e.g. the user picked a video with no motion peaks) still navigates there
-  rather than stopping on this screen; Clip List's own "No tricks found" notice (§3)
-  says so.
+  rather than stopping on this screen; Name Clips itself says "No tricks found"
+  (§3a).
 - One exit besides success: the **Error state** — pipeline throws (unreadable video,
   pose model failure). Message + retry, or back to Home.
 - A swipe here navigates the grid rather than reaching Camera: right browses
@@ -454,110 +458,77 @@ default empty state, so it never reads as "your library is empty."
   This screen draws no navigation bar and its own back chevron, because the
   stack's bar would sit over the page without moving with it or passing a
   drag to it. And the Camera/Home pager (§1) is switched off while this
-  screen (or Clip List/Editor) is open over Home, because its swipe would
+  screen (or Name Clips/Editor) is open over Home, because its swipe would
   otherwise take every horizontal drag before this screen saw it.
 
-### 3. Clip List (triage)
+### 3. Clip List *(retired 2026-10-27)*
 
-- A grid of square tiles: the original source video first, then one tile per
-  detected trick window, then a trailing "+" tile (grey square, centered plus
-  sign) that appends a new full-frame clip at the start of the asset for the
-  user to trim.
-- A video analyzed following everyone (§2) has a tile per person's trick, in
-  start order, so two tiles can cover the same moment. Each tile's crop frames
-  its own person, and so do its follow path and the editor's Auto crop and
-  Auto follow; nothing else marks whose clip it is.
-- When an analysis detected zero tricks, this screen still shows — just the
-  original tile and the "+" tile — with a dismissible Liquid Glass notice
-  ("No tricks found") centered over the top of the grid, tap-to-dismiss or
-  auto-dismissing after 5 seconds, instead of a dead-end screen of its own.
-  A video that arrived by "Clip manually" (§2) shows the same two tiles with
-  no notice: nothing looked, so nothing was "not found".
-- Every tile autoplay-loops its window inline continuously (accessibility
-  permitting); its poster thumbnail stands in only until the loop's first
-  frame, so there's no blank flash while the loop starts and no second
-  picture under the loop once it plays — cropped and rotated to match the clip's manual
-  adjustment, the same framing the poster and the exported clip use, not the
-  raw source frame. A derived clip's tile also draws a thin, read-only
-  timeline over its bottom edge: it spans the whole source video with the
-  clip's window drawn as a highlighted segment, so a glance at the grid shows
-  roughly which part of the video each clip is from. It isn't draggable —
-  trimming happens in the editor (§4). The original tile has no timeline,
-  since its window is the whole video.
-- One control overlays each tile's top-trailing corner: a trash button,
-  filled red while trashed. Trashing a derived clip removes its tile from
-  the grid, with no restore: the tile fades out to the background (ease-out)
-  while the tiles after it slide to their new slots (ease-in-out), both over
-  150ms — the editor's Delete (§4) removes the tile the same way behind its
-  own fade. Trashing the original tile is a
-  reversible toggle — tap again to restore it — that marks the source video
-  itself for deletion from Photos once Save Clips runs: the tile dims and a
-  "Will be deleted" label sits over it, so the consequence is spelled out
-  rather than implied by a red trash icon.
-- The top-leading corner carries a marker, not a control: a green checkmark
-  on a clip whose video is already in Photos. It has no action of its own and
-  doesn't take the tap over the corner it covers — tapping there still flies
-  the clip open like anywhere else on the tile. In practice it's only ever on
-  screen after a Save Clips that partially failed, which is the one state where the
-  grid holds a mix of landed and still-missing clips.
-- Tapping a derived clip's tile flies it open, Photos-style, into the full
-  Clip Detail / Editor (§4) directly — the single entry point into "view
-  large" and "edit," not a separate pencil icon — the same tap-to-expand
-  transition Home uses to reach Processing
-  ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)), landing on the
-  tile's own cropped thumbnail immediately rather than the screen sliding in.
-  The original tile isn't tappable — there's nothing to edit on the source
-  video.
-- A "Save Clips" action, enabled except while a save is running: exports and saves every non-trashed
-  derived clip to Photos, deletes the original video from Photos if its tile
-  was trashed, and pops back to Home. A full-screen spinner covers the grid
-  while this runs. The original is deleted only once every derived clip has
-  confirmed it saved — a clip that fails leaves the original alone and shows
-  an alert naming the failure, so Save Clips can be retried without risking the
-  user's only copy of a trick that never actually saved.
-- The retry saves only what is still missing: a clip whose video already
-  landed is skipped, so tapping Save Clips again after a partial failure can't put
-  a second copy of a healthy clip in the user's library. Its tile's marker is
-  what says which clips those are. Once the last missing clip lands, that
-  retry deletes the trashed original exactly as a clean first Save Clips would.
-  Opening a saved clip and closing it unchanged keeps its marker. One residue
-  the skip doesn't cover: editing a clip after a partial failure clears its
-  marker, correctly, since the retrimmed clip isn't the one that landed — so
-  the retry writes the new version and the pre-edit copy stays in Photos.
-  Nothing in the app can take that copy back; the user deletes it in Photos. The app tracks no identifier for an asset it wrote, so it can't
-  offer to.
-- "Save Clips" is now "Next: name clips", which opens Name Clips (§3a), where
-  the save happens ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4). Under it, in
-  the same bar, a quieter "Save without names" text button —
-  `PrimaryActionBar`'s secondary action, styled like Processing's "Clip
-  manually" — does exactly what Save Clips did, skipping the naming step. With
-  no derived clip left to name (every one trashed), the button reads "Save
-  Clips" and the secondary is not shown. The tiles are unchanged, and no
-  contribution control is added here. *Planned*
-  ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §2.3): either save also writes each
-  saved clip, its saved Photos asset and the video's pose to the on-device clip
-  library the Profile reads, and clips saved without names wait in the
-  Profile's "Needs a name".
-- The back chevron pops to Home, not to Processing; the title sits centered
-  inline on the same line as the chevron, Photos-app style. The chevron is
-  the same glass circle every other screen's chevron is (`ScrimIconButton`),
-  drawn in place of the bar's own wider item pill, so the control reads the
-  same across the flow and lands exactly on the editor's chevron through the
-  expansion cross-fade. The pop is a
-  sideways slide, like any navigation pop — not a shrink back into the
-  video's tile, since this screen's tiles are the clips cut from the video,
-  not the video itself (`EXPANSION_TRANSITIONS.md`, Rev 9).
+Clip List was the grid an analysis used to land on, ahead of Name Clips. Its
+triage moved into Name Clips (§3a), one clip at a time, and the grid is gone:
+
+| Clip List | Now, on Name Clips (§3a) |
+|---|---|
+| A tile per detected clip, looping its window | The page's card, looping its window at a fixed size |
+| Tap a tile → the editor | Tap the card → the editor, by the same expansion flight |
+| A derived tile's trash | The card's trash button |
+| The "+" tile | The header's "+" |
+| The original tile's trash ("Will be deleted") | The header's "…" menu: "Delete original after saving", and a notice above the save |
+| The read-only range timeline on each tile | The same timeline over the card's bottom edge |
+| The saved-to-Photos checkmark after a partial failure | The same checkmark on the card |
+| "No tricks found" notice over a near-empty grid | Name Clips' empty state |
+| "Save Clips" / "Save without names" | "Save Clips" on the last clip, "Save now" before it |
+
+The original video no longer has a tile of its own: nothing on the screen
+edits it, and marking it for deletion is the one thing it offered.
 
 ### 3a. Name Clips *([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4)*
 
-- Pushed from Clip List's "Next: name clips" (§3) with the usual sideways
-  slide. The back chevron pops back to Clip List with every name given so
-  far kept, since nothing has been saved yet. *Planned:* the same screen
-  opens from the Profile's "Needs a name" for clips saved without names.
-- One clip at a time, full width, looping its window with the framing export
-  uses — its Clip List tile's picture, larger. No editing controls: trimming
-  and framing stay in the editor (§4), which this screen doesn't open.
-- Under the clip:
+- Where an analysis lands (§2), and where a camera take live inference fully
+  covered lands directly (§1b): pushed onto the cover's stack with no grid in
+  between. The back chevron pops to Home — a sideways slide, not a shrink back
+  into the video's tile, since this screen shows clips cut from the video, not
+  the video (`EXPANSION_TRANSITIONS.md`, Rev 9) — and nothing is saved.
+  *Planned:* the same screen opens from the Profile's "Needs a name" for clips
+  saved without names.
+- One detected clip at a time, on a card looping its window with the framing
+  export uses, cropped and rotated to the clip's adjustment. The card is a
+  square of a fixed size worked out from the screen alone: the width less its
+  insets, giving up height only where the naming controls wouldn't fit below
+  it, never below 220 pt. A swipe, a name added, a "did you mean" line or the
+  keyboard can't resize or move it; when the controls need more room, the page
+  scrolls. The card's poster stands in only until the loop's first frame. The
+  clip beside the current one builds its loop paused on its first frame, so a
+  swipe slides in the video it is about to play, in the tone it plays in,
+  rather than a poster that cuts to it.
+- The card carries the triage:
+  - tapping it flies it open, Photos-style, into the Clip Detail / Editor (§4)
+    — the same tap-to-expand transition Home uses to reach Processing
+    ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) — and back into
+    the card, which waits hidden at its own frame while the clip is open;
+  - a trash button in its top-trailing corner discards the clip outright, with
+    no restore, and the next clip slides into its place (the previous one when
+    it was the last); the editor's Delete does the same;
+  - a thin, read-only timeline over its bottom edge spans the whole video with
+    the clip's window highlighted. It isn't draggable — trimming happens in the
+    editor. VoiceOver reads it as the card's value ("Clip from 3.0s to 4.5s of
+    6.0s");
+  - a green checkmark in its top-leading corner on a clip already in Photos,
+    which is only ever on screen after a save that partially failed. It takes
+    no tap: the corner still opens the editor.
+- The header: the back chevron, the counter ("2 of 4"), a "+" that adds a new
+  full-frame clip over the first seconds of the video and slides to it for the
+  user to trim in the editor, and a "…" menu with "Delete original after
+  saving". With that on, a red line above the save says "The original video
+  will be deleted after saving." On iOS 26 the "+" and the menu are two glass
+  circles, split by a fixed spacer as on Home.
+- A video analyzed following everyone (§2) has a clip per person's trick, in
+  start order, so two clips can cover the same moment; each card's crop frames
+  its own person, and nothing else marks whose clip it is.
+- With no clip — a run that found none, every clip discarded, or a video that
+  arrived by "Clip manually" — the screen says "No tricks found" (the first) or
+  "No clips yet" (the others) over "Add a clip, then trim it to the trick in
+  the editor", with "Add Clip" as the screen's button. The menu is hidden.
+- Under the card:
   - the trick-name field ("What trick is this? e.g. cork"); each committed
     name becomes a removable chip, and a combo takes several;
   - suggestion chips — names already used on this video first, then the
@@ -574,39 +545,43 @@ default empty state, so it never reads as "your library is empty."
     default and disabled until the clip has a name, and for a clip added by
     hand, which has no pose to send
     ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §3.3).
-- A counter in the header ("2 of 4") and horizontal paging: a swipe left goes
-  to the next clip, a swipe right to the previous one, and the "Next" button
-  plays the same slide (see "A gesture and its button play one animation").
-  As on Processing (§2), the paging owns every horizontal drag — there is no
-  edge-swipe back, only the chevron — and at the first or last clip the page
-  gives only a little. The button reads "Skip" while the clip has no name;
-  naming is never required.
-- On the last clip the button reads "Save Clips" and does what Clip List's
-  Save Clips did — the full-screen spinner, the export, the save to Photos,
-  deleting a trashed original only once every clip has saved, the failure
-  alert and retry — and pops to Home. *Planned:* it then writes the clip
-  library, with each clip's names also in its exported file; until that
-  lands, names reach nothing but a contribution. Under the button, from the
-  first clip on, a quieter "Save now" (`PrimaryActionBar`'s secondary) saves
-  at once and leaves the clips not reached yet unnamed, so a long take never
-  costs a row of Skips. *(Judgment call.)* It steps aside while the name field
-  has focus, to leave the keyboard room. A name typed and left without
-  pressing return still counts: "Next", a swipe, the chevron and a save all
-  commit it as typed. If any saved clip was toggled to contribute, the
-  contribution confirmation sheet opens once the save has finished, before
-  Home; "Not Now" sends nothing.
-- When the name field has focus, the field and its chips ride above the
-  keyboard and the clip shrinks to fit the space above them; this screen has
-  no crop marker to hold in place.
+- Horizontal paging: a swipe left goes to the next clip, a swipe right to the
+  previous one, and the "Next" button plays the same slide (see "A gesture and
+  its button play one animation"). As on Processing (§2), the paging owns every
+  horizontal drag — there is no edge-swipe back, only the chevron — and at the
+  first or last clip the page gives only a little. A drag that starts vertical
+  scrolls the page instead and never pages. The button reads "Skip" while the
+  clip has no name; naming is never required.
+- On the last clip the button reads "Save Clips": it exports and saves every
+  clip not yet in Photos under a full-screen spinner, deletes the original
+  from Photos if it was marked — only once every clip has confirmed it saved,
+  so a failure can't cost the user's only copy of a trick — and pops to Home.
+  A clip that fails leaves the screen up with an alert naming the failure, and
+  the retry saves only what is still missing; a clip edited after a partial
+  failure loses its checkmark and is written again, and the pre-edit copy stays
+  in Photos, since the app keeps no identifier for an asset it wrote.
+  *Planned:* the save then writes the clip library, with each clip's names
+  also in its exported file; until that lands, names reach nothing but a
+  contribution. Under the button, from the first clip on, a quieter "Save now"
+  (`PrimaryActionBar`'s secondary) saves at once and leaves the clips not
+  reached yet unnamed, so a long take never costs a row of Skips. *(Judgment
+  call.)* It steps aside while the name field has focus, to leave the keyboard
+  room. A name typed and left without pressing return still counts: "Next", a
+  swipe, the chevron, opening the editor and a save all commit it as typed. If
+  any saved clip was toggled to contribute, the contribution confirmation sheet
+  opens once the save has finished, before Home; "Not Now" sends nothing.
+- When the name field has focus, the page scrolls the field and the
+  suggestions above the keyboard, and keeps them there as names are added;
+  the card scrolls up with the page rather than shrinking.
 - *Planned:* opened from "Needs a name", the clips are already in Photos: the
   last button reads "Done" and writes names to the clip library only, and
   there is no "Save now".
 
 ### 4. Clip Detail / Editor
 
-- Reached by tapping a derived clip's tile in Clip List (§3) — the tile's
-  single detail entry point, not a separate pencil icon. Full-screen, one
-  clip at a time:
+- Reached by tapping the clip's card on Name Clips (§3a) — the card's single
+  detail entry point, not a separate pencil icon. Full-screen, one clip at a
+  time:
   - Video player showing the trimmed clip looping under the crop marker: one
     rectangle of the export's aspect ratio, the same size at the same place on screen
     for every clip in the same framing mode, centered in the band between the header row and
@@ -615,7 +590,7 @@ default empty state, so it never reads as "your library is empty."
     The video is laid out so the clip's crop rect fills the marker exactly — a
     different clip, or an adjustment to the framing, moves and scales the video,
     never the marker — and the rest of the frame shows around it through frosted
-    glass (the same material as Processing's and Clip List's bottom bars), edge to
+    glass (the same material as Processing's and Name Clips' bottom bars), edge to
     edge, running under the header and the controls rather than clipped to a box:
     only the picture inside the marker is sharp, and the controls sit on the glass.
     The marker is what export cuts to. No default AVKit playback chrome; the only
@@ -696,14 +671,13 @@ default empty state, so it never reads as "your library is empty."
     photo/video trim gesture): near the track it tracks the touch 1:1; drag
     away and the same finger movement moves it a smaller fraction of the way,
     for fine control. Moving back to the track snaps to full speed again.
-  - A Delete button at the top-right corner removes the clip from the list
-    entirely — the same removal the list's own trash button already performs
-    on a derived clip's tile (§3). Trashing stays a reversible toggle only
-    for the original tile. Unlike the back chevron below, Delete fades the
-    screen out in place rather than flying back to a tile — the grid slot it
-    would land on no longer holds this clip.
-  - Back to Clip List commits the edits and shrinks the screen back into its
-    tile — the reverse of the tap that opened it, no separate "save" step
+  - A Delete button at the top-right corner discards the clip — the same
+    removal the card's own trash button performs (§3a). Unlike the back
+    chevron below, Delete fades the screen out in place rather than flying
+    back to the card, since the card it would land on no longer holds this
+    clip; Name Clips shows the next clip in its place.
+  - Back to Name Clips commits the edits and shrinks the screen back into its
+    card — the reverse of the tap that opened it, no separate "save" step
     needed since edits are held in view state until back-navigation. A swipe
     down in the band above the crop marker — the top row and the status-bar
     band over it — does the same; the crop pinch/rotate/drag gesture keeps
@@ -713,7 +687,7 @@ default empty state, so it never reads as "your library is empty."
     chevron, title, Delete) as its own content rather than a navigation bar,
     the same way Processing does, so no bar sits over the swipe band — laid
     out in the band a bar would occupy, with the chevron and title at the same
-    positions as Clip List's, so the two headers line up through the
+    positions as Name Clips', so the two headers line up through the
     cross-fade (`ScreenHeaderBand`; every bar-less screen's corner controls
     share the same placement). The title's slot holds the Still | Follow switch
     instead (below).
@@ -727,7 +701,7 @@ default empty state, so it never reads as "your library is empty."
       two things, both accepted: the control claims a touch that starts on it,
       so a swipe down from there doesn't dismiss (one that starts anywhere else
       in the band still does); and through the expansion cross-fade it fades in
-      at the title's slot rather than lining up with Clip List's title. The
+      at the title's slot rather than lining up with Name Clips' counter. The
       screen keeps "Edit clip" as its VoiceOver header. A clip opens in the mode
       it was last committed in. A detected clip that hasn't been opened yet
       starts in the mode Settings' Follow the athlete gives it (§1a); a "+" clip
@@ -816,7 +790,7 @@ default empty state, so it never reads as "your library is empty."
       still entirely Auto follow's, every diamond hollow, re-tracks the new
       window when the handle is released, positions and zoom, at the same
       turn, moving there the way Auto follow does. Its zoom follows each
-      moment's own need, so a wider window doesn't widen every moment. Rev 15's Clip List refit also
+      moment's own need, so a wider window doesn't widen every moment. Rev 15's grid refit also
       resized the crop, and resizing on a trim is what Rev 8 removed: it made
       the video shrink under the marker as the window grew. Still mode is
       unchanged: its framing never follows a trim.
@@ -965,7 +939,8 @@ Resolved 2026-09-04.
    including the original: trashing the original marks it for deletion from
    Photos, which Save Clips carries out once every derived clip has confirmed it
    saved. The "Select All" / "Deselect All" toolbar action is gone along with
-   the keep/discard concept it bulk-toggled.
+   the keep/discard concept it bulk-toggled. *Clip List itself was retired
+   2026-10-27 (decision 9); its inline save is now Name Clips'.*
 7. **Camera takes skip Processing → Added.** Recorded 2026-09-23: the camera
    scores pose on its live frames while recording and draws the skeleton on
    the preview; when that covered the whole take, the same trick detection
@@ -1012,3 +987,16 @@ Resolved 2026-09-04.
    one zoom looser than before. The rendering worry no longer applies: export draws one
    transform per frame, so a turn that changes between keyframes is drawn
    exactly at every frame.*
+9. **Clip List retired; an analysis lands on Name Clips → Changed.** Recorded
+   2026-10-27 (Rev 21): with naming in the clip flow (Rev 20), a video passed
+   through two screens of the same clips — the grid to triage them, then Name
+   Clips to name them — and the grid's tile players kept decoding behind Name
+   Clips. Name Clips now takes the triage over, one clip at a time: the card
+   opens the editor and carries the trash button, the header carries "+" and
+   "Delete original after saving", and a video with no clip shows an empty
+   state with "Add Clip". The grid's one view of all a video's clips at once
+   is what's given up; the counter and the swipe stand in for it. The card
+   has a fixed size from the screen alone, so nothing on the page — a swipe,
+   a name, the keyboard — resizes it, and the clip beside the current one
+   waits paused on its first frame, so a swipe never shows a poster that cuts
+   to the video.
