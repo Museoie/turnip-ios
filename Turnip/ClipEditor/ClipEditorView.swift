@@ -9,31 +9,20 @@ import SwiftUI
 /// rotate buttons that fit the video under the marker for the user, plus a scrub bar
 /// with start/end drag handles.
 ///
-/// Back-navigation and Delete both close the editor via the toolbar's own actions —
-/// `onCommit`/`onDelete` fire synchronously from those taps, before the enclosing
-/// presentation dismisses, rather than from `onDisappear`: mutating the presenting
-/// screen's state while the dismiss transition is still animating would race the
-/// dismiss and swallow the back chevron's tap.
+/// Back-navigation closes the editor via the top row's own action — `onCommit` fires
+/// synchronously from that tap, before the enclosing presentation dismisses, rather than
+/// from `onDisappear`: mutating the presenting screen's state while the dismiss transition
+/// is still animating would race the dismiss and swallow the back chevron's tap.
 struct ClipEditorView: View {
     @StateObject private var viewModel: ClipEditorViewModel
     /// The final editor state, committed on back-navigation — no separate save step,
     /// per the design doc.
     let onCommit: (ClipEditorResult) -> Void
-    /// The Delete action: removes the clip from the list entirely, the same as its
-    /// tile's trash button.
-    let onDelete: () -> Void
     /// Intercepts the back button's close instead of calling `dismiss()` directly, so
     /// a presenter can animate its own reverse transition before the cover actually
     /// goes away. `nil` (the default) falls back to `dismiss()`, which keeps
     /// `ScreenshotHarness` and this file's own `#Preview` working unchanged.
     var onRequestClose: (() -> Void)?
-    /// Intercepts the Delete button's close the same way, but separately from
-    /// `onRequestClose`: a presenter that flies its reverse transition back to the
-    /// tile's on-screen frame (`ClipExpansionContainer`) can't reuse that same flight
-    /// for Delete, since deleting the item changes what's in that slot. Falls back to
-    /// `onRequestClose`, then `dismiss()`, so callers that don't need the distinction
-    /// don't have to supply both.
-    var onRequestDeleteClose: (() -> Void)?
     /// A presenter's own swipe-to-dismiss gesture, planted behind this view's content
     /// (see `ClipExpansionContainer`'s doc comment for why it has to live here rather
     /// than behind this view in the presenter's own hierarchy) — `nil` for callers
@@ -59,17 +48,13 @@ struct ClipEditorView: View {
     init(
         source: ClipEditorSource,
         onCommit: @escaping (ClipEditorResult) -> Void,
-        onDelete: @escaping () -> Void,
         onRequestClose: (() -> Void)? = nil,
-        onRequestDeleteClose: (() -> Void)? = nil,
         dismissGesture: AnyGesture<DragGesture.Value>? = nil
     ) {
         self.init(
             viewModel: ClipEditorViewModel(source: source),
             onCommit: onCommit,
-            onDelete: onDelete,
             onRequestClose: onRequestClose,
-            onRequestDeleteClose: onRequestDeleteClose,
             dismissGesture: dismissGesture)
     }
 
@@ -79,16 +64,12 @@ struct ClipEditorView: View {
     init(
         viewModel: ClipEditorViewModel,
         onCommit: @escaping (ClipEditorResult) -> Void,
-        onDelete: @escaping () -> Void,
         onRequestClose: (() -> Void)? = nil,
-        onRequestDeleteClose: (() -> Void)? = nil,
         dismissGesture: AnyGesture<DragGesture.Value>? = nil
     ) {
         _viewModel = StateObject(wrappedValue: viewModel)
         self.onCommit = onCommit
-        self.onDelete = onDelete
         self.onRequestClose = onRequestClose
-        self.onRequestDeleteClose = onRequestDeleteClose
         self.dismissGesture = dismissGesture
     }
 
@@ -97,14 +78,6 @@ struct ClipEditorView: View {
             onRequestClose()
         } else {
             dismiss()
-        }
-    }
-
-    private func closeAfterDelete() {
-        if let onRequestDeleteClose {
-            onRequestDeleteClose()
-        } else {
-            close()
         }
     }
 
@@ -225,9 +198,8 @@ struct ClipEditorView: View {
     }
 
     /// The screen's own top row in place of a navigation bar (see `body`): the back chevron
-    /// leading, the Still | Follow switch in the title's slot, Delete trailing — the
-    /// chevron and Delete at the same positions as the clip list's titled bar this screen
-    /// flies open from. The title stays as the screen's VoiceOver header, drawn clear.
+    /// leading, at the same position as Name Clips' bar this screen flies open from. The title
+    /// stays as the screen's VoiceOver header, drawn clear.
     private var topRow: some View {
         ZStack {
             Text("Edit clip")
@@ -235,28 +207,11 @@ struct ClipEditorView: View {
                 .foregroundStyle(.clear)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("clip-editor-title")
-            framingSwitch
             HStack {
                 backButton
                 Spacer()
-                deleteButton
             }
         }
-    }
-
-    /// The two framing modes, named both ways so it reads as a choice of mode rather than an
-    /// effect switched on and off. Waits for media info, as the crop buttons do.
-    private var framingSwitch: some View {
-        Picker("Framing", selection: Binding(
-            get: { viewModel.framingMode },
-            set: { viewModel.setFramingMode($0) })) {
-            Text("Still").tag(FramingMode.still)
-            Text("Follow").tag(FramingMode.follow)
-        }
-        .pickerStyle(.segmented)
-        .frame(width: 168)
-        .disabled(viewModel.previewOverlay == nil)
-        .accessibilityIdentifier("framing-mode-switch")
     }
 
     /// Commits the current edits and closes — the back chevron's action. Runs
@@ -269,24 +224,6 @@ struct ClipEditorView: View {
             close()
         }
         .accessibilityIdentifier("clip-editor-back")
-    }
-
-    private var deleteButton: some View {
-        let button = Button(role: .destructive) {
-            onDelete()
-            closeAfterDelete()
-        } label: {
-            Text("Delete")
-        }
-        .accessibilityLabel("Delete clip")
-        .accessibilityIdentifier("clip-editor-delete")
-        return Group {
-            if #available(iOS 26.0, *) {
-                button.buttonStyle(.glass)
-            } else {
-                button.buttonStyle(.bordered)
-            }
-        }
     }
 
     /// The crop stage, edge to edge under the chrome: the video laid out so its crop rect
@@ -322,10 +259,10 @@ struct ClipEditorView: View {
                 if expansionHasLanded {
                     // The same `.thinMaterial` as `PrimaryActionBar`'s bottom bar, with a
                     // hole at the marker: everything export cuts away shows frosted, only
-                    // the crop stays sharp. Not drawn while an expansion flight or Delete's
-                    // fade has this view under partial opacity, where a material can't blur
-                    // and would render the frame behind it sharp: the flying card shows the
-                    // crop alone, and the frosted frame around it appears with the landing.
+                    // the crop stays sharp. Not drawn while an expansion flight has this view
+                    // under partial opacity, where a material can't blur and would render the
+                    // frame behind it sharp: the flying card shows the crop alone, and the
+                    // frosted frame around it appears with the landing.
                     CropOverlayShape(hole: marker)
                         .fill(.thinMaterial, style: FillStyle(eoFill: true))
                         .allowsHitTesting(false)

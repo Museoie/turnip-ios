@@ -43,7 +43,6 @@ struct ClipExpansionContainer: View {
     let thumbnail: CGImage?
     let source: ClipEditorSource
     let onCommit: (ClipEditorResult) -> Void
-    let onDelete: () -> Void
     /// Called the instant the opening flight starts moving — which is when the presenter
     /// should hide the tile underneath. Not at presentation: the card waits for its video
     /// surface to be able to show `sourceTime`'s frame first, and until then the tile
@@ -60,11 +59,11 @@ struct ClipExpansionContainer: View {
     /// begin, see `acceptsDestinationUpdates`.
     @State private var measuredMarker: CGRect?
     /// Gates `measuredMarker` updates: `true` through the opening flight, `false`
-    /// from the first touch-move of an interactive drag, or from the moment
-    /// `close()`/`closeForDelete()` runs, whichever comes first. Once the user could be
-    /// leaving, the flight's endpoint shouldn't keep tracking a value that could still move
-    /// underneath it. A drag that springs back reopens it once the card has landed again: the
-    /// editor's marker changes with its framing mode, and the next close has to aim there.
+    /// from the first touch-move of an interactive drag, or from the moment `close()`
+    /// runs, whichever comes first. Once the user could be leaving, the flight's endpoint
+    /// shouldn't keep tracking a value that could still move underneath it. A drag that
+    /// springs back reopens it once the card has landed again, so the next close aims at
+    /// wherever the marker has settled.
     @State private var acceptsDestinationUpdates = true
     /// The live drag, via `@GestureState` rather than a plain `@State` flag: a system
     /// cancellation (an incoming call, Control Center, the home-indicator swipe-up
@@ -81,10 +80,6 @@ struct ClipExpansionContainer: View {
     /// The frame the editor was showing when an interactive drag began scrubbing, so a
     /// cancelled drag can scrub back to it. `nil` while no drag is in progress.
     @State private var dragScrubOrigin: TimeInterval?
-    /// Delete fades the whole view out in place instead of flying to `sourceFrame`:
-    /// by the time this runs, that tile's slot in the grid holds a different item (or
-    /// nothing), so flying there would land in the wrong spot.
-    @State private var deleteFadeOpacity: CGFloat = 1
     /// The two readiness signals the opening flight waits for, and whether it has
     /// started. The card's video surface is transparent until the player has decoded a
     /// frame, and that frame is only the right one once the seek to `sourceTime` has
@@ -93,7 +88,7 @@ struct ClipExpansionContainer: View {
     @State private var isSeekedToSource = false
     @State private var isSurfaceReady = false
     @State private var hasStartedOpenFlight = false
-    /// Set by `close()`/`closeForDelete()`, so a deferred step from an earlier flight
+    /// Set by `close()`, so a deferred step from an earlier flight
     /// (releasing playback after an open, resuming it after a cancelled drag) that lands
     /// after the user has already started leaving does nothing instead of restarting the
     /// loop under the closing scrub.
@@ -121,7 +116,6 @@ struct ClipExpansionContainer: View {
         thumbnail: CGImage?,
         source: ClipEditorSource,
         onCommit: @escaping (ClipEditorResult) -> Void,
-        onDelete: @escaping () -> Void,
         onFlightStarted: @escaping () -> Void
     ) {
         self.sourceFrame = sourceFrame
@@ -129,7 +123,6 @@ struct ClipExpansionContainer: View {
         self.thumbnail = thumbnail
         self.source = source
         self.onCommit = onCommit
-        self.onDelete = onDelete
         self.onFlightStarted = onFlightStarted
         let viewModel = ClipEditorViewModel(source: source)
         _viewModel = StateObject(wrappedValue: viewModel)
@@ -168,10 +161,9 @@ struct ClipExpansionContainer: View {
                 }
 
                 cardLayer(destination: destination, focus: focus)
-                    // Rendered as one group before any opacity touches it: with Delete's
-                    // fade applied straight to the live player view, the video spilled past
-                    // the window's clip below and showed the frame outside the marker sharp
-                    // for the whole fade.
+                    // Rendered as one group before any opacity touches it: under a partial
+                    // opacity applied straight to the live player view, the video spills past
+                    // the window's clip below and shows the frame outside the marker sharp.
                     .compositingGroup()
                     // The hard cut to the editor's video surface — unanimated, since
                     // `hasLanded` is only ever written with animations disabled.
@@ -199,7 +191,6 @@ struct ClipExpansionContainer: View {
                             steepness: ExpansionFlightGeometry.chromeCrossfadeSteepness)
                 }
             }
-            .opacity(deleteFadeOpacity)
         }
         .ignoresSafeArea()
         .onAppear(perform: armOpenFlight)
@@ -224,9 +215,7 @@ struct ClipExpansionContainer: View {
             ClipEditorView(
                 viewModel: viewModel,
                 onCommit: onCommit,
-                onDelete: onDelete,
                 onRequestClose: close,
-                onRequestDeleteClose: closeForDelete,
                 dismissGesture: dismissDragGesture)
             .expansionTransparentNavigationContainer()
         }
@@ -445,20 +434,6 @@ struct ClipExpansionContainer: View {
         withAnimation(.easeInOut(duration: flightDuration)) { progress = 0 }
         scrubber.animate(from: from, to: landingTime, duration: flightDuration)
         dismissAfterLanding(delay: flightDuration + 0.05)
-    }
-
-    /// Delete's own close: a plain fade in place, not a flight back to `sourceFrame`
-    /// — see `deleteFadeOpacity`'s own comment for why.
-    private func closeForDelete() {
-        acceptsDestinationUpdates = false
-        isClosing = true
-        scrubber.cancel()
-        // Back onto the card for the fade, as `close()` does: under the fade's opacity the
-        // editor's frosted surround can't blur, and would show the frame outside the
-        // marker sharp; the card is the marker alone.
-        setLanded(false)
-        withAnimation(.easeOut(duration: 0.22)) { deleteFadeOpacity = 0 }
-        dismissAfterLanding(delay: 0.22)
     }
 
     /// Dismisses once the flight has visually landed — `delay` after it began, and never

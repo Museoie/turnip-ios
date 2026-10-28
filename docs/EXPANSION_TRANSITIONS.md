@@ -26,9 +26,10 @@ slower one springs back to fully open. See "Rev 14" near the end.
 shows the crop alone: the card is laid out at the marker again, the window
 uncrops from the tile to the marker, and the editor's edge-to-edge surface
 with the frosted frame around the crop appears with the landing and leaves
-with the first frame of any close, Delete included. The card is composited
-before Delete's fade, or its video spills past the window's clip. See "Rev
-13" near the end.
+with the first frame of any close. The card is composited before any
+opacity touches it, or its video spills past the window's clip. See "Rev
+13" near the end. (The editor's Delete, and the fade-out close it had, went
+with `UIUX.md` Rev 23.)
 
 *Rev 12 · 2026-10-07.* The editor's crop marker is now one fixed rectangle
 on screen and its video runs edge to edge under the chrome, so the card is
@@ -309,7 +310,7 @@ progress: CGFloat        // 0 = exactly at the source tile, 1 = fully open
 | Card content | The editor's own `ClipEditorVideoSurface`, rendering the container-owned `ClipEditorViewModel`'s `AVPlayer` (the editor renders the same object), over the tile's poster thumbnail placed at the crop marker. The window starts on the marker's center square (what the tile's aspect-filled loop shows) | The tile's square thumbnail at the frame's center square, the cached full-frame poster where there is one, and `ProcessingView`'s live player once reported |
 | Source frame / time | Both captured once, at tap time: `sourceFrame: CGRect`, and `sourceTime` — the tile's paused loop position (the tile pauses *before* reading it), or its poster's midpoint time without a loop | A **live closure** (`sourceFrame: () -> CGRect?`), re-read on every render until a close begins — a close after `ProcessingView`'s own swipe-to-browse-neighbors must land on whichever tile is *now* current, not the one first tapped. It stays live through an interactive drag; a non-interactive close (the back button, or a committed swipe) latches it into `lockedSourceFrame` for the rest of that flight |
 | Dismiss gesture | Owns one itself, planted into `ClipEditorView`'s background (see "Gesture ownership" below) | Doesn't own one — the destination (`ProcessingView`) already has its own vertical swipe, reported *into* the container via `HomeExpansionCloseHandlers` |
-| Delete | Its own close path: fades out in place rather than flying, since the tile's grid slot holds different content (or nothing) by the time delete runs | N/A — Home has no per-tile delete |
+| Delete | None since `UIUX.md` Rev 23: the editor has no Delete. It used to close by its own fade in place rather than flying, since the card's slot held a different clip by then | N/A — Home has no per-tile delete |
 
 ## Matching the destination's real content rect, not just its view bounds
 
@@ -501,9 +502,9 @@ not "has a report arrived yet" but "could the user possibly be leaving":
 flight (where that liveness is the real fix and the existing regression
 test already proves it converges), gated by a new
 `acceptsDestinationUpdates` flag that's set `false` on the first touch-move
-of an interactive drag, or when `close()`/`closeForDelete()` runs, whichever
-comes first — covering a committed swipe, a cancelled one, the back button,
-and Delete alike, for the rest of the container's lifetime. A cancelled
+of an interactive drag, or when `close()` runs, whichever
+comes first — covering a committed swipe, a cancelled one and the back
+button alike, for the rest of the container's lifetime. A cancelled
 drag's snap-back to `progress == 1` is *not* a special case left live: by
 the time any drag can start, the opening flight converged long ago, so
 there's nothing left to gain from remeasuring through the cancel-spring
@@ -1670,8 +1671,7 @@ Both steps live in one place, `SystemTransition.present`
 
 ## Suppressing the system's own dismissal animation
 
-Both containers' `close()` (and `ClipExpansionContainer.closeForDelete()`)
-need the *same* two-layer suppression as the open side, around the
+Both containers' `close()` need the *same* two-layer suppression as the open side, around the
 `dismiss()` call that ends the flight — `Transaction.disablesAnimations`
 alone leaves a residual slide visible, for the identical reason it did on
 the present side: it suppresses SwiftUI's own animation system but not the

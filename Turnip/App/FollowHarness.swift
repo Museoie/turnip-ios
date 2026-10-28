@@ -9,11 +9,10 @@ import SwiftUI
 /// each side of it, so a recording shows which source frame is on screen next to where the follow crop
 /// put it: a pan in step with the picture holds the bar still in the marker frame by frame.
 ///
-/// - `-screenshotClipEditorFollow`: the editor over the take's middle, in Still (add
-///   `-follow` to open it in Follow, the way Settings' Follow the athlete opens a detected
-///   clip, or `-keyframedZoom` to open it in Follow on `keyframedCrop`, whose zoom and turn
-///   change from keyframe to keyframe).
-/// - `-screenshotClipListFollow`: the Clip List with that clip in Follow, for the tile, its
+/// - `-screenshotClipEditorFollow`: the editor over the take's middle, in Follow on Auto
+///   follow's crop, the way Name Clips opens a detected clip (add `-keyframedZoom` to open it
+///   on `keyframedCrop` instead, whose zoom and turn change from keyframe to keyframe).
+/// - `-screenshotClipListFollow`: Name Clips with that clip in Follow, for the card, its
 ///   poster and the expansion flight's card.
 enum FollowHarness {
     static let size = CGSize(width: 640, height: 360)
@@ -184,12 +183,11 @@ struct ScreenshotFollowEditorHarness: View {
                     source: ClipEditorSource(
                         window: FollowHarness.window,
                         cropRect: FollowHarness.cropRect,
-                        framingMode: CommandLine.arguments.contains("-follow") || Self.isKeyframed ? .follow : .still,
+                        framingMode: .follow,
                         followCrop: Self.isKeyframed ? FollowHarness.keyframedCrop : nil,
                         asset: AVURLAsset(url: movie.url),
                         poseFrames: FollowHarness.poseFrames),
-                    onCommit: { _ in },
-                    onDelete: {})
+                    onCommit: { _ in })
             }
         }
     }

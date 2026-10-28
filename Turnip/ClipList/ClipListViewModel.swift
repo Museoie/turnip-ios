@@ -223,9 +223,10 @@ final class ClipListViewModel: ObservableObject {
     /// than left to every call site to remember. `duration` seeds its full-video
     /// window; the original never opens the editor, so this never needs re-deriving.
     ///
-    /// `items` are the detected clips, which start in the framing mode Settings' Follow the
-    /// athlete gives them — read once, here — when the video has pose analysis for Auto follow
-    /// to fit. A clip added later with "+" starts in Still.
+    /// `items` are the detected clips, each put in Follow (`docs/UIUX.md` § "Clip Detail /
+    /// Editor"): a clip with no follow crop of its own shows Auto follow's, or the whole frame
+    /// held still when the video has no pose analysis to fit. A clip added later with "+" starts
+    /// in Follow too.
     init(
         items: [ClipListItem],
         poseFrames: [PoseFrameResult] = [],
@@ -248,10 +249,9 @@ final class ClipListViewModel: ObservableObject {
             window: TrickWindow(startTime: 0, endTime: max(duration, 0)),
             cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
             isOriginal: true)
-        let startsFollowing = settingsProvider().followAthlete && !poseFrames.isEmpty
         self.items = [original] + items.map { item in
             var item = item
-            if startsFollowing { item.framingMode = .follow }
+            item.framingMode = .follow
             return item
         }
         self.poseFrames = poseFrames
@@ -324,8 +324,8 @@ final class ClipListViewModel: ObservableObject {
     /// The item's `isTrashed` carries over unchanged — the editor doesn't own that decision.
     /// `isSaved` carries over only while the result still describes the video that landed:
     /// a clip the user retrimmed or recropped is not the one in Photos, so Save Clips has to
-    /// export and save it again. Names and the contribute choice carry over; the window stays
-    /// detection's only while the editor left it as it was. A no-op for unknown ids.
+    /// export and save it again. Names carry over; the window stays detection's only while the
+    /// editor left it as it was. A no-op for unknown ids.
     func applyEditorResult(_ result: ClipEditorResult, to id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let item = items[index]
@@ -341,7 +341,6 @@ final class ClipListViewModel: ObservableObject {
             personID: item.personID,
             names: item.names,
             isMe: item.isMe,
-            contributes: item.contributes,
             isAutoDetected: item.isAutoDetected && isSameWindow(result.window, as: item.window))
     }
 
@@ -369,9 +368,9 @@ final class ClipListViewModel: ObservableObject {
         return window == ClipEditorViewModel.clamped(window: previous, to: loadedAssetDuration)
     }
 
-    /// Removes the item with the given id entirely: the editor's Delete action, and
-    /// — for a derived clip — also what the card's trash button routes to
-    /// via `trash(_:)`, since a derived clip has no restore once trashed. The
+    /// Removes the item with the given id entirely: Name Clips' "Remove this clip", and
+    /// — for a derived clip — also what `trash(_:)` routes to, since a derived clip has no
+    /// restore once trashed. The
     /// original item can never be removed this way — it can only be soft-trashed —
     /// since deleting a `PHAsset` needs `save()`'s confirmation-and-cleanup flow, not
     /// an in-memory removal. A no-op for unknown ids.
@@ -385,8 +384,7 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// Flips one item's reversible trash flag — the primitive `trash(_:)` composes
-    /// for the original, behind Name Clips' "Delete original after saving". A no-op for
-    /// unknown ids.
+    /// for the original. A no-op for unknown ids.
     func toggleTrash(_ item: ClipListItem) {
         guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
         items[index].isTrashed.toggle()
@@ -405,14 +403,15 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// The "+" button's action: appends a new clip covering the first few seconds of the
-    /// asset (or its full duration if shorter), full-frame crop. The user trims it in the
-    /// editor like any other clip; there's no separate creation UI.
+    /// asset (or its full duration if shorter), full-frame crop, in Follow like every clip. The
+    /// user trims it in the editor like any other clip; there's no separate creation UI.
     func addClip() async {
         let duration = await assetDuration() ?? Self.defaultNewClipDuration
         let end = max(min(Self.defaultNewClipDuration, duration), ClipEditorViewModel.minimumClipDuration)
         items.append(ClipListItem(
             window: TrickWindow(startTime: 0, endTime: end),
-            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)))
+            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+            framingMode: .follow))
     }
 
     private static let defaultNewClipDuration: TimeInterval = 3
@@ -696,7 +695,7 @@ extension ClipListViewModel {
     var clipsToName: [ClipListItem] { items.filter { !$0.isOriginal } }
 
     /// Whether the video has pose analysis to contribute. A video reached by "Clip manually" has
-    /// none, so its clips can be named but not contributed.
+    /// none, so its clips can be named but are never contributed.
     var hasPose: Bool { !poseFrames.isEmpty }
 
     /// The names already given on this video, each once, in the order first given — the first
@@ -715,11 +714,10 @@ extension ClipListViewModel {
         items[index].names = names
     }
 
-    /// Removes a name. A clip left with none can't be contributed, so its toggle goes off too.
+    /// Removes a name.
     func removeName(_ name: ClipName, from id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].names.removeAll { $0 == name }
-        if items[index].names.isEmpty { items[index].contributes = false }
     }
 
     /// "Did you mean": puts the vocabulary's spelling in the typed name's place, as a pick.
@@ -745,16 +743,12 @@ extension ClipListViewModel {
         items[index].isMe = isMe
     }
 
-    /// The per-clip opt-in. Only a named clip can be turned on.
-    func setContributes(_ contributes: Bool, for id: UUID) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        items[index].contributes = contributes && !items[index].names.isEmpty
-    }
-
-    /// The contribution the saved clips toggled on make, laid out for the confirmation sheet.
+    /// The contribution the saved, named clips make, laid out for the confirmation sheet — none
+    /// while Settings' Contribute named clips is off, or for a video with no pose analysis.
     func contributionPlan() -> ContributionPlan {
-        ContributionPlan(
-            clips: items.filter { !$0.isOriginal && $0.isSaved && $0.contributes && !$0.names.isEmpty },
+        let contributes = settingsProvider().contributesClips && hasPose
+        return ContributionPlan(
+            clips: contributes ? items.filter { !$0.isOriginal && $0.isSaved && !$0.names.isEmpty } : [],
             videoID: VideoIdentity.videoID(forAssetIdentifier: assetIdentifier),
             duration: loadedAssetDuration ?? items.first?.window.endTime ?? 0,
             poseFrames: poseFrames(forPerson:))

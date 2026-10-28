@@ -148,8 +148,7 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
 
 ### 2.3 When it is written
 
-- **Saving writes it** — Name Clips' "Save Clips" or "Save now" (UIUX
-  §3a). Each saved derived clip
+- **Saving writes it** — Name Clips' "Save Clips" (UIUX §3a). Each saved derived clip
   gets a clip record with its `export_asset_id` and whatever names it
   was given; its source gets a source record and its pose. Trashed clips
   are not stored. The one exception is on-device personalization: a
@@ -279,13 +278,13 @@ also where an analysis lands: Clip List's triage moved onto it, UIUX
   save. It shows one clip at a time, larger, with a free-text
   field ("What trick is this? e.g. cork"); committing adds a chip;
   chips are removable; a combo is N chips on one clip (no
-  sub-segmentation, matching the model's `trick_names`). Its last
-  button saves, and "Save now" saves early — from the first clip on,
-  which is how a user saves without naming.
+  sub-segmentation, matching the model's `trick_names`). "Save Clips",
+  on every clip, saves them all, which is how a user saves without
+  naming.
 - The same screen names clips saved without names, opened from the
   Profile's "Needs a name" (§5.1), ending in "Done" instead of a save.
 - The Clip Editor is unchanged.
-- Naming is optional. Nothing blocks on it ("Skip" moves on); unnamed
+- Naming is optional. Nothing blocks on it (a swipe moves on); unnamed
   clips land in the Profile's "Needs a name".
 - No batch naming in v1: one name applied to a whole video's clips
   makes one mistake N times. *(Judgment call.)*
@@ -493,9 +492,10 @@ rendering is a required-reason API (PRIVACY.md).
 
 ## 9. Contribution and impact feedback
 
-- **Contributing (Phase 2b).** A per-clip contribute toggle on Name
-  Clips (UIUX §3a) and on the Clip view, and a "Contribute named clips"
-  action on the Profile page, feed `CONTRIBUTION_DESIGN.md`'s flow
+- **Contributing (Phase 2b).** Settings' Contribute named clips switch
+  for Name Clips' save (UIUX §1a, §3a), a per-clip contribute toggle on
+  the Clip view, and a "Contribute named clips" action on the Profile
+  page, feed `CONTRIBUTION_DESIGN.md`'s flow
   (§3.3), which uploads the library's stored pose and each clip's names
   and provenance. The Clip Editor carries no contribution
   controls. Nothing in the Profile depends on contributing.

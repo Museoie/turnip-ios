@@ -30,7 +30,8 @@ control:
   affordance needed since it isn't decorative.
 - Every control carries a stable `accessibilityIdentifier`: `settings-analysis-mode` (the
   segmented picker), `settings-auto-add-album`, `settings-album-name` (only present while the
-  toggle above is on), `settings-follow-athlete`, `settings-granularity`, `settings-done`.
+  toggle above is on), `settings-granularity`, `settings-contribute-clips` (only in a build
+  that points at a farm), `settings-done`.
 - The granularity `Stepper` exposes the `.adjustable` trait natively (SwiftUI's `Stepper`
   already does — no extra work), so VoiceOver can change it with increment/decrement gestures
   without a drag.
@@ -191,9 +192,9 @@ history; what carried over is listed under Name Clips.
 - Touch targets: trim handles, play/pause, mute and the scrub track all reach 44 pt.
 - No auto-playing preview loop when reduce motion is on: the preview parks on the window's
   first frame and Play starts it on request.
-- Identifiers: `clip-editor-back`, `clip-editor-delete`, `clip-editor-crop-surface`,
+- Identifiers: `clip-editor-back`, `clip-editor-crop-surface`,
   `auto-crop-button`, `reset-crop-button`, `auto-rotate-button`, `trim-start-handle`, `trim-end-handle`, `playback-play-pause`,
-  `playback-mute`, `playback-position`, `framing-mode-switch`, `auto-follow-button`, `reset-follow-button`,
+  `playback-mute`, `playback-position`, `auto-follow-button`, `reset-follow-button`,
   `follow-lane`, `follow-keyframe-button`, `nothing-to-follow-notice`.
 - **Still owed:** a real VoiceOver pass on device, plus Accessibility Inspector's audit.
   Everything above is verified by CI and by unit tests over the spoken strings and the gates,
@@ -216,17 +217,16 @@ Built:
 - Each clip's card is one element: "Clip 2 of 4, 1.5 seconds, kept", with ", saved to Photos"
   after a partial failure, `.isButton` with the hint "Opens the clip in the editor". Its value
   is the timeline's words ("Clip from 3.0s to 4.5s of 6.0s"), the bar drawn over the card
-  having no other way to be heard. "Discard clip" is a custom action on the card as well as
-  its own labeled button, a 44 pt target. The card's element is the picture alone, so its
-  frame is the card's and the trash button stays separate.
+  having no other way to be heard. "Previous clip" and "Next clip" are custom actions on the
+  card, offered where there is a clip that way. The card's element is the picture alone, so
+  its frame is the card's.
 - The header's controls are labeled: "Back to Home", "Add clip", and "More", whose menu holds
-  "Delete original after saving" as a toggle; with it on, the line above the save says so in
-  words, and Save Clips' value says it too ("Saves 2 clips to Photos, and deletes the original
-  video").
+  "Remove this clip". Save Clips' value counts what it commits to ("Saves 2 clips to Photos").
 - The save keeps Clip List's announcements: starting, finished, and each failure numbered by
   the clip it belongs to.
-- Paging has buttons ("Next" / "Skip", "Save Clips" on the last clip, "Save now"), so moving
-  between clips never depends on the swipe.
+- Paging has no button of its own — "Save Clips" is the one button, on every clip — so the
+  card's Previous clip / Next clip actions are what keep moving between clips from depending
+  on the swipe.
 - Each name chip is a button labeled with the name, hinted "Removes this name".
 - No auto-playing loop under Reduce Motion or with video autoplay off, for the current clip and
   for the one prepared beside it alike; the card shows its poster.
@@ -237,8 +237,6 @@ Not yet, from the plan:
   announce their position ("gainer, suggestion 1 of 3").
 - The me / someone-else control reads as a segmented control with its selected segment, not
   as a value ("Who's in this clip: me").
-- The disabled contribute toggle shows why in a footnote under it, which VoiceOver reads as a
-  separate element rather than as part of the switch.
 
 ### Profile (`PROFILE_DESIGN.md` §5–§7)
 
@@ -248,9 +246,9 @@ Built:
   swipe, so it never depends on a gesture.
 - "Your Profile stays on this iPhone." is on the page itself, as text.
 - "Needs a name" is one element and a button: "Needs a name, 3 clips". Its screen keeps Name
-  Clips' rules: the title is the count ("2 of 5"), paging has buttons ("Skip" / "Next",
-  "Done" on the last clip), the back chevron is labeled "Back to Profile", and the naming
-  controls are Name Clips' own.
+  Clips' rules: the title is the count ("2 of 5"), the back chevron is labeled "Back to
+  Profile", and the naming controls are Name Clips' own. Unlike Name Clips, its paging has
+  buttons ("Skip" / "Next", "Done" on the last clip).
 - Each achievement card is one element: label "Gainer, level 2", value "2 of 3 sessions to
   level 3" (a reps card: "Gainer, 10 reps", "14 of 50 reps"). The bar's fill is never the only
   signal: the same figures are printed under it. The cards don't open anything yet, so they

@@ -50,25 +50,26 @@ struct TurnipSettings: Equatable, Sendable {
     var autoAddToAlbum: Bool
     var albumName: String
     private(set) var analysisGranularity: Int
-    /// Whether a detected clip starts in the editor's Follow mode, its crop moving with the
-    /// athlete (`AutoFollow`), rather than in Still.
-    var followAthlete: Bool
     var personMode: PersonMode
+    /// Whether Name Clips' save offers the saved, named clips of an analyzed video to the farm
+    /// (`docs/CONTRIBUTION_DESIGN.md` §3.3). Off by default: contribution is opt-in, and the
+    /// confirmation sheet still asks before anything is sent.
+    var contributesClips: Bool
 
     init(
         analysisMode: AnalysisMode = .realTime,
         autoAddToAlbum: Bool = false,
         albumName: String = TurnipSettings.defaultAlbumName,
         analysisGranularity: Int = TurnipSettings.defaultGranularity,
-        followAthlete: Bool = false,
-        personMode: PersonMode = .one
+        personMode: PersonMode = .one,
+        contributesClips: Bool = false
     ) {
         self.analysisMode = analysisMode
         self.autoAddToAlbum = autoAddToAlbum
         self.albumName = albumName
         self.analysisGranularity = Self.clampedGranularity(analysisGranularity)
-        self.followAthlete = followAthlete
         self.personMode = personMode
+        self.contributesClips = contributesClips
     }
 
     /// Clamps to `granularityRange` so a corrupt or out-of-range stored value, or a future

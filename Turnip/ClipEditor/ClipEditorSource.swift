@@ -56,17 +56,16 @@ struct ClipEditorSource {
 
 /// The editor's edits, committed on back-navigation: the design doc wants no separate save
 /// step, so the view hands `result` to its commit closure when the editor disappears, and
-/// the clip list applies it to its item. Trashing isn't the editor's decision — the list's
-/// own trash button owns it — so the clip list preserves the item's existing `isTrashed`
-/// when applying a result.
+/// the clip list applies it to its item. Trashing isn't the editor's decision, so the clip
+/// list preserves the item's existing `isTrashed` when applying a result.
 ///
-/// It carries both modes' framings, whichever is active: the clip keeps the other for a later
-/// switch. A `followCrop` the editor only ever showed as Auto follow's for the window it opened
-/// with comes back `nil`, as it went in.
+/// It carries both modes' framings, whichever is active, and the clip keeps both. A
+/// `followCrop` the editor only ever showed as Auto follow's for the window it opened with
+/// comes back `nil`, as it went in.
 struct ClipEditorResult: Equatable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
     let cropAdjustment: CropAdjustment
-    var framingMode: FramingMode = .still
+    var framingMode: FramingMode = .follow
     var followCrop: FollowCrop?
 }

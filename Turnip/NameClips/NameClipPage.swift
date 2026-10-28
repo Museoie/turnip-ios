@@ -5,8 +5,8 @@ import SwiftUI
 enum NameClipsLayout {
     static let horizontalInset: CGFloat = 16
     /// Room kept under the card for the naming controls before the card gives up height: the
-    /// field, a row of suggestions, who's in it, and the contribute toggle. More controls than
-    /// that scroll rather than shrink the card.
+    /// field, a row of suggestions, and who's in it. More controls than that scroll rather than
+    /// shrink the card.
     static let controlsReserve: CGFloat = 240
     static let minimumSide: CGFloat = 220
 
@@ -20,23 +20,27 @@ enum NameClipsLayout {
 }
 
 /// One clip's page on Name Clips: its card on top at the screen's fixed size, and under it the
-/// trick-name field, the names given as removable chips, suggestions, who is in the clip, and —
-/// when the build points at a farm — the clip's contribute toggle. The page scrolls, so the
-/// keyboard moves the controls into view instead of squeezing the card.
+/// trick-name field, the names given as removable chips, suggestions, and who is in the clip.
+/// The page scrolls, so the keyboard moves the controls into view instead of squeezing the
+/// card — but not while a swipe is paging, which holds it still.
 struct NameClipPage: View {
     let item: ClipListItem
     let cardSide: CGFloat
     @ObservedObject var viewModel: ClipListViewModel
     let vocabulary: TrickVocabulary
-    let showsContribution: Bool
     @Binding var draft: String
     var isFieldFocused: FocusState<Bool>.Binding
     let isCurrent: Bool
     let isCardPlaying: Bool
     let isCardHidden: Bool
+    /// True while a horizontal swipe is paging between clips: the page's own scroll stops, so
+    /// the swipe slides it sideways and never up or down too.
+    let isPaging: Bool
     let commitDraft: () -> Void
     let openEditor: (CGRect, CGImage?, TimeInterval?) -> Void
-    let trash: () -> Void
+    /// The card's VoiceOver actions for the swipe (`NameClipCard.onPrevious`, `onNext`).
+    let goToPrevious: (() -> Void)?
+    let goToNext: (() -> Void)?
 
     var body: some View {
         ScrollViewReader { scroller in
@@ -44,13 +48,12 @@ struct NameClipPage: View {
                 VStack(spacing: 16) {
                     NameClipCard(
                         item: item, side: cardSide, viewModel: viewModel, isPlaying: isCardPlaying,
-                        isHidden: isCardHidden, onOpen: openEditor, onTrash: trash)
+                        isHidden: isCardHidden, onOpen: openEditor, onPrevious: goToPrevious, onNext: goToNext)
                     VStack(alignment: .leading, spacing: 12) {
                         ClipNamingFields(
                             names: item.names, isMe: item.isMe, usedNames: viewModel.namesUsedOnVideo,
                             vocabulary: vocabulary, draft: $draft, isFieldFocused: isFieldFocused,
                             isEnabled: isCurrent, commitDraft: commitDraft, actions: namingActions)
-                        if showsContribution { contributeToggle }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -58,6 +61,7 @@ struct NameClipPage: View {
                 .padding(.top, 8)
                 .padding(.bottom, 16)
             }
+            .scrollDisabled(isPaging)
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: isFieldFocused.wrappedValue) { focused in
                 guard focused, isCurrent else { return }
@@ -84,24 +88,5 @@ struct NameClipPage: View {
             remove: { viewModel.removeName($0, from: item.id) },
             replace: { viewModel.replaceName($0, with: $1, in: item.id) },
             setIsMe: { viewModel.setIsMe($0, for: item.id) })
-    }
-
-    private var contributeToggle: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle("Contribute this clip", isOn: Binding(
-                get: { item.contributes },
-                set: { viewModel.setContributes($0, for: item.id) }))
-                .disabled(item.names.isEmpty || !viewModel.hasPose)
-                .accessibilityIdentifier("name-clips-contribute")
-            if !viewModel.hasPose {
-                Text("Clips added without analysis have no pose to contribute.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else if item.names.isEmpty {
-                Text("Name the clip to contribute it.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 }

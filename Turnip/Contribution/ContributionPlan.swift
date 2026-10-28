@@ -1,6 +1,6 @@
 import Foundation
 
-/// What a contribution of one video's saved, toggled clips would send, worked out before
+/// What a contribution of one video's saved, named clips would send, worked out before
 /// anything is sent so the confirmation sheet can show it (`docs/CONTRIBUTION_DESIGN.md` §2.3,
 /// §3.3).
 ///

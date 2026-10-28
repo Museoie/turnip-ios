@@ -44,18 +44,6 @@ enum ClipListAccessibility {
             : String(localized: "discarded")
     }
 
-    /// The card's custom action for its trash toggle, named for what the tap does rather than
-    /// for the glyph — the checklist asks for the toggle to be reachable as an action and not
-    /// only as a tap target beside the card.
-    static func trashActionName(isTrashed: Bool, isOriginal: Bool) -> String {
-        if isTrashed {
-            return String(localized: "Restore")
-        }
-        return isOriginal
-            ? String(localized: "Delete original after saving")
-            : String(localized: "Discard clip")
-    }
-
     /// What Save Clips is going to do, as its `accessibilityValue`. The button says only "Save
     /// Clips", so without this the count it commits to is visible only by counting tiles.
     static func saveClipsValue(clipCount: Int, deletesOriginal: Bool) -> String {

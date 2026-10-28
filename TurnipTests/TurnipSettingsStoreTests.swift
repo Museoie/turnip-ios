@@ -28,10 +28,10 @@ final class TurnipSettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.autoAddToAlbum)
         XCTAssertEqual(store.albumName, TurnipSettings.defaultAlbumName)
         XCTAssertEqual(store.analysisGranularity, 10)
-        XCTAssertFalse(store.followAthlete)
-        XCTAssertFalse(store.current.followAthlete)
         XCTAssertEqual(store.personMode, .one)
         XCTAssertEqual(store.current.personMode, .one)
+        XCTAssertFalse(store.contributesClips)
+        XCTAssertFalse(store.current.contributesClips)
     }
 
     @MainActor
@@ -41,8 +41,8 @@ final class TurnipSettingsStoreTests: XCTestCase {
         first.autoAddToAlbum = true
         first.albumName = "Tricking Sessions"
         first.setAnalysisGranularity(24)
-        first.followAthlete = true
         first.personMode = .everyone
+        first.contributesClips = true
 
         let second = TurnipSettingsStore(defaults: defaults)
 
@@ -50,10 +50,10 @@ final class TurnipSettingsStoreTests: XCTestCase {
         XCTAssertTrue(second.autoAddToAlbum)
         XCTAssertEqual(second.albumName, "Tricking Sessions")
         XCTAssertEqual(second.analysisGranularity, 24)
-        XCTAssertTrue(second.followAthlete)
-        XCTAssertTrue(second.current.followAthlete)
         XCTAssertEqual(second.personMode, .everyone)
         XCTAssertEqual(second.current.personMode, .everyone)
+        XCTAssertTrue(second.contributesClips)
+        XCTAssertTrue(second.current.contributesClips)
     }
 
     @MainActor

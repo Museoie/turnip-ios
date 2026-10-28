@@ -105,8 +105,8 @@ final class ClipEditorViewModel: ObservableObject {
     @Published private(set) var isAutoRotateApplied = false
 
     /// Which framing the clip shows (`docs/UIUX.md` § "Two framing modes, Still and Follow").
-    /// Still's is `cropAdjustment`, Follow's `followCrop`; each mode keeps its own, so a
-    /// switch back finds it where it was.
+    /// Still's is `cropAdjustment`, Follow's `followCrop`; each mode keeps its own. Every clip
+    /// Name Clips opens is in Follow.
     @Published private(set) var framingMode: FramingMode {
         didSet { updatePreviewPan() }
     }
@@ -768,12 +768,13 @@ final class ClipEditorViewModel: ObservableObject {
         return differs(followCrop.resting) || followCrop.keyframes.contains { differs($0.framing) }
     }
 
-    /// The Still | Follow switch. Entering Follow the first time on a clip Auto follow can fit
-    /// runs Auto follow at once — Follow means following the athlete — and on one it can't,
-    /// starts from the whole frame. Each mode keeps its own framing, and the picture moves
-    /// from one to the other over `fitAnimation`, the marker with it, since Follow's is
-    /// shorter by the lane. The turn on screen carries the Auto rotate button over only when
-    /// both modes are turned the same.
+    /// Moves the clip between Still and Follow; no control offers it, since every clip opens in
+    /// Follow (`docs/UIUX.md` § "Two framing modes, Still and Follow"). Entering Follow the first
+    /// time on a clip Auto follow can fit runs Auto follow at once — Follow means following the
+    /// athlete — and on one it can't, starts from the whole frame. Each mode keeps its own
+    /// framing, and the picture moves from one to the other over `fitAnimation`, the marker with
+    /// it, since Follow's is shorter by the lane. The turn on screen carries the Auto rotate
+    /// button over only when both modes are turned the same.
     func setFramingMode(_ mode: FramingMode) {
         guard mode != framingMode, let overlay = previewOverlay else { return }
         let rotationBefore = framingAtPlayhead.rotationRadians

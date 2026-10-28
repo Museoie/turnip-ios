@@ -3,18 +3,17 @@ import SwiftUI
 
 /// Name Clips (`docs/UIUX.md` § "Name Clips", `docs/PROFILE_DESIGN.md` §4): where an analysis
 /// lands. One detected clip at a time, looping with the framing it exports with, and under it the
-/// trick-name field, the names given as chips, suggestions, who is in the clip and — when the
-/// build points at a farm — its contribute toggle. Naming is never required: "Skip" moves on,
-/// "Save now" saves at once, and the last clip's "Save Clips" saves them all.
+/// trick-name field, the names given as chips, suggestions, and who is in the clip. Naming is
+/// never required: "Save Clips", on every clip, saves them all at once.
 ///
 /// It is also the triage the clip grid used to be: tapping the card flies it open into the
-/// editor (`ClipExpansionContainer`), the card's trash button discards the clip, the header's
-/// "+" adds one, and the header's menu marks the original video for deletion once every clip
-/// has saved.
+/// editor (`ClipExpansionContainer`), the header's "+" adds a clip, and the header's menu
+/// removes the one on screen.
 ///
-/// The pager owns every horizontal drag, as Processing's browse swipe does, and "Next" plays the
-/// same slide. The processing screen pushes this with the pipeline's output; the back chevron
-/// pops to Home. This view declares no `NavigationStack` of its own.
+/// The pager owns every horizontal drag, as Processing's browse swipe does, and holds the page's
+/// own vertical scroll still while it slides. The processing screen pushes this with the
+/// pipeline's output; the back chevron pops to Home. This view declares no `NavigationStack` of
+/// its own.
 struct NameClipsView: View {
     @StateObject private var viewModel: ClipListViewModel
     @ObservedObject private var vocabulary: VocabularyStore
@@ -26,8 +25,11 @@ struct NameClipsView: View {
     @State private var index = 0
     @State private var dragOffset: CGFloat = 0
     /// The axis a drag committed to on its first movement: a vertical one scrolls the page and
-    /// never pages, a horizontal one pages and never scrolls.
+    /// never pages, a horizontal one pages and stops the page's scroll (`NameClipPage.isPaging`).
     @State private var dragAxis: Axis?
+    /// True from a drag's first movement until it ends or the system takes it (a call banner,
+    /// Control Center). A taken drag never reaches `onEnded`, so its reset keys off this instead.
+    @GestureState private var isDragging = false
     @State private var draft = ""
     @FocusState private var isFieldFocused: Bool
     @State private var screenSize: CGSize = .zero
@@ -128,6 +130,9 @@ struct NameClipsView: View {
             .contentShape(Rectangle())
             // Simultaneous, so the controls and the page's own vertical scroll keep their touches.
             .simultaneousGesture(pagingGesture)
+            .onChange(of: isDragging) { dragging in
+                if !dragging { settleTakenDrag() }
+            }
         }
         .clipped()
     }
@@ -138,19 +143,21 @@ struct NameClipsView: View {
             cardSide: cardSide,
             viewModel: viewModel,
             vocabulary: vocabulary.current,
-            showsContribution: account.isAvailable,
             draft: isCurrent ? $draft : .constant(""),
             isFieldFocused: $isFieldFocused,
             isCurrent: isCurrent,
             isCardPlaying: isCurrent && expandTarget == nil && !viewModel.isSaving && !isShowingContribution,
             isCardHidden: hiddenItemID == item.id,
+            isPaging: dragAxis == .horizontal,
             commitDraft: commitDraft,
             openEditor: { frame, thumbnail, loopTime in open(item, from: frame, thumbnail: thumbnail, at: loopTime) },
-            trash: { trash(item) })
+            goToPrevious: isCurrent && index > 0 ? { go(to: index - 1) } : nil,
+            goToNext: isCurrent && !isLast ? { go(to: index + 1) } : nil)
     }
 
     private var pagingGesture: some Gesture {
         DragGesture(minimumDistance: 20)
+            .updating($isDragging) { _, dragging, _ in dragging = true }
             .onChanged { value in
                 if dragAxis == nil {
                     dragAxis = abs(value.translation.width) > abs(value.translation.height) ? .horizontal : .vertical
@@ -174,8 +181,16 @@ struct NameClipsView: View {
             }
     }
 
-    /// The one entry point the swipe and the button share: commits what is typed to the clip
-    /// being left, then slides to `target`.
+    /// A drag the system took puts the page back and gives the page its scroll back. A no-op
+    /// after an ordinary end, whose `onEnded` has already done both.
+    private func settleTakenDrag() {
+        guard dragAxis != nil else { return }
+        dragAxis = nil
+        withAnimation(Self.slide) { dragOffset = 0 }
+    }
+
+    /// Where a swipe lands, and the card's Previous clip / Next clip: commits what is typed to
+    /// the clip being left, then slides to `target`.
     private func go(to target: Int) {
         guard clips.indices.contains(target) else { return }
         commitDraft()
@@ -194,10 +209,12 @@ struct NameClipsView: View {
 
     // MARK: - Triage
 
-    /// Discards a clip outright, as the grid's trash did; the clip after it slides into its place.
-    private func trash(_ item: ClipListItem) {
-        if clips.indices.contains(index), clips[index].id == item.id { draft = "" }
-        withAnimation(Self.slide) { viewModel.delete(item.id) }
+    /// The menu's "Remove this clip": discards the clip on screen outright; the clip after it
+    /// slides into its place.
+    private func removeCurrentClip() {
+        guard clips.indices.contains(index) else { return }
+        draft = ""
+        withAnimation(Self.slide) { viewModel.delete(clips[index].id) }
     }
 
     /// "+": a new clip over the first seconds of the video, which the editor trims; the pager
@@ -211,16 +228,6 @@ struct NameClipsView: View {
                 dragOffset = 0
             }
         }
-    }
-
-    private var original: ClipListItem? { viewModel.items.first(where: \.isOriginal) }
-
-    private var deletesOriginal: Binding<Bool> {
-        Binding(
-            get: { original?.isTrashed == true },
-            set: { newValue in
-                if let original, original.isTrashed != newValue { viewModel.toggleTrash(original) }
-            })
     }
 
     // MARK: - Editor
@@ -245,7 +252,6 @@ struct NameClipsView: View {
             thumbnail: target.thumbnail,
             source: target.source,
             onCommit: { result in viewModel.applyEditorResult(result, to: target.id) },
-            onDelete: { withAnimation(Self.slide) { viewModel.delete(target.id) } },
             onFlightStarted: { hiddenItemID = target.id }
         )
         // Lets this screen show through the cover while the card and scrim animate.
@@ -301,10 +307,10 @@ struct NameClipsView: View {
 
     private var menu: some View {
         Menu {
-            Toggle(isOn: deletesOriginal) {
-                Label("Delete original after saving", systemImage: "trash")
+            Button(role: .destructive, action: removeCurrentClip) {
+                Label("Remove this clip", systemImage: "trash")
             }
-            .accessibilityIdentifier("delete-original-toggle")
+            .accessibilityIdentifier("remove-clip")
         } label: {
             Image(systemName: "ellipsis")
         }
@@ -312,38 +318,16 @@ struct NameClipsView: View {
         .accessibilityIdentifier("name-clips-more")
     }
 
+    @ViewBuilder
     private var actionBar: some View {
-        VStack(spacing: 0) {
-            if deletesOriginal.wrappedValue, !clips.isEmpty {
-                Label("The original video will be deleted after saving.", systemImage: "trash")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 10)
-                    .background(.thinMaterial)
-                    .accessibilityIdentifier("original-deletion-notice")
-            }
-            if clips.isEmpty {
-                PrimaryActionBar(String(localized: "Add Clip"), action: addClip)
-                    .accessibilityIdentifier("name-clips-primary")
-            } else {
-                PrimaryActionBar(primaryTitle, isEnabled: !viewModel.isSaving, secondary: secondaryAction) {
-                    if isLast { save() } else { go(to: index + 1) }
-                }
-                .accessibilityValue(isLast ? saveAccessibilityValue : "")
+        if clips.isEmpty {
+            PrimaryActionBar(String(localized: "Add Clip"), action: addClip)
                 .accessibilityIdentifier("name-clips-primary")
-            }
+        } else {
+            PrimaryActionBar(String(localized: "Save Clips"), isEnabled: !viewModel.isSaving, action: save)
+                .accessibilityValue(saveAccessibilityValue)
+                .accessibilityIdentifier("name-clips-primary")
         }
-    }
-
-    private var primaryTitle: String {
-        if isLast { return String(localized: "Save Clips") }
-        let hasName = clips.indices.contains(index) && !(clips[index].names.isEmpty && draft.isBlank)
-        return hasName ? String(localized: "Next") : String(localized: "Skip")
-    }
-
-    private var secondaryAction: PrimaryActionBar.SecondaryAction? {
-        isLast || isFieldFocused ? nil : PrimaryActionBar.SecondaryAction(String(localized: "Save now"), action: save)
     }
 
     /// What Save Clips commits to, read after its label: the count, and the original's fate.
@@ -374,8 +358,8 @@ struct NameClipsView: View {
 
     // MARK: - Save
 
-    /// The save, then the contribution sheet when any saved clip was toggled on and the farm can
-    /// take it, and back to Home once that closes.
+    /// The save, then the contribution sheet when Settings' Contribute named clips is on, a saved
+    /// clip has a name and the farm can take it, and back to Home once that closes.
     private func save() {
         commitDraft()
         isFieldFocused = false
@@ -392,7 +376,7 @@ struct NameClipsView: View {
     }
 }
 
-/// The tapped card's presentation target, snapshotted at tap time: a Delete in the editor removes
+/// The tapped card's presentation target, snapshotted at tap time: the editor's commit replaces
 /// the item before the container's own close animation finishes.
 private struct ExpandTarget: Identifiable {
     let id: UUID

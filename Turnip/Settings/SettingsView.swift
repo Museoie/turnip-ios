@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// Configuration screen (`docs/UIUX.md` § "Settings"): the five preferences the app exposes,
-/// each taking effect the next time its integration point runs rather than needing a restart —
-/// analysis mode on the next Record tap, the album on the next save, follow crop on the next
-/// Clip List, granularity on the next analysis run. Presented as a sheet from Home's gear button
+/// Configuration screen (`docs/UIUX.md` § "Settings"): the preferences the app exposes, each
+/// taking effect the next time its integration point runs rather than needing a restart —
+/// analysis mode on the next Record tap, the album and contributing on the next save,
+/// granularity on the next analysis run. Presented as a sheet from Home's gear button
 /// rather than pushed onto the main flow's `NavigationStack`, since it isn't part of "pick a
 /// video, get clips" and has nothing to hand back to that flow.
 struct SettingsView: View {
@@ -46,18 +46,6 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Follow the athlete", isOn: $settings.followAthlete)
-                        .accessibilityIdentifier("settings-follow-athlete")
-                } header: {
-                    Text("Crop")
-                } footer: {
-                    Text("""
-                        Starts each detected clip in Follow, its crop moving with the athlete, \
-                        instead of Still. Any clip can switch between the two in the editor.
-                        """)
-                }
-
-                Section {
                     Stepper(
                         "Granularity: \(settings.analysisGranularity)",
                         value: Binding(
@@ -76,7 +64,7 @@ struct SettingsView: View {
                 }
 
                 if account.isAvailable {
-                    FarmAccountSection(account: account)
+                    FarmAccountSection(account: account, contributesClips: $settings.contributesClips)
                 }
             }
             .navigationTitle("Settings")

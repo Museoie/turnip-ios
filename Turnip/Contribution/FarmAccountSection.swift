@@ -1,15 +1,19 @@
 import AuthenticationServices
 import SwiftUI
 
-/// Settings' Contribution section (`docs/CONTRIBUTION_DESIGN.md` §5.4): sign in with Apple, sign
-/// out, and delete the farm account. Shown only when the build points at a farm.
+/// Settings' Contribution section (`docs/CONTRIBUTION_DESIGN.md` §3.3, §5.4): the Contribute named
+/// clips switch, then sign in with Apple, sign out, and delete the farm account. Shown only when
+/// the build points at a farm.
 struct FarmAccountSection: View {
     @ObservedObject var account: FarmAccount
+    @Binding var contributesClips: Bool
     @State private var isConfirmingDeletion = false
     @State private var failureMessage: String?
 
     var body: some View {
         Section {
+            Toggle("Contribute named clips", isOn: $contributesClips)
+                .accessibilityIdentifier("settings-contribute-clips")
             if account.isSignedIn {
                 Label("Signed in with Apple", systemImage: "checkmark.seal")
                     .accessibilityIdentifier("settings-farm-signed-in")
@@ -30,7 +34,7 @@ struct FarmAccountSection: View {
         } header: {
             Text("Contribution")
         } footer: {
-            Text(ContributionDisclosure.accountFooter)
+            Text("\(ContributionDisclosure.contributeSwitch) \(ContributionDisclosure.accountFooter)")
         }
         .confirmationDialog(
             "Delete your Turnip account?", isPresented: $isConfirmingDeletion, titleVisibility: .visible
@@ -92,6 +96,10 @@ enum ContributionDisclosure {
         """)
     static let consent = String(localized: """
         Contribute only clips of yourself, or of people who agreed.
+        """)
+    static let contributeSwitch = String(localized: """
+        With Contribute named clips on, saving an analyzed video's clips asks to send the named \
+        ones. Nothing is sent until you confirm.
         """)
     static let accountFooter = String(localized: """
         Signing in lets you contribute named clips to train Turnip's trick detection. \

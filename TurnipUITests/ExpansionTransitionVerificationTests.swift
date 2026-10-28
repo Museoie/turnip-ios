@@ -107,33 +107,26 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         XCTAssertLessThan(previewFrame.maxY, window.maxY - 44)
     }
 
-    /// The editor's own top row (`ScreenHeaderBand`) against the clip list's titled bar it
-    /// flies open from: the back chevron cross-fades over the list's through the flight, so
-    /// it has to sit at the same place or the header visibly jumps at the cut. The Still |
-    /// Follow switch takes the title's slot — it fades in there rather than lining up with
-    /// the list's title, but it is centered on the same line. Compares the two screens'
-    /// element frames in one flow, on whichever OS the run is on — the band's metrics branch
-    /// per OS.
+    /// The editor's own top row (`ScreenHeaderBand`) against Name Clips' titled bar it flies
+    /// open from: the back chevron cross-fades over the list's through the flight, so it has
+    /// to sit at the same place or the header visibly jumps at the cut. Compares the two
+    /// screens' element frames in one flow, on whichever OS the run is on — the band's metrics
+    /// branch per OS. The row holds the chevron alone: no mode switch, no Delete.
     func testClipEditorHeaderLinesUpWithTheClipListsBar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
         XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
         let listBack = settledFrame(of: app.buttons["Back to Home"].firstMatch)
-        let listTitle = settledFrame(of: app.navigationBars["1 of 2"].staticTexts["1 of 2"].firstMatch)
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
         XCTAssertTrue(app.staticTexts["clip-editor-title"].waitForExistence(timeout: 15))
-        let modeSwitch = app.segmentedControls["framing-mode-switch"]
-        XCTAssertTrue(modeSwitch.waitForExistence(timeout: 5))
         let editorBack = settledFrame(of: app.buttons["Back to clips"].firstMatch)
-        let switchFrame = settledFrame(of: modeSwitch)
         print("VERIFY_LIST_BACK:\(listBack) VERIFY_EDITOR_BACK:\(editorBack)")
-        print("VERIFY_LIST_TITLE:\(listTitle) VERIFY_EDITOR_SWITCH:\(switchFrame)")
+        XCTAssertFalse(app.segmentedControls["framing-mode-switch"].exists)
+        XCTAssertFalse(app.buttons["clip-editor-delete"].exists)
         XCTAssertEqual(editorBack.midY, listBack.midY, accuracy: 1)
-        XCTAssertEqual(switchFrame.midY, listTitle.midY, accuracy: 1)
-        XCTAssertEqual(switchFrame.midX, listTitle.midX, accuracy: 1)
         // Both are the same `ScrimIconButton` circle, the list's with the bar's own wider
         // pill hidden under it, so the frames match outright, not just the glyph.
         XCTAssertEqual(editorBack.midX, listBack.midX, accuracy: 1)
@@ -142,14 +135,14 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
     }
 
     /// Where a swipe-to-dismiss starts: in the top row's band, which the dismiss gesture owns
-    /// (the video surface keeps a downward drag for its own crop gesture), between the back
-    /// chevron and the Still | Follow switch — the switch claims a touch that starts on it.
+    /// (the video surface keeps a downward drag for its own crop gesture), midway between the
+    /// back chevron and the screen's middle — the chevron claims a touch that starts on it.
     /// Read off the controls, so it doesn't depend on the device's status-bar height.
     private func headerSwipeStart(in app: XCUIApplication) -> XCUICoordinate {
         let back = settledFrame(of: app.buttons["Back to clips"].firstMatch)
-        let modeSwitch = settledFrame(of: app.segmentedControls["framing-mode-switch"])
+        let window = app.windows.firstMatch.frame
         return app.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: (back.maxX + modeSwitch.minX) / 2, dy: back.midY))
+            .withOffset(CGVector(dx: (back.maxX + window.midX) / 2, dy: back.midY))
     }
 
     /// The flight lands on whichever marker the editor reports, and a clip that opens in

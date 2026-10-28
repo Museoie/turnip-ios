@@ -136,7 +136,8 @@ struct ScreenshotClipListMediaHarness: View {
 // MARK: - Clip editor
 
 /// Clip editor (`-screenshotClipEditor`): the trimmed clip looping with its live crop
-/// rect and the trim slider.
+/// rect and the trim slider, in Still for the Still-mode tests, or in Follow with `-follow`,
+/// the mode every clip opens in.
 ///
 /// The editor needs real media — `/dev/null` isn't one, so `prepare()` takes the
 /// load-failure path and the screenshot would show "Couldn't load this clip", which
@@ -185,10 +186,10 @@ struct ScreenshotClipEditorHarness: View {
                     source: ClipEditorSource(
                         window: TrickWindow(startTime: 2, endTime: 5),
                         cropRect: NormalizedRect(minX: 0.25, maxX: 0.75, minY: 0.25, maxY: 0.75),
+                        framingMode: CommandLine.arguments.contains("-follow") ? .follow : .still,
                         asset: AVURLAsset(url: movie.url),
                         poseFrames: Self.samplePoseFrames),
-                    onCommit: { _ in },
-                    onDelete: {})
+                    onCommit: { _ in })
             }
         }
     }

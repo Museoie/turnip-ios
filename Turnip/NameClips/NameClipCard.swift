@@ -7,9 +7,8 @@ import UIKit
 /// beside the current page builds its loop paused on the first frame, so it slides in showing the
 /// video it is about to play rather than a poster that cuts to it.
 ///
-/// The card also carries the triage controls: the trash button, the saved-to-Photos badge, and
-/// the read-only timeline of where the window sits in the video. A tap opens the editor, flying
-/// the card open from where it sits.
+/// The card also carries the saved-to-Photos badge and the read-only timeline of where the
+/// window sits in the video. A tap opens the editor, flying the card open from where it sits.
 ///
 /// The card's size comes from its caller and never from its content: a poster drawn
 /// `scaledToFill` overflows whatever proposes its size, so the frame is fixed first and the
@@ -26,7 +25,11 @@ struct NameClipCard: View {
     /// Opens the editor from the card's on-screen frame (global space), on the poster and the
     /// asset time the loop was showing (`nil` without a loop).
     let onOpen: (CGRect, CGImage?, TimeInterval?) -> Void
-    let onTrash: () -> Void
+    /// The swipe's way to the clip before and after this one, as VoiceOver actions: Name Clips
+    /// has no paging button. `nil` where there is no clip that way, or on a card that isn't the
+    /// current page.
+    let onPrevious: (() -> Void)?
+    let onNext: (() -> Void)?
 
     @StateObject private var playback: ClipCardPlayback
     @State private var thumbnail: CGImage?
@@ -36,7 +39,8 @@ struct NameClipCard: View {
 
     init(
         item: ClipListItem, side: CGFloat, viewModel: ClipListViewModel, isPlaying: Bool, isHidden: Bool,
-        onOpen: @escaping (CGRect, CGImage?, TimeInterval?) -> Void, onTrash: @escaping () -> Void
+        onOpen: @escaping (CGRect, CGImage?, TimeInterval?) -> Void,
+        onPrevious: (() -> Void)? = nil, onNext: (() -> Void)? = nil
     ) {
         self.item = item
         self.side = side
@@ -44,7 +48,8 @@ struct NameClipCard: View {
         self.isPlaying = isPlaying
         self.isHidden = isHidden
         self.onOpen = onOpen
-        self.onTrash = onTrash
+        self.onPrevious = onPrevious
+        self.onNext = onNext
         _playback = StateObject(wrappedValue: ClipCardPlayback(
             asset: viewModel.sourceAsset,
             loadComposition: { [viewModel] geometry in await viewModel.videoComposition(for: geometry) },
@@ -58,8 +63,7 @@ struct NameClipCard: View {
                 .clipped()
                 .contentShape(Rectangle())
                 .onTapGesture { open(frame: proxy.frame(in: .global)) }
-                // The card's element is the picture itself, so its frame is the card's; the
-                // trash button over it stays an element of its own.
+                // The card's element is the picture itself, so its frame is the card's.
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(accessibilityLabel)
                 // The timeline's own words: the bar drawn over the picture has no other way to
@@ -67,14 +71,15 @@ struct NameClipCard: View {
                 .accessibilityValue(timelineDescription)
                 .accessibilityAddTraits(.isButton)
                 .accessibilityHint("Opens the clip in the editor")
-                .accessibilityAction(
-                    named: Text(ClipListAccessibility.trashActionName(isTrashed: false, isOriginal: false)), onTrash)
+                .accessibilityActions {
+                    if let onPrevious { Button("Previous clip", action: onPrevious) }
+                    if let onNext { Button("Next clip", action: onNext) }
+                }
                 .accessibilityIdentifier(accessibilityIdentifier)
         }
         .frame(width: side, height: side)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(alignment: .topLeading) { savedBadge }
-        .overlay(alignment: .topTrailing) { trashButton }
         .overlay(alignment: .bottom) { timeline }
         .opacity(isHidden ? 0 : 1)
         // Keyed by the geometry, not the item: a name given doesn't touch the loop, an editor
@@ -153,23 +158,6 @@ struct NameClipCard: View {
     }
 
     private static let iconDiameter: CGFloat = 32
-
-    private var trashButton: some View {
-        Button(action: onTrash) {
-            ZStack {
-                Circle().fill(Color.black.opacity(0.45))
-                Image(systemName: "trash")
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: Self.iconDiameter, height: Self.iconDiameter)
-            .touchTarget(insetBy: 6)
-        }
-        .buttonStyle(.plain)
-        .padding(8)
-        .accessibilityLabel("Discard clip")
-        .accessibilityIdentifier("name-clips-trash")
-    }
 
     /// Marks a clip already in Photos — only ever on screen after a save that partly failed, which
     /// leaves the screen up on a mix of landed and missing clips; a retry saves only the missing.

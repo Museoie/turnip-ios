@@ -4,9 +4,9 @@ import Foundation
 /// (docs/DESIGN.md pipeline steps 5-6), with the user's trash decision.
 ///
 /// `isTrashed` defaults to `false`: every clip starts untrashed. It's the original
-/// tile's own reversible flag — `ClipListViewModel.save()` reads it to decide
-/// whether to delete the source video from Photos — while a derived clip's trash
-/// button removes the item outright (`ClipListViewModel.delete(_:)`) instead of
+/// item's own reversible flag — `ClipListViewModel.save()` reads it to decide
+/// whether to delete the source video from Photos — while Name Clips' "Remove this
+/// clip" removes a derived clip outright (`ClipListViewModel.delete(_:)`) instead of
 /// setting this, so it never goes `true` on one in practice. `Identifiable` by a
 /// stable `id` (not the window times) so view state survives an edit that changes
 /// the window.
@@ -20,24 +20,23 @@ import Foundation
 /// since an edited clip is no longer the one that was saved; opening a clip and closing
 /// it unchanged leaves it set.
 ///
-/// `framingMode` is which of the editor's two framings the clip shows (`docs/UIUX.md` § "Two
-/// framing modes, Still and Follow"): `cropAdjustment` is Still's, `followCrop` Follow's. The
-/// clip keeps both, so the editor's switch can go back to either. A clip in Follow whose
-/// `followCrop` is still `nil` shows Auto follow's crop for its window, worked out where it is
-/// drawn (`ClipListViewModel.followCrop(for:)`): a detected clip starts that way when Settings'
-/// Follow the athlete is on.
+/// `framingMode` is which of the editor's framings the clip shows: `cropAdjustment` is Still's,
+/// `followCrop` Follow's. `ClipListViewModel` puts every clip it holds in Follow (`docs/UIUX.md`
+/// § "Clip Detail / Editor"). A clip in Follow whose `followCrop` is still `nil` shows Auto
+/// follow's crop for its window, worked out where it is drawn
+/// (`ClipListViewModel.followCrop(for:)`).
 ///
-/// `names`, `isMe` and `contributes` are what Name Clips gives a clip (`docs/UIUX.md` § "Name
-/// Clips"): its trick names with how each was given, whether it shows the user, and whether it
-/// goes to the farm once saved. `contributes` is only ever on while the clip has a name.
+/// `names` and `isMe` are what Name Clips gives a clip (`docs/UIUX.md` § "Name Clips"): its
+/// trick names with how each was given, and whether it shows the user. Whether its names go to
+/// the farm once saved is Settings' Contribute named clips, for every clip at once.
 /// `isAutoDetected` says the window is still the one detection proposed — the farm's
 /// `auto_detected` — and goes off for a clip added by hand or retrimmed in the editor.
 ///
 /// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
 /// stands for the source video already in Photos rather than a derived clip: it
 /// carries the full-video window and full-frame crop, is never opened in the
-/// editor, and its trash button is the reversible `isTrashed` toggle above rather
-/// than an outright removal.
+/// editor, and its trash is the reversible `isTrashed` flag above rather than an
+/// outright removal.
 struct ClipListItem: Hashable, Identifiable, Sendable {
     let id: UUID
     let window: TrickWindow
@@ -57,7 +56,6 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     let personID: Int?
     var names: [ClipName]
     var isMe: Bool
-    var contributes: Bool
     let isAutoDetected: Bool
 
     init(
@@ -65,7 +63,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         window: TrickWindow,
         cropRect: NormalizedRect,
         cropAdjustment: CropAdjustment = .identity,
-        framingMode: FramingMode = .still,
+        framingMode: FramingMode = .follow,
         followCrop: FollowCrop? = nil,
         isTrashed: Bool = false,
         isSaved: Bool = false,
@@ -73,7 +71,6 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         personID: Int? = nil,
         names: [ClipName] = [],
         isMe: Bool = true,
-        contributes: Bool = false,
         isAutoDetected: Bool = false
     ) {
         self.id = id
@@ -88,7 +85,6 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.personID = personID
         self.names = names
         self.isMe = isMe
-        self.contributes = contributes
         self.isAutoDetected = isAutoDetected
     }
 

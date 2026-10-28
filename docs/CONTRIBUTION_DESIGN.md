@@ -48,8 +48,8 @@ sequences, never from video.
   check: it is never a trusted device, and Apple reports every credential
   there as revoked, a just-issued one included.
 - **`video_id`** (§1.1) for Photos-backed videos, `VideoIdentity`.
-- **The contribute toggle** on Name Clips and **the confirmation sheet**
-  (§3.3), which opens once the save finishes, with the clips and their
+- **Settings' Contribute named clips switch** and **the confirmation
+  sheet** (§3.3), which opens once Name Clips' save finishes, with the clips and their
   names, the someone-else flag, the disclosure, and the pose-quality gate
   of §2.3 (warn over 30% gaps, refuse over 60%).
 - **The upload** (§5.1): register with the source key, PUT the gzipped TKP1
@@ -237,8 +237,9 @@ The flow rides the existing screens from `UIUX.md`:
 - **Name Clips** (`UIUX.md` §3a, `PROFILE_DESIGN.md` §4) — the screen an
   analysis lands on, one clip at a time, where clips are triaged (open
   in the editor, discard, add), named, contributed or not, and saved.
-  Each clip there carries its contribute toggle (§3.3). It took over
-  Clip List's triage on 2026-10-27 (`UIUX.md` §3).
+  Whether its saved, named clips are offered is Settings' Contribute
+  named clips switch (§3.3). It took over Clip List's triage on
+  2026-10-27 (`UIUX.md` §3).
 - **Clip Detail / Editor (§4)** — window trimming via the scrub-bar
   handles and crop editing are unchanged.
 - **The Profile's Clip view** (`PROFILE_DESIGN.md` §5.2) — a saved
@@ -260,13 +261,19 @@ Confirmation is the farm boundary: **only confirmed clips + labels are
 uploaded; nothing else ever is.** Discarded clips and the original
 video can never be confirmed.
 
-- Each clip on Name Clips, and each saved clip's Clip view in the
-  Profile, gains a **contribute toggle** ("Contribute this clip",
-  persisted in the clip library, default off, disabled until the clip
-  has a name). Toggling is per-clip opt-in. The Clip Editor gets none.
+- Name Clips has no toggle of its own: Settings' Contribution section
+  leads with one **Contribute named clips** switch (`UIUX.md` §1a,
+  default off) that decides for every clip at once. With it on, the
+  clips a Name Clips save writes that have a name, on a video with pose
+  analysis, go to the confirmation sheet; the sheet's Confirm is the
+  opt-in for exactly the clips it lists. Each saved clip's Clip view in
+  the Profile is planned to gain a **contribute toggle** ("Contribute
+  this clip", persisted in the clip library, default off, disabled until
+  the clip has a name). The Clip Editor gets none.
 - The **confirmation sheet** opens in two ways: by itself when the user
-  finishes Name Clips with any clip toggled — once the save has
-  finished, so saving and contributing stay separate steps — or from
+  finishes Name Clips with the switch on and a named clip saved — once
+  the save has finished, so saving and contributing stay separate
+  steps — or from
   the Profile's **"Contribute named clips"**, a list of named clips not
   yet contributed, each chosen individually. The sheet lists the clips
   with their trick-name chips, the payload summary ("pose keypoints,
@@ -558,8 +565,8 @@ identifiers, contacts, thumbnails, the video file itself, and the
 on-device personal layer with everything it learns from
 (`PERSONALIZATION_DESIGN.md` §7, §9).
 
-**Leaves only on explicit per-clip opt-in** (the Contribute
-confirmation, §3.3):
+**Leaves only on explicit opt-in** (Settings' Contribute named clips
+switch, then the confirmation sheet's Confirm, §3.3):
 - `video_id` — opaque deterministic ID (§1)
 - pose-format keypoint sequence — stick figures, no face, no background,
   no identity (residual honesty per the master plan: gait-from-keypoints

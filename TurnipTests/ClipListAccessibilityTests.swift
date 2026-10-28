@@ -56,19 +56,6 @@ final class ClipListAccessibilityTests: XCTestCase {
         XCTAssertEqual(ClipListAccessibility.gridLabel(clipCount: 0), "No clips")
     }
 
-    func testTrashActionNameSaysWhatTheTapWillDo() {
-        XCTAssertEqual(
-            ClipListAccessibility.trashActionName(isTrashed: false, isOriginal: false),
-            "Discard clip")
-        XCTAssertEqual(
-            ClipListAccessibility.trashActionName(isTrashed: false, isOriginal: true),
-            "Delete original after saving")
-        XCTAssertEqual(
-            ClipListAccessibility.trashActionName(isTrashed: true, isOriginal: true), "Restore")
-        XCTAssertEqual(
-            ClipListAccessibility.trashActionName(isTrashed: true, isOriginal: false), "Restore")
-    }
-
     func testDoneValueCountsWhatTheTapCommitsTo() {
         XCTAssertEqual(
             ClipListAccessibility.saveClipsValue(clipCount: 3, deletesOriginal: false),

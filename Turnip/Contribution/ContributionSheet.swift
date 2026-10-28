@@ -56,9 +56,10 @@ final class ContributionViewModel: ObservableObject {
     }
 }
 
-/// The contribution confirmation sheet (`docs/CONTRIBUTION_DESIGN.md` §3.3): the clips toggled on,
-/// with their names; what is sent and what never is; the disclosure the farm requires; sign-in
-/// when there is no session; and Confirm. Cancel sends nothing — the clips are already saved.
+/// The contribution confirmation sheet (`docs/CONTRIBUTION_DESIGN.md` §3.3): the saved, named
+/// clips Settings' Contribute named clips offers, with their names; what is sent and what never
+/// is; the disclosure the farm requires; sign-in when there is no session; and Confirm. Cancel
+/// sends nothing — the clips are already saved.
 struct ContributionSheet: View {
     @StateObject private var model: ContributionViewModel
     @ObservedObject private var account: FarmAccount

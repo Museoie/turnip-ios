@@ -18,8 +18,8 @@ final class TurnipSettingsStore: ObservableObject {
         static let autoAddToAlbum = "settings.autoAddToAlbum"
         static let albumName = "settings.albumName"
         static let analysisGranularity = "settings.analysisGranularity"
-        static let followAthlete = "settings.followAthlete"
         static let personMode = "settings.personMode"
+        static let contributesClips = "settings.contributesClips"
     }
 
     private let defaults: UserDefaults
@@ -34,11 +34,11 @@ final class TurnipSettingsStore: ObservableObject {
         didSet { defaults.set(albumName, forKey: Key.albumName) }
     }
     @Published private(set) var analysisGranularity: Int
-    @Published var followAthlete: Bool {
-        didSet { defaults.set(followAthlete, forKey: Key.followAthlete) }
-    }
     @Published var personMode: PersonMode {
         didSet { defaults.set(personMode.rawValue, forKey: Key.personMode) }
+    }
+    @Published var contributesClips: Bool {
+        didSet { defaults.set(contributesClips, forKey: Key.contributesClips) }
     }
 
     /// `defaults` is injectable so tests exercise a real round trip against an isolated
@@ -52,14 +52,14 @@ final class TurnipSettingsStore: ObservableObject {
             autoAddToAlbum: defaults.object(forKey: Key.autoAddToAlbum) as? Bool ?? false,
             albumName: defaults.string(forKey: Key.albumName) ?? TurnipSettings.defaultAlbumName,
             analysisGranularity: storedGranularity ?? TurnipSettings.defaultGranularity,
-            followAthlete: defaults.object(forKey: Key.followAthlete) as? Bool ?? false,
-            personMode: defaults.string(forKey: Key.personMode).flatMap(PersonMode.init(rawValue:)) ?? .one)
+            personMode: defaults.string(forKey: Key.personMode).flatMap(PersonMode.init(rawValue:)) ?? .one,
+            contributesClips: defaults.object(forKey: Key.contributesClips) as? Bool ?? false)
         analysisMode = loaded.analysisMode
         autoAddToAlbum = loaded.autoAddToAlbum
         albumName = loaded.albumName
         analysisGranularity = loaded.analysisGranularity
-        followAthlete = loaded.followAthlete
         personMode = loaded.personMode
+        contributesClips = loaded.contributesClips
     }
 
     /// The Settings screen's stepper goes through this rather than a plain `@Published` setter,
@@ -82,7 +82,7 @@ final class TurnipSettingsStore: ObservableObject {
             autoAddToAlbum: autoAddToAlbum,
             albumName: albumName,
             analysisGranularity: analysisGranularity,
-            followAthlete: followAthlete,
-            personMode: personMode)
+            personMode: personMode,
+            contributesClips: contributesClips)
     }
 }

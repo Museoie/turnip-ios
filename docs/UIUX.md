@@ -1,12 +1,14 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
-*Rev 22 · 2026-10-27 · The root pager's third page, Profile, is built
-(Root navigation; its screens in [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md)
-§5), with a third icon on the floating bar. Name Clips' save now writes each
-saved clip into the on-device clip library (§3a), and the Profile's "Needs a
-name" names clips saved without names on a screen of their own that shares
-Name Clips' naming controls and ends in "Done". The names in each exported
-file stay planned.*
+*Rev 23 · 2026-10-28 · Name Clips (§3a) loses its per-clip controls that
+weren't naming: the "Contribute this clip" toggle becomes Settings' one
+**Contribute named clips** switch (§1a), the card's trash button gives way to
+"Remove this clip" in the header's "…" menu, which no longer offers to delete
+the original, and "Save Clips" is the only button on every clip, with no
+"Skip", "Next" or "Save now". A swipe between clips holds the page's own
+vertical scroll still. The Clip Detail / Editor (§4) has no Still | Follow
+switch and no Delete: every clip is in Follow, and Settings' Follow the
+athlete is gone.*
 
 *Rev 21 · 2026-10-27 · Clip List is retired: an analysis lands on Name Clips
 (§3a), which now carries the triage Clip List did. Tapping the clip opens the
@@ -76,7 +78,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -136,7 +138,7 @@ Where it applies today:
 | Tile ↔ Processing (§1, §2) | Swipe down anywhere on the page | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
 | Name Clips card ↔ Clip Editor (§3a, §4) | Swipe down above the crop marker | Back chevron | Same, with the card showing the editor's own player |
 | Home ↔ Profile (Root navigation) | Horizontal page swipe | Floating bar's gallery / profile icons | The pager's horizontal slide (`RootTabView.slide(to:)`) |
-| Name Clips, one clip ↔ the next (§3a) | Horizontal swipe | "Next" / "Skip" | The page slide between clips (`NameClipsView.go(to:)`) |
+| Name Clips, one clip ↔ the next (§3a) | Horizontal swipe | The card's VoiceOver actions, Previous clip / Next clip (no button on screen) | The page slide between clips (`NameClipsView.go(to:)`) |
 | Profile ↔ its pushed screens — a trick's clips, the Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe from the left edge | Back button | The navigation push and pop |
 | Needs a name, one clip ↔ the next ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4.1) | Horizontal swipe | "Next" / "Skip" | The page slide between clips (`LibraryNamingView.go(to:)`) |
 | *Planned:* Profile clip tile ↔ Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §7) | Swipe down | Back chevron | The tile's expansion card, showing the clip's own player, in place of the push |
@@ -183,7 +185,6 @@ Where it applies today:
 | Clip Editor crop fit (§4) | Pinch / rotate / drag the video under the marker | "Auto crop" | The video's scale, rotation and offset about the crop center, eased over 0.4 s |
 | Clip Editor leveling (§4) | Two-finger rotate | "Auto rotate" | The video's rotation about the crop center, eased over 0.4 s |
 | Clip Editor follow fit (§4) | Drag, pinch or turn the video at a few moments in Follow mode | "Auto follow", "Apply zoom and turn to all keyframes", removing a keyframe, and an untouched Auto follow re-tracking a trimmed window | The video's position, zoom and turn eased over 0.4 s to the curves at the playhead, then the curves play |
-| Clip Editor framing mode (§4) | Pinch, rotate and drag | The "Still \| Follow" switch | The video's scale, rotation and offset moving from one mode's framing to the other's, eased over 0.4 s |
 
 This is the companion of the principle above: that one says a button plays
 the gesture's *transition*; this one says an automatic change plays the
@@ -207,9 +208,8 @@ flowchart TD
     E2 -->|retry / back to Home| A
     N -->|tap the clip| D[Clip Detail / Editor]
     D -->|back, commits edits| N
-    D -->|delete| N
     N -->|back| A
-    N -->|Save Clips or Save now, then contribution sheet if any clip is toggled| A
+    N -->|Save Clips, then contribution sheet if Contribute named clips is on| A
     P -->|Needs a name| NN[Needs a name]
     NN -->|Done / back| P
     P -->|gallery row, then a tile| CV[Clip view]
@@ -351,7 +351,7 @@ default empty state, so it never reads as "your library is empty."
   and the gear is a `ScrimIconButton` (`HomeSettingsButton`) in a corner overlay row, level with
   the wordmark. Presented as a sheet, not pushed onto the flow's `NavigationStack`: it has nothing
   to hand back to Home and isn't part of "pick a video, get clips."
-- Five preferences on this screen, `UserDefaults`-backed (`Turnip/Settings/TurnipSettingsStore.swift`),
+- Three preferences on this screen, `UserDefaults`-backed (`Turnip/Settings/TurnipSettingsStore.swift`),
   each taking effect at its own integration point rather than needing a restart:
   - **Analysis mode** (segmented Real-time / Offline) — whether the camera scores pose live while
     recording (§1b below) or always defers to Processing (§2). Real-time is the default.
@@ -362,24 +362,20 @@ default empty state, so it never reads as "your library is empty."
   - **Analysis granularity** (stepper, 1-30, default 10) — frames sampled per second of footage,
     replacing the fixed rate `docs/DESIGN.md`'s "Performance targets" describes; both the file
     path and the live path (§1b) sample at this rate.
-  - **Follow the athlete** (toggle, off by default) — the framing mode a detected clip starts
-    in (§4): off starts it in Still, one framing held for the whole clip; on starts it in
-    Follow with Auto follow applied, its crop moving with the athlete through the trick
-    (`docs/DESIGN.md` pipeline step 6, "Follow crop in the editor"). Read once when the Clip
-    List opens, so the tiles, their looping previews and Save Clips agree on it. The editor
-    keeps either mode, so a clip adjusted in Follow mode still follows. The original tile and a
-    "+" clip start in Still, and a clip whose path never moves plays as a still crop in either
-    mode.
-- A sixth preference lives in the same store but not on this screen: **person mode** (One
+- A fourth preference lives in the same store but not on this screen: **person mode** (One
   person / Everyone, default One person), whose tricks a take or an analysis is cut into clips
   for. It is chosen where it takes effect, on the camera before recording (§1b) and on
   Processing before "Analyze clips" (§2), and remembered between them.
 - Under the preferences, when the build points at a farm (`TURNIP_FARM_ENDPOINT`), a
-  **Contribution** section: Sign in with Apple while signed out; "Signed in with Apple", Sign
-  Out and Delete Account once signed in, deletion confirming with the farm's disclosure first
-  ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §5.4). It is an account, not a
-  preference, and nothing outside contribution reads it.
-- Further settings beyond these six are out of scope for this doc's current revision.
+  **Contribution** section. It leads with a fifth preference, **Contribute named clips**
+  (switch, off by default): with it on, Name Clips' save (§3a) opens the contribution
+  confirmation sheet for the saved clips that have a name, on a video with pose analysis, and
+  nothing is sent until the user confirms there
+  ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §3.3). Read when the save finishes. Under
+  it, the account: Sign in with Apple while signed out; "Signed in with Apple", Sign Out and
+  Delete Account once signed in, deletion confirming with the farm's disclosure first
+  (§5.4). The account is not a preference, and nothing outside contribution reads it.
+- Further settings beyond these five are out of scope for this doc's current revision.
 
 ### 1b. Camera
 
@@ -484,16 +480,16 @@ triage moved into Name Clips (§3a), one clip at a time, and the grid is gone:
 |---|---|
 | A tile per detected clip, looping its window | The page's card, looping its window at a fixed size |
 | Tap a tile → the editor | Tap the card → the editor, by the same expansion flight |
-| A derived tile's trash | The card's trash button |
+| A derived tile's trash | The header's "…" menu: "Remove this clip" |
 | The "+" tile | The header's "+" |
-| The original tile's trash ("Will be deleted") | The header's "…" menu: "Delete original after saving", and a notice above the save |
+| The original tile's trash ("Will be deleted") | Nothing: Name Clips doesn't delete the original |
 | The read-only range timeline on each tile | The same timeline over the card's bottom edge |
 | The saved-to-Photos checkmark after a partial failure | The same checkmark on the card |
 | "No tricks found" notice over a near-empty grid | Name Clips' empty state |
-| "Save Clips" / "Save without names" | "Save Clips" on the last clip, "Save now" before it |
+| "Save Clips" / "Save without names" | "Save Clips", on every clip |
 
 The original video no longer has a tile of its own: nothing on the screen
-edits it, and marking it for deletion is the one thing it offered.
+edits it, and marking it for deletion, the one thing it offered, is gone too.
 
 ### 3a. Name Clips *([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4)*
 
@@ -519,9 +515,6 @@ edits it, and marking it for deletion is the one thing it offered.
     — the same tap-to-expand transition Home uses to reach Processing
     ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) — and back into
     the card, which waits hidden at its own frame while the clip is open;
-  - a trash button in its top-trailing corner discards the clip outright, with
-    no restore, and the next clip slides into its place (the previous one when
-    it was the last); the editor's Delete does the same;
   - a thin, read-only timeline over its bottom edge spans the whole video with
     the clip's window highlighted. It isn't draggable — trimming happens in the
     editor. VoiceOver reads it as the card's value ("Clip from 3.0s to 4.5s of
@@ -531,10 +524,10 @@ edits it, and marking it for deletion is the one thing it offered.
     no tap: the corner still opens the editor.
 - The header: the back chevron, the counter ("2 of 4"), a "+" that adds a new
   full-frame clip over the first seconds of the video and slides to it for the
-  user to trim in the editor, and a "…" menu with "Delete original after
-  saving". With that on, a red line above the save says "The original video
-  will be deleted after saving." On iOS 26 the "+" and the menu are two glass
-  circles, split by a fixed spacer as on Home.
+  user to trim in the editor, and a "…" menu with "Remove this clip", which
+  discards the clip on screen outright, with no restore; the next clip slides
+  into its place (the previous one when it was the last). On iOS 26 the "+"
+  and the menu are two glass circles, split by a fixed spacer as on Home.
 - A video analyzed following everyone (§2) has a clip per person's trick, in
   start order, so two clips can cover the same moment; each card's crop frames
   its own person, and nothing else marks whose clip it is.
@@ -554,22 +547,18 @@ edits it, and marking it for deletion is the one thing it offered.
     a near miss of a vocabulary name; a tap puts the vocabulary's spelling in
     its place;
   - who's in it — me (default) or someone else. The first clip's choice
-    carries to the rest of the video's clips; any clip can change it;
-  - when the build points at a farm, a "Contribute this clip" toggle, off by
-    default and disabled until the clip has a name, and for a clip added by
-    hand, which has no pose to send
-    ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §3.3).
+    carries to the rest of the video's clips; any clip can change it.
 - Horizontal paging: a swipe left goes to the next clip, a swipe right to the
-  previous one, and the "Next" button plays the same slide (see "A gesture and
-  its button play one animation"). As on Processing (§2), the paging owns every
-  horizontal drag — there is no edge-swipe back, only the chevron — and at the
-  first or last clip the page gives only a little. A drag that starts vertical
-  scrolls the page instead and never pages. The button reads "Skip" while the
-  clip has no name; naming is never required.
-- On the last clip the button reads "Save Clips": it exports and saves every
-  clip not yet in Photos under a full-screen spinner, deletes the original
-  from Photos if it was marked — only once every clip has confirmed it saved,
-  so a failure can't cost the user's only copy of a trick — and pops to Home.
+  previous one; there is no button for it on screen, and the card's VoiceOver
+  actions, Previous clip and Next clip, play the same slide. As on Processing (§2), the paging
+  owns every horizontal drag — there is no edge-swipe back, only the chevron —
+  and at the first or last clip the page gives only a little. A drag that
+  starts vertical scrolls the page instead and never pages, and one that starts
+  horizontal holds the page's own scroll still while it slides, so a swipe
+  that drifts up or down moves the page sideways only. Naming is never
+  required.
+- Every clip's button reads "Save Clips": it exports and saves every clip not
+  yet in Photos under a full-screen spinner and pops to Home.
   A clip that fails leaves the screen up with an alert naming the failure, and
   the retry saves only what is still missing; a clip edited after a partial
   failure loses its checkmark and is written again, and the pre-edit copy stays
@@ -578,15 +567,12 @@ edits it, and marking it for deletion is the one thing it offered.
   on-device clip library ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §2) with
   the names and who's-in-it it has — a partial failure records what landed,
   and the retry records names given since — before the original is deleted.
-  *Planned:* each clip's names also in its exported file (§3.2 there). Under
-  the button, from the first clip on, a quieter "Save now"
-  (`PrimaryActionBar`'s secondary) saves at once and leaves the clips not
-  reached yet unnamed, so a long take never costs a row of Skips. *(Judgment
-  call.)* It steps aside while the name field has focus, to leave the keyboard
-  room. A name typed and left without pressing return still counts: "Next", a
-  swipe, the chevron, opening the editor and a save all commit it as typed. If
-  any saved clip was toggled to contribute, the contribution confirmation sheet
-  opens once the save has finished, before Home; "Not Now" sends nothing.
+  *Planned:* each clip's names also in its exported file (§3.2 there). A name
+  typed and left without pressing return still counts: a swipe, the chevron,
+  opening the editor and a save all commit it as typed. With Settings'
+  Contribute named clips on (§1a), when a saved clip has a name and the video
+  has pose analysis, the contribution confirmation sheet opens once the save
+  has finished, before Home; "Not Now" sends nothing.
 - When the name field has focus, the page scrolls the field and the
   suggestions above the keyboard, and keeps them there as names are added;
   the card scrolls up with the page rather than shrinking.
@@ -594,7 +580,7 @@ edits it, and marking it for deletion is the one thing it offered.
   so naming them is a screen of its own (`LibraryNamingView`) with this
   screen's naming controls and paging but no editor, triage or save: each
   card loops the saved clip, names go to the clip library as they are given,
-  the last button reads "Done", and there is no "Save now". It pages through
+  and the last button reads "Done". It pages through
   the clips that needed a name when it opened, so a clip named there stays
   put rather than leaving the pager under the user's finger.
 
@@ -692,11 +678,6 @@ edits it, and marking it for deletion is the one thing it offered.
     photo/video trim gesture): near the track it tracks the touch 1:1; drag
     away and the same finger movement moves it a smaller fraction of the way,
     for fine control. Moving back to the track snaps to full speed again.
-  - A Delete button at the top-right corner discards the clip — the same
-    removal the card's own trash button performs (§3a). Unlike the back
-    chevron below, Delete fades the screen out in place rather than flying
-    back to the card, since the card it would land on no longer holds this
-    clip; Name Clips shows the next clip in its place.
   - Back to Name Clips commits the edits and shrinks the screen back into its
     card — the reverse of the tap that opened it, no separate "save" step
     needed since edits are held in view state until back-navigation. A swipe
@@ -705,29 +686,26 @@ edits it, and marking it for deletion is the one thing it offered.
     sole ownership of the band the marker sits in, and below the marker the
     buttons, the scrub bar and their margins never dismiss, so a drag that
     slips off a control goes nowhere. The screen draws that top row (back
-    chevron, title, Delete) as its own content rather than a navigation bar,
+    chevron, title) as its own content rather than a navigation bar,
     the same way Processing does, so no bar sits over the swipe band — laid
     out in the band a bar would occupy, with the chevron and title at the same
     positions as Name Clips', so the two headers line up through the
     cross-fade (`ScreenHeaderBand`; every bar-less screen's corner controls
-    share the same placement). The title's slot holds the Still | Follow switch
-    instead (below).
+    share the same placement). The title stays the screen's VoiceOver header,
+    drawn clear, so the row shows the chevron alone. There is no Delete: a clip
+    is removed from Name Clips' menu (§3a).
   - **Two framing modes, Still and Follow** (Rev 16). A clip's crop
     either holds one framing for the whole clip (Still: everything above) or
-    moves with the athlete (Follow). The UI presents them as two modes, not as
-    an effect switched on and off:
-    - **The switch.** A segmented control, "Still | Follow", takes the title's
-      slot in the top row; the chevron and Delete stay where they are. Naming
-      both sides is what makes it read as a choice between two modes. It costs
-      two things, both accepted: the control claims a touch that starts on it,
-      so a swipe down from there doesn't dismiss (one that starts anywhere else
-      in the band still does); and through the expansion cross-fade it fades in
-      at the title's slot rather than lining up with Name Clips' counter. The
-      screen keeps "Edit clip" as its VoiceOver header. A clip opens in the mode
-      it was last committed in. A detected clip that hasn't been opened yet
-      starts in the mode Settings' Follow the athlete gives it (§1a); a "+" clip
-      starts in Still. Rejected: a mode row above the crop buttons, which would
-      shorten every clip's marker, Still mode's included.
+    moves with the athlete (Follow).
+    - **Every clip is in Follow** (Rev 23). There is no switch: a detected
+      clip, a "+" clip and a clip of a video that skipped analysis all open in
+      Follow, and Settings has no Follow the athlete. A clip with no follow
+      crop of its own opens on Auto follow's for its window, or, with no pose
+      analysis, on the whole frame held still with Reset follow alone. Still's
+      framing, its buttons and its gestures above stay in the editor's code,
+      but no clip reaches them. Before Rev 23 a segmented "Still | Follow"
+      control took the title's slot and a detected clip started in the mode
+      Settings' Follow the athlete gave it.
     - **What a follow crop is.** A few keyframes, each a moment of the source
       (in seconds, not frame numbers) and the whole crop at that moment, as a
       still crop holds it for the clip: where the video sits under the marker,
@@ -744,8 +722,7 @@ edits it, and marking it for deletion is the one thing it offered.
       to an unchanged Auto rotate. A follow lane appears between the buttons and
       the trim timeline, which still spans the whole video and works as above.
       The lane takes about 44 pt from the stage, so Follow mode's marker is that
-      much shorter (about 7% on a 6.9" iPhone), and switching modes animates the
-      marker and the video to their new size. The marker is the same size at
+      much shorter (about 7% on a 6.9" iPhone). The marker is the same size at
       the same place for every clip in the same mode, and the expansion flight
       lands on whichever marker the editor reports.
     - **The follow lane.** It spans the trim window, not the video, so a
@@ -779,10 +756,8 @@ edits it, and marking it for deletion is the one thing it offered.
       keyframe" below). Like Auto crop, it keeps the turn, replaces the zoom
       and the positions, and discards keyframes the user set. The video moves to the
       path at the playhead over the same 0.4 s ease and then follows it.
-      Switching a detected clip to Follow when it has no follow crop yet runs
-      Auto follow at once: Follow means following the athlete, and waiting for
-      a second tap would show a still crop under a Follow label. The button then
-      reads "Reset follow", and the toggle rules are Auto crop's: any manual
+      A clip that opens with no follow crop of its own opens on Auto follow's,
+      so the button reads "Reset follow", and the toggle rules are Auto crop's: any manual
       pinch, rotate, drag or keyframe change returns it and Auto rotate to
       offering their fits; a trim does not.
     - **Reset follow.** Returns to the whole source frame centered in the
@@ -800,12 +775,6 @@ edits it, and marking it for deletion is the one thing it offered.
       follow" in a notice where "No horizon
       found" appears. Follow stays usable by hand: pinch in, then drag at a few
       moments.
-    - **Switching back and forth.** Each mode keeps its own framing for the
-      editor session, so Still → Follow → Still lands on the same still
-      framing, and the switch moves the video from one framing to the other
-      over the 0.4 s ease. Back (the chevron or the swipe) commits the active
-      mode, and the clip keeps the other mode's framing too, so a later switch
-      finds it.
     - **Trim.** A trim never moves a keyframe the user set or moved: a trim is
       not a re-crop (Rev 8). One deliberate exception: a follow crop that is
       still entirely Auto follow's, every diamond hollow, re-tracks the new
@@ -820,8 +789,7 @@ edits it, and marking it for deletion is the one thing it offered.
       the card is the editor's own player. Save Clips, the tile's loop and its
       poster draw the same curve (`DESIGN.md` step 6), so what the editor shows
       is what export writes.
-    - **VoiceOver.** The switch is a standard segmented control. In Follow mode
-      the crop area's zooms, turns and moves set the keyframe at the playhead,
+    - **VoiceOver.** The crop area's zooms, turns and moves set the keyframe at the playhead,
       as the gestures do, Reset follow stands in for Reset crop, and the crop
       area adds Previous keyframe, Next keyframe, Add keyframe, Remove keyframe
       and Apply zoom and turn to all keyframes to its actions. The
@@ -1021,3 +989,17 @@ Resolved 2026-09-04.
    a name, the keyboard — resizes it, and the clip beside the current one
    waits paused on its first frame, so a swipe never shows a poster that cuts
    to the video.
+10. **Name Clips one button; contributing in Settings; every clip in Follow →
+   Changed.** Recorded 2026-10-28 (Rev 23): Name Clips keeps only what names
+   a clip on the page. The per-clip contribute toggle becomes Settings'
+   Contribute named clips switch, with the confirmation sheet's Confirm still
+   the opt-in for the clips it lists; the card's trash button and the
+   editor's Delete become "Remove this clip" in the header's menu, which no
+   longer marks the original for deletion; and "Skip", "Next" and "Save now"
+   give way to "Save Clips" on every clip, the swipe (and, for VoiceOver, the
+   card's Previous clip / Next clip actions) moving between clips. The
+   editor's Still | Follow switch goes: every clip is in Follow, so Settings'
+   Follow the athlete goes with it. Given up: contributing some named clips
+   of a video and not others from Name Clips, deleting the original from the
+   app, and a still crop for a clip — Still's code stays in the editor, but
+   no clip reaches it.

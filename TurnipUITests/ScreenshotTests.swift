@@ -113,42 +113,43 @@ final class ScreenshotTests: XCTestCase {
         addScreenshot(named: "clip-list-media")
     }
 
-    /// The original video is marked for deletion from the header's "More" menu — the clip
-    /// screen has no tile of its own for it — and the screen then says in words, above the
-    /// save, what saving will do.
-    func testDeleteOriginalMenuSaysTheOriginalWillBeDeleted() throws {
+    /// The header's "More" menu removes the clip on screen outright, with no restore: the pager
+    /// counts one clip fewer and the one after it takes its place. The menu holds nothing about
+    /// the original video, and the card carries no trash button of its own.
+    func testMoreMenuRemovesTheClipOnScreen() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
         XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
-        let notice = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "identifier == 'original-deletion-notice'"))
-            .firstMatch
-        XCTAssertFalse(notice.exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "clip-card-1").firstMatch
+            .waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons.matching(identifier: "name-clips-trash").firstMatch.exists)
         let more = app.buttons["name-clips-more"]
         XCTAssertTrue(more.waitForExistence(timeout: 5))
         more.tap()
-        let option = app.buttons["Delete original after saving"].firstMatch
-        XCTAssertTrue(option.waitForExistence(timeout: 5))
-        option.tap()
+        XCTAssertFalse(app.buttons["Delete original after saving"].exists)
+        let remove = app.buttons["Remove this clip"].firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 5))
+        addScreenshot(named: "name-clips-more-menu")
+        remove.tap()
 
-        XCTAssertTrue(notice.waitForExistence(timeout: 5))
-        addScreenshot(named: "clip-list-original-trashed")
+        XCTAssertTrue(app.navigationBars["1 of 1"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Restore clip"].exists)
     }
 
-    /// A clip's trash button discards it outright, with no restore: the pager counts one
-    /// clip fewer and the one after it takes its place.
-    func testTrashButtonRemovesADerivedClipImmediately() throws {
+    /// Every clip, not only the last, offers the one button that saves them all — no Skip, Next
+    /// or Save now beside it.
+    func testEveryClipOffersSaveClips() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
         XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
-        let trash = app.buttons.matching(NSPredicate(format: "identifier == 'name-clips-trash'")).firstMatch
-        XCTAssertTrue(trash.waitForExistence(timeout: 15))
-        trash.tap()
-
-        XCTAssertTrue(app.navigationBars["1 of 1"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["Restore clip"].exists)
+        let primary = app.buttons["name-clips-primary"].firstMatch
+        XCTAssertTrue(primary.waitForExistence(timeout: 5))
+        XCTAssertEqual(primary.label, "Save Clips")
+        for label in ["Skip", "Next", "Save now"] {
+            XCTAssertFalse(app.buttons[label].exists, "\(label) is still on the first clip")
+        }
     }
 
     /// Auto crop and Auto rotate are toggles: each tap puts its fit on screen and the same
