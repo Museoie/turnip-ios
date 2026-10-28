@@ -58,7 +58,9 @@ in the store.
   own video file in their Photos library. If the user
   marks the original video for deletion on Name Clips, the original is deleted
   from Photos too — a user-initiated, on-device change to their own library,
-  not data leaving the device.
+  not data leaving the device. Saved clips' trick names, whether each shows
+  the user, and the Profile's achievements are kept in an on-device library
+  ("The clip library and the Profile" below) and never sent anywhere.
 - Nothing is uploaded, shared, or transmitted to any Turnip-controlled server.
 
 ## Privacy manifest (`Turnip/Resources/PrivacyInfo.xcprivacy`)
@@ -89,7 +91,7 @@ Apple rejects undeclared usage, not an unused declaration.
 | UserDefaults | Yes — CA92.1 | `TurnipSettingsStore` reads four keys in `init` and writes through to `UserDefaults` on every published change; `TurnipSettingsStore.shared` takes the `.standard` suite. All four keys are app-local — no app group, no shared suite outside the screenshot and preview harnesses — which is what CA92.1 approves. |
 | File timestamps | Yes — C617.1 | `PhotoVideoResolver.deleteOrphanedTemporaryExports` reads `.creationDateKey` via `resourceValues(forKeys:)` on files in the app's own `tmp/` container — in-container metadata reads, declared with approved reason C617.1. (`PHAsset.creationDate` is PhotoKit metadata on user-granted assets, not a file-timestamp API.) |
 | System boot time | Yes — 35F9.1 | `ProgressReportClock.shouldReport` (in `ProcessingPipeline.swift`) defaults its clock to `ProcessInfo.processInfo.systemUptime` to measure elapsed time between in-app progress reports; `LivePoseRecording` and `LivePoseFrameTap` read the same clock for inference timing and thermal accounting. All in-app elapsed-time measurement — declared with approved reason 35F9.1. |
-| Disk space | No | No volume-capacity resource keys and no `statfs` family call sites. A free-space check before rendering a highlight or writing the planned clip library would change this row (see "Planned" below). |
+| Disk space | No | No volume-capacity resource keys and no `statfs` family call sites. The clip library is written without one. A free-space check before rendering a highlight or writing the library would change this row (see "The clip library and the Profile" below). |
 | Active keyboards | No | The category covers querying `UITextInputMode.activeInputModes`, which nothing does. `SettingsView` has one `TextField` for the album name; presenting a keyboard is not the declarable access. |
 
 Third-party SDKs: the only dependency is `TensorFlowLiteSwift`
@@ -217,24 +219,48 @@ a contribution's last edit), `NSPrivacyCollectedDataTypes` in the manifest,
 `site/privacy.html`, and the Photos usage string. `ITSAppUsesNonExemptEncryption`
 stays `NO`: HTTPS only.
 
-## Planned: the clip library and the Profile (not built)
+## The clip library and the Profile (core built; the rest planned)
 
 The first v2 release (master plan Phase 2a; [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md))
 changes on-device data handling only. Nothing below is collected in the App
 Store sense: it is processed and stored on the device, and none of it is sent
 to a Turnip-controlled server.
 
-- **No network of its own.** The library adds no farm call. The vocabulary
-  fetch it suggests names from arrived with contribution (above): it carries
-  no identifier and no session, and the farm's access logs, kept 30 days at
-  most (`BACKEND_DESIGN.md` §8), are its only record.
-- **The first persistent user data.** The clip library — saved clips' trick
-  names, whether each shows the user, favorites, spot names, dates, a copy of
-  the source video's location when it has one, and each source's pose
-  keypoint sequence — lives in `Application Support/`: not `Documents/`,
-  which stays empty, and not `Caches/`, since the pose there is the only copy
-  once the save has deleted an original. It is in the user's iCloud and
-  Finder device backups, which is how it survives a reinstall.
+Built (`Turnip/Profile/`):
+
+- **No network of its own.** The library and the Profile make no call. The
+  vocabulary naming suggests from arrived with contribution (above): it
+  carries no identifier and no session, and the farm's access logs, kept 30
+  days at most (`BACKEND_DESIGN.md` §8), are its only record. The Profile
+  reads the vocabulary already held and fetches nothing.
+- **The first persistent user data.** `ClipLibrary` keeps one JSON file,
+  `Application Support/ClipLibrary/library.json`, written by Name Clips' save
+  and by naming on the Profile: for each video that produced a saved clip,
+  its Photos identifier, recording date and duration; for each saved clip,
+  its clip ID, window in seconds, its own Photos identifier, trick names,
+  whether it shows the user, whether detection found it, and its date; and
+  the levels and rep milestones earned. Not `Documents/`, which stays empty,
+  and not `Caches/`: it is in the user's iCloud and Finder device backups,
+  which is how it survives a reinstall today. A file the app can't read is
+  renamed `library-unreadable-<date>.json` beside it rather than overwritten.
+  Deleting the app deletes it.
+- **New read, no new prompt.** `PHAsset.creationDate` of the video a save
+  came from, under the existing Photos grant, to date its clips. The Profile
+  also shows each saved clip's thumbnail and plays it from Photos by its
+  identifier, and the Clip view can delete a clip's video through the same
+  `PHAssetChangeRequest.deleteAssets` path (and system confirmation) Name
+  Clips uses for an original.
+- **Required-reason APIs.** None added: the library is written with
+  `Data.write(options: .atomic)` and read back whole; it reads no file
+  timestamps and checks no free space.
+
+Planned:
+
+- **More in the library.** Each source's pose keypoint sequence, a copy of
+  the source video's location when it has one, spot names and favorites
+  join the same file's directory in `Application Support/`: not `Caches/`,
+  since the pose there is the only copy once the save has deleted an
+  original.
 - **Data written into the user's own files.** Each clip Save Clips exports
   carries a small Turnip metadata item (its clip ID, trick names, and whether
   it shows the user) and is named `turnip-clip-<clip_id>.mov`, the same
@@ -242,10 +268,10 @@ to a Turnip-controlled server.
   app carries both; Turnip's own Share action, when it lands, strips them. No
   photo-library identifier, `source_id` or location is written into a file.
 - **New reads, no new prompt.** Under the existing Photos grant:
-  `PHAsset.creationDate`, `PHAsset.location`, `PHAsset.isFavorite`, and
-  `PHAssetResource.originalFilename`. No location permission is requested:
-  Turnip's own camera records no location, so its takes get a place only
-  when the user names one.
+  `PHAsset.location`, `PHAsset.isFavorite`, and
+  `PHAssetResource.originalFilename` (`creationDate` is read already). No
+  location permission is requested: Turnip's own camera records no
+  location, so its takes get a place only when the user names one.
 - **Temp files.** Highlight videos render to `tmp/turnip-highlight-<uuid>.mov`
   only for Save or Share and are deleted afterwards; the launch-time orphan
   sweep (`PhotoVideoResolver.deleteOrphanedTemporaryExports`) has to learn

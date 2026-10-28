@@ -240,21 +240,47 @@ Not yet, from the plan:
 - The disabled contribute toggle shows why in a footnote under it, which VoiceOver reads as a
   separate element rather than as part of the switch.
 
-### Profile (planned — `PROFILE_DESIGN.md` §5–§8)
+### Profile (`PROFILE_DESIGN.md` §5–§7)
 
-- Reached by the floating bar's profile icon (`accessibilityLabel` "Profile") as well as
-  the page swipe, so it never depends on a gesture.
-- Each achievement card is one element: "Gainer, level 2, 7 of 10 sessions to level 3",
-  `.isButton`. Progress bars carry the same figures as `accessibilityValue`; the bar's fill
-  is never the only signal.
-- An achievement reached is announced once, when it is earned, not on every visit.
-- Gallery tiles follow Name Clips' card rules: one element per tile, no auto-playing loops under
-  Reduce Motion or with video autoplay off.
+Built:
+
+- Reached by the floating bar's profile icon ("Profile", `tab-profile`) as well as the page
+  swipe, so it never depends on a gesture.
+- "Your Profile stays on this iPhone." is on the page itself, as text.
+- "Needs a name" is one element and a button: "Needs a name, 3 clips". Its screen keeps Name
+  Clips' rules: the title is the count ("2 of 5"), paging has buttons ("Skip" / "Next",
+  "Done" on the last clip), the back chevron is labeled "Back to Profile", and the naming
+  controls are Name Clips' own.
+- Each achievement card is one element: label "Gainer, level 2", value "2 of 3 sessions to
+  level 3" (a reps card: "Gainer, 10 reps", "14 of 50 reps"). The bar's fill is never the only
+  signal: the same figures are printed under it. The cards don't open anything yet, so they
+  carry no button trait.
+- An achievement is announced once, as it is earned: appended to Name Clips' save
+  announcement ("Saved 2 clips to Photos. Earned Gainer, level 1"), or spoken as the name that
+  earns it is given on Needs a name or the Clip view.
+- Each gallery row is one element and a button: "Gainer, 3 clips". A trick's grid announces the
+  same on entry, and each tile is one element: its names, length and date, then "someone else"
+  for a clip marked so and "video not in Photos" once its video is gone.
+- The Clip view's player never auto-plays under Reduce Motion or with video autoplay off; its
+  play/pause button ("Play" / "Pause") is a 44 pt target. Needs a name's cards follow the same
+  rule. "Delete Clip" asks first, naming both choices ("Remove from Profile", "Remove and
+  Delete Video from Photos").
+- While an iCloud-only clip downloads, its player says "Downloading from iCloud…" with the
+  progress as its value ("42 percent"); a failed download says so in words, with "Try Again".
+- Identifiers: `tab-profile`, `profile`, `profile-privacy-note`, `profile-empty`,
+  `needs-a-name`, `needs-a-name-screen`, `needs-a-name-primary`, `needs-a-name-back`,
+  `achievement-<trick>-<kind>`, `gallery-filter`, `gallery-trick-<trick>`, `trick-clips`,
+  `library-clip-tile`, `clip-view`, `clip-view-date`, `clip-view-delete`, `clip-play-pause`,
+  `clip-downloading`, `clip-load-failed`, `clip-load-retry`.
+
+Not yet, from the plan:
+
 - Highlights: no autoplay under Reduce Motion; a side-by-side "then and now" reads as one
   element naming both dates ("Gainer, March 2025 and September 2026"); locked highlights
   read what they are missing ("Locked: name one more gainer from before April").
-- Stable identifiers: `profile-tab`, `needs-a-name`, `achievement-<trick>-<kind>`,
-  `gallery-trick-<trick>`, `highlight-<kind>`, `clip-view`.
+- Gallery tiles will loop like Name Clips' cards, under the same autoplay rule; today they show
+  a still.
+- The on-device VoiceOver pass over the Profile is still owed.
 
 ## Cross-cutting rules (every v1 screen)
 

@@ -69,8 +69,9 @@ sequences, never from video.
   the farm doesn't also start the model poll, which waits on a promoted
   model. Blank, every farm control is hidden and no farm call is made.
 
-Until the clip library lands ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §2),
-the built flow differs from this doc:
+The clip library ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §2) is built
+without its pose store or contribution state, so the built flow differs
+from this doc:
 
 - The pose is encoded when the sheet opens, from the analysis still in
   memory, not read from the library. So a clip can be contributed only in

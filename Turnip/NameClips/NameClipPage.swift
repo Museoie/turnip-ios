@@ -38,8 +38,6 @@ struct NameClipPage: View {
     let openEditor: (CGRect, CGImage?, TimeInterval?) -> Void
     let trash: () -> Void
 
-    private static let suggestionsID = "suggestions"
-
     var body: some View {
         ScrollViewReader { scroller in
             ScrollView(.vertical, showsIndicators: false) {
@@ -48,11 +46,10 @@ struct NameClipPage: View {
                         item: item, side: cardSide, viewModel: viewModel, isPlaying: isCardPlaying,
                         isHidden: isCardHidden, onOpen: openEditor, onTrash: trash)
                     VStack(alignment: .leading, spacing: 12) {
-                        nameChips
-                        correction
-                        nameField
-                        suggestionChips.id(Self.suggestionsID)
-                        whoIsIn
+                        ClipNamingFields(
+                            names: item.names, isMe: item.isMe, usedNames: viewModel.namesUsedOnVideo,
+                            vocabulary: vocabulary, draft: $draft, isFieldFocused: isFieldFocused,
+                            isEnabled: isCurrent, commitDraft: commitDraft, actions: namingActions)
                         if showsContribution { contributeToggle }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -66,110 +63,27 @@ struct NameClipPage: View {
                 guard focused, isCurrent else { return }
                 // After the keyboard's own animation has moved the page's bottom edge up.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    withAnimation(.easeOut(duration: 0.25)) { scroller.scrollTo(Self.suggestionsID, anchor: .bottom) }
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        scroller.scrollTo(ClipNamingFields.suggestionsID, anchor: .bottom)
+                    }
                 }
             }
             // A name added while typing grows the chips above the field; the suggestions stay in view.
             .onChange(of: item.names.count) { _ in
                 guard isFieldFocused.wrappedValue, isCurrent else { return }
-                withAnimation(.easeOut(duration: 0.25)) { scroller.scrollTo(Self.suggestionsID, anchor: .bottom) }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var nameChips: some View {
-        if !item.names.isEmpty {
-            ChipFlow {
-                ForEach(item.names, id: \.self) { name in
-                    Button {
-                        viewModel.removeName(name, from: item.id)
-                    } label: {
-                        Label(name.name, systemImage: "xmark")
-                            .labelStyle(TrailingIconLabelStyle())
-                    }
-                    .buttonStyle(ChipButtonStyle(isProminent: true))
-                    .accessibilityLabel(name.name)
-                    .accessibilityHint("Removes this name")
+                withAnimation(.easeOut(duration: 0.25)) {
+                    scroller.scrollTo(ClipNamingFields.suggestionsID, anchor: .bottom)
                 }
             }
-            .accessibilityIdentifier("name-clips-names")
         }
     }
 
-    /// "Did you mean": for the newest typed name that is a near miss of a vocabulary name.
-    @ViewBuilder
-    private var correction: some View {
-        if let typed = item.names.last(where: { $0.origin == .typed }),
-           let canonical = vocabulary.suggestedCorrection(for: typed.name),
-           TrickVocabulary.normalized(canonical) != TrickVocabulary.normalized(typed.name) {
-            Button {
-                viewModel.replaceName(typed, with: canonical, in: item.id)
-            } label: {
-                Text("Did you mean **\(canonical)**?")
-                    .font(.subheadline)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityIdentifier("name-clips-did-you-mean")
-        }
-    }
-
-    private var nameField: some View {
-        TextField("What trick is this? e.g. cork", text: $draft)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .submitLabel(.done)
-            .padding(12)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
-            .focused(isFieldFocused)
-            .disabled(!isCurrent)
-            .onSubmit {
-                commitDraft()
-                // Return adds the name and keeps the keyboard up for the next one in a combo.
-                if isCurrent { isFieldFocused.wrappedValue = true }
-            }
-            .accessibilityIdentifier("name-clips-field")
-    }
-
-    private var suggestionChips: some View {
-        ChipFlow {
-            ForEach(suggestions, id: \.self) { name in
-                Button(name) {
-                    // A pick from the vocabulary is `vocabulary`; a name used earlier on this video
-                    // that the vocabulary doesn't know was typed, so it stays `typed`.
-                    let origin: LabelOrigin = vocabulary.canonicalName(for: name) == nil ? .typed : .vocabulary
-                    viewModel.addName(name, origin: origin, to: item.id)
-                    draft = ""
-                }
-                .buttonStyle(ChipButtonStyle(isProminent: false))
-            }
-        }
-        .accessibilityIdentifier("name-clips-suggestions")
-    }
-
-    /// Names used on this video first, then the vocabulary's matches for what is typed, led by
-    /// a near-miss correction; none the clip already has.
-    private var suggestions: [String] {
-        let query = TrickVocabulary.normalized(draft)
-        let used = viewModel.namesUsedOnVideo.filter { query.isEmpty || TrickVocabulary.normalized($0).contains(query) }
-        let corrected = vocabulary.suggestedCorrection(for: draft).map { [$0] } ?? []
-        var seen = Set(item.names.map { TrickVocabulary.normalized($0.name) })
-        return (used + corrected + vocabulary.names(matching: query))
-            .filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
-            .prefix(8)
-            .map { $0 }
-    }
-
-    private var whoIsIn: some View {
-        Picker("Who's in it", selection: Binding(
-            get: { item.isMe },
-            set: { viewModel.setIsMe($0, for: item.id) })
-        ) {
-            Text("Me").tag(true)
-            Text("Someone else").tag(false)
-        }
-        .pickerStyle(.segmented)
-        .accessibilityIdentifier("name-clips-who")
+    private var namingActions: ClipNamingActions {
+        ClipNamingActions(
+            add: { viewModel.addName($0, origin: $1, to: item.id) },
+            remove: { viewModel.removeName($0, from: item.id) },
+            replace: { viewModel.replaceName($0, with: $1, in: item.id) },
+            setIsMe: { viewModel.setIsMe($0, for: item.id) })
     }
 
     private var contributeToggle: some View {

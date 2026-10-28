@@ -23,14 +23,19 @@ typealias ExportOneClip = @Sendable (
     _ progress: @escaping @Sendable (Double) -> Void
 ) async throws -> URL
 
-/// Saves one exported file to the Photos library. `ClipPhotosSaver` plugs in here.
+/// Saves one exported file to the Photos library and returns the new asset's
+/// `PHAsset.localIdentifier`, which the clip library keeps. `ClipPhotosSaver` plugs in here.
 /// Throws `ClipSaveError.photosSaveFailed` so a save failure names the step. `albumTitle` is
 /// the Settings screen's "Save to an album" destination (`TurnipSettings.albumDestination`),
 /// read once by `save()` and threaded through rather than read again per clip.
 ///
 /// Concurrency contract: same as `ExportOneClip` — awaited from `@MainActor`-isolated
 /// code, so implementations must hop off the main actor internally for blocking work.
-typealias SaveOneClipToPhotos = @Sendable (_ fileURL: URL, _ albumTitle: String?) async throws -> Void
+typealias SaveOneClipToPhotos = @Sendable (_ fileURL: URL, _ albumTitle: String?) async throws -> String
+
+/// Writes a save into the on-device clip library and returns the achievements it earned.
+/// `recordInClipLibrary` plugs in here.
+typealias RecordSavedClips = @MainActor (LibrarySave) -> [EarnedAchievement]
 
 /// Deletes the original video from Photos by its `PHAsset.localIdentifier`.
 /// `PhotoAssetDeleter` plugs in here. A throw here is treated as non-fatal by
@@ -97,9 +102,9 @@ private func exportOneClip(
 
 /// The production `SaveOneClipToPhotos`, wired to `ClipPhotosSaver` (add-only
 /// authorization).
-private func saveOneClipToPhotos(_ url: URL, albumTitle: String?) async throws {
+private func saveOneClipToPhotos(_ url: URL, albumTitle: String?) async throws -> String {
     do {
-        try await ClipPhotosSaver().saveVideo(at: url, albumTitle: albumTitle)
+        return try await ClipPhotosSaver().saveVideo(at: url, albumTitle: albumTitle)
     } catch {
         throw ClipSaveError.photosSaveFailed(reason: error.localizedDescription)
     }
@@ -166,6 +171,10 @@ final class ClipListViewModel: ObservableObject {
     private let exportClip: ExportOneClip
     private let saveToPhotos: SaveOneClipToPhotos
     private let deleteOriginalAsset: DeleteOriginalAsset
+    private let recordSaved: RecordSavedClips
+    /// The Photos asset each saved clip landed as, by item id: what the clip library records, and
+    /// replaced when an edited clip is saved again.
+    private var exportAssetIDs: [UUID: String] = [:]
     private let makeDirectory: @Sendable () -> URL
     /// Read once per `save()` run for the album destination — injected (like
     /// `CameraCaptureViewModel`'s own `settingsProvider`) so a test can drive the album-on
@@ -228,6 +237,7 @@ final class ClipListViewModel: ObservableObject {
         exportClip: @escaping ExportOneClip = exportOneClip,
         saveToPhotos: @escaping SaveOneClipToPhotos = saveOneClipToPhotos,
         deleteOriginalAsset: @escaping DeleteOriginalAsset = deleteOriginalVideo,
+        recordSaved: @escaping RecordSavedClips = { recordInClipLibrary($0) },
         makeDirectory: @escaping @Sendable () -> URL = defaultExportDirectory,
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettingsStore.shared.current },
         announce: @escaping AccessibilityAnnouncing = postAccessibilityAnnouncement,
@@ -252,6 +262,7 @@ final class ClipListViewModel: ObservableObject {
         self.exportClip = exportClip
         self.saveToPhotos = saveToPhotos
         self.deleteOriginalAsset = deleteOriginalAsset
+        self.recordSaved = recordSaved
         self.makeDirectory = makeDirectory
         self.settingsProvider = settingsProvider
         self.announce = announce
@@ -606,7 +617,7 @@ final class ClipListViewModel: ObservableObject {
                     window: item.window, cropRect: item.cropRect, cropAdjustment: item.cropAdjustment,
                     followCrop: await followCrop(for: item))
                 let fileURL = try await exportClip(spec, asset, directory) { _ in }
-                try await saveToPhotos(fileURL, albumTitle)
+                exportAssetIDs[item.id] = try await saveToPhotos(fileURL, albumTitle)
                 markSaved(item.id)
             } catch {
                 // Numbered by card, not by run: a retry skips the clips already saved, and
@@ -617,6 +628,9 @@ final class ClipListViewModel: ObservableObject {
                     reason: Self.reason(for: error)))
             }
         }
+        // Before the original can be deleted: the library reads its recording date. A partial
+        // failure records what did land, so a clip in Photos is never missing from the Profile.
+        let earned = recordLibrary()
         guard failures.isEmpty else {
             saveFailureMessage = failures.joined(separator: "\n")
             return false
@@ -626,9 +640,28 @@ final class ClipListViewModel: ObservableObject {
             try? await deleteOriginalAsset(assetIdentifier)
         }
         if clipCount > 0 {
-            announceAfterScreenChange(ClipListAccessibility.saveFinished(clipCount: clipCount))
+            var message = ClipListAccessibility.saveFinished(clipCount: clipCount)
+            if !earned.isEmpty {
+                message += ". " + ProfileAccessibility.earnedAnnouncement(earned)
+            }
+            announceAfterScreenChange(message)
         }
         return true
+    }
+
+    /// Writes every clip in Photos into the clip library with the names it has now: a name given
+    /// between a partial failure and the retry reaches the library too.
+    private func recordLibrary() -> [EarnedAchievement] {
+        let saved = items.compactMap { item -> LibrarySave.Clip? in
+            guard !item.isOriginal, item.isSaved, let exportAssetID = exportAssetIDs[item.id] else { return nil }
+            return LibrarySave.Clip(
+                id: item.id, window: item.window, exportAssetID: exportAssetID, names: item.names,
+                isMe: item.isMe, isAutoDetected: item.isAutoDetected)
+        }
+        guard !saved.isEmpty else { return [] }
+        return recordSaved(LibrarySave(
+            sourceAssetID: assetIdentifier, sourceDuration: loadedAssetDuration ?? items[0].window.endTime,
+            clips: saved))
     }
 
     /// Records that one clip's video is now in Photos. Resolved by id rather than
@@ -676,11 +709,10 @@ extension ClipListViewModel {
     /// Adds a trick name to a clip, trimmed; a blank name, or one the clip already has in any
     /// case, changes nothing.
     func addName(_ name: String, origin: LabelOrigin, to id: UUID) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let index = items.firstIndex(where: { $0.id == id }) else { return }
-        let key = TrickVocabulary.normalized(trimmed)
-        guard !items[index].names.contains(where: { TrickVocabulary.normalized($0.name) == key }) else { return }
-        items[index].names.append(ClipName(name: trimmed, origin: origin))
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        var names = items[index].names
+        guard names.addName(name, origin: origin) else { return }
+        items[index].names = names
     }
 
     /// Removes a name. A clip left with none can't be contributed, so its toggle goes off too.
@@ -692,13 +724,10 @@ extension ClipListViewModel {
 
     /// "Did you mean": puts the vocabulary's spelling in the typed name's place, as a pick.
     func replaceName(_ name: ClipName, with canonical: String, in id: UUID) {
-        guard let index = items.firstIndex(where: { $0.id == id }),
-              let position = items[index].names.firstIndex(of: name)
-        else { return }
-        let key = TrickVocabulary.normalized(canonical)
-        items[index].names.removeAll { $0 != name && TrickVocabulary.normalized($0.name) == key }
-        let slot = items[index].names.firstIndex(of: name) ?? position
-        items[index].names[slot] = ClipName(name: canonical, origin: .vocabulary)
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        var names = items[index].names
+        guard names.replaceName(name, with: canonical) else { return }
+        items[index].names = names
     }
 
     /// Who is in a clip. A change on a person's first clip carries to that person's later clips

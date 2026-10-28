@@ -26,12 +26,30 @@ and `name_metrics` (§1); `TRAINING_DESIGN.md` §6.4 is why provenance
 matters. Where this doc makes a call none of those cover, it says so
 as *(judgment call)*.
 
-**Status.** Nothing here is built. Today the app keeps no clip state
-past Save Clips: the editor holds edits in view state until it closes,
-Save Clips exports and pops back to Home, and the asset identifier
-`ClipPhotosSaver.saveVideo` returns for each saved clip is discarded
-(`saveOneClipToPhotos` in `ClipListViewModel.swift`). No clip has a
-name anywhere.
+**Status (2026-10-27).** Phase 2a's core is built (`Turnip/Profile/`):
+the clip library Name Clips' save writes (§2.1, §2.3, §2.4), the Profile
+tab with Needs a name, Achievements and the Gallery (§5.1, §6.1, §6.3–§6.5,
+§7), and the Clip view (§5.2). How the build differs from this doc:
+
+- The library is one JSON file, `Application Support/ClipLibrary/library.json`,
+  rewritten atomically on every change, with a schema version; a file the
+  build can't read is moved aside, never overwritten. Each source keeps its
+  asset ID, recording date and duration; each clip its window in seconds,
+  saved asset ID, names, `is_me`, `auto_detected` and date. Not stored yet:
+  the pose (§2.2), the copied location and spot, the crop and rotation,
+  `favorite`, the model provenance fields, and contribution state.
+- Not built: the file record and Restore library (§3.2), the achievement
+  detail (§6.2), tracking a video deleted in Photos (§2.3: such a clip
+  keeps its record and shows a "not in Photos" glyph, with no skeleton),
+  Highlights (§8), and everything from Phase 2b on.
+- The gallery's tiles show the clip's still rather than looping it, and a
+  tile opens the Clip view with a navigation push rather than the expansion
+  transition (§7). Achievement cards don't open anything yet.
+- Needs a name is its own screen built from Name Clips' naming controls,
+  not Name Clips itself, since it has no editor, triage or save; it writes
+  each name to the library as it is given.
+- An achievement earned is spoken once: with the save's own announcement
+  on Name Clips, or as it is earned on the Profile's screens.
 
 ---
 

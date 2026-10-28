@@ -1,13 +1,13 @@
 import Photos
 import SwiftUI
 
-/// Which of the app's two pages is showing. Camera sorts first only because that's the
-/// order the floating tab bar draws its icons in, left to right, and the order the pages
-/// are declared in `RootTabView`'s `TabView` — swiping right from Home (its previous page)
-/// reaches Camera the same way tapping the camera icon does.
+/// Which of the app's pages is showing, in the order the floating tab bar draws its icons, left
+/// to right, and the order the pages are declared in `RootTabView`'s `TabView`: swiping right from
+/// Home reaches Camera, and swiping left reaches Profile, the same way tapping their icons does.
 enum MainTab: Hashable {
     case camera
     case home
+    case profile
 }
 
 /// The floating bar's approximate footprint, shared with `VideoGalleryView` (grid scroll
@@ -18,31 +18,42 @@ enum FloatingTabBarMetrics {
     static let clearance: CGFloat = 100
 }
 
-/// The app's root screen: a swipeable, two-page `TabView` (Camera,
-/// then the gallery) with a custom floating pill replacing the system tab bar — this app
-/// has exactly two destinations, not the several a real `UITabBar` assumes.
+/// The app's root screen: a swipeable, three-page `TabView` (Camera, the gallery, then the
+/// Profile) with a custom floating pill replacing the system tab bar, which would dock at the
+/// bottom and draw a label under every icon.
 ///
-/// Owns the one `VideoLibraryViewModel` shared by both pages, since a finished camera
+/// Owns the one `VideoLibraryViewModel` shared by Camera and Home, since a finished camera
 /// recording needs to hand its asset to the same gallery/navigation state a tapped tile
 /// would (`VideoLibraryViewModel.select(_:)`), and switching back to the gallery tab to
-/// show that pick land needs to live somewhere both pages are reachable from.
+/// show that pick land needs to live somewhere both pages are reachable from. Owns the Profile's
+/// navigation path too, since whether a Profile screen is pushed decides the pager's swipe and
+/// the bar's visibility here.
 struct RootTabView: View {
     @StateObject private var viewModel = VideoLibraryViewModel()
     @State private var selectedTab: MainTab = .home
+    @State private var profilePath: [ProfileRoute] = []
     @State private var recordingSaveError: String?
+
+    /// The page swipe belongs to the pages' roots alone. While Home presents a destination
+    /// (`viewModel.isPresentingDestination`, true from the tap on) or the Profile has a screen
+    /// pushed, that screen owns its own horizontal gestures — Processing browses videos with one,
+    /// Needs a name pages clips with one — and the pager's recognizer would otherwise take every
+    /// one of them first. Every page's lock writes this same value to the one pager, so no page
+    /// can switch it back on under another.
+    private var swipeEnabled: Bool {
+        !viewModel.isPresentingDestination && profilePath.isEmpty
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
             CameraCaptureView(onFinished: handleRecorded, onCancel: { slide(to: .home) })
                 .tag(MainTab.camera)
             HomeView(viewModel: viewModel)
-                // The Camera/Home swipe belongs to Home's root alone. While Home presents
-                // a destination (`viewModel.isPresentingDestination`, true from the tap on),
-                // that screen owns its own horizontal gestures — Processing browses videos
-                // with one — and the pager's
-                // recognizer would otherwise take every one of them first.
-                .background(PageSwipeLock(swipeEnabled: !viewModel.isPresentingDestination))
+                .background(PageSwipeLock(swipeEnabled: swipeEnabled))
                 .tag(MainTab.home)
+            ProfileView(library: .shared, vocabulary: .shared, path: $profilePath)
+                .background(PageSwipeLock(swipeEnabled: swipeEnabled))
+                .tag(MainTab.profile)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
         // A page-style `TabView` lays its pages out inside the safe area, so the nested
@@ -53,19 +64,19 @@ struct RootTabView: View {
         .ignoresSafeArea()
         // An overlay, not a safe-area inset: the grid scrolls underneath it rather than
         // stopping short, so it reads as floating over the content instead of a docked
-        // bar. Visible on both pages (root-only, `!viewModel.isPresentingDestination`) so its
-        // selection marker actually has something to slide between — it's the reason a
-        // tab bar's marker animates in Slack/Instagram-style apps at all. Hidden only
-        // once Home drills into Processing/ClipList/ClipEditor, each of which has its own
-        // back chevron and needs the full screen; Camera keeps its own cancel chevron too,
-        // so the bar there is an additional way back, not a replacement.
+        // bar. Visible on every page's root so its selection marker actually has something to
+        // slide between — it's the reason a tab bar's marker animates in Slack/Instagram-style
+        // apps at all. Hidden once Home drills into Processing/Name Clips/the editor or the
+        // Profile pushes a screen, each of which has its own way back and needs the full screen;
+        // Camera keeps its own cancel chevron too, so the bar there is an additional way back,
+        // not a replacement.
         .overlay(alignment: .bottom) {
-            if !viewModel.isPresentingDestination {
+            if swipeEnabled {
                 FloatingTabBar(selectedTab: selectedTab, onSelect: slide(to:))
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: viewModel.isPresentingDestination)
+        .animation(.easeInOut(duration: 0.2), value: swipeEnabled)
         // A distinct alert from Home's "Couldn't open video" — that one is about
         // resolving an existing library asset, not about this just-recorded file
         // failing to save. Sharing it would misname the failure to the user.
@@ -118,15 +129,15 @@ struct RootTabView: View {
 
 }
 
-/// The floating bottom nav: camera on the left, the gallery grid on the right. A custom
-/// capsule rather than `TabView`'s own bar, which assumes more than two items.
+/// The floating bottom nav: camera, the gallery grid, then the Profile. A custom capsule rather
+/// than `TabView`'s own bar, which docks at the bottom and labels every icon.
 private struct FloatingTabBar: View {
     let selectedTab: MainTab
     /// Pages to the tapped tab. The bar never writes the selection itself, so a tap can't
     /// skip the slide a swipe to the same page plays.
     let onSelect: (MainTab) -> Void
     /// Ties the selection pill to whichever icon is currently selected: only one of the
-    /// two `tabButton`s ever draws it (see `indicator`), so a change in `selectedTab`
+    /// `tabButton`s ever draws it (see `indicator`), so a change in `selectedTab`
     /// reads to SwiftUI as that same shape flying from its old spot to its new one
     /// rather than one fading out while an unrelated one fades in.
     @Namespace private var glassNamespace
@@ -135,6 +146,7 @@ private struct FloatingTabBar: View {
         let buttons = HStack(spacing: 40) {
             tabButton(.camera, systemImage: "camera.fill", label: "Camera")
             tabButton(.home, systemImage: "square.grid.2x2.fill", label: "Videos")
+            tabButton(.profile, systemImage: "person.crop.circle.fill", label: "Profile")
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 8)

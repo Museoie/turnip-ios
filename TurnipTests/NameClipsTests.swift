@@ -17,7 +17,7 @@ final class NameClipsTests: XCTestCase {
             items: items, poseFrames: poseFrames, asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
             assetIdentifier: "asset-1", duration: 10,
             exportClip: { _, _, _, _ in URL(fileURLWithPath: "/tmp/fake.mp4") },
-            saveToPhotos: { _, _ in }, deleteOriginalAsset: { _ in },
+            saveToPhotos: { url, _ in url.lastPathComponent }, deleteOriginalAsset: { _ in }, recordSaved: { _ in [] },
             makeDirectory: {
                 FileManager.default.temporaryDirectory.appendingPathComponent("turnip-test-\(UUID().uuidString)")
             },

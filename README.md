@@ -27,7 +27,9 @@ All on-device. No server, no data upload for the core auto-edit path.
 ## Privacy
 
 Turnip never sends your videos anywhere. v1 has no accounts, no uploads
-and no analytics; contribution, built but not yet released, adds an opt-in
+and no analytics. The Profile — your saved clips' trick names, levels and
+reps — is computed and kept on your iPhone only. Contribution, built but not
+yet released, adds an opt-in
 Sign in with Apple account that sends a named clip's pose keypoints and
 trick names to `turnip-farm`, only from its confirmation sheet. The app asks for Photos access to show your videos, save the
 clips you export, and delete an original you mark for deletion when saving clips, and
@@ -49,6 +51,15 @@ now" saves without going through every clip). A clip toggled to contribute goes
 to `turnip-farm` from a confirmation sheet after the save
 ([`docs/CONTRIBUTION_DESIGN.md`](docs/CONTRIBUTION_DESIGN.md), not yet
 released).
+
+The save also writes each clip into an on-device clip library, which the
+Profile — the page after Home, a left swipe away — is built from
+([`docs/PROFILE_DESIGN.md`](docs/PROFILE_DESIGN.md), Phase 2a's core):
+"Needs a name" for clips saved without names, a level (days practiced) and
+rep milestones per trick, and a gallery grouped by trick that opens each
+clip to play, rename or delete it (`Turnip/Profile/`). Highlights, the
+library's pose store and restoring the library after a reinstall are not
+built yet.
 
 Steps 4-6 of the pipeline — turning pose keypoints into trick windows and
 a crop rect — are library code under `Turnip/TrickDetection/`, unit-tested

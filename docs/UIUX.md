@@ -1,5 +1,13 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 22 · 2026-10-27 · The root pager's third page, Profile, is built
+(Root navigation; its screens in [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md)
+§5), with a third icon on the floating bar. Name Clips' save now writes each
+saved clip into the on-device clip library (§3a), and the Profile's "Needs a
+name" names clips saved without names on a screen of their own that shares
+Name Clips' naming controls and ends in "Done". The names in each exported
+file stay planned.*
+
 *Rev 21 · 2026-10-27 · Clip List is retired: an analysis lands on Name Clips
 (§3a), which now carries the triage Clip List did. Tapping the clip opens the
 editor, its trash button discards it, the header's "+" adds one, and the
@@ -68,7 +76,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -127,9 +135,11 @@ Where it applies today:
 | Home ↔ Camera (Root navigation) | Horizontal page swipe | Floating bar's camera / gallery icons; Camera's cancel chevron | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Tile ↔ Processing (§1, §2) | Swipe down anywhere on the page | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
 | Name Clips card ↔ Clip Editor (§3a, §4) | Swipe down above the crop marker | Back chevron | Same, with the card showing the editor's own player |
-| *Planned:* Home ↔ Profile (Root navigation) | Horizontal page swipe | Floating bar's gallery / profile icons | The pager's horizontal slide (`RootTabView.slide(to:)`) |
+| Home ↔ Profile (Root navigation) | Horizontal page swipe | Floating bar's gallery / profile icons | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Name Clips, one clip ↔ the next (§3a) | Horizontal swipe | "Next" / "Skip" | The page slide between clips (`NameClipsView.go(to:)`) |
-| *Planned:* Profile clip tile ↔ Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe down | Back chevron | The tile's expansion card, showing the clip's own player |
+| Profile ↔ its pushed screens — a trick's clips, the Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe from the left edge | Back button | The navigation push and pop |
+| Needs a name, one clip ↔ the next ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4.1) | Horizontal swipe | "Next" / "Skip" | The page slide between clips (`LibraryNamingView.go(to:)`) |
+| *Planned:* Profile clip tile ↔ Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §7) | Swipe down | Back chevron | The tile's expansion card, showing the clip's own player, in place of the push |
 
 Not every state change has a gesture counterpart that it owes an animation.
 A recording that finishes on Camera switches to Home *instantly*, because the
@@ -187,8 +197,8 @@ flowchart TD
     A[Home / Video Gallery] -->|tap a video tile| B[Processing]
     A -->|tap camera icon / swipe right| G[Camera]
     G -->|tap gallery icon / swipe left| A
-    A -.->|planned: tap profile icon / swipe left| P[Profile]
-    P -.->|planned: tap gallery icon / swipe right| A
+    A -->|tap profile icon / swipe left| P[Profile]
+    P -->|tap gallery icon / swipe right| A
     G -->|recording saved, analyzed live| N
     G -->|recording saved, live analysis incomplete| B
     B -->|clips found, or none| N[Name Clips]
@@ -200,7 +210,10 @@ flowchart TD
     D -->|delete| N
     N -->|back| A
     N -->|Save Clips or Save now, then contribution sheet if any clip is toggled| A
-    P -.->|planned: Needs a name| N
+    P -->|Needs a name| NN[Needs a name]
+    NN -->|Done / back| P
+    P -->|gallery row, then a tile| CV[Clip view]
+    CV -->|back, or delete| P
 ```
 
 The whole app forces dark appearance (`.preferredColorScheme(.dark)` in
@@ -215,17 +228,18 @@ There is no SwiftUI splash: `ContentView` mounts the root tab view directly.
 
 ### Root navigation
 
-`Turnip/App/RootTabView.swift` hosts the app's two pages — Camera and Home
-— in a swipeable `TabView` (`.page` style, native page dots hidden), with a
-custom floating pill bar overlaid at the bottom rather than the system tab
-bar: camera icon on the left, gallery-grid icon on the right, gallery
-selected by default. Tapping an icon or swiping the page (right reveals
-Camera, since it's the page before Home) both drive the same selection
-state *and the same motion*: a tap (or Camera's cancel chevron) pages
-through `slide(to:)`, which changes the selection inside an animated
-transaction. A page-style `TabView` only scrolls to a selection that changes
-that way, and cuts to it otherwise. So Camera slides in from the left on a
-tap exactly as it does under the finger (see "A gesture and its button play
+`Turnip/App/RootTabView.swift` hosts the app's three pages — Camera, Home
+and Profile — in a swipeable `TabView` (`.page` style, native page dots
+hidden), with a custom floating pill bar overlaid at the bottom rather than
+the system tab bar: camera icon on the left, gallery-grid icon in the
+middle, profile icon on the right, gallery selected by default. Tapping an
+icon or swiping the page (right reveals Camera, since it's the page before
+Home; left reveals Profile, the page after it) both drive the same
+selection state *and the same motion*: a tap (or Camera's cancel chevron)
+pages through `slide(to:)`, which changes the selection inside an animated
+transaction. A page-style `TabView` only scrolls to a selection that
+changes that way, and cuts to it otherwise. So Camera slides in from the
+left, and Profile from the right, on a tap exactly as under the finger (see "A gesture and its button play
 one animation" above). It also owns the one `VideoLibraryViewModel` shared by both pages —
 a finished recording needs to hand its asset into the same
 `select(_:)` a tapped gallery tile calls, then switch back to the gallery
@@ -238,23 +252,23 @@ bar. It renders in Liquid Glass on iOS 26+ (`.ultraThinMaterial` below that),
 with a sliding selection pill behind whichever icon is active — visible on
 both pages, so the pill has something to slide between on a tap or a page
 swipe alike. Camera keeps its own cancel chevron too; the bar there is an
-additional way back, not a replacement. It's hidden only once Home opens
-Processing/ClipList/ClipEditor — a tap flies the tile into the full-screen
+additional way back, not a replacement. It's hidden once Home opens
+Processing/Name Clips/the editor — a tap flies the tile into the full-screen
 destination rather than pushing it (see "Tapping a tile" below and
 [`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) — each of which owns
 the full screen and its own back chevron, reappearing once back at the grid.
 
-*Planned — a third page* ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5): the
-pager becomes Camera | Home | Profile, with Profile the page after Home, so a
-left swipe on Home reveals it the way a right swipe reveals Camera. The pill
-gains a third icon after the gallery icon, and the selection pill slides
-across all three. A tap on the profile icon pages through the same
-`slide(to:)` the swipe drives, so the button plays the swipe's motion. Home
-stays the default page. Screens pushed from Profile — an achievement, a
-trick's gallery, a highlight, a clip — hide the pill and own the full screen
-like Processing/ClipList/ClipEditor do, and `PageSwipeLock` switches the pager
-off while one is open, for the same reason it does over Home: the pager would
-otherwise take every horizontal drag first.
+Profile ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5) is the page after
+Home: one scrolling page titled "Profile", saying "Your Profile stays on this
+iPhone.", with "Needs a name" while any saved clip has no name, the
+achievement cards, and the gallery's rows by trick under a Me / Everyone
+filter. Screens pushed from it — Needs a name, a trick's clips, the Clip
+view — hide the pill and own the full screen like Processing/Name
+Clips/the editor do, and `PageSwipeLock` switches the pager off while one is
+open, for the same reason it does over Home: the pager would otherwise take
+every horizontal drag first, among them Needs a name's paging and the edge
+swipe that pops a pushed screen. Every page's lock writes the same value, so
+one page can't switch the swipe back on under another's pushed screen.
 
 ### 1. Home / Video Gallery
 
@@ -488,8 +502,8 @@ edits it, and marking it for deletion is the one thing it offered.
   between. The back chevron pops to Home — a sideways slide, not a shrink back
   into the video's tile, since this screen shows clips cut from the video, not
   the video (`EXPANSION_TRANSITIONS.md`, Rev 9) — and nothing is saved.
-  *Planned:* the same screen opens from the Profile's "Needs a name" for clips
-  saved without names.
+  Clips saved without names are named later from the Profile's "Needs a
+  name", on a screen of its own with these same naming controls (below).
 - One detected clip at a time, on a card looping its window with the framing
   export uses, cropped and rotated to the clip's adjustment. The card is a
   square of a fixed size worked out from the screen alone: the width less its
@@ -559,10 +573,13 @@ edits it, and marking it for deletion is the one thing it offered.
   A clip that fails leaves the screen up with an alert naming the failure, and
   the retry saves only what is still missing; a clip edited after a partial
   failure loses its checkmark and is written again, and the pre-edit copy stays
-  in Photos, since the app keeps no identifier for an asset it wrote.
-  *Planned:* the save then writes the clip library, with each clip's names
-  also in its exported file; until that lands, names reach nothing but a
-  contribution. Under the button, from the first clip on, a quieter "Save now"
+  in Photos: the clip library follows the clip to its new asset, and the app
+  deletes no clip it wrote. The save writes every clip now in Photos into the
+  on-device clip library ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §2) with
+  the names and who's-in-it it has — a partial failure records what landed,
+  and the retry records names given since — before the original is deleted.
+  *Planned:* each clip's names also in its exported file (§3.2 there). Under
+  the button, from the first clip on, a quieter "Save now"
   (`PrimaryActionBar`'s secondary) saves at once and leaves the clips not
   reached yet unnamed, so a long take never costs a row of Skips. *(Judgment
   call.)* It steps aside while the name field has focus, to leave the keyboard
@@ -573,9 +590,13 @@ edits it, and marking it for deletion is the one thing it offered.
 - When the name field has focus, the page scrolls the field and the
   suggestions above the keyboard, and keeps them there as names are added;
   the card scrolls up with the page rather than shrinking.
-- *Planned:* opened from "Needs a name", the clips are already in Photos: the
-  last button reads "Done" and writes names to the clip library only, and
-  there is no "Save now".
+- Opened from the Profile's "Needs a name", the clips are already in Photos,
+  so naming them is a screen of its own (`LibraryNamingView`) with this
+  screen's naming controls and paging but no editor, triage or save: each
+  card loops the saved clip, names go to the clip library as they are given,
+  the last button reads "Done", and there is no "Save now". It pages through
+  the clips that needed a name when it opened, so a clip named there stays
+  put rather than leaving the pager under the user's finger.
 
 ### 4. Clip Detail / Editor
 

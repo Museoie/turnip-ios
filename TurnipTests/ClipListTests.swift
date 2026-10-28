@@ -39,8 +39,9 @@ final class ClipListTests: XCTestCase {
         assetIdentifier: String = "asset-1",
         duration: TimeInterval = 30,
         exportClip: @escaping ExportOneClip = { _, _, _, _ in URL(fileURLWithPath: "/tmp/fake.mp4") },
-        saveToPhotos: @escaping SaveOneClipToPhotos = { _, _ in },
+        saveToPhotos: @escaping SaveOneClipToPhotos = { url, _ in url.lastPathComponent },
         deleteOriginalAsset: @escaping DeleteOriginalAsset = { _ in },
+        recordSaved: @escaping RecordSavedClips = { _ in [] },
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettings() },
         announce: @escaping AccessibilityAnnouncing = { _ in },
         announceAfterScreenChange: AccessibilityAnnouncing? = nil
@@ -55,6 +56,7 @@ final class ClipListTests: XCTestCase {
             exportClip: exportClip,
             saveToPhotos: saveToPhotos,
             deleteOriginalAsset: deleteOriginalAsset,
+            recordSaved: recordSaved,
             makeDirectory: {
                 FileManager.default.temporaryDirectory
                     .appendingPathComponent("turnip-test-\(UUID().uuidString)", isDirectory: true)
@@ -576,7 +578,10 @@ final class ClipListTests: XCTestCase {
                 await recorder.recordExport(spec.window)
                 return directory.appendingPathComponent("\(UUID().uuidString).mp4")
             },
-            saveToPhotos: { url, _ in await recorder.recordSave(url) })
+            saveToPhotos: { url, _ in
+                await recorder.recordSave(url)
+                return url.lastPathComponent
+            })
 
         let result = await viewModel.save()
 
@@ -601,7 +606,10 @@ final class ClipListTests: XCTestCase {
         let recorder = Recorder()
         let viewModel = makeViewModel(
             items: [makeItem()],
-            saveToPhotos: { _, albumTitle in await recorder.record(albumTitle) },
+            saveToPhotos: { url, albumTitle in
+                await recorder.record(albumTitle)
+                return url.lastPathComponent
+            },
             settingsProvider: { TurnipSettings(autoAddToAlbum: true, albumName: "Tricking Sessions") })
 
         _ = await viewModel.save()
@@ -622,7 +630,10 @@ final class ClipListTests: XCTestCase {
         let recorder = Recorder()
         let viewModel = makeViewModel(
             items: [makeItem()],
-            saveToPhotos: { _, albumTitle in await recorder.record(albumTitle) })
+            saveToPhotos: { url, albumTitle in
+                await recorder.record(albumTitle)
+                return url.lastPathComponent
+            })
 
         _ = await viewModel.save()
 
@@ -940,7 +951,10 @@ final class ClipListTests: XCTestCase {
                 }
                 return directory.appendingPathComponent("clip-\(Int(spec.window.startTime)).mp4")
             },
-            saveToPhotos: { url, _ in await recorder.recordSave(url.lastPathComponent) })
+            saveToPhotos: { url, _ in
+                await recorder.recordSave(url.lastPathComponent)
+                return url.lastPathComponent
+            })
 
         let first = await viewModel.save()
         XCTAssertFalse(first)
@@ -1014,7 +1028,10 @@ final class ClipListTests: XCTestCase {
                 }
                 return directory.appendingPathComponent("clip-\(Int(spec.window.startTime)).mp4")
             },
-            saveToPhotos: { url, _ in await recorder.recordSave(url.lastPathComponent) },
+            saveToPhotos: { url, _ in
+                await recorder.recordSave(url.lastPathComponent)
+                return url.lastPathComponent
+            },
             deleteOriginalAsset: { _ in await recorder.recordDelete() })
         viewModel.toggleTrash(viewModel.items[0])
 
