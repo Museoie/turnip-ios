@@ -32,7 +32,7 @@ reps — is computed and kept on your iPhone only. Contribution, built but not
 yet released, adds an opt-in
 Sign in with Apple account that sends a named clip's pose keypoints and
 trick names to `turnip-farm`, only from its confirmation sheet. The app asks for Photos access to show your videos, save the
-clips you export, and delete an original you mark for deletion when saving clips, and
+clips you export and delete a saved clip's video when you ask it to, and
 for camera and microphone access to record takes in the app. The App
 Store privacy answers, the privacy manifest, and temp-file hygiene are
 documented in

@@ -309,7 +309,7 @@ final class ClipLibrary: ObservableObject {
 }
 
 /// The production library writer for `ClipListViewModel`: reads the video's recording date from
-/// Photos while the video is still there — a save that deletes the original does so afterwards.
+/// Photos.
 @MainActor
 func recordInClipLibrary(_ save: LibrarySave) -> [EarnedAchievement] {
     let recordedAt = PHAsset.fetchAssets(withLocalIdentifiers: [save.sourceAssetID], options: nil)

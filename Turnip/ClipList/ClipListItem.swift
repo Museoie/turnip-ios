@@ -1,15 +1,8 @@
 import Foundation
 
-/// One triage card's data: a detected trick window plus its computed crop rect
-/// (docs/DESIGN.md pipeline steps 5-6), with the user's trash decision.
-///
-/// `isTrashed` defaults to `false`: every clip starts untrashed. It's the original
-/// item's own reversible flag — `ClipListViewModel.save()` reads it to decide
-/// whether to delete the source video from Photos — while Name Clips' "Remove this
-/// clip" removes a derived clip outright (`ClipListViewModel.delete(_:)`) instead of
-/// setting this, so it never goes `true` on one in practice. `Identifiable` by a
-/// stable `id` (not the window times) so view state survives an edit that changes
-/// the window.
+/// One clip's data: a detected trick window plus its computed crop rect (docs/DESIGN.md
+/// pipeline steps 5-6). `Identifiable` by a stable `id` (not the window times) so view state
+/// survives an edit that changes the window.
 ///
 /// `isSaved` records that this clip's video has already been written to Photos by
 /// `ClipListViewModel.save()`. It exists so that a Save Clips retried after a partial
@@ -34,9 +27,8 @@ import Foundation
 ///
 /// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
 /// stands for the source video already in Photos rather than a derived clip: it
-/// carries the full-video window and full-frame crop, is never opened in the
-/// editor, and its trash is the reversible `isTrashed` flag above rather than an
-/// outright removal.
+/// carries the full-video window and full-frame crop, and is never paged through,
+/// opened in the editor, saved or removed.
 struct ClipListItem: Hashable, Identifiable, Sendable {
     let id: UUID
     let window: TrickWindow
@@ -46,7 +38,6 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     var cropAdjustment: CropAdjustment
     var framingMode: FramingMode
     var followCrop: FollowCrop?
-    var isTrashed: Bool
     var isSaved: Bool
     let isOriginal: Bool
     /// Whose trick this is, when the video was analyzed following everyone
@@ -65,7 +56,6 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         cropAdjustment: CropAdjustment = .identity,
         framingMode: FramingMode = .follow,
         followCrop: FollowCrop? = nil,
-        isTrashed: Bool = false,
         isSaved: Bool = false,
         isOriginal: Bool = false,
         personID: Int? = nil,
@@ -79,7 +69,6 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.cropAdjustment = cropAdjustment
         self.framingMode = framingMode
         self.followCrop = followCrop
-        self.isTrashed = isTrashed
         self.isSaved = isSaved
         self.isOriginal = isOriginal
         self.personID = personID

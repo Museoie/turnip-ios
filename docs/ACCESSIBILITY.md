@@ -214,7 +214,7 @@ Built:
 - The screen's title is the count ("2 of 4"), read on the screen change, which is how a run's
   result reaches a listener; a run that found nothing lands on an empty state whose "No tricks
   found" is announced once the push has settled.
-- Each clip's card is one element: "Clip 2 of 4, 1.5 seconds, kept", with ", saved to Photos"
+- Each clip's card is one element: "Clip 2 of 4, 1.5 seconds", with ", saved to Photos"
   after a partial failure, `.isButton` with the hint "Opens the clip in the editor". Its value
   is the timeline's words ("Clip from 3.0s to 4.5s of 6.0s"), the bar drawn over the card
   having no other way to be heard. "Previous clip" and "Next clip" are custom actions on the

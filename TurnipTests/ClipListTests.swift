@@ -14,13 +14,13 @@ final class ClipListTests: XCTestCase {
     private let window = TrickWindow(startTime: 2, endTime: 5)
     private let fullFrame = NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
 
-    private func makeItem(isTrashed: Bool = false) -> ClipListItem {
-        ClipListItem(window: window, cropRect: fullFrame, isTrashed: isTrashed)
+    private func makeItem() -> ClipListItem {
+        ClipListItem(window: window, cropRect: fullFrame)
     }
 
     /// `AVAsset` is abstract and throws at runtime, so the view-model tests use the
     /// concrete `AVURLAsset` subclass. The URL resolves to nothing — these tests never
-    /// decode, they only exercise the trash and save logic.
+    /// decode, they only exercise the list and save logic.
     private func dummyAsset() -> AVURLAsset {
         AVURLAsset(url: URL(fileURLWithPath: "/dev/null"))
     }
@@ -40,7 +40,6 @@ final class ClipListTests: XCTestCase {
         duration: TimeInterval = 30,
         exportClip: @escaping ExportOneClip = { _, _, _, _ in URL(fileURLWithPath: "/tmp/fake.mp4") },
         saveToPhotos: @escaping SaveOneClipToPhotos = { url, _ in url.lastPathComponent },
-        deleteOriginalAsset: @escaping DeleteOriginalAsset = { _ in },
         recordSaved: @escaping RecordSavedClips = { _ in [] },
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettings() },
         announce: @escaping AccessibilityAnnouncing = { _ in },
@@ -55,7 +54,6 @@ final class ClipListTests: XCTestCase {
             duration: duration,
             exportClip: exportClip,
             saveToPhotos: saveToPhotos,
-            deleteOriginalAsset: deleteOriginalAsset,
             recordSaved: recordSaved,
             makeDirectory: {
                 FileManager.default.temporaryDirectory
@@ -67,10 +65,6 @@ final class ClipListTests: XCTestCase {
     }
 
     // MARK: - ClipListItem
-
-    func testNewItemsStartUntrashed() {
-        XCTAssertFalse(makeItem().isTrashed)
-    }
 
     func testNewItemsStartUnsaved() {
         XCTAssertFalse(makeItem().isSaved)
@@ -104,7 +98,6 @@ final class ClipListTests: XCTestCase {
 
         XCTAssertEqual(viewModel.items[0].window, TrickWindow(startTime: 0, endTime: 12))
         XCTAssertEqual(viewModel.items[0].cropRect, fullFrame)
-        XCTAssertFalse(viewModel.items[0].isTrashed)
     }
 
     @MainActor
@@ -116,81 +109,6 @@ final class ClipListTests: XCTestCase {
 
         XCTAssertEqual(viewModel.items.count, 1)
         XCTAssertTrue(viewModel.items[0].isOriginal)
-    }
-
-    // MARK: - ClipListViewModel: trash toggle
-
-    @MainActor
-    func testToggleTrashFlipsOnlyTheTappedCard() {
-        let first = makeItem(), second = makeItem()
-        let viewModel = makeViewModel(items: [first, second])
-
-        viewModel.toggleTrash(first)
-
-        XCTAssertTrue(viewModel.items[1].isTrashed)
-        XCTAssertFalse(viewModel.items[2].isTrashed)
-
-        viewModel.toggleTrash(first)
-        XCTAssertFalse(viewModel.items[1].isTrashed)
-    }
-
-    @MainActor
-    func testToggleTrashIgnoresUnknownItems() {
-        let viewModel = makeViewModel(items: [makeItem()])
-
-        viewModel.toggleTrash(makeItem())
-
-        XCTAssertFalse(viewModel.items[1].isTrashed)
-    }
-
-    @MainActor
-    func testToggleTrashWorksOnTheOriginalItem() {
-        let viewModel = makeViewModel(items: [])
-        let original = viewModel.items[0]
-
-        viewModel.toggleTrash(original)
-
-        XCTAssertTrue(viewModel.items[0].isTrashed)
-    }
-
-    // MARK: - ClipListViewModel: trash button routing
-
-    @MainActor
-    func testTrashOnADerivedClipRemovesItImmediately() {
-        let first = makeItem(), second = makeItem()
-        let viewModel = makeViewModel(items: [first, second])
-
-        viewModel.trash(viewModel.items[1])
-
-        // Removed, not toggled: a `toggleTrash` call would have left the item in
-        // place with `isTrashed` flipped and the count unchanged.
-        XCTAssertEqual(viewModel.items.count, 2)
-        XCTAssertEqual(viewModel.items[1].id, second.id)
-    }
-
-    @MainActor
-    func testTrashOnTheOriginalItemTogglesInsteadOfRemoving() {
-        let viewModel = makeViewModel(items: [])
-        let original = viewModel.items[0]
-
-        viewModel.trash(original)
-
-        // Toggled, not removed: a `delete` call would have dropped the item, but
-        // `delete(_:)` never removes the original regardless.
-        XCTAssertEqual(viewModel.items.count, 1)
-        XCTAssertTrue(viewModel.items[0].isTrashed)
-
-        viewModel.trash(original)
-        XCTAssertFalse(viewModel.items[0].isTrashed)
-    }
-
-    @MainActor
-    func testTrashIgnoresUnknownItems() {
-        let viewModel = makeViewModel(items: [makeItem()])
-
-        viewModel.trash(makeItem())
-
-        XCTAssertEqual(viewModel.items.count, 2)
     }
 
     // MARK: - Editor destination
@@ -208,14 +126,12 @@ final class ClipListTests: XCTestCase {
         viewModel.applyEditorResult(result, to: target.id)
 
         // The editor's commit lands on the tapped item — window, crop rect, and crop
-        // adjustment — and leaves the rest of the list (and the item's own trash
-        // decision, which the editor doesn't own) alone.
+        // adjustment — and leaves the rest of the list alone.
         let updated = viewModel.items[2]
         XCTAssertEqual(updated.id, target.id)
         XCTAssertEqual(updated.window, result.window)
         XCTAssertEqual(updated.cropRect, result.cropRect)
         XCTAssertEqual(updated.cropAdjustment, result.cropAdjustment)
-        XCTAssertEqual(updated.isTrashed, target.isTrashed)
         XCTAssertEqual(viewModel.items[1], other)
     }
 
@@ -569,7 +485,7 @@ final class ClipListTests: XCTestCase {
     // MARK: - save()
 
     @MainActor
-    func testSaveExportsAndSavesEveryNonTrashedDerivedClip() async {
+    func testSaveExportsAndSavesEveryDerivedClip() async {
         actor Recorder {
             var exportedWindows: [TrickWindow] = []
             var savedURLs: [URL] = []
@@ -577,10 +493,10 @@ final class ClipListTests: XCTestCase {
             func recordSave(_ url: URL) { savedURLs.append(url) }
         }
         let recorder = Recorder()
-        let kept = makeItem()
-        let trashed = makeItem(isTrashed: true)
+        let first = makeItem()
+        let second = ClipListItem(window: TrickWindow(startTime: 8, endTime: 10), cropRect: fullFrame)
         let viewModel = makeViewModel(
-            items: [kept, trashed],
+            items: [first, second],
             exportClip: { spec, _, directory, _ in
                 await recorder.recordExport(spec.window)
                 return directory.appendingPathComponent("\(UUID().uuidString).mp4")
@@ -594,9 +510,9 @@ final class ClipListTests: XCTestCase {
 
         XCTAssertTrue(result)
         let windows = await recorder.exportedWindows
-        XCTAssertEqual(windows, [kept.window])
+        XCTAssertEqual(windows, [first.window, second.window])
         let saved = await recorder.savedURLs
-        XCTAssertEqual(saved.count, 1)
+        XCTAssertEqual(saved.count, 2)
         XCTAssertNil(viewModel.saveFailureMessage)
     }
 
@@ -669,68 +585,6 @@ final class ClipListTests: XCTestCase {
     }
 
     @MainActor
-    func testSaveDeletesTheOriginalWhenItIsTrashedAndEverythingSucceeded() async {
-        actor Recorder {
-            var deletedIdentifiers: [String] = []
-            func record(_ identifier: String) { deletedIdentifiers.append(identifier) }
-        }
-        let recorder = Recorder()
-        let viewModel = makeViewModel(
-            items: [makeItem()],
-            assetIdentifier: "original-123",
-            deleteOriginalAsset: { identifier in await recorder.record(identifier) })
-        viewModel.toggleTrash(viewModel.items[0])
-
-        let result = await viewModel.save()
-
-        XCTAssertTrue(result)
-        let deleted = await recorder.deletedIdentifiers
-        XCTAssertEqual(deleted, ["original-123"])
-    }
-
-    @MainActor
-    func testSaveLeavesTheOriginalAloneWhenItIsNotTrashed() async {
-        actor Recorder {
-            var deleteCount = 0
-            func increment() { deleteCount += 1 }
-        }
-        let recorder = Recorder()
-        let viewModel = makeViewModel(
-            items: [makeItem()],
-            deleteOriginalAsset: { _ in await recorder.increment() })
-
-        let result = await viewModel.save()
-
-        XCTAssertTrue(result)
-        let count = await recorder.deleteCount
-        XCTAssertEqual(count, 0)
-    }
-
-    @MainActor
-    func testSaveDoesNotDeleteTheOriginalWhenAClipFails() async {
-        struct Boom: Error {}
-        actor Recorder {
-            var deleteCount = 0
-            func increment() { deleteCount += 1 }
-        }
-        let recorder = Recorder()
-        let viewModel = makeViewModel(
-            items: [makeItem()],
-            exportClip: { _, _, _, _ in throw Boom() },
-            deleteOriginalAsset: { _ in await recorder.increment() })
-        viewModel.toggleTrash(viewModel.items[0])
-
-        let result = await viewModel.save()
-
-        XCTAssertFalse(result)
-        let count = await recorder.deleteCount
-        // A failed clip must never cost the original its only remaining copy: the
-        // original stays until every derived clip has confirmed it landed in Photos.
-        XCTAssertEqual(count, 0)
-        XCTAssertNotNil(viewModel.saveFailureMessage)
-    }
-
-    @MainActor
     func testSaveReportsExportFailureReason() async {
         let viewModel = makeViewModel(
             items: [makeItem()],
@@ -769,19 +623,13 @@ final class ClipListTests: XCTestCase {
         XCTAssertEqual(viewModel.clipPosition(of: viewModel.items[2])?.count, 3)
     }
 
-    /// What Save Clips announces and what it does read off the same scope, so a trashed clip that
-    /// still counted would promise a save that never happens.
+    /// What Save Clips announces and what it does read off the same count, so counting the
+    /// original would promise a clip that never saves.
     @MainActor
-    func testSaveScopeSkipsTrashedClipsAndReportsTheOriginal() {
-        let viewModel = makeViewModel(items: [makeItem(), makeItem(isTrashed: true), makeItem()])
+    func testUnsavedClipCountLeavesOutTheOriginal() {
+        let viewModel = makeViewModel(items: [makeItem(), makeItem()])
 
-        XCTAssertEqual(viewModel.saveScope.clipCount, 2)
-        XCTAssertFalse(viewModel.saveScope.deletesOriginal)
-
-        viewModel.toggleTrash(viewModel.items[0])
-
-        XCTAssertTrue(viewModel.saveScope.deletesOriginal)
-        XCTAssertEqual(viewModel.saveScope.clipCount, 2, "the original is not one of the clips")
+        XCTAssertEqual(viewModel.unsavedClipCount, 2, "the original is not one of the clips")
     }
 
     /// A retry writes only the clips still missing from Photos, so the button's count and the
@@ -807,7 +655,7 @@ final class ClipListTests: XCTestCase {
         let first = await viewModel.save()
         XCTAssertFalse(first)
         XCTAssertEqual(viewModel.saveFailureMessage, "Clip 2 of 3: Export failed — always")
-        XCTAssertEqual(viewModel.saveScope.clipCount, 1)
+        XCTAssertEqual(viewModel.unsavedClipCount, 1)
 
         viewModel.saveFailureMessage = nil
         let second = await viewModel.save()
@@ -914,22 +762,6 @@ final class ClipListTests: XCTestCase {
             "Clip 1 of 2: Export failed — boom\nClip 2 of 2: Export failed — boom")
     }
 
-    @MainActor
-    func testSaveIgnoresAFailedOriginalDeletion() async {
-        struct Boom: Error {}
-        let viewModel = makeViewModel(
-            items: [],
-            deleteOriginalAsset: { _ in throw Boom() })
-        viewModel.toggleTrash(viewModel.items[0])
-
-        let result = await viewModel.save()
-
-        // A declined system delete-confirmation or a revoked permission leaves the
-        // original in place, which is the safe outcome — not a reportable failure.
-        XCTAssertTrue(result)
-        XCTAssertNil(viewModel.saveFailureMessage)
-    }
-
     /// A retried Save Clips must not duplicate any healthy clip: `save()` selects by a
     /// predicate over `items`, so without a record of what already landed, the second tap
     /// would re-export and re-write the clips that had succeeded — one extra copy of each per
@@ -1003,9 +835,9 @@ final class ClipListTests: XCTestCase {
 
     /// Skipping the already-landed clips must not cost the retry its own success: once the
     /// last missing clip lands, `failures` is empty and the run has to behave exactly like a
-    /// clean first Save Clips — pop to Home, and delete the trashed original.
+    /// clean first Save Clips — pop to Home.
     @MainActor
-    func testRetriedSaveSucceedsAndDeletesTheTrashedOriginalOnceTheLastClipLands() async {
+    func testRetriedSaveSucceedsOnceTheLastClipLands() async {
         actor Flake {
             private var failuresLeft: Int
             init(failuresLeft: Int) { self.failuresLeft = failuresLeft }
@@ -1017,9 +849,7 @@ final class ClipListTests: XCTestCase {
         }
         actor Recorder {
             var savedNames: [String] = []
-            var deleteCount = 0
             func recordSave(_ name: String) { savedNames.append(name) }
-            func recordDelete() { deleteCount += 1 }
         }
         let flake = Flake(failuresLeft: 1)
         let recorder = Recorder()
@@ -1038,14 +868,10 @@ final class ClipListTests: XCTestCase {
             saveToPhotos: { url, _ in
                 await recorder.recordSave(url.lastPathComponent)
                 return url.lastPathComponent
-            },
-            deleteOriginalAsset: { _ in await recorder.recordDelete() })
-        viewModel.toggleTrash(viewModel.items[0])
+            })
 
         let first = await viewModel.save()
         XCTAssertFalse(first)
-        let deletesAfterTheFailure = await recorder.deleteCount
-        XCTAssertEqual(deletesAfterTheFailure, 0)
 
         viewModel.saveFailureMessage = nil
         let second = await viewModel.save()
@@ -1053,8 +879,6 @@ final class ClipListTests: XCTestCase {
         XCTAssertTrue(second)
         let savedNames = await recorder.savedNames
         XCTAssertEqual(savedNames, ["clip-0.mp4", "clip-5.mp4"])
-        let deleteCount = await recorder.deleteCount
-        XCTAssertEqual(deleteCount, 1)
     }
 
     @MainActor
@@ -1318,7 +1142,6 @@ final class ClipListTests: XCTestCase {
         XCTAssertEqual(added.window.startTime, 0)
         XCTAssertEqual(added.window.endTime, 3)
         XCTAssertEqual(added.cropRect, fullFrame)
-        XCTAssertFalse(added.isTrashed)
     }
 
     @MainActor

@@ -168,7 +168,7 @@ camera takes where live inference covered the take (`LIVE_POSE.md`),
 those live results are the input — again, no re-decode. The encoding
 happens once, when saving writes the source to the clip library
 (`PROFILE_DESIGN.md` §2.2), so a clip saved today can be contributed
-later even after the save has deleted its original from Photos.
+later even after the user has deleted its original from Photos.
 
 Keypoint order is MoveNet 17 in COCO order, exactly as the farm expects:
 `0 nose, 1 left_eye, 2 right_eye, 3 left_ear, 4 right_ear,

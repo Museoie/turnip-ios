@@ -56,8 +56,7 @@ struct ClipEditorSource {
 
 /// The editor's edits, committed on back-navigation: the design doc wants no separate save
 /// step, so the view hands `result` to its commit closure when the editor disappears, and
-/// the clip list applies it to its item. Trashing isn't the editor's decision, so the clip
-/// list preserves the item's existing `isTrashed` when applying a result.
+/// the clip list applies it to its item.
 ///
 /// It carries both modes' framings, whichever is active, and the clip keeps both. A
 /// `followCrop` the editor only ever showed as Auto follow's for the window it opened with

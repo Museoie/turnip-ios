@@ -37,12 +37,6 @@ typealias SaveOneClipToPhotos = @Sendable (_ fileURL: URL, _ albumTitle: String?
 /// `recordInClipLibrary` plugs in here.
 typealias RecordSavedClips = @MainActor (LibrarySave) -> [EarnedAchievement]
 
-/// Deletes the original video from Photos by its `PHAsset.localIdentifier`.
-/// `PhotoAssetDeleter` plugs in here. A throw here is treated as non-fatal by
-/// `save()` — the original staying in the library is the safe outcome of a decline
-/// or a revoked permission, not a reportable failure.
-typealias DeleteOriginalAsset = @Sendable (String) async throws -> Void
-
 /// Names which of a clip's two independently-failable steps broke: export and the
 /// Photos-library write fail independently (e.g. Photos permission revoked
 /// mid-save), and the fix differs, so the failure message names the step.
@@ -110,30 +104,25 @@ private func saveOneClipToPhotos(_ url: URL, albumTitle: String?) async throws -
     }
 }
 
-/// The production `DeleteOriginalAsset`, wired to `PhotoAssetDeleter`.
-private func deleteOriginalVideo(_ assetIdentifier: String) async throws {
-    try await PhotoAssetDeleter().delete(assetIdentifier: assetIdentifier)
-}
-
 /// Backing store for Name Clips (`NameClipsView`, `docs/UIUX.md` § "Name Clips"): the video's
-/// clips with their windows, framing, trash and save state, and the names given them. `items[0]`
-/// stands for the source video itself, whose trash flag is "delete the original after saving".
+/// clips with their windows, framing and save state, and the names given them. `items[0]`
+/// stands for the source video itself: never one of the clips, its window carries the video's
+/// Photos duration until the asset's own has loaded.
 @MainActor
 final class ClipListViewModel: ObservableObject {
     @Published private(set) var items: [ClipListItem]
-    /// True while `save()` is exporting/saving clips and possibly deleting the
-    /// original — the screen shows a spinner and disables its content for this.
+    /// True while `save()` is exporting and saving clips — the screen shows a spinner and
+    /// disables its content for this.
     @Published private(set) var isSaving = false
     /// Set by `save()` when a clip failed and cleared once the screen's alert
     /// dismisses. `nil` means no alert is showing.
     @Published var saveFailureMessage: String?
 
-    /// The item fields a decoded thumbnail actually depends on — `isTrashed` isn't
-    /// here, since trashing a clip never changes what its preview frame looks like.
-    /// Tagging cache entries with this, rather than clearing the cache from every call
-    /// site that can mutate an item, makes the cache self-invalidating: a decode
-    /// started before an edit and delivered after it carries the *pre-edit* key, so it
-    /// can never read back as current for the *post-edit* item, however the two race.
+    /// The item fields a decoded thumbnail actually depends on. Tagging cache entries with
+    /// this, rather than clearing the cache from every call site that can mutate an item,
+    /// makes the cache self-invalidating: a decode started before an edit and delivered after
+    /// it carries the *pre-edit* key, so it can never read back as current for the
+    /// *post-edit* item, however the two race.
     private struct ThumbnailCacheKey: Equatable {
         let window: TrickWindow
         let cropRect: NormalizedRect
@@ -159,8 +148,8 @@ final class ClipListViewModel: ObservableObject {
     /// (`DetectedClips.people`); a clip with a `personID` reads its own person's frames instead
     /// of `poseFrames`.
     private let people: [PoseTrack]
-    /// The source video's `PHAsset.localIdentifier`, for deleting it from Photos
-    /// when the original is marked for deletion at `save()` time.
+    /// The source video's `PHAsset.localIdentifier`: the clip library's source and the
+    /// contribution's video id.
     private let assetIdentifier: String
     private let loader: ClipThumbnailLoader
     /// One in-flight decode per id, tagged with the key it was started for — a caller
@@ -170,7 +159,6 @@ final class ClipListViewModel: ObservableObject {
     private var inFlight: [UUID: (key: ThumbnailCacheKey, task: Task<CGImage?, Never>)] = [:]
     private let exportClip: ExportOneClip
     private let saveToPhotos: SaveOneClipToPhotos
-    private let deleteOriginalAsset: DeleteOriginalAsset
     private let recordSaved: RecordSavedClips
     /// The Photos asset each saved clip landed as, by item id: what the clip library records, and
     /// replaced when an edited clip is saved again.
@@ -237,7 +225,6 @@ final class ClipListViewModel: ObservableObject {
         loader: ClipThumbnailLoader = ClipThumbnailLoader(),
         exportClip: @escaping ExportOneClip = exportOneClip,
         saveToPhotos: @escaping SaveOneClipToPhotos = saveOneClipToPhotos,
-        deleteOriginalAsset: @escaping DeleteOriginalAsset = deleteOriginalVideo,
         recordSaved: @escaping RecordSavedClips = { recordInClipLibrary($0) },
         makeDirectory: @escaping @Sendable () -> URL = defaultExportDirectory,
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettingsStore.shared.current },
@@ -261,7 +248,6 @@ final class ClipListViewModel: ObservableObject {
         self.loader = loader
         self.exportClip = exportClip
         self.saveToPhotos = saveToPhotos
-        self.deleteOriginalAsset = deleteOriginalAsset
         self.recordSaved = recordSaved
         self.makeDirectory = makeDirectory
         self.settingsProvider = settingsProvider
@@ -279,13 +265,10 @@ final class ClipListViewModel: ObservableObject {
         return (offset + 1, clips.count)
     }
 
-    /// How many clips a Save Clips tap would write to Photos, and whether it would also delete the
-    /// source video — what the button announces before it is tapped, and what the save
-    /// announces on its way in and out.
-    var saveScope: (clipCount: Int, deletesOriginal: Bool) {
-        let clipCount = items.filter { !$0.isOriginal && !$0.isTrashed && !$0.isSaved }.count
-        let deletesOriginal = items.first(where: \.isOriginal)?.isTrashed == true
-        return (clipCount, deletesOriginal)
+    /// How many clips a Save Clips tap would write to Photos — what the button announces before it
+    /// is tapped, and what the save announces on its way in and out.
+    var unsavedClipCount: Int {
+        items.filter { !$0.isOriginal && !$0.isSaved }.count
     }
 
     /// Speaks the zero-tricks notice, which otherwise fades itself out unheard.
@@ -298,8 +281,7 @@ final class ClipListViewModel: ObservableObject {
     var sourceAsset: AVAsset { asset }
 
     /// Builds the editor's input for one list item: its window, crop rect, and crop
-    /// adjustment plus the analyzed asset and the video's scored frames. Trash stays the
-    /// list's own decision — the editor neither surfaces nor edits it. Never called for
+    /// adjustment plus the analyzed asset and the video's scored frames. Never called for
     /// the original item, which never opens the editor.
     func editorSource(for item: ClipListItem) -> ClipEditorSource {
         ClipEditorSource(
@@ -321,7 +303,6 @@ final class ClipListViewModel: ObservableObject {
     /// Applies the editor's commit to the item with the given id: the window, crop rect,
     /// and crop adjustment the user left the editor with replace the list entry's, so
     /// trim/crop edits commit on back-navigation (docs/UIUX.md § "Clip Detail / Editor").
-    /// The item's `isTrashed` carries over unchanged — the editor doesn't own that decision.
     /// `isSaved` carries over only while the result still describes the video that landed:
     /// a clip the user retrimmed or recropped is not the one in Photos, so Save Clips has to
     /// export and save it again. Names carry over; the window stays detection's only while the
@@ -336,7 +317,6 @@ final class ClipListViewModel: ObservableObject {
             cropAdjustment: result.cropAdjustment,
             framingMode: result.framingMode,
             followCrop: result.followCrop,
-            isTrashed: item.isTrashed,
             isSaved: item.isSaved && describesTheSameVideo(result, as: item),
             personID: item.personID,
             names: item.names,
@@ -368,12 +348,9 @@ final class ClipListViewModel: ObservableObject {
         return window == ClipEditorViewModel.clamped(window: previous, to: loadedAssetDuration)
     }
 
-    /// Removes the item with the given id entirely: Name Clips' "Remove this clip", and
-    /// — for a derived clip — also what `trash(_:)` routes to, since a derived clip has no
-    /// restore once trashed. The
-    /// original item can never be removed this way — it can only be soft-trashed —
-    /// since deleting a `PHAsset` needs `save()`'s confirmation-and-cleanup flow, not
-    /// an in-memory removal. A no-op for unknown ids.
+    /// Removes the clip with the given id entirely, with no restore: Name Clips' "Remove this
+    /// clip". The original item is never removed, since `items[0]` always stands for the
+    /// source video. A no-op for unknown ids.
     func delete(_ id: UUID) {
         items.removeAll { $0.id == id && !$0.isOriginal }
         // The id is gone from `items` for good, so nothing will ever look these up
@@ -381,25 +358,6 @@ final class ClipListViewModel: ObservableObject {
         // life of the screen.
         thumbnails.removeValue(forKey: id)
         inFlight[id] = nil
-    }
-
-    /// Flips one item's reversible trash flag — the primitive `trash(_:)` composes
-    /// for the original. A no-op for unknown ids.
-    func toggleTrash(_ item: ClipListItem) {
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
-        items[index].isTrashed.toggle()
-    }
-
-    /// Trash for any item: the original's is reversible (`toggleTrash`, read by `save()` to
-    /// decide whether to delete the source video from Photos), while a derived clip's
-    /// removes it immediately (`delete(_:)`) — there is no restore for a derived clip once
-    /// trashed.
-    func trash(_ item: ClipListItem) {
-        if item.isOriginal {
-            toggleTrash(item)
-        } else {
-            delete(item.id)
-        }
     }
 
     /// The "+" button's action: appends a new clip covering the first few seconds of the
@@ -572,10 +530,8 @@ final class ClipListViewModel: ObservableObject {
         return image
     }
 
-    /// The "Save Clips" action: exports and saves every non-trashed derived clip that has not
-    /// already landed in Photos, then — only once every one of them has succeeded —
-    /// deletes the original video from Photos if it was marked for deletion. Returns `true`
-    /// when the screen should pop to Home; `false` when a clip failed, in which case
+    /// The "Save Clips" action: exports and saves every derived clip that has not already
+    /// landed in Photos. Returns `true` when the screen should pop to Home; `false` when a clip failed, in which case
     /// `saveFailureMessage` is set and the screen stays up so Save Clips can be retried.
     ///
     /// Each clip is marked `isSaved` the moment its Photos write returns, and the loop
@@ -583,13 +539,6 @@ final class ClipListViewModel: ObservableObject {
     /// that fails deterministically would otherwise cost the user one extra copy of
     /// every healthy clip per attempt, and a Photos asset the app wrote is not
     /// something the app can take back.
-    ///
-    /// The original is never deleted if any clip failed: deleting the source before
-    /// every derived clip has confirmed safely landed in Photos would risk losing
-    /// the user's only copy of a trick that never actually saved. A failed original deletion
-    /// (the user declined PhotoKit's own confirmation, or permission was revoked) is
-    /// swallowed rather than surfaced — the original staying in the library is the
-    /// safe outcome, not a reportable failure.
     func save() async -> Bool {
         guard !isSaving else { return false }
         isSaving = true
@@ -604,13 +553,13 @@ final class ClipListViewModel: ObservableObject {
         // the same destination, and a setting change mid-save shouldn't split a run across two
         // albums.
         let albumTitle = settingsProvider().albumDestination
-        let clipCount = saveScope.clipCount
+        let clipCount = unsavedClipCount
         // A run with no clip to write has no work to announce.
         if clipCount > 0 {
             announce(ClipListAccessibility.saveStarting(clipCount: clipCount))
         }
         var failures: [String] = []
-        for item in items where !item.isOriginal && !item.isTrashed && !item.isSaved {
+        for item in items where !item.isOriginal && !item.isSaved {
             do {
                 let spec = ClipSpec(
                     window: item.window, cropRect: item.cropRect, cropAdjustment: item.cropAdjustment,
@@ -627,17 +576,14 @@ final class ClipListViewModel: ObservableObject {
                     reason: Self.reason(for: error)))
             }
         }
-        // Before the original can be deleted: the library reads its recording date. A partial
-        // failure records what did land, so a clip in Photos is never missing from the Profile.
+        // A partial failure records what did land, so a clip in Photos is never missing from the
+        // Profile.
         let earned = recordLibrary()
         guard failures.isEmpty else {
             saveFailureMessage = failures.joined(separator: "\n")
             return false
         }
 
-        if let original = items.first(where: \.isOriginal), original.isTrashed {
-            try? await deleteOriginalAsset(assetIdentifier)
-        }
         if clipCount > 0 {
             var message = ClipListAccessibility.saveFinished(clipCount: clipCount)
             if !earned.isEmpty {
@@ -690,8 +636,7 @@ final class ClipListViewModel: ObservableObject {
 /// What Name Clips writes (`docs/UIUX.md` § "Name Clips", `docs/PROFILE_DESIGN.md` §4): names on
 /// the items themselves, so an editor commit or a page change keeps every name given so far.
 extension ClipListViewModel {
-    /// The clips Name Clips pages through: every derived clip, in order. A trashed derived
-    /// clip is already gone from `items`.
+    /// The clips Name Clips pages through: every derived clip, in order.
     var clipsToName: [ClipListItem] { items.filter { !$0.isOriginal } }
 
     /// Whether the video has pose analysis to contribute. A video reached by "Clip manually" has

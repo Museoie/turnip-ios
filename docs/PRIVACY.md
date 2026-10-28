@@ -56,9 +56,9 @@ in the store.
   needs no `NSMotionUsageDescription` and raises no prompt (unlike the
   pedometer and activity APIs), and the angles live only inside the user's
   own video file in their Photos library. If the user
-  marks the original video for deletion on Name Clips, the original is deleted
-  from Photos too — a user-initiated, on-device change to their own library,
-  not data leaving the device. Saved clips' trick names, whether each shows
+  removes a saved clip from the Profile and asks for its video to go too, the
+  video is deleted from Photos — a user-initiated, on-device change to their
+  own library, not data leaving the device. Saved clips' trick names, whether each shows
   the user, and the Profile's achievements are kept in an on-device library
   ("The clip library and the Profile" below) and never sent anywhere.
 - Nothing is uploaded, shared, or transmitted to any Turnip-controlled server.
@@ -105,11 +105,11 @@ require a manifest/signature. If a dependency is added, check both.
   read-only level — the choices are add-only (can't enumerate the
   library) or read/write — and exporting clips back to Photos needs the
   write half anyway, so one honest prompt covers both. The write half is
-  also what lets Name Clips delete the original video (`PhotoAssetDeleter`,
-  `PHAssetChangeRequest.deleteAssets`) when the user trashes its tile and
-  taps Save Clips — PhotoKit shows its own "Allow Turnip to delete?" system
-  confirmation before the deletion happens, on top of the one-time
-  read/write grant.
+  also what lets the Profile's Clip view delete a saved clip's video
+  (`PhotoAssetDeleter`, `PHAssetChangeRequest.deleteAssets`) when the user
+  picks "Remove and Delete Video from Photos" — PhotoKit shows its own
+  "Allow Turnip to delete?" system confirmation before the deletion happens,
+  on top of the one-time read/write grant.
 - `NSPhotoLibraryUsageDescription` explains the read side in plain
   language. `NSPhotoLibraryAddUsageDescription` ships alongside it
   because the clip-save path — reachable from Home through Processing and
@@ -150,7 +150,7 @@ require a manifest/signature. If a dependency is added, check both.
   at launch. The prefix is what makes both the delete and the sweep recognize
   only our files.
 - **Clip exports.** Tapping "Save Clips" on Name Clips (`ClipListViewModel.save()`)
-  stages every non-trashed derived clip in a fresh `tmp/turnip-export-<uuid>/`
+  stages every derived clip not yet in Photos in a fresh `tmp/turnip-export-<uuid>/`
   scratch directory, hands each one to Photos through `ClipPhotosSaver`
   (add-only), and deletes the whole directory once the run ends — success or
   failure, since there is no Share action here to keep a file alive for. A
@@ -247,9 +247,9 @@ Built (`Turnip/Profile/`):
 - **New read, no new prompt.** `PHAsset.creationDate` of the video a save
   came from, under the existing Photos grant, to date its clips. The Profile
   also shows each saved clip's thumbnail and plays it from Photos by its
-  identifier, and the Clip view can delete a clip's video through the same
-  `PHAssetChangeRequest.deleteAssets` path (and system confirmation) Name
-  Clips uses for an original.
+  identifier, and the Clip view can delete a clip's video through
+  `PHAssetChangeRequest.deleteAssets`, behind the system's own confirmation
+  (Photos access, above).
 - **Required-reason APIs.** None added: the library is written with
   `Data.write(options: .atomic)` and read back whole; it reads no file
   timestamps and checks no free space.
@@ -259,8 +259,8 @@ Planned:
 - **More in the library.** Each source's pose keypoint sequence, a copy of
   the source video's location when it has one, spot names and favorites
   join the same file's directory in `Application Support/`: not `Caches/`,
-  since the pose there is the only copy once the save has deleted an
-  original.
+  since the pose there is the only copy once the user has deleted an
+  original from Photos.
 - **Data written into the user's own files.** Each clip Save Clips exports
   carries a small Turnip metadata item (its clip ID, trick names, and whether
   it shows the user) and is named `turnip-clip-<clip_id>.mov`, the same

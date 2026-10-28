@@ -566,7 +566,7 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
   deletes no clip it wrote. The save writes every clip now in Photos into the
   on-device clip library ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §2) with
   the names and who's-in-it it has — a partial failure records what landed,
-  and the retry records names given since — before the original is deleted.
+  and the retry records names given since.
   *Planned:* each clip's names also in its exported file (§3.2 there). A name
   typed and left without pressing return still counts: a swipe, the chevron,
   opening the editor and a save all commit it as typed. With Settings'
@@ -929,7 +929,8 @@ Resolved 2026-09-04.
    Photos, which Save Clips carries out once every derived clip has confirmed it
    saved. The "Select All" / "Deselect All" toolbar action is gone along with
    the keep/discard concept it bulk-toggled. *Clip List itself was retired
-   2026-10-27 (decision 9); its inline save is now Name Clips'.*
+   2026-10-27 (decision 9); its inline save is now Name Clips', and the app
+   no longer deletes the original (decision 10).*
 7. **Camera takes skip Processing → Added.** Recorded 2026-09-23: the camera
    scores pose on its live frames while recording and draws the skeleton on
    the preview; when that covered the whole take, the same trick detection

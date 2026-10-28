@@ -2,40 +2,14 @@ import XCTest
 @testable import Turnip
 
 /// The Clip List's VoiceOver wording is its own contract: nothing crashes when a label drops
-/// the clip's position or states the wrong trash decision, the screen just lies to a listener.
+/// the clip's position or miscounts a save, the screen just lies to a listener.
 /// Each case pins the full string so a dropped clause fails rather than degrades.
 final class ClipListAccessibilityTests: XCTestCase {
     func testCardLabelCountsOffTheClipsPosition() {
         XCTAssertEqual(
             ClipListAccessibility.cardLabel(
-                clipNumber: 2, clipCount: 3, spokenDuration: "2.4 seconds",
-                isTrashed: false, hasThumbnail: true),
-            "Clip 2 of 3, 2.4 seconds, kept")
-    }
-
-    /// The original is the source video already in Photos, not a detected clip, so it has no
-    /// position in the count.
-    func testCardLabelNamesTheOriginalInsteadOfCountingIt() {
-        XCTAssertEqual(
-            ClipListAccessibility.cardLabel(
-                clipNumber: nil, clipCount: 3, spokenDuration: "1 minute, 3 seconds",
-                isTrashed: false, hasThumbnail: true),
-            "Original video, 1 minute, 3 seconds, kept")
-    }
-
-    /// The two trash decisions differ in kind: the original's is a reversible instruction to
-    /// Save Clips, a derived clip's removes the card. The wording has to say which.
-    func testCardLabelDistinguishesTheTwoTrashDecisions() {
-        XCTAssertEqual(
-            ClipListAccessibility.cardLabel(
-                clipNumber: nil, clipCount: 3, spokenDuration: "1 minute, 3 seconds",
-                isTrashed: true, hasThumbnail: true),
-            "Original video, 1 minute, 3 seconds, will be deleted")
-        XCTAssertEqual(
-            ClipListAccessibility.cardLabel(
-                clipNumber: 1, clipCount: 3, spokenDuration: "2.4 seconds",
-                isTrashed: true, hasThumbnail: true),
-            "Clip 1 of 3, 2.4 seconds, discarded")
+                clipNumber: 2, clipCount: 3, spokenDuration: "2.4 seconds", hasThumbnail: true),
+            "Clip 2 of 3, 2.4 seconds")
     }
 
     /// The UI-test harness waits on this clause to prove the thumbnail fallback engaged, and a
@@ -43,9 +17,8 @@ final class ClipListAccessibilityTests: XCTestCase {
     func testCardLabelReportsAMissingThumbnail() {
         XCTAssertEqual(
             ClipListAccessibility.cardLabel(
-                clipNumber: 1, clipCount: 1, spokenDuration: "2.4 seconds",
-                isTrashed: false, hasThumbnail: false),
-            "Clip 1 of 1, 2.4 seconds, kept, thumbnail placeholder")
+                clipNumber: 1, clipCount: 1, spokenDuration: "2.4 seconds", hasThumbnail: false),
+            "Clip 1 of 1, 2.4 seconds, thumbnail placeholder")
     }
 
     /// A run that found clips announces nothing of its own, so this label is where its result
@@ -58,19 +31,11 @@ final class ClipListAccessibilityTests: XCTestCase {
 
     func testDoneValueCountsWhatTheTapCommitsTo() {
         XCTAssertEqual(
-            ClipListAccessibility.saveClipsValue(clipCount: 3, deletesOriginal: false),
+            ClipListAccessibility.saveClipsValue(clipCount: 3),
             "Saves 3 clips to Photos")
         XCTAssertEqual(
-            ClipListAccessibility.saveClipsValue(clipCount: 1, deletesOriginal: false),
+            ClipListAccessibility.saveClipsValue(clipCount: 1),
             "Saves 1 clip to Photos")
-    }
-
-    /// Deleting the source video is the one irreversible thing Save Clips does, so it is never left
-    /// to the tile's dimmed thumbnail to convey.
-    func testDoneValueNamesTheOriginalDeletion() {
-        XCTAssertEqual(
-            ClipListAccessibility.saveClipsValue(clipCount: 2, deletesOriginal: true),
-            "Saves 2 clips to Photos, and deletes the original video")
     }
 
     func testSaveAnnouncementsAgreeInNumber() {

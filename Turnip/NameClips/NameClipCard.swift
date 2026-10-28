@@ -195,7 +195,7 @@ struct NameClipCard: View {
             clipNumber: position?.number, clipCount: position?.count ?? 0,
             spokenDuration: ClipDurationFormatter.accessibilityString(
                 from: item.window.endTime - item.window.startTime),
-            isTrashed: false, hasThumbnail: thumbnail != nil)
+            hasThumbnail: thumbnail != nil)
         if item.isSaved { label += String(localized: ", saved to Photos") }
         return label
     }

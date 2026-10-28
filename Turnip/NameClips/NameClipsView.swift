@@ -330,10 +330,9 @@ struct NameClipsView: View {
         }
     }
 
-    /// What Save Clips commits to, read after its label: the count, and the original's fate.
+    /// What Save Clips commits to, read after its label: how many clips it writes.
     private var saveAccessibilityValue: String {
-        let scope = viewModel.saveScope
-        return ClipListAccessibility.saveClipsValue(clipCount: scope.clipCount, deletesOriginal: scope.deletesOriginal)
+        ClipListAccessibility.saveClipsValue(clipCount: viewModel.unsavedClipCount)
     }
 
     /// What an analysis that left no clip shows: that it found nothing, or — for a video reached

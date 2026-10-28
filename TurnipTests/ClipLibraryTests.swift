@@ -229,7 +229,7 @@ final class ClipLibraryTests: XCTestCase {
             exportClip: { spec, _, directory, _ in
                 directory.appendingPathComponent("clip-\(Int(spec.window.startTime)).mp4")
             },
-            saveToPhotos: saveToPhotos, deleteOriginalAsset: { _ in }, recordSaved: recordSaved,
+            saveToPhotos: saveToPhotos, recordSaved: recordSaved,
             makeDirectory: {
                 FileManager.default.temporaryDirectory.appendingPathComponent("turnip-test-\(UUID().uuidString)")
             },

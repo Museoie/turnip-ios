@@ -7,8 +7,7 @@ import Photos
 ///
 /// PhotoKit shows its own "Allow Turnip to delete?" confirmation before
 /// `performChanges` resolves; a decline surfaces as a thrown error indistinguishable
-/// from any other rejected change, so the caller treats every failure here as
-/// non-fatal and leaves the asset in place.
+/// from any other rejected change, and the asset stays in place.
 struct PhotoAssetDeleter: Sendable {
     /// A no-op when the identifier no longer resolves to an asset — already deleted
     /// (by this call or elsewhere) is the same outcome as deleted.

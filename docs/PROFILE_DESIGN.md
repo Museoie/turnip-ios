@@ -105,8 +105,7 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
   - `recorded_at` (`PHAsset.creationDate`), duration, analysis rate;
   - the pose sequence (§2.2);
   - `location`, copied from `PHAsset.location` when the asset has one,
-    because the original may be deleted later (Name Clips' save deletes
-    it when it is marked for deletion);
+    because the user may delete the original from Photos later;
   - `spot`, an optional name the user gives the place (§8.1);
   - `source_id`, the contribution identity (`CONTRIBUTION_DESIGN.md`
     §1), computed the first time a clip of it is contributed.
@@ -133,8 +132,8 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
 - The source's pose sequence is stored as the TKP1 blob contribution
   would upload: encoded once at the analysis rate, gap frames as all
   zeros (`CONTRIBUTION_DESIGN.md` §2.2), gzip-compressed.
-- Why keep it: Name Clips' save deletes the original from Photos when
-  it is marked for deletion, and with it any way to re-run pose. Without the
+- Why keep it: the user can delete the original from Photos once its
+  clips are saved, and with it any way to re-run pose. Without the
   stored pose a clip named today could never be contributed later.
   The same pose aligns "then and now" highlights (§8.1) and draws
   skeleton previews for clips whose video is gone.
@@ -154,8 +153,7 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
   are not stored. The one exception is on-device personalization: a
   trashed trick-model proposal on a saved source leaves its window's
   two frame indices behind, and nothing else
-  (`PERSONALIZATION_DESIGN.md` §3). A trashed original is still deleted
-  from Photos as today; its source record and pose stay.
+  (`PERSONALIZATION_DESIGN.md` §3).
 - Backing out of Name Clips without saving stores nothing.
 - A saved clip can later have its names, `is_me` and `favorite`
   changed from the Clip view (§5.2). Its window and crop cannot: the

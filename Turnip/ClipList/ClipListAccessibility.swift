@@ -3,13 +3,13 @@ import Foundation
 /// What the Clip List says out loud, and what its cards are called.
 ///
 /// Three of this screen's states are otherwise purely visual. A card conveys its clip by
-/// position in a grid, its length by a "2.4s" caption, and its kept/discarded decision by
-/// opacity; the save puts a silent spinner over a disabled grid and then pops to Home; and
-/// the zero-tricks notice fades itself out after a few seconds. Each gets a spoken form
-/// here, as plain functions, so the wording is assertable without a screen reader.
+/// position in a grid and its length by a "2.4s" caption; the save puts a silent spinner
+/// over a disabled grid and then pops to Home; and the zero-tricks notice fades itself out
+/// after a few seconds. Each gets a spoken form here, as plain functions, so the wording is
+/// assertable without a screen reader.
 enum ClipListAccessibility {
-    /// One card's label. `clipNumber` is `nil` for the original video, which is the source
-    /// already in Photos rather than a detected clip and so has no position in the count.
+    /// One card's label. `clipNumber` is `nil` for an item that isn't among the clips, whose
+    /// label then goes without a position.
     ///
     /// `hasThumbnail` appends the placeholder state: a card whose frame has not decoded shows
     /// a grey square, which is information a listener otherwise has no way to reach.
@@ -17,41 +17,25 @@ enum ClipListAccessibility {
         clipNumber: Int?,
         clipCount: Int,
         spokenDuration: String,
-        isTrashed: Bool,
         hasThumbnail: Bool
     ) -> String {
         var parts: [String] = []
         if let clipNumber {
             parts.append(String(localized: "Clip \(clipNumber) of \(clipCount)"))
-        } else {
-            parts.append(String(localized: "Original video"))
         }
         parts.append(spokenDuration)
-        parts.append(decisionDescription(isTrashed: isTrashed, isOriginal: clipNumber == nil))
         if !hasThumbnail {
             parts.append(String(localized: "thumbnail placeholder"))
         }
         return parts.joined(separator: ", ")
     }
 
-    /// How a card states its trash decision. The original's trash toggle is reversible and
-    /// takes effect at Save Clips, so it describes what Save Clips will do; a derived clip's removes the
-    /// card outright, so "discarded" describes a state the grid barely holds.
-    static func decisionDescription(isTrashed: Bool, isOriginal: Bool) -> String {
-        guard isTrashed else { return String(localized: "kept") }
-        return isOriginal
-            ? String(localized: "will be deleted")
-            : String(localized: "discarded")
-    }
-
     /// What Save Clips is going to do, as its `accessibilityValue`. The button says only "Save
     /// Clips", so without this the count it commits to is visible only by counting tiles.
-    static func saveClipsValue(clipCount: Int, deletesOriginal: Bool) -> String {
-        let saving = clipCount == 1
+    static func saveClipsValue(clipCount: Int) -> String {
+        clipCount == 1
             ? String(localized: "Saves 1 clip to Photos")
             : String(localized: "Saves \(clipCount) clips to Photos")
-        guard deletesOriginal else { return saving }
-        return String(localized: "\(saving), and deletes the original video")
     }
 
     /// Spoken when Save Clips starts working, because the overlay that replaces the grid is a
