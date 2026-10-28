@@ -119,6 +119,34 @@ final class LivePoseTests: XCTestCase {
         XCTAssertTrue(gate.admits(presentationTime: 2.1), "sampling resumes when the state cools")
     }
 
+    // MARK: - Thermal stop latch
+
+    /// A thermal stop is terminal for the recording (#203): once `apply`
+    /// sees `.stopped`, later cool-down responses must not revive the gate.
+    /// The serious-time accounting below the latch still closes, so
+    /// `secondsAtSerious` stays accurate for the rejected outcome.
+    func testThermalStopStaysLatchedWhenTheDeviceCools() {
+        let channel = LivePoseSampleChannel(capacity: 10)
+        let recording = LivePoseRecording(inference: { _ in [] }, channel: channel)
+        var session = LivePoseFrameTap.Session(
+            recording: recording, preparer: PoseInputPreparer(longSide: 256),
+            frameRate: 30, rotationDegrees: 0, gate: LivePoseFrameGate(baseInterval: 0.1))
+
+        session.apply(.halved, at: 0)
+        XCTAssertEqual(session.gate.currentInterval, 0.2)
+        session.apply(.stopped, at: 1)
+        XCTAssertNil(session.gate.currentInterval)
+        XCTAssertTrue(session.metrics.stoppedForThermal)
+        session.apply(.halved, at: 2)
+        XCTAssertNil(session.gate.currentInterval, "cooling to serious must not revive sampling")
+        session.apply(.normal, at: 3)
+        XCTAssertNil(session.gate.currentInterval, "cooling to normal must not revive sampling")
+        // Serious windows [0, 1] and [2, 3]: the latch must not disturb them.
+        XCTAssertEqual(session.metrics.secondsAtSerious, 2, accuracy: 1e-9)
+
+        session.recording.finish(producer: session.metrics)
+    }
+
     // MARK: - Timestamp anchor
 
     func testAnchorRebasesOntoTheFirstTimestampItSees() {
