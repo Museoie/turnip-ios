@@ -1,5 +1,6 @@
 import AVFoundation
 import SwiftUI
+import UIKit
 
 /// The clip a Name Clips page is about, at its fixed size: its window looping with the framing
 /// export uses through `ClipCardPlayback`, over its poster until the loop has a frame. A card
@@ -98,6 +99,23 @@ struct NameClipCard: View {
         }
         // A rebuilt loop is a new player with no frame yet: the poster comes back until it has one.
         .onChange(of: playback.loop.map { ObjectIdentifier($0.player) }) { _ in isLoopReady = false }
+        // Either accessibility setting can flip while the app is backgrounded — changing
+        // one requires leaving the app — and a mounted tile gets no onAppear or .task(id:)
+        // re-fire on return, so the gate would never be re-read and the loop would keep
+        // playing against the new setting (#198). Re-evaluate on both change
+        // notifications, and again on foregrounding in case one posted while the app was
+        // backgrounded and was never delivered to this view.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIAccessibility.videoAutoplayStatusDidChangeNotification)
+        ) { _ in playback.accessibilitySettingsChanged() }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: UIAccessibility.reduceMotionStatusDidChangeNotification)
+        ) { _ in playback.accessibilitySettingsChanged() }
+        .onReceive(
+            NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)
+        ) { _ in playback.accessibilitySettingsChanged() }
         .onDisappear { playback.teardown() }
     }
 

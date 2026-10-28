@@ -188,6 +188,91 @@ final class ClipCardPlaybackTests: XCTestCase {
         XCTAssertEqual(recorder.loops[0].pauseCount, 1)
     }
 
+    /// The uncovered half (#198): the flip lands while the tile is mounted and
+    /// unsuspended — no suspension edge arrives to carry the re-check, so the
+    /// settings-change handler itself has to pause the loop. The loop stays
+    /// mounted (like a suspension), and a later start must not rebuild or replay
+    /// it while the gate is still against looping.
+    func testAutoplayTurnedOffWhilePlayingPausesTheLoopOnSettingsChange() async {
+        let recorder = LoopRecorder()
+        let playback = makePlayback(recorder)
+        playback.start(geometry: geometry(), isSuspended: false)
+        await settle(playback)
+
+        recorder.isVideoAutoplayEnabled = false
+        playback.accessibilitySettingsChanged()
+        await settle(playback)
+
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].playCount, 1)
+        XCTAssertEqual(recorder.loops[0].pauseCount, 1)
+        XCTAssertNotNil(playback.loop)
+
+        playback.start(geometry: geometry(), isSuspended: false)
+        await settle(playback)
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].playCount, 1)
+    }
+
+    /// Reduce Motion's sibling of the same flip: its own switch, Auto-Play Video
+    /// Previews left at its default.
+    func testReduceMotionTurnedOnWhilePlayingPausesTheLoopOnSettingsChange() async {
+        let recorder = LoopRecorder()
+        let playback = makePlayback(recorder)
+        playback.start(geometry: geometry(), isSuspended: false)
+        await settle(playback)
+
+        recorder.isReduceMotionEnabled = true
+        playback.accessibilitySettingsChanged()
+        await settle(playback)
+
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].playCount, 1)
+        XCTAssertEqual(recorder.loops[0].pauseCount, 1)
+        XCTAssertNotNil(playback.loop)
+    }
+
+    /// Flipping the setting back resumes the loop the flip-off paused — the pause
+    /// is not a teardown, so no rebuild is owed.
+    func testAutoplayTurnedBackOnResumesTheLoopPausedByTheFlipOff() async {
+        let recorder = LoopRecorder()
+        let playback = makePlayback(recorder)
+        playback.start(geometry: geometry(), isSuspended: false)
+        await settle(playback)
+
+        recorder.isVideoAutoplayEnabled = false
+        playback.accessibilitySettingsChanged()
+        recorder.isVideoAutoplayEnabled = true
+        playback.accessibilitySettingsChanged()
+        await settle(playback)
+
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].pauseCount, 1)
+        XCTAssertEqual(recorder.loops[0].playCount, 2)
+    }
+
+    /// The gate flips while a build is in flight (before its loads are awaited):
+    /// the build must not assign a loop that plays against the new setting, and
+    /// flipping back plus a fresh start builds one.
+    func testGateFlippedOffBeforeTheBuildFinishesAssignsNoLoop() async {
+        let recorder = LoopRecorder()
+        let playback = makePlayback(recorder)
+
+        playback.start(geometry: geometry(), isSuspended: false)
+        recorder.isVideoAutoplayEnabled = false
+        await settle(playback)
+
+        XCTAssertTrue(recorder.loops.isEmpty)
+        XCTAssertNil(playback.loop)
+
+        recorder.isVideoAutoplayEnabled = true
+        playback.start(geometry: geometry(), isSuspended: false)
+        await settle(playback)
+
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].playCount, 1)
+    }
+
     // MARK: - Mounting and releasing
 
     func testStartBuildsALoopOverTheItemsGeometryAndPlaysIt() async {

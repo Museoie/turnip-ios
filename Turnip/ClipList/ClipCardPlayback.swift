@@ -183,6 +183,22 @@ final class ClipCardPlayback: ObservableObject {
         }
     }
 
+    /// Re-evaluates the accessibility gate after either setting changed, or after the app
+    /// returned to the foreground with one flipped while it was backgrounded. The gate is
+    /// otherwise only read when a caller comes in, so without this a mounted tile keeps
+    /// looping until something else re-drives it — and changing either setting requires
+    /// leaving the app, so the flip always lands while the tile is mounted and
+    /// unsuspended, with no `onAppear` or `.task(id:)` re-fire to catch it (#198).
+    /// A flip against looping pauses the loop (it stays mounted, like a suspension, so
+    /// flipping the setting back resumes it); a flip back to allowing loops resumes.
+    func accessibilitySettingsChanged() {
+        guard mayAutoplayLoops() else {
+            loop?.pause()
+            return
+        }
+        resume()
+    }
+
     /// Rebuilds the loop over `window`. The grid keys its tiles by clip id, so an editor
     /// commit reuses this same tile — and, without the rebuild, its loop would keep playing
     /// the pre-edit range forever. Tears the old loop down eagerly rather than at the next
@@ -210,9 +226,10 @@ final class ClipCardPlayback: ObservableObject {
     /// that moved it also tore the loop down, so a geometry that arrives by any other path
     /// still can't leave the pre-edit range or framing looping indefinitely.
     ///
-    /// The composition load re-checks suspension before assigning, so the editor opening
-    /// mid-load can't leave a tile playing behind the cover — `setSuspended` only pauses an
-    /// already-built loop.
+    /// The composition load re-checks suspension and the accessibility gate before
+    /// assigning, so the editor opening mid-load can't leave a tile playing behind the
+    /// cover — `setSuspended` only pauses an already-built loop — and a setting flipped
+    /// mid-load can't leave one playing against it either.
     private func resume() {
         guard let target = geometry, mayAutoplayLoops(), !isSuspended else { return }
         build(target)
@@ -245,7 +262,10 @@ final class ClipCardPlayback: ObservableObject {
             // Both loads are awaited before this check, not between them: a suspension
             // point after the guard would let a teardown/suspend that lands during the
             // second await slip past it, assigning a loop behind the editor's cover.
-            guard !Task.isCancelled, keepsLoopWhileSuspended || !isSuspended else {
+            // The gate is re-checked here too: a setting flipped while the build was in
+            // flight must not leave a loop playing against it (#198) — the notification
+            // handler only pauses a loop that already exists.
+            guard !Task.isCancelled, mayAutoplayLoops(), keepsLoopWhileSuspended || !isSuspended else {
                 releaseBuildSlot(token)
                 return
             }
