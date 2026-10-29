@@ -111,8 +111,8 @@ struct CameraCaptureView: View {
             .animation(.easeOut(duration: 0.2), value: viewModel.isRecording)
         }
         .padding(.bottom, 24)
-        .opacity(viewModel.isFinishingRecording ? 0.4 : 1)
-        .disabled(viewModel.isFinishingRecording)
+        .opacity(viewModel.isFinishingRecording || !viewModel.hasCaptureDevice ? 0.4 : 1)
+        .disabled(viewModel.isFinishingRecording || !viewModel.hasCaptureDevice)
         .accessibilityLabel(viewModel.isRecording ? "Stop recording" : "Start recording")
         .accessibilityIdentifier("camera-record")
     }

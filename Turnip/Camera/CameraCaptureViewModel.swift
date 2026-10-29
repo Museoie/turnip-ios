@@ -232,6 +232,12 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
             movieOutput.stopRecording()
         } else {
             guard !isFinishingRecording else { return }
+            // The movie output raises an uncatchable NSInvalidArgumentException
+            // if startRecording is reached with no video connection — on a
+            // device where the output could not be attached at all, every tap
+            // would crash. Refuse instead: the record button is gated on the
+            // same readiness, and this is the backstop for any other caller.
+            guard movieOutput.connection(with: .video) != nil else { return }
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("\(Self.recordingFilenamePrefix)\(UUID().uuidString)")
                 .appendingPathExtension("mov")
