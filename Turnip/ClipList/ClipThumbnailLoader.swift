@@ -3,9 +3,8 @@ import CoreGraphics
 import Foundation
 
 /// Builds the card thumbnails for `docs/UIUX.md` § "Clip List (triage)": the source frame
-/// at each trick window's midpoint, cropped to the window's computed crop rect and
-/// transformed by the editor's manual crop adjustment (rotate/zoom/pan), exactly as
-/// `ClipExporter` renders it.
+/// at each trick window's midpoint, cropped to where the clip's follow crop has the crop then,
+/// zoomed and turned about it, exactly as `ClipExporter` renders it.
 ///
 /// An actor so frame decoding stays off the main thread — `copyCGImage` blocks while it
 /// seeks and decodes, and the review bar for this repo treats main-thread decoding as a
@@ -13,8 +12,9 @@ import Foundation
 /// main-actor view; the crossing is narrow and read-only — the generator seeks and copies
 /// one frame, and the asset is never mutated or stored.
 actor ClipThumbnailLoader {
-    /// Loads the thumbnail for `item` from `asset` — cropped, for a clip in Follow, to where
-    /// `followCrop` has the crop at the thumbnail's own moment, zoomed and turned about it.
+    /// Loads the thumbnail for `item` from `asset` — cropped to where `followCrop` has the crop
+    /// at the thumbnail's own moment, zoomed and turned about it, or without one to the clip's
+    /// crop rect as it is.
     ///
     /// The generator returns the raw, un-uprighted frame: `ClipExportTransform.make`
     /// already composes `preferredTransform` into `layerTransform`, the same as the
@@ -66,7 +66,7 @@ actor ClipThumbnailLoader {
                 image = try generator.copyCGImage(at: time, actualTime: nil)
             }
             var cropRect = item.cropRect
-            var cropAdjustment = item.cropAdjustment
+            var cropAdjustment = CropAdjustment.identity
             if let followCrop, let rect = Self.followRect(
                 followCrop, at: midpoint, cropRect: item.cropRect,
                 naturalSize: naturalSize, preferredTransform: preferredTransform) {

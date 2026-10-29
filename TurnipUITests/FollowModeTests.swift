@@ -1,8 +1,8 @@
 import XCTest
 
-/// The clip editor's Follow mode, the one every clip opens in (`docs/UIUX.md` § "Two framing
-/// modes, Still and Follow"), over the follow harness's take, an athlete crossing a landscape
-/// frame (`-screenshotClipEditorFollow`).
+/// The clip editor's follow crop, the framing every clip has (`docs/UIUX.md` § "Clip Detail /
+/// Editor"), over the follow harness's take, an athlete crossing a landscape frame
+/// (`-screenshotClipEditorFollow`).
 final class FollowModeTests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -52,7 +52,6 @@ final class FollowModeTests: XCTestCase {
         let app = launchEditor()
         XCTAssertFalse(app.segmentedControls["framing-mode-switch"].exists)
         XCTAssertFalse(app.buttons["clip-editor-delete"].exists)
-        XCTAssertFalse(app.buttons["auto-crop-button"].exists)
         let follow = app.buttons["auto-follow-button"]
         XCTAssertTrue(follow.waitForExistence(timeout: 5))
         XCTAssertTrue(waitUntil { follow.label == "Reset follow" }, "the clip didn't open on Auto follow")
@@ -66,8 +65,7 @@ final class FollowModeTests: XCTestCase {
         XCTAssertEqual(frame.width / frame.height, 9.0 / 16.0, accuracy: 0.01)
     }
 
-    /// Auto follow and Reset follow toggle like Auto crop and Reset crop, and a pinch hands
-    /// the button back to Auto follow.
+    /// Auto follow and Reset follow toggle, and a pinch hands the button back to Auto follow.
     func testFollowsButtonTogglesAndAPinchHandsItBack() throws {
         let app = launchEditor()
         let follow = app.buttons["auto-follow-button"]
@@ -206,11 +204,11 @@ final class FollowModeTests: XCTestCase {
     }
 
     /// Following an athlete who stays put leaves one keyframe and says so: Reset follow, then
-    /// Auto follow again over the screenshot harness's standing athlete, opened in Follow. The
+    /// Auto follow again over the screenshot harness's standing athlete. The
     /// notice stays up (`-noticesStay`): on its own timer it can be gone before a loaded runner
     /// answers the query.
     func testAnAthleteWhoStaysPutHasNothingToFollow() throws {
-        let app = launchEditor(["-screenshotClipEditor", "-follow", "-noticesStay"])
+        let app = launchEditor(["-screenshotClipEditor", "-noticesStay"])
         let follow = app.buttons["auto-follow-button"]
         XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
         follow.tap()
@@ -219,5 +217,47 @@ final class FollowModeTests: XCTestCase {
         follow.tap()
 
         XCTAssertTrue(element("nothing-to-follow-notice", in: app).waitForExistence(timeout: 5))
+    }
+
+    /// Every crop gesture keeps working after a pinch with no turn in it: the editor once
+    /// ignored every drag, pinch and turn that followed one. From Reset follow's empty lane,
+    /// each pinch and turn is read off the crop area's accessibility value, which spells out the
+    /// zoom and turn at the playhead and has to change; a drag, which the value doesn't spell
+    /// out, at a moment of its own has to add a keyframe there.
+    func testCropGesturesKeepWorkingAfterAPinch() throws {
+        let app = launchEditor()
+        let lane = element("follow-lane", in: app)
+        XCTAssertTrue(lane.waitForExistence(timeout: 10))
+        let follow = app.buttons["auto-follow-button"]
+        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        follow.tap()
+        XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
+        lane.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).tap()
+        let surface = element("clip-editor-crop-surface", in: app)
+        func framing() -> String { surface.value as? String ?? "" }
+        let steps: [(name: String, gesture: () -> Void)] = [
+            ("pinch", { surface.pinch(withScale: 0.7, velocity: -1) }),
+            ("pinch after the pinch", { surface.pinch(withScale: 1.4, velocity: 1) }),
+            ("turn after the pinch", { surface.rotate(0.4, withVelocity: 1) })
+        ]
+        for step in steps {
+            let before = framing()
+            step.gesture()
+            XCTAssertTrue(
+                waitUntil(timeout: 3) { framing() != before },
+                "the \(step.name) left the framing at \"\(before)\"")
+        }
+        XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 1 })
+
+        lane.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).tap()
+        // Above the playback pill at the bottom of the marker.
+        let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        start.press(
+            forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 80, dy: 0)),
+            withVelocity: XCUIGestureVelocity(300), thenHoldForDuration: 0.05)
+
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { self.keyframeCount(in: lane) == 2 },
+            "the drag after the pinch and turn set no keyframe; lane reads \(lane.value as? String ?? "nothing")")
     }
 }

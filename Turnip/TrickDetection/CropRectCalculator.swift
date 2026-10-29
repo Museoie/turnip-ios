@@ -79,7 +79,7 @@ struct CropRectCalculator: Sendable {
     }
 
     /// The same rect, around points already located in the frame's normalized space — the
-    /// clip editor's Auto crop hands in the window's keypoints rotated about the crop
+    /// clip editor's Auto follow hands in the window's keypoints rotated about the crop
     /// center, so the rect frames them as the rotated video shows them. In that rotated
     /// space the frame's own edges are no longer axis-aligned, which is what
     /// `slidIntoFrame` is for: the slide treats `[0, 1]` as the frame, which is only the

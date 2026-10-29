@@ -126,8 +126,7 @@ struct NameClipCard: View {
 
     private var playbackGeometry: ClipCardPlaybackGeometry {
         ClipCardPlaybackGeometry(
-            window: item.window, cropRect: item.cropRect, cropAdjustment: item.cropAdjustment,
-            framingMode: item.framingMode, followCrop: item.followCrop, personID: item.personID)
+            window: item.window, cropRect: item.cropRect, followCrop: item.followCrop, personID: item.personID)
     }
 
     @ViewBuilder

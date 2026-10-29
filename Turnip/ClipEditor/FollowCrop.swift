@@ -1,26 +1,18 @@
 import CoreGraphics
 import Foundation
 
-/// The two ways a clip's crop can frame it (`docs/UIUX.md` § "Two framing modes, Still and
-/// Follow"): one framing held for the whole clip, or a crop that moves with the athlete.
-enum FramingMode: Hashable, Sendable {
-    case still
-    case follow
-}
-
 /// A follow crop's framing at one moment: the source point at the marker's center, and the
 /// zoom and turn about it.
 struct FollowFraming: Hashable, Sendable {
     /// In the displayed (upright) frame's pixels.
     var center: CGPoint
-    /// Against the clip's crop rect filling the marker — `CropAdjustment.scale`'s meaning, so the
-    /// two modes zoom alike.
+    /// Against the clip's crop rect filling the marker — `CropAdjustment.scale`'s meaning.
     var scale: CGFloat
     var rotationRadians: Double
 }
 
-/// One moment of a follow crop: the whole crop then, as a still crop holds it for the clip —
-/// where the video sits under the marker, its zoom and its turn.
+/// One moment of a follow crop: the whole crop then — where the video sits under the marker,
+/// its zoom and its turn.
 struct FollowKeyframe: Hashable, Sendable {
     /// Source time, in seconds.
     var time: TimeInterval
@@ -109,8 +101,8 @@ struct FollowCrop: Hashable, Sendable {
     }
 
     /// Turns every keyframe and the resting framing to `radians`: Auto rotate and Reset rotate.
-    /// A keyframe Auto follow wrote takes the turn as Auto follow's too, as a turn leaves Auto
-    /// crop's fit on, so it stays hollow and a removal keeps the clip's level.
+    /// A keyframe Auto follow wrote takes the turn as Auto follow's too, so it stays hollow and a
+    /// removal keeps the clip's level.
     mutating func setRotation(_ radians: Double) {
         resting.rotationRadians = radians
         for index in keyframes.indices {

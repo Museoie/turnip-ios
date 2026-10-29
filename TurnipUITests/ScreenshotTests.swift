@@ -152,73 +152,32 @@ final class ScreenshotTests: XCTestCase {
         }
     }
 
-    /// Auto crop and Auto rotate are toggles: each tap puts its fit on screen and the same
-    /// button then offers to put back what the fit replaced, independently of the other.
-    /// Auto rotate levels the harness clip by the roll track its sample movie carries, so
-    /// this also proves the track reader works inside the app, not just in the unit tests.
+    /// Auto follow and Auto rotate are toggles: each tap puts its fit on screen and the same
+    /// button then offers to put back what the fit replaced, independently of the other. The
+    /// clip opens on Auto follow's crop. Auto rotate levels the harness clip by the roll track
+    /// its sample movie carries, so this also proves the track reader works inside the app,
+    /// not just in the unit tests.
     func testClipEditorAutoFitsToggleToResets() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipEditor"]
         app.launch()
         waitForClipEditorToLoad(app)
-        let crop = app.buttons["auto-crop-button"]
+        let follow = app.buttons["auto-follow-button"]
         let rotate = app.buttons["auto-rotate-button"]
-        XCTAssertTrue(waitUntilHittable(crop))
-        XCTAssertEqual(crop.label, "Auto crop")
-        XCTAssertEqual(rotate.label, "Auto rotate")
-
-        crop.tap()
-        XCTAssertTrue(waitUntil { crop.label == "Reset crop" }, "Auto crop did not become Reset crop")
+        XCTAssertTrue(waitUntilHittable(follow))
+        XCTAssertTrue(waitUntil { follow.label == "Reset follow" }, "the clip didn't open on Auto follow")
         XCTAssertEqual(rotate.label, "Auto rotate")
 
         rotate.tap()
         XCTAssertTrue(waitUntil { rotate.label == "Reset rotate" }, "Auto rotate did not become Reset rotate")
-        XCTAssertEqual(crop.label, "Reset crop")
+        XCTAssertEqual(follow.label, "Reset follow")
         // The fit moves the video over 0.4 s; the screenshot is of the settled result.
         Thread.sleep(forTimeInterval: 1)
         addScreenshot(named: "clip-editor-resets")
 
-        crop.tap()
-        XCTAssertTrue(waitUntil { crop.label == "Auto crop" }, "Reset crop did not return to Auto crop")
-        XCTAssertEqual(rotate.label, "Reset rotate", "resetting the crop must leave the rotate button alone")
-    }
-
-    /// Every crop gesture keeps working after a pinch with no turn in it: the editor once
-    /// ignored every drag, pinch and turn that followed one. Each step reads the crop area's
-    /// accessibility value, which spells out the framing the gesture left, and needs it to
-    /// have changed.
-    func testCropGesturesKeepWorkingAfterAPinch() throws {
-        let app = XCUIApplication()
-        app.launchArguments = ["-screenshotClipEditor"]
-        app.launch()
-        waitForClipEditorToLoad(app)
-        let surface = app.descendants(matching: .any)
-            .matching(identifier: "clip-editor-crop-surface").firstMatch
-        XCTAssertTrue(surface.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitUntilHittable(app.buttons["auto-crop-button"]))
-        func framing() -> String { surface.value as? String ?? "" }
-        func drag(_ dx: CGFloat, _ dy: CGFloat) {
-            // Above the playback pill at the bottom of the marker.
-            let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
-            start.press(
-                forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: dx, dy: dy)),
-                withVelocity: XCUIGestureVelocity(300), thenHoldForDuration: 0.05)
-        }
-        let steps: [(name: String, gesture: () -> Void)] = [
-            ("drag", { drag(80, 0) }),
-            ("pinch", { surface.pinch(withScale: 0.7, velocity: -1) }),
-            ("drag after the pinch", { drag(-80, 0) }),
-            ("pinch after the pinch", { surface.pinch(withScale: 1.4, velocity: 1) }),
-            ("turn after the pinch", { surface.rotate(0.4, withVelocity: 1) }),
-            ("drag after the turn", { drag(0, 60) })
-        ]
-        for step in steps {
-            let before = framing()
-            step.gesture()
-            XCTAssertTrue(
-                waitUntil(timeout: 3) { framing() != before },
-                "the \(step.name) left the framing at \"\(before)\"")
-        }
+        follow.tap()
+        XCTAssertTrue(waitUntil { follow.label == "Auto follow" }, "Reset follow did not return to Auto follow")
+        XCTAssertEqual(rotate.label, "Reset rotate", "resetting the follow crop must leave the rotate button alone")
     }
 
     /// What a test that lands on the editor's load-failure state reports.

@@ -1,5 +1,12 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 24 · 2026-10-28 · The Clip Detail / Editor (§4) describes only what it
+does: every clip's crop follows the athlete. Still's framing, Auto crop and
+Reset crop, which no clip has reached since Rev 23, are removed from the app
+and from §4; the crop area's VoiceOver value reads the zoom and turn at the
+playhead without the move it never reported for a follow crop; and Auto
+rotate and Reset rotate ease the follow crop's turn instead of cutting to it.*
+
 *Rev 23 · 2026-10-28 · Name Clips (§3a) loses its per-clip controls that
 weren't naming: the "Contribute this clip" toggle becomes Settings' one
 **Contribute named clips** switch (§1a), the card's trash button gives way to
@@ -78,7 +85,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -166,7 +173,7 @@ shift, over an easing curve, not as a new picture replacing the old one.
 A cut tells the user *that* something changed and nothing else. The motion
 tells them *what* changed and *by how much*: a horizon that visibly turns
 five degrees to level teaches what Auto rotate measured, and a crop that
-visibly pulls in around the athlete teaches what Auto crop found. It also
+visibly pulls in around the athlete teaches what Auto follow found. It also
 keeps the result reversible in the user's head — they saw where the video
 came from, so they know what pulling it back by hand would mean. A cut
 reads as the app having replaced their work; a motion reads as the app
@@ -182,9 +189,8 @@ Where it applies today:
 
 | Change | By hand | Automatic | Shared motion |
 |---|---|---|---|
-| Clip Editor crop fit (§4) | Pinch / rotate / drag the video under the marker | "Auto crop" | The video's scale, rotation and offset about the crop center, eased over 0.4 s |
-| Clip Editor leveling (§4) | Two-finger rotate | "Auto rotate" | The video's rotation about the crop center, eased over 0.4 s |
-| Clip Editor follow fit (§4) | Drag, pinch or turn the video at a few moments in Follow mode | "Auto follow", "Apply zoom and turn to all keyframes", removing a keyframe, and an untouched Auto follow re-tracking a trimmed window | The video's position, zoom and turn eased over 0.4 s to the curves at the playhead, then the curves play |
+| Clip Editor leveling (§4) | Two-finger rotate | "Auto rotate", "Reset rotate" | The follow crop's turn at every keyframe, eased over 0.4 s |
+| Clip Editor follow fit (§4) | Drag, pinch or turn the video at a few moments | "Auto follow", "Apply zoom and turn to all keyframes", removing a keyframe, and an untouched Auto follow re-tracking a trimmed window | The video's position, zoom and turn eased over 0.4 s to the curves at the playhead, then the curves play |
 
 This is the companion of the principle above: that one says a button plays
 the gesture's *transition*; this one says an automatic change plays the
@@ -591,9 +597,8 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
   time:
   - Video player showing the trimmed clip looping under the crop marker: one
     rectangle of the export's aspect ratio, the same size at the same place on screen
-    for every clip in the same framing mode, centered in the band between the header row and
-    the controls (Follow mode's lane makes its marker shorter; see "Two framing modes"
-    below).
+    for every clip, centered in the band between the header row and the controls, above
+    the follow lane (see "The crop follows the athlete" below).
     The video is laid out so the clip's crop rect fills the marker exactly — a
     different clip, or an adjustment to the framing, moves and scales the video,
     never the marker — and the rest of the frame shows around it through frosted
@@ -607,23 +612,10 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
     drag with one finger to reposition the video underneath the fixed marker
     rectangle — the video zooms/rotates/moves, the marker never does, and whatever
     the adjustment pushes outside the frame's own rect stays visible instead of
-    being cut off. Two buttons fit the video under the marker for the user:
-    "Auto crop" frames every body part the pose model located in the clip
-    range inside the marker, at whatever rotation the video currently has —
-    so after a trim, or after a turn, one tap refits the crop to the range
-    (issue #9), and it is the only thing that does; a manual pinch or drag is
-    discarded. The fit is the pipeline's own framing for the range (the body
-    parts' box plus a tenth of it on each side — joints stop at the eyes,
-    wrists and ankles, and a tenth reaches the head, hands and feet), with
-    one more rule: the crop shows video in every part of it. The crop's
-    footprint on the video — a turned rectangle, once the video is rotated —
-    is slid inside the frame, and when the body parts' box can't fit the
-    frame at the crop's ratio (an athlete crossing most of a landscape
-    frame), the crop zooms in to the frame's edge and parts of the athlete
-    leave it: no black beyond the frame's edge ever shows in the crop, which
-    outranks holding every body part. Detection's own crop rects (DESIGN.md
-    step 6) follow the same rule, so a clip opens the way Auto crop would
-    frame it. "Auto rotate" levels the clip by the camera's roll: a take
+    being cut off. Each gesture sets the crop at the playhead's moment ("The crop
+    follows the athlete" below). Two buttons fit the video under the marker for
+    the user: "Auto follow" (below) and "Auto rotate", which levels the clip by
+    the camera's roll: a take
     recorded in the app carries its roll as a track in the file (§1b), read
     off the phone's gravity sensor while it recorded, and the button averages
     the samples across the clip range (the roll can drift during a clip) and
@@ -632,40 +624,25 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
     sampled across the range with Vision's horizon detector, which is a guess:
     right on a sky-over-ground scene, confidently wrong in a gym, where it
     locks onto the ceiling trusses and floor lines. A clip with nothing to
-    level by says so in a notice and keeps its rotation. The two are
-    independent one-shot fits: Auto rotate changes only the rotation, so a
-    limb the turn carries out of the marker is Auto crop's to bring back.
-    Both move the video to their result rather than cutting to it ("An
-    automatic change moves, it never cuts", above).
-    Each button is a toggle. Once its fit is on screen it reads "Reset crop"
-    or "Reset rotate" and returns to the original video — Reset crop to the
-    whole source frame centered in the marker, the way a clip added by hand
-    opens (not the detected crop), Reset rotate to no rotation — not to
-    whatever the fingers had set just before the Auto tap. It moves there the same
-    way the fit moved, and then offers the fit again. The two are independent:
-    resetting one leaves the other's result and button alone. Any manual
-    pinch, turn or drag returns both buttons to "Auto", since the fits are
-    no longer what's on screen; a trim does not, since a trim is not a
-    re-crop. The state is per editor session: a clip reopened starts at
-    "Auto".
-    A clip of a video that skipped analysis ("Clip manually", §2) carries no
-    pose analysis, so there is nothing for Auto crop to fit (a "+" clip on an
-    analyzed video keeps the Auto crop toggle, since the video's pose frames
-    cover it); an Auto crop whose tap could never
-    change anything would read as broken. Its crop button is "Reset crop"
-    alone: disabled while the framing is the whole source video, enabled once
-    a pinch or drag has moved it (a turn alone doesn't count — that is Reset
-    rotate's), and returning to the whole frame the same way. Auto rotate is
-    unchanged there, since leveling reads the video, not the pose.
+    level by says so in a notice and keeps its rotation. Auto rotate changes
+    only the turn, so a limb the turn carries out of the marker is Auto
+    follow's to bring back. It moves the video to its result rather than
+    cutting to it ("An automatic change moves, it never cuts", above).
+    It is a toggle. Once its turn is on screen it reads "Reset rotate" and
+    returns to no rotation — not to whatever the fingers had set just before
+    the Auto tap — moving there the same way the fit moved, and then offers
+    the fit again. Leveling reads the video, not the pose, so a clip of a
+    video that skipped analysis ("Clip manually", §2) keeps Auto rotate.
   - Scrub bar spanning the whole source video (not a zoomed range around the
     window) with drag handles on start/end — adjusts the trick window from
-    issue #8's output. A handle drag is a trim, not a re-crop: the framing
-    — the crop rect the clip opened with plus the adjustment above — never
-    moves while the handles do. Re-deriving the crop from the window on
-    every drag made the crop grow with the range (every keypoint the wider
-    window held pulled the box out, and the video visibly shrank under the
-    fixed marker); the framing is what the user last set, and "Auto crop"
-    is the one tap that refits it to the trimmed range.
+    issue #8's output. A handle drag is a trim, not a re-crop: the crop rect
+    the clip opened with and every keyframe the user set never move while the
+    handles do (a follow crop still all Auto follow's re-tracks the new
+    window; "Trim" below). Re-deriving the crop from the window on every drag
+    made the crop grow with the range (every keypoint the wider window held
+    pulled the box out, and the video visibly shrank under the fixed marker);
+    the framing is what the user last set, and "Auto follow" is the one tap
+    that refits it to the trimmed range.
     The window is drawn as a frame around its span: a band in the accent
     color, open in the middle so the track shows through, with a capped
     handle at each end whose glyph points the way it widens. The caps sit
@@ -694,22 +671,20 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
     share the same placement). The title stays the screen's VoiceOver header,
     drawn clear, so the row shows the chevron alone. There is no Delete: a clip
     is removed from Name Clips' menu (§3a).
-  - **Two framing modes, Still and Follow** (Rev 16). A clip's crop
-    either holds one framing for the whole clip (Still: everything above) or
-    moves with the athlete (Follow).
-    - **Every clip is in Follow** (Rev 23). There is no switch: a detected
-      clip, a "+" clip and a clip of a video that skipped analysis all open in
-      Follow, and Settings has no Follow the athlete. A clip with no follow
-      crop of its own opens on Auto follow's for its window, or, with no pose
-      analysis, on the whole frame held still with Reset follow alone. Still's
-      framing, its buttons and its gestures above stay in the editor's code,
-      but no clip reaches them. Before Rev 23 a segmented "Still | Follow"
-      control took the title's slot and a detected clip started in the mode
-      Settings' Follow the athlete gave it.
+  - **The crop follows the athlete** (Rev 16, Rev 23). A clip's crop moves
+    with the athlete through the clip.
+    - **Every clip follows** (Rev 23). There is no mode to choose: a detected
+      clip, a "+" clip and a clip of a video that skipped analysis all open on
+      a follow crop, and Settings has no Follow the athlete. A clip with no
+      follow crop of its own opens on Auto follow's for its window, or, with no
+      pose analysis, on the whole frame held still with Reset follow alone.
+      Before Rev 23 a segmented "Still | Follow" control took the title's slot,
+      a detected clip started in the mode Settings' Follow the athlete gave it,
+      and a clip in Still held one framing for the whole clip, with Auto crop
+      and Reset crop in Auto follow's place; Rev 24 removed Still.
     - **What a follow crop is.** A few keyframes, each a moment of the source
-      (in seconds, not frame numbers) and the whole crop at that moment, as a
-      still crop holds it for the clip: where the video sits under the marker,
-      its zoom and its turn (Rev 19; see "Zoom and turn by keyframe" below).
+      (in seconds, not frame numbers) and the whole crop at that moment: where
+      the video sits under the marker, its zoom and its turn (Rev 19; see "Zoom and turn by keyframe" below).
       Between keyframes the crop moves
       on one smooth curve through all of them. It eases out of the first
       keyframe and into the last, and passes through the ones between without
@@ -718,13 +693,12 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
       keyframes the two are the same ease-in-out. The curve never swings past a
       keyframe (`DESIGN.md` step 6). Before the first keyframe and after the
       last, the crop holds still.
-    - **Layout.** The crop button becomes "Auto follow" / "Reset follow", next
-      to an unchanged Auto rotate. A follow lane appears between the buttons and
-      the trim timeline, which still spans the whole video and works as above.
-      The lane takes about 44 pt from the stage, so Follow mode's marker is that
-      much shorter (about 7% on a 6.9" iPhone). The marker is the same size at
-      the same place for every clip in the same mode, and the expansion flight
-      lands on whichever marker the editor reports.
+    - **Layout.** The crop button is "Auto follow" / "Reset follow", next to
+      Auto rotate. The follow lane sits between the buttons and the trim
+      timeline, which spans the whole video and works as above. The lane takes
+      about 44 pt from the stage, and the marker is centered in what is left:
+      the same size at the same place for every clip, and the expansion flight
+      lands on it.
     - **The follow lane.** It spans the trim window, not the video, so a
       4-second clip from a 3-minute take still gets the lane's whole width. A
       drag anywhere on it scrubs, with the trim timeline's vertical
@@ -753,28 +727,33 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
       the whole clip, the turn the crop has at the playhead: the pipeline's
       follow path for the window (`DESIGN.md` step 6), reduced to a few
       keyframes, each with a zoom of its own (Rev 19, "Zoom and turn by
-      keyframe" below). Like Auto crop, it keeps the turn, replaces the zoom
-      and the positions, and discards keyframes the user set. The video moves to the
+      keyframe" below). It keeps the turn, replaces the zoom and the
+      positions, and discards keyframes the user set. The video moves to the
       path at the playhead over the same 0.4 s ease and then follows it.
       A clip that opens with no follow crop of its own opens on Auto follow's,
-      so the button reads "Reset follow", and the toggle rules are Auto crop's: any manual
-      pinch, rotate, drag or keyframe change returns it and Auto rotate to
-      offering their fits; a trim does not.
+      so the button reads "Reset follow". Any manual pinch, rotate, drag or
+      keyframe change returns it and Auto rotate to offering their fits; a
+      trim does not.
     - **Reset follow.** Returns to the whole source frame centered in the
-      marker with no keyframes, so the crop holds still, and stays in Follow
-      mode; the button then offers Auto follow again. From there a manual
-      follow is a few drags at a few moments. A clip with no pose analysis has
-      Reset follow alone, disabled while the framing is the whole frame with no
-      keyframes and enabled once a pinch, a drag or a keyframe has moved it (a
-      turn alone doesn't count), as Rev 13's Reset crop is; Follow mode is
-      entirely manual there.
+      marker with no keyframes, so the crop holds still; the button then offers
+      Auto follow again. From there a manual follow is a few drags at a few
+      moments. A clip with no pose analysis has nothing for Auto follow to fit,
+      and an Auto follow whose tap could never change anything would read as
+      broken, so it has Reset follow alone, disabled while the framing is the
+      whole frame with no keyframes and enabled once a pinch, a drag or a
+      keyframe has moved it (a turn alone doesn't count — that is Reset
+      rotate's); the follow crop is entirely manual there.
     - **Nothing to follow.** When the crop Auto follow finds neither moves
       nor zooms, because the athlete stays put or a portrait take leaves a 9:16
-      crop no room, it frames the athlete with one keyframe, as Auto crop
-      would (no tighter than Auto follow's zoom allows), and says "Nothing to
-      follow" in a notice where "No horizon
-      found" appears. Follow stays usable by hand: pinch in, then drag at a few
-      moments.
+      crop no room, it frames the athlete with one keyframe and says "Nothing
+      to follow" in a notice where "No horizon found" appears. The keyframe
+      frames every body part the pose model located in the window, at the
+      clip's turn: the body parts' box plus a tenth of it on each side, slid
+      inside the frame, and zoomed in to the frame's edge when that box can't
+      fit the frame at the crop's ratio, so the crop shows video in every part
+      of it, the rule detection's own crop rects follow (`DESIGN.md` step 6);
+      and no tighter than Auto follow's zoom allows. The crop stays usable by
+      hand: pinch in, then drag at a few moments.
     - **Trim.** A trim never moves a keyframe the user set or moved: a trim is
       not a re-crop (Rev 8). One deliberate exception: a follow crop that is
       still entirely Auto follow's, every diamond hollow, re-tracks the new
@@ -782,22 +761,22 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
       turn, moving there the way Auto follow does. Its zoom follows each
       moment's own need, so a wider window doesn't widen every moment. Rev 15's grid refit also
       resized the crop, and resizing on a trim is what Rev 8 removed: it made
-      the video shrink under the marker as the window grew. Still mode is
-      unchanged: its framing never follows a trim.
+      the video shrink under the marker as the window grew.
     - **Playback and export.** The editor plays the follow crop as it loops,
       pauses and scrubs, and the expansion flight's card shows it too, since
       the card is the editor's own player. Save Clips, the tile's loop and its
       poster draw the same curve (`DESIGN.md` step 6), so what the editor shows
       is what export writes.
     - **VoiceOver.** The crop area's zooms, turns and moves set the keyframe at the playhead,
-      as the gestures do, Reset follow stands in for Reset crop, and the crop
-      area adds Previous keyframe, Next keyframe, Add keyframe, Remove keyframe
-      and Apply zoom and turn to all keyframes to its actions. The
+      as the gestures do, and the crop area adds Reset follow, Previous
+      keyframe, Next keyframe, Add keyframe, Remove keyframe and Apply zoom and
+      turn to all keyframes to its actions. Its value reads the zoom and the
+      turn at the playhead. The
       lane is adjustable: swiping up or down scrubs a tenth of a second, the trim
       handles' step.
     - **Zoom and turn by keyframe** (Rev 19). A keyframe holds the whole crop
-      for its moment, as a still crop does: where the video sits under the
-      marker, its zoom and its turn.
+      for its moment: where the video sits under the marker, its zoom and its
+      turn.
       - **The curve.** Position, zoom and turn each move on their own smooth
         curve through the keyframes, easing at the ends and passing through
         the keyframes between without stopping. Zoom moves in proportion, so
@@ -812,17 +791,18 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
         or more level at once. It counts as the user's change, so the keyframes
         it changes fill in. The crop area offers the same action to VoiceOver,
         taking the zoom and turn at the playhead.
-      - **Auto rotate and Reset rotate** in Follow mode give every keyframe the
-        clip's leveling turn, or none, replacing turns set by hand the way Auto
-        crop replaces a pinch. Positions and zoom stay, and Auto follow's
-        keyframes stay hollow.
+      - **Auto rotate and Reset rotate** give every keyframe the clip's
+        leveling turn, or none, replacing turns set by hand, and move there
+        over the 0.4 s ease as Auto follow does (Rev 24; they cut to it
+        before). Positions and zoom stay, and Auto follow's keyframes stay
+        hollow.
       - **Diamonds.** A diamond fills once its position, zoom or turn has
         changed. Removing a keyframe Auto follow wrote and the user changed puts
         back all three.
       - **Manual zoom.** A pinch keeps the editor's own zoom range.
       - **Auto follow** writes positions and zoom from the pose, and one turn
         for the whole clip: the turn the crop has at the playhead. The zoom
-        keeps the still crop's padding, a tenth of the body's box on each side,
+        keeps the static crop's padding, a tenth of the body's box on each side,
         and follows the room the athlete needs over a moment rather than each
         limb: it widens before a reach would leave the crop, ignores small
         changes, and closes in more slowly than it opens. So it changes as the
@@ -1003,4 +983,5 @@ Resolved 2026-09-04.
    Follow the athlete goes with it. Given up: contributing some named clips
    of a video and not others from Name Clips, deleting the original from the
    app, and a still crop for a clip — Still's code stays in the editor, but
-   no clip reaches it.
+   no clip reaches it. *Recorded 2026-10-28 (Rev 24): Still's code is removed
+   from the editor, Auto crop and Reset crop with it.*

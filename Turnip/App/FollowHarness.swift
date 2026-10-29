@@ -3,16 +3,16 @@ import AVFoundation
 import os
 import SwiftUI
 
-/// A take with something to follow, for the follow-mode harnesses and their UI tests: a
+/// A take with something to follow, for the follow harnesses and their UI tests: a
 /// landscape movie in which a white bar — the athlete — crosses a grey frame, with pose
 /// frames tracking it. The bar carries the frame's index in eight binary blocks, four on
 /// each side of it, so a recording shows which source frame is on screen next to where the follow crop
 /// put it: a pan in step with the picture holds the bar still in the marker frame by frame.
 ///
-/// - `-screenshotClipEditorFollow`: the editor over the take's middle, in Follow on Auto
-///   follow's crop, the way Name Clips opens a detected clip (add `-keyframedZoom` to open it
+/// - `-screenshotClipEditorFollow`: the editor over the take's middle, on Auto follow's crop,
+///   the way Name Clips opens a detected clip (add `-keyframedZoom` to open it
 ///   on `keyframedCrop` instead, whose zoom and turn change from keyframe to keyframe).
-/// - `-screenshotClipListFollow`: Name Clips with that clip in Follow, for the card, its
+/// - `-screenshotClipListFollow`: Name Clips with that clip, for the card, its
 ///   poster and the expansion flight's card.
 enum FollowHarness {
     static let size = CGSize(width: 640, height: 360)
@@ -183,7 +183,6 @@ struct ScreenshotFollowEditorHarness: View {
                     source: ClipEditorSource(
                         window: FollowHarness.window,
                         cropRect: FollowHarness.cropRect,
-                        framingMode: .follow,
                         followCrop: Self.isKeyframed ? FollowHarness.keyframedCrop : nil,
                         asset: AVURLAsset(url: movie.url),
                         poseFrames: FollowHarness.poseFrames),
@@ -200,8 +199,7 @@ struct ScreenshotFollowClipListHarness: View {
             NavigationStack {
                 NameClipsView(
                     items: [
-                        ClipListItem(
-                            window: FollowHarness.window, cropRect: FollowHarness.cropRect, framingMode: .follow)
+                        ClipListItem(window: FollowHarness.window, cropRect: FollowHarness.cropRect)
                     ],
                     poseFrames: FollowHarness.poseFrames,
                     asset: AVURLAsset(url: movie.url),

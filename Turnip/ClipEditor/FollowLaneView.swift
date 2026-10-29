@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Follow mode's lane (`docs/UIUX.md` § "Two framing modes, Still and Follow"): the follow
+/// The follow lane (`docs/UIUX.md` § "Clip Detail / Editor"): the follow
 /// crop's keyframes over the trim window, between the crop buttons and the trim timeline.
 ///
 /// It spans the window rather than the whole video, so a 4-second clip from a 3-minute take

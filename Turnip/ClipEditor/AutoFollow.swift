@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-/// Auto follow (`docs/UIUX.md` § "Two framing modes, Still and Follow"): frames the athlete
+/// Auto follow (`docs/UIUX.md` § "Clip Detail / Editor"): frames the athlete
 /// through a window at one turn for the whole clip, as a follow crop of a few keyframes.
 ///
 /// The pipeline's follow path (`CropPathCalculator`) is analysis output, one center per pose
@@ -149,8 +149,8 @@ struct AutoFollow {
     }
 
     // swiftlint:disable function_parameter_count
-    /// One keyframe, mid-window, framed as Auto crop frames the whole window (every joint at
-    /// once), within the zoom Auto follow allows.
+    /// One keyframe, mid-window, framing the whole window's joints at once
+    /// (`ClipEditorViewModel.autoCropAdjustment`), within the zoom Auto follow allows.
     private func stillCrop(
         frames: [PoseFrameResult], samples: [Sample], cropRect: CGRect, videoSize: CGSize,
         rotationRadians: Double, widths: ClosedRange<CGFloat>, resting: CGPoint
@@ -302,12 +302,13 @@ struct AutoFollow {
     }
 }
 
-/// Converts a framing between the two modes' terms. Still mode turns and zooms the video
-/// about the clip's crop center and then offsets it on screen; Follow mode moves a source
-/// point onto the marker's center and turns and zooms about it (`docs/DESIGN.md` step 6). The
-/// same picture is one source point at the marker's center at the same zoom and turn.
+/// Converts a framing from `CropAdjustment`'s terms — the video turned and zoomed about the
+/// clip's crop center and then offset on screen, the terms `ClipEditorViewModel.autoCropAdjustment`
+/// fits in — into a follow crop's, a source point moved onto the marker's center and turned and
+/// zoomed about it (`docs/DESIGN.md` step 6). The same picture is one source point at the
+/// marker's center at the same zoom and turn.
 enum FramingConversion {
-    /// The source point a still adjustment puts at the marker's center, in displayed pixels:
+    /// The source point an adjustment puts at the marker's center, in displayed pixels:
     /// a point `p` lands at `R·s·(p − cropCenter) + offset` from it, so the center shows
     /// `cropCenter − R⁻¹·offset / s`.
     static func followCenter(of adjustment: CropAdjustment, cropCenter: CGPoint) -> CGPoint {
@@ -318,23 +319,11 @@ enum FramingConversion {
             x: cropCenter.x - unturned.x / adjustment.scale,
             y: cropCenter.y - unturned.y / adjustment.scale)
     }
-
-    /// The on-screen offset, in displayed pixels, that a still adjustment of `scale` and
-    /// `rotationRadians` needs to put `center` at the marker's center — `followCenter`'s
-    /// inverse.
-    static func stillOffset(
-        centering center: CGPoint, cropCenter: CGPoint, scale: CGFloat, rotationRadians: Double
-    ) -> CGSize {
-        let turned = CGPoint(x: (cropCenter.x - center.x) * scale, y: (cropCenter.y - center.y) * scale)
-            .applying(CGAffineTransform(rotationAngle: rotationRadians))
-        return CGSize(width: turned.x, height: turned.y)
-    }
 }
 
 extension FollowCrop {
     /// Reset follow's crop: the whole source frame centered in the marker, at
-    /// `rotationRadians`, with no keyframes, so it holds still — the follow counterpart of
-    /// Reset crop (`ClipEditorViewModel.fullFrameAdjustment`).
+    /// `rotationRadians`, with no keyframes, so it holds still.
     static func wholeFrame(
         cropRect: CGRect, videoSize: CGSize, rotationRadians: Double, aspectRatio: CGFloat
     ) -> FollowCrop {

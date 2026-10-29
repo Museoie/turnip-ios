@@ -10,22 +10,17 @@ import Foundation
 /// `preferredTransform` when sampling, so keypoints are measured upright). Pass
 /// `SampledFrame.renderSize` (not `track.naturalSize`) when denormalizing it.
 ///
-/// `followCrop`, when set, replaces `cropAdjustment`: the crop moves with the athlete along
-/// it (`docs/DESIGN.md` step 6, "Follow crop in the editor"), with `cropRect` setting only the
-/// crop's size, the marker's.
+/// `followCrop`, when set, moves the crop with the athlete along it (`docs/DESIGN.md` step 6,
+/// "Follow crop in the editor"), with `cropRect` setting only the crop's size, the marker's;
+/// without one the clip is cut to `cropRect` as it is.
 struct ClipSpec: Equatable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
-    let cropAdjustment: CropAdjustment
     let followCrop: FollowCrop?
 
-    init(
-        window: TrickWindow, cropRect: NormalizedRect, cropAdjustment: CropAdjustment = .identity,
-        followCrop: FollowCrop? = nil
-    ) {
+    init(window: TrickWindow, cropRect: NormalizedRect, followCrop: FollowCrop? = nil) {
         self.window = window
         self.cropRect = cropRect
-        self.cropAdjustment = cropAdjustment
         self.followCrop = followCrop
     }
 }
@@ -107,11 +102,11 @@ struct ClipExportTransform {
     /// `nil` when the source dimensions are unknown or the crop rect is degenerate — in
     /// either case there is no frame to render into.
     ///
-    /// `cropAdjustment` is the editor's manual pinch/rotate/drag on top of `cropRect`: the
-    /// crop rect's on-screen marker stays fixed, so the adjustment transforms the *video*
-    /// around the rect's center, and the export has to reproduce that exactly — the
-    /// render frame stays `cropRect`'s own size, only the source content landing inside it
-    /// changes. At `.identity` this reduces to the un-adjusted crop translation.
+    /// `cropAdjustment` turns, zooms and moves the *video* around `cropRect`'s center while
+    /// the crop rect's on-screen marker stays fixed — one moment of a follow crop, as the card's
+    /// poster draws it — and the render has to reproduce that exactly: the render frame stays
+    /// `cropRect`'s own size, only the source content landing inside it changes. At
+    /// `.identity` this reduces to the un-adjusted crop translation.
     static func make(
         cropRect: NormalizedRect,
         naturalSize: CGSize,
@@ -132,7 +127,7 @@ struct ClipExportTransform {
         guard crop.width > 0, crop.height > 0 else { return nil }
         // Maps upright displayed-space points into the crop's render space, anchored on
         // the crop rect's own center so the preview's fixed marker rectangle and this
-        // export transform agree: un-anchor, apply the user's scale/rotation about the
+        // export transform agree: un-anchor, apply the adjustment's scale/rotation about the
         // origin (they commute — both are uniform/linear), then re-anchor and land the
         // crop's top-left at the render origin. At identity (scale 1, no rotation, no
         // offset) this is exactly `translate(-crop.minX, -crop.minY)`, the un-adjusted
@@ -394,8 +389,7 @@ actor ClipExporter {
         let naturalSize = try await videoTrack.load(.naturalSize)
         let preferredTransform = try await videoTrack.load(.preferredTransform)
         guard let staticTransform = ClipExportTransform.make(
-            cropRect: spec.cropRect, naturalSize: naturalSize, preferredTransform: preferredTransform,
-            cropAdjustment: spec.cropAdjustment
+            cropRect: spec.cropRect, naturalSize: naturalSize, preferredTransform: preferredTransform
         ) else {
             throw ClipExportError.invalidCropRect(window: spec.window)
         }

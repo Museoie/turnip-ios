@@ -211,8 +211,7 @@ final class ClipCardPlayback: ObservableObject {
     func windowChanged(to window: TrickWindow) {
         guard let current = geometry else { return }
         geometry = ClipCardPlaybackGeometry(
-            window: window, cropRect: current.cropRect, cropAdjustment: current.cropAdjustment,
-            framingMode: current.framingMode, followCrop: current.followCrop, personID: current.personID)
+            window: window, cropRect: current.cropRect, followCrop: current.followCrop, personID: current.personID)
         teardown()
         resume()
     }
@@ -297,8 +296,7 @@ final class ClipCardPlayback: ObservableObject {
         let clampedWindow = ClipEditorViewModel.clamped(window: target.window, to: duration)
         guard clampedWindow != target.window else { return target }
         return ClipCardPlaybackGeometry(
-            window: clampedWindow, cropRect: target.cropRect, cropAdjustment: target.cropAdjustment,
-            framingMode: target.framingMode, followCrop: target.followCrop, personID: target.personID)
+            window: clampedWindow, cropRect: target.cropRect, followCrop: target.followCrop, personID: target.personID)
     }
 
     /// Clears the in-flight slot only if `token` still owns it: a later attempt for the
@@ -313,14 +311,12 @@ final class ClipCardPlayback: ObservableObject {
 
 /// Everything a tile's live loop needs to play the right range with the right framing: a
 /// window change alone needs a rebuild (a different `AVPlayerLooper` time range), and so
-/// does a crop-rect or crop-adjustment change alone (a different `videoComposition`) —
-/// trimming never touches `cropAdjustment` and an editor commit can change any subset of
-/// them. A clip in Follow without a follow crop of its own draws Auto follow's for `window`.
+/// does a crop-rect or follow-crop change alone (a different `videoComposition`) — an editor
+/// commit can change any subset of them. A clip without a follow crop of its own draws Auto
+/// follow's for `window`.
 struct ClipCardPlaybackGeometry: Equatable {
     let window: TrickWindow
     let cropRect: NormalizedRect
-    let cropAdjustment: CropAdjustment
-    var framingMode: FramingMode = .still
     var followCrop: FollowCrop?
     /// The item's `personID`: which person's frames a follow crop fitted here reads.
     var personID: Int?

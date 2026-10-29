@@ -77,16 +77,13 @@ final class NameClipsTests: XCTestCase {
     func testEditorCommitsKeepNamesAndARetrimClearsAutoDetected() {
         let model = viewModel([item(1, names: [ClipName(name: "cork", origin: .typed)])])
         let clip = model.clipsToName[0]
-        let unchanged = ClipEditorResult(
-            window: clip.window, cropRect: clip.cropRect, cropAdjustment: clip.cropAdjustment,
-            framingMode: clip.framingMode, followCrop: clip.followCrop)
+        let unchanged = ClipEditorResult(window: clip.window, cropRect: clip.cropRect, followCrop: clip.followCrop)
         model.applyEditorResult(unchanged, to: clip.id)
         XCTAssertTrue(model.clipsToName[0].isAutoDetected)
         XCTAssertEqual(names(model, 0), [ClipName(name: "cork", origin: .typed)])
 
         let retrimmed = ClipEditorResult(
-            window: TrickWindow(startTime: 1.2, endTime: 2), cropRect: clip.cropRect,
-            cropAdjustment: clip.cropAdjustment, framingMode: clip.framingMode, followCrop: clip.followCrop)
+            window: TrickWindow(startTime: 1.2, endTime: 2), cropRect: clip.cropRect, followCrop: clip.followCrop)
         model.applyEditorResult(retrimmed, to: clip.id)
         XCTAssertFalse(model.clipsToName[0].isAutoDetected)
         XCTAssertEqual(names(model, 0), [ClipName(name: "cork", origin: .typed)])

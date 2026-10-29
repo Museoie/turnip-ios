@@ -126,8 +126,6 @@ final class ClipListViewModel: ObservableObject {
     private struct ThumbnailCacheKey: Equatable {
         let window: TrickWindow
         let cropRect: NormalizedRect
-        let cropAdjustment: CropAdjustment
-        let framingMode: FramingMode
         let followCrop: FollowCrop?
     }
 
@@ -139,7 +137,7 @@ final class ClipListViewModel: ObservableObject {
 
     private let asset: AVAsset
     /// Every scored frame of the source video (`DetectedClips.poseFrames`), handed to the
-    /// editor so Auto crop can fit the crop around the keypoints in the trimmed window,
+    /// editor so Auto follow can fit the crop around the keypoints in the trimmed window,
     /// including frames a trim pulled in from outside the clip's original window. Empty
     /// when nothing analyzed the video (the screenshot harness), in which case Auto crop
     /// has nothing to fit.
@@ -171,8 +169,8 @@ final class ClipListViewModel: ObservableObject {
     /// `TurnipSettingsStore.shared`, type-checks as a default argument.
     private let settingsProvider: @MainActor () -> TurnipSettings
     private let autoFollow = AutoFollow()
-    /// Auto follow's crop for each window a clip in Follow without a follow crop of its own has
-    /// been drawn over, so its tile, poster and save fit it once.
+    /// Auto follow's crop for each window a clip without a follow crop of its own has been drawn
+    /// over, so its tile, poster and save fit it once.
     private var autoFollowCrops: [AutoFollowKey: FollowCrop] = [:]
 
     private struct AutoFollowKey: Hashable {
@@ -194,7 +192,7 @@ final class ClipListViewModel: ObservableObject {
     private var loadedAssetDuration: TimeInterval?
 
     /// The video track and its geometry, loaded once per asset and shared by every
-    /// card's live preview composition (`videoComposition(cropRect:cropAdjustment:)`).
+    /// card's live preview composition (`videoComposition(for:)`).
     private struct TrackGeometry {
         let track: AVAssetTrack
         let naturalSize: CGSize
@@ -211,10 +209,9 @@ final class ClipListViewModel: ObservableObject {
     /// than left to every call site to remember. `duration` seeds its full-video
     /// window; the original never opens the editor, so this never needs re-deriving.
     ///
-    /// `items` are the detected clips, each put in Follow (`docs/UIUX.md` § "Clip Detail /
-    /// Editor"): a clip with no follow crop of its own shows Auto follow's, or the whole frame
-    /// held still when the video has no pose analysis to fit. A clip added later with "+" starts
-    /// in Follow too.
+    /// `items` are the detected clips (`docs/UIUX.md` § "Clip Detail / Editor"): a clip with no
+    /// follow crop of its own shows Auto follow's, or the whole frame held still when the video
+    /// has no pose analysis to fit. A clip added later with "+" does the same.
     init(
         items: [ClipListItem],
         poseFrames: [PoseFrameResult] = [],
@@ -236,11 +233,7 @@ final class ClipListViewModel: ObservableObject {
             window: TrickWindow(startTime: 0, endTime: max(duration, 0)),
             cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
             isOriginal: true)
-        self.items = [original] + items.map { item in
-            var item = item
-            item.framingMode = .follow
-            return item
-        }
+        self.items = [original] + items
         self.poseFrames = poseFrames
         self.people = people
         self.asset = asset
@@ -280,15 +273,13 @@ final class ClipListViewModel: ObservableObject {
     /// exports from the same source the list's thumbnails were decoded from.
     var sourceAsset: AVAsset { asset }
 
-    /// Builds the editor's input for one list item: its window, crop rect, and crop
-    /// adjustment plus the analyzed asset and the video's scored frames. Never called for
+    /// Builds the editor's input for one list item: its window, crop rect, and follow crop
+    /// plus the analyzed asset and the video's scored frames. Never called for
     /// the original item, which never opens the editor.
     func editorSource(for item: ClipListItem) -> ClipEditorSource {
         ClipEditorSource(
             window: item.window,
             cropRect: item.cropRect,
-            cropAdjustment: item.cropAdjustment,
-            framingMode: item.framingMode,
             followCrop: item.followCrop,
             asset: asset,
             poseFrames: poseFrames(forPerson: item.personID))
@@ -301,7 +292,7 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// Applies the editor's commit to the item with the given id: the window, crop rect,
-    /// and crop adjustment the user left the editor with replace the list entry's, so
+    /// and follow crop the user left the editor with replace the list entry's, so
     /// trim/crop edits commit on back-navigation (docs/UIUX.md § "Clip Detail / Editor").
     /// `isSaved` carries over only while the result still describes the video that landed:
     /// a clip the user retrimmed or recropped is not the one in Photos, so Save Clips has to
@@ -314,8 +305,6 @@ final class ClipListViewModel: ObservableObject {
             id: id,
             window: result.window,
             cropRect: result.cropRect,
-            cropAdjustment: result.cropAdjustment,
-            framingMode: result.framingMode,
             followCrop: result.followCrop,
             isSaved: item.isSaved && describesTheSameVideo(result, as: item),
             personID: item.personID,
@@ -325,19 +314,13 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// Whether `result` would export the same video as `item`. The editor commits on every
-    /// close, so opening a clip only to watch it must not read as an edit. Only the active
-    /// mode's framing is compared: the other one isn't in the video. It also clamps a
+    /// close, so opening a clip only to watch it must not read as an edit. It also clamps a
     /// window that runs past the video's end when it loads, which changes the window without
     /// changing what an export of it contains. That clamp uses the asset's own duration, so the
     /// comparison does too; until the cards have loaded it, only an identical window matches.
     private func describesTheSameVideo(_ result: ClipEditorResult, as item: ClipListItem) -> Bool {
-        guard isSameWindow(result.window, as: item.window),
-              result.cropRect == item.cropRect, result.framingMode == item.framingMode
-        else { return false }
-        switch result.framingMode {
-        case .still: return result.cropAdjustment == item.cropAdjustment
-        case .follow: return result.followCrop == item.followCrop
-        }
+        isSameWindow(result.window, as: item.window)
+            && result.cropRect == item.cropRect && result.followCrop == item.followCrop
     }
 
     /// Whether the editor's `window` is `previous` as it was, allowing for the clamp to the
@@ -361,15 +344,14 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// The "+" button's action: appends a new clip covering the first few seconds of the
-    /// asset (or its full duration if shorter), full-frame crop, in Follow like every clip. The
-    /// user trims it in the editor like any other clip; there's no separate creation UI.
+    /// asset (or its full duration if shorter), full-frame crop. The user trims it in the editor
+    /// like any other clip; there's no separate creation UI.
     func addClip() async {
         let duration = await assetDuration() ?? Self.defaultNewClipDuration
         let end = max(min(Self.defaultNewClipDuration, duration), ClipEditorViewModel.minimumClipDuration)
         items.append(ClipListItem(
             window: TrickWindow(startTime: 0, endTime: end),
-            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
-            framingMode: .follow))
+            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)))
     }
 
     private static let defaultNewClipDuration: TimeInterval = 3
@@ -422,8 +404,8 @@ final class ClipListViewModel: ObservableObject {
     /// source track — `AVPlayerLooper`'s own `timeRange` already bounds what actually loops,
     /// this only shapes the frame. Built from the same `ClipExportTransform.make` the exported
     /// clip and the card's poster thumbnail both use, so the live-playing tile, the poster
-    /// underneath it, and the saved clip always agree on the framing. A clip in Follow renders
-    /// its moving crop, timed in source time since the player runs over the untrimmed asset.
+    /// underneath it, and the saved clip always agree on the framing. It renders the clip's
+    /// moving crop, timed in source time since the player runs over the untrimmed asset.
     /// `nil` when the track geometry can't be loaded or the crop rect is degenerate — the
     /// caller falls back to an uncomposed player rather than showing nothing.
     ///
@@ -433,28 +415,19 @@ final class ClipListViewModel: ObservableObject {
     /// caller into rereading `item` itself instead of passing the geometry it already resolved.
     func videoComposition(for geometry: ClipCardPlaybackGeometry) async -> AVVideoComposition? {
         guard let track = await trackGeometry(),
-              let duration = try? await asset.load(.duration)
+              let duration = try? await asset.load(.duration),
+              let followCrop = await followCrop(
+                  followCrop: geometry.followCrop, window: geometry.window, cropRect: geometry.cropRect,
+                  personID: geometry.personID),
+              // The composition's own grid (`makeVideoComposition` below), so every frame it
+              // renders lands on a sample of the moving crop.
+              let frameDuration = try? VideoFrameSampler.compositionFrameDuration(
+                  minFrameDuration: track.minFrameDuration, nominalFrameRate: track.frameRate),
+              let transform = ClipExportTransform.make(
+                  followCrop: followCrop, cropRect: geometry.cropRect, over: 0...max(duration.seconds, 0),
+                  frameDuration: frameDuration, naturalSize: track.naturalSize,
+                  preferredTransform: track.preferredTransform)
         else { return nil }
-        let transform: ClipExportTransform?
-        if geometry.framingMode == .follow,
-           let followCrop = await followCrop(
-               mode: geometry.framingMode, followCrop: geometry.followCrop,
-               window: geometry.window, cropRect: geometry.cropRect, personID: geometry.personID) {
-            // The composition's own grid (`makeVideoComposition` below), so every frame it renders
-            // lands on a sample of the moving crop.
-            guard let frameDuration = try? VideoFrameSampler.compositionFrameDuration(
-                minFrameDuration: track.minFrameDuration, nominalFrameRate: track.frameRate)
-            else { return nil }
-            transform = ClipExportTransform.make(
-                followCrop: followCrop, cropRect: geometry.cropRect, over: 0...max(duration.seconds, 0),
-                frameDuration: frameDuration, naturalSize: track.naturalSize,
-                preferredTransform: track.preferredTransform)
-        } else {
-            transform = ClipExportTransform.make(
-                cropRect: geometry.cropRect, naturalSize: track.naturalSize,
-                preferredTransform: track.preferredTransform, cropAdjustment: geometry.cropAdjustment)
-        }
-        guard let transform else { return nil }
         // A grid the shared derivation rejects (no usable timing value) drops the
         // composed preview the same way an unloadable track does — the caller
         // falls back to an uncomposed player rather than showing nothing.
@@ -463,19 +436,17 @@ final class ClipListViewModel: ObservableObject {
             minFrameDuration: track.minFrameDuration)
     }
 
-    /// The follow crop a clip draws, or `nil` for one in Still: its own, or — for a clip in
-    /// Follow that has none yet — Auto follow's for its window (`AutoFollow.defaultCrop`), the
-    /// same crop the editor opens it on. `nil` too when the track geometry can't be loaded.
+    /// The follow crop a clip draws: its own, or — for a clip that has none yet — Auto follow's
+    /// for its window (`AutoFollow.defaultCrop`), the same crop the editor opens it on. `nil` when
+    /// the track geometry can't be loaded or the crop rect is degenerate.
     func followCrop(for item: ClipListItem) async -> FollowCrop? {
         await followCrop(
-            mode: item.framingMode, followCrop: item.followCrop, window: item.window, cropRect: item.cropRect,
-            personID: item.personID)
+            followCrop: item.followCrop, window: item.window, cropRect: item.cropRect, personID: item.personID)
     }
 
     private func followCrop(
-        mode: FramingMode, followCrop: FollowCrop?, window: TrickWindow, cropRect: NormalizedRect, personID: Int?
+        followCrop: FollowCrop?, window: TrickWindow, cropRect: NormalizedRect, personID: Int?
     ) async -> FollowCrop? {
-        guard mode == .follow else { return nil }
         if let followCrop { return followCrop }
         let key = AutoFollowKey(window: window, cropRect: cropRect, personID: personID)
         if let fitted = autoFollowCrops[key] { return fitted }
@@ -494,7 +465,7 @@ final class ClipListViewModel: ObservableObject {
     /// concurrent calls for the same item share one decode instead of seeking the same
     /// frame twice. The cache is keyed by the item's id *and* the fields the decoded
     /// frame depends on, so a call for the same id but a since-edited window/cropRect/
-    /// cropAdjustment always re-decodes — including when it races a still-in-flight
+    /// followCrop always re-decodes — including when it races a still-in-flight
     /// decode for the pre-edit item, which it never joins. A cancelled caller never
     /// cancels the shared decode — the decode runs to completion and the result is
     /// cached, so a card that scrolls off-screen and back within the decode window gets
@@ -503,9 +474,7 @@ final class ClipListViewModel: ObservableObject {
     /// cancelling the shared task cannot save the expensive work — it can only throw the
     /// result away from under another waiter.)
     func thumbnail(for item: ClipListItem) async -> CGImage? {
-        let key = ThumbnailCacheKey(
-            window: item.window, cropRect: item.cropRect, cropAdjustment: item.cropAdjustment,
-            framingMode: item.framingMode, followCrop: item.followCrop)
+        let key = ThumbnailCacheKey(window: item.window, cropRect: item.cropRect, followCrop: item.followCrop)
         if let cached = thumbnails[item.id], cached.key == key {
             return cached.image
         }
@@ -562,8 +531,7 @@ final class ClipListViewModel: ObservableObject {
         for item in items where !item.isOriginal && !item.isSaved {
             do {
                 let spec = ClipSpec(
-                    window: item.window, cropRect: item.cropRect, cropAdjustment: item.cropAdjustment,
-                    followCrop: await followCrop(for: item))
+                    window: item.window, cropRect: item.cropRect, followCrop: await followCrop(for: item))
                 let fileURL = try await exportClip(spec, asset, directory) { _ in }
                 exportAssetIDs[item.id] = try await saveToPhotos(fileURL, albumTitle)
                 markSaved(item.id)

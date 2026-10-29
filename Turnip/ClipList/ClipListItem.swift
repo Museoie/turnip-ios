@@ -13,11 +13,9 @@ import Foundation
 /// since an edited clip is no longer the one that was saved; opening a clip and closing
 /// it unchanged leaves it set.
 ///
-/// `framingMode` is which of the editor's framings the clip shows: `cropAdjustment` is Still's,
-/// `followCrop` Follow's. `ClipListViewModel` puts every clip it holds in Follow (`docs/UIUX.md`
-/// § "Clip Detail / Editor"). A clip in Follow whose `followCrop` is still `nil` shows Auto
-/// follow's crop for its window, worked out where it is drawn
-/// (`ClipListViewModel.followCrop(for:)`).
+/// `followCrop` is the clip's framing, the crop moving with the athlete (`docs/UIUX.md`
+/// § "Clip Detail / Editor"). A clip whose `followCrop` is still `nil` shows Auto follow's crop
+/// for its window, worked out where it is drawn (`ClipListViewModel.followCrop(for:)`).
 ///
 /// `names` and `isMe` are what Name Clips gives a clip (`docs/UIUX.md` § "Name Clips"): its
 /// trick names with how each was given, and whether it shows the user. Whether its names go to
@@ -33,15 +31,11 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     let id: UUID
     let window: TrickWindow
     let cropRect: NormalizedRect
-    /// The editor's manual pinch/rotate/drag adjustment on top of `cropRect`, carried so
-    /// it survives a re-open of the editor and reaches export.
-    var cropAdjustment: CropAdjustment
-    var framingMode: FramingMode
     var followCrop: FollowCrop?
     var isSaved: Bool
     let isOriginal: Bool
     /// Whose trick this is, when the video was analyzed following everyone
-    /// (`DetectedClips.people`): its crop, follow path and the editor's Auto crop read only that
+    /// (`DetectedClips.people`): its crop, follow path and the editor's Auto follow read only that
     /// person's pose. `nil` for the original, a clip added by hand, and every clip of a video
     /// analyzed following one person, which read every scored frame.
     let personID: Int?
@@ -53,8 +47,6 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         id: UUID = UUID(),
         window: TrickWindow,
         cropRect: NormalizedRect,
-        cropAdjustment: CropAdjustment = .identity,
-        framingMode: FramingMode = .follow,
         followCrop: FollowCrop? = nil,
         isSaved: Bool = false,
         isOriginal: Bool = false,
@@ -66,8 +58,6 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.id = id
         self.window = window
         self.cropRect = cropRect
-        self.cropAdjustment = cropAdjustment
-        self.framingMode = framingMode
         self.followCrop = followCrop
         self.isSaved = isSaved
         self.isOriginal = isOriginal

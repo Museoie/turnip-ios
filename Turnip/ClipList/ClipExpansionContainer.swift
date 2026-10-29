@@ -315,8 +315,6 @@ struct ClipExpansionContainer: View {
         let result = viewModel.result
         let isUnchanged = result.window == originalWindow
             && result.cropRect == source.cropRect
-            && result.cropAdjustment == source.cropAdjustment
-            && result.framingMode == source.framingMode
             && result.followCrop == source.followCrop
         return isUnchanged ? sourceTime : (viewModel.window.startTime + viewModel.window.endTime) / 2
     }

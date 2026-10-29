@@ -71,7 +71,7 @@ struct ProcessedClip: Hashable, Sendable {
 
 /// What detection yields for one video: the clips, with every sampled frame they were cut
 /// from. The frames travel with the clips because the editor needs frames beyond a clip's
-/// own window — Auto crop frames whatever keypoints the trimmed window holds, and a trim
+/// own window — Auto follow frames whatever keypoints the trimmed window holds, and a trim
 /// handle dragged outward pulls in frames the clip didn't start with — and both the file
 /// pipeline and the camera's live scoring are sources of them.
 struct DetectedClips: Hashable, Sendable {
@@ -85,7 +85,7 @@ struct DetectedClips: Hashable, Sendable {
     /// detection rides in the navigation path and is hashed on every push.
     var people: [PoseTrack] = []
 
-    /// The frames a clip's crop, follow path and the editor's Auto crop read: its own person's
+    /// The frames a clip's crop, follow path and the editor's Auto follow read: its own person's
     /// when it has one, every scored frame otherwise.
     func poseFrames(forPerson personID: Int?) -> [PoseFrameResult] {
         personID.flatMap { id in people.first { $0.id == id }?.frames } ?? poseFrames

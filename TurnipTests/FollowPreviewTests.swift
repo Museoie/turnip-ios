@@ -52,54 +52,24 @@ final class FollowPreviewTests: XCTestCase {
     }
 
     /// Each generation's framing counts by its weight, at the frame's own time; a generation
-    /// without a pan draws Still's framing.
+    /// without a pan draws the unshifted frame.
     func testABlendDrawsEachPanByItsWeight() {
-        let center = CGPoint(x: 200, y: 50)
         let steady = PreviewPanBlend(pans: [3: pan], weights: PreviewPanWeights([3: 1]))
-        XCTAssertEqual(steady.framing(at: 1.5, cropCenter: center), pan.framing(at: 1.5))
-        XCTAssertEqual(
-            PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1])).framing(at: 1.5, cropCenter: center),
-            .identity)
+        XCTAssertEqual(steady.framing(at: 1.5), pan.framing(at: 1.5))
+        XCTAssertEqual(PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1])).framing(at: 1.5), .identity)
 
         let zoomed = still(CGPoint(x: 40, y: 0), scale: 3)
         let easing = PreviewPanBlend(pans: [3: zoomed], weights: PreviewPanWeights([2: 0.25, 3: 0.75]))
-        let framing = easing.framing(at: 1.5, cropCenter: center)
+        let framing = easing.framing(at: 1.5)
         XCTAssertEqual(framing.shift.x, 40 * 0.75, accuracy: 1e-9)
         XCTAssertEqual(framing.scale, 0.25 * 1 + 0.75 * 3, accuracy: 1e-9)
     }
 
-    /// Still's framing is drawn as the same picture its zoom, turn and on-screen offset make: the
-    /// shift, zoomed and turned, lands where the offset puts the crop center.
-    func testAStillFramingDrawsTheStillPicture() {
-        let adjustment = CropAdjustment(scale: 1.6, rotationRadians: 0.4, offset: CGSize(width: 37, height: -12))
-        let blend = PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1]), still: adjustment)
-
-        let framing = blend.framing(at: 0, cropCenter: CGPoint(x: 700, y: 400))
-
-        let drawn = CGPoint(x: framing.shift.x * framing.scale, y: framing.shift.y * framing.scale)
-            .applying(CGAffineTransform(rotationAngle: framing.rotationRadians))
-        XCTAssertEqual(drawn.x, 37, accuracy: 1e-9)
-        XCTAssertEqual(drawn.y, -12, accuracy: 1e-9)
-        XCTAssertEqual(framing.scale, 1.6, accuracy: 1e-9)
-        XCTAssertEqual(framing.rotationRadians, 0.4, accuracy: 1e-9)
-    }
-
-    /// A live pinch and turn draw what each mode commits: Still keeps its on-screen offset, as
-    /// its pinch leaves it; Follow keeps the crop's center, as its keyframe does.
-    func testALivePinchAndTurnDrawWhatEachModeCommits() {
-        let adjustment = CropAdjustment(scale: 1.6, rotationRadians: 0.4, offset: CGSize(width: 37, height: -12))
-        let cropCenter = CGPoint(x: 700, y: 400)
-        let stillBlend = PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1]), still: adjustment)
-
-        let live = stillBlend.framing(at: 0, cropCenter: cropCenter, gestureScale: 1.5, gestureRotation: 0.2)
-
-        var committed = adjustment
-        committed.scale *= 1.5
-        committed.rotationRadians += 0.2
-        XCTAssertEqual(live, PreviewFraming(still: committed, cropCenter: cropCenter))
-
+    /// A live pinch and turn draw what the keyframe commits: the crop's center stays put, zoomed
+    /// and turned about.
+    func testALivePinchAndTurnKeepTheCropsCenter() {
         let followBlend = PreviewPanBlend(pans: [1: pan], weights: PreviewPanWeights([1: 1]))
-        let follow = followBlend.framing(at: 1.5, cropCenter: cropCenter, gestureScale: 1.5, gestureRotation: 0.2)
+        let follow = followBlend.framing(at: 1.5, gestureScale: 1.5, gestureRotation: 0.2)
         XCTAssertEqual(follow.shift, pan.framing(at: 1.5).shift)
         XCTAssertEqual(follow.scale, pan.framing(at: 1.5).scale * 1.5, accuracy: 1e-9)
         XCTAssertEqual(follow.rotationRadians, pan.framing(at: 1.5).rotationRadians + 0.2, accuracy: 1e-9)
@@ -145,7 +115,7 @@ final class FollowPreviewTests: XCTestCase {
             let weights = time < 0.15 ? targets[1] - firstRemaining : targets[2] - firstRemaining - secondRemaining
             XCTAssertEqual(weights.values.values.reduce(0, +), 1, accuracy: 1e-9, "at \(time) s")
 
-            let shift = PreviewPanBlend(pans: pans, weights: weights).framing(at: 0, cropCenter: .zero).shift
+            let shift = PreviewPanBlend(pans: pans, weights: weights).framing(at: 0).shift
             let expected = CGPoint(
                 x: animated(shifts.map { Double($0.x) }, first, second),
                 y: animated(shifts.map { Double($0.y) }, first, second))

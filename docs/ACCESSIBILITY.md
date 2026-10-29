@@ -165,18 +165,16 @@ history; what carried over is listed under Name Clips.
   swipe-up/down. Each handle's value is spoken ("2.4 seconds"), not read off the "2.4s" badge.
 - **The crop area has the same non-visual path.** Framing a clip is pinch, two-finger rotate
   and drag, none of which a VoiceOver user can perform, which would leave the editor's whole
-  purpose unreachable. Nine named actions — zoom in/out, rotate either way, move in four
-  directions, Reset crop — drive the same view-model calls the gestures commit, so the two paths
-  cannot diverge. Steps live in `CropAdjustmentStep`. The crop area's value spells out the
-  framing those actions leave ("Zoom 125%, turned 3° clockwise, moved 5% left"), in the units
-  they step by (`CropAdjustmentDescription`), so a press is heard to have done something.
-- **Still and Follow** (UIUX §4, Rev 16): the mode switch is a standard segmented control,
-  and "Edit clip" stays the screen's header, drawn clear in the switch's slot. In Follow the
-  crop area's zooms, turns and moves set the keyframe at the playhead, as the gestures do
-  there (UIUX §4, Rev 19), and it adds Previous keyframe, Next keyframe, Add keyframe, Remove
-  keyframe and Apply zoom and turn to all keyframes; Reset follow stands in for Reset crop.
-  Its value reads the active mode's zoom and turn at the playhead.
-  The follow lane is one adjustable element labeled "Follow keyframes": its value counts the
+  purpose unreachable. Named actions — zoom in/out, rotate either way, move in four
+  directions — set the keyframe at the playhead through the same view-model calls the
+  gestures commit (UIUX §4, Rev 19), so the two paths cannot diverge. Steps live in
+  `CropAdjustmentStep`. The crop area's value spells out the zoom and turn at the playhead
+  ("Zoom 125%, turned 3° clockwise"), in the units the actions step by
+  (`CropAdjustmentDescription`), so a zoom or a turn is heard to have done something. It also
+  offers Reset follow, Previous keyframe, Next keyframe, Add keyframe, Remove keyframe and
+  Apply zoom and turn to all keyframes.
+- **The follow crop** (UIUX §4, Rev 16, Rev 23): "Edit clip" stays the screen's header,
+  drawn clear in the top row. The follow lane is one adjustable element labeled "Follow keyframes": its value counts the
   keyframes and says where the playhead is, and a swipe up or down scrubs a tenth of a
   second, the trim handles' step — without it the lane is a pure drag surface. The lane's
   trailing button reads "Add keyframe" or "Remove keyframe" for what a tap does at the
@@ -193,7 +191,7 @@ history; what carried over is listed under Name Clips.
 - No auto-playing preview loop when reduce motion is on: the preview parks on the window's
   first frame and Play starts it on request.
 - Identifiers: `clip-editor-back`, `clip-editor-crop-surface`,
-  `auto-crop-button`, `reset-crop-button`, `auto-rotate-button`, `trim-start-handle`, `trim-end-handle`, `playback-play-pause`,
+  `auto-rotate-button`, `trim-start-handle`, `trim-end-handle`, `playback-play-pause`,
   `playback-mute`, `playback-position`, `auto-follow-button`, `reset-follow-button`,
   `follow-lane`, `follow-keyframe-button`, `nothing-to-follow-notice`.
 - **Still owed:** a real VoiceOver pass on device, plus Accessibility Inspector's audit.

@@ -145,9 +145,9 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
             .withOffset(CGVector(dx: (back.maxX + window.midX) / 2, dy: back.midY))
     }
 
-    /// The flight lands on whichever marker the editor reports, and a clip that opens in
-    /// Follow reports Follow's, shorter by the lane: the card has to land on that one.
-    func testAClipInFollowFliesOntoFollowsShorterMarker() throws {
+    /// The flight lands on the marker the editor reports for a clip whose crop moves too, over
+    /// the follow harness's landscape take: the marker the editor lays out above its lane.
+    func testAMovingFollowCropFliesOntoTheEditorsMarker() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListFollow"]
         app.launch()

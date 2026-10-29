@@ -36,7 +36,7 @@ private final class FakeLoop: ClipLooping {
 private final class LoopRecorder {
     struct CompositionRequest: Equatable {
         let cropRect: NormalizedRect
-        let cropAdjustment: CropAdjustment
+        let followCrop: FollowCrop?
     }
 
     var isVideoAutoplayEnabled = true
@@ -45,7 +45,6 @@ private final class LoopRecorder {
     var loops: [FakeLoop] = []
     var compositionRequests: [CompositionRequest] = []
     var compositionWindows: [TrickWindow] = []
-    var compositionFramingModes: [FramingMode] = []
 }
 
 @MainActor
@@ -59,19 +58,21 @@ final class ClipCardPlaybackTests: XCTestCase {
     /// own, since a composition is what carries framing and the looper's time range is
     /// unchanged by it.
     private let pannedCropRect = NormalizedRect(minX: 0.4, maxX: 0.9, minY: 0.1, maxY: 0.6)
-    private let rotation = CropAdjustment(scale: 1, rotationRadians: 0.5, offset: .zero)
+    /// A follow crop held still and turned half a radian: a framing an editor commit can
+    /// change without touching the window or the crop rect.
+    private let turned = FollowCrop(
+        keyframes: [], resting: FollowFraming(center: CGPoint(x: 50, y: 50), scale: 1, rotationRadians: 0.5),
+        isAutoFollow: false)
 
     private func geometry(
         window: TrickWindow? = nil,
         cropRect: NormalizedRect? = nil,
-        cropAdjustment: CropAdjustment = .identity,
-        framingMode: FramingMode = .still
+        followCrop: FollowCrop? = nil
     ) -> ClipCardPlaybackGeometry {
         ClipCardPlaybackGeometry(
             window: window ?? self.window,
             cropRect: cropRect ?? self.cropRect,
-            cropAdjustment: cropAdjustment,
-            framingMode: framingMode)
+            followCrop: followCrop)
     }
 
     /// `AVAsset` is abstract and throws at runtime, so this uses the concrete
@@ -91,10 +92,8 @@ final class ClipCardPlaybackTests: XCTestCase {
             },
             loadComposition: { geometry in
                 recorder.compositionRequests.append(
-                    LoopRecorder.CompositionRequest(
-                        cropRect: geometry.cropRect, cropAdjustment: geometry.cropAdjustment))
+                    LoopRecorder.CompositionRequest(cropRect: geometry.cropRect, followCrop: geometry.followCrop))
                 recorder.compositionWindows.append(geometry.window)
-                recorder.compositionFramingModes.append(geometry.framingMode)
                 return nil
             },
             loadDuration: { recorder.duration },
@@ -279,14 +278,14 @@ final class ClipCardPlaybackTests: XCTestCase {
         let recorder = LoopRecorder()
         let playback = makePlayback(recorder)
 
-        playback.start(geometry: geometry(cropAdjustment: rotation), isSuspended: false)
+        playback.start(geometry: geometry(followCrop: turned), isSuspended: false)
         await settle(playback)
 
         XCTAssertEqual(
             recorder.compositionRequests,
-            [LoopRecorder.CompositionRequest(cropRect: cropRect, cropAdjustment: rotation)])
+            [LoopRecorder.CompositionRequest(cropRect: cropRect, followCrop: turned)])
         XCTAssertEqual(recorder.loops.count, 1)
-        XCTAssertEqual(recorder.loops[0].geometry, geometry(cropAdjustment: rotation))
+        XCTAssertEqual(recorder.loops[0].geometry, geometry(followCrop: turned))
         XCTAssertEqual(recorder.loops[0].playCount, 1)
         XCTAssertIdentical(playback.loop as? FakeLoop, recorder.loops[0])
     }
@@ -387,21 +386,20 @@ final class ClipCardPlaybackTests: XCTestCase {
         XCTAssertEqual(recorder.compositionRequests.map(\.cropRect), [cropRect, pannedCropRect])
     }
 
-    /// Rotation is stored apart from `cropRect` and an editor commit can change it alone,
-    /// so it has to key the rebuild on its own too.
-    func testStartWithAChangedCropAdjustmentAloneRebuildsOverTheNewFraming() async {
+    /// The follow crop is stored apart from `cropRect` and an editor commit can change it
+    /// alone, so it has to key the rebuild on its own too.
+    func testStartWithAChangedFollowCropAloneRebuildsOverTheNewFraming() async {
         let recorder = LoopRecorder()
         let playback = makePlayback(recorder)
         playback.start(geometry: geometry(), isSuspended: false)
         await settle(playback)
 
-        playback.start(geometry: geometry(cropAdjustment: rotation), isSuspended: false)
+        playback.start(geometry: geometry(followCrop: turned), isSuspended: false)
         await settle(playback)
 
         XCTAssertEqual(recorder.loops.count, 2)
-        XCTAssertEqual(recorder.loops[1].geometry.cropAdjustment, rotation)
-        XCTAssertEqual(
-            recorder.compositionRequests.map(\.cropAdjustment), [.identity, rotation])
+        XCTAssertEqual(recorder.loops[1].geometry.followCrop, turned)
+        XCTAssertEqual(recorder.compositionRequests.map(\.followCrop), [nil, turned])
     }
 
     func testTeardownReleasesTheLoop() async {
@@ -578,21 +576,6 @@ final class ClipCardPlaybackTests: XCTestCase {
         XCTAssertEqual(recorder.compositionWindows, [window, editedWindow])
     }
 
-    /// A clip in Follow draws its follow crop over its window, so a window change has to keep
-    /// the mode: dropping it would rebuild the loop on the still crop.
-    func testWindowChangeKeepsAClipInFollowFollowingOverTheNewWindow() async {
-        let recorder = LoopRecorder()
-        let playback = makePlayback(recorder)
-        playback.start(geometry: geometry(framingMode: .follow), isSuspended: false)
-        await settle(playback)
-
-        playback.windowChanged(to: editedWindow)
-        await settle(playback)
-
-        XCTAssertEqual(recorder.compositionFramingModes, [.follow, .follow])
-        XCTAssertEqual(recorder.compositionWindows, [window, editedWindow])
-    }
-
     /// The window arrives through an `.onChange` closure that carries no framing, so the
     /// rebuild has to take the framing from what the lifecycle already stored — reading it
     /// off a stale view would resume on pre-edit framing and record that as the mounted
@@ -600,7 +583,7 @@ final class ClipCardPlaybackTests: XCTestCase {
     func testWindowChangeKeepsTheFramingItWasAlreadyBuiltFor() async {
         let recorder = LoopRecorder()
         let playback = makePlayback(recorder)
-        playback.start(geometry: geometry(cropAdjustment: rotation), isSuspended: false)
+        playback.start(geometry: geometry(followCrop: turned), isSuspended: false)
         await settle(playback)
 
         playback.windowChanged(to: editedWindow)
@@ -608,7 +591,7 @@ final class ClipCardPlaybackTests: XCTestCase {
 
         XCTAssertEqual(
             recorder.loops[1].geometry,
-            geometry(window: editedWindow, cropAdjustment: rotation))
+            geometry(window: editedWindow, followCrop: turned))
     }
 
     func testWindowChangeWhileSuspendedRebuildsOnResumeNotOnThePreEditRange() async {

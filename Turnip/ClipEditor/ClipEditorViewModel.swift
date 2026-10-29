@@ -15,14 +15,14 @@ enum CropAdjustmentStep {
     static let offsetFraction: CGFloat = 0.05
 }
 
-/// The crop area's framing in words, its accessibility value: what a VoiceOver user's zoom,
-/// rotate and move actions changed, and what a pinch, turn or drag left behind. Each part is
+/// The crop area's framing at the playhead in words, its accessibility value: what a VoiceOver
+/// user's zoom and rotate actions changed, and what a pinch or turn left behind. Each part is
 /// measured the way its action steps it — the zoom against the clip's own crop, the turn in
-/// whole degrees, the move as a share of the video's width and height (`CropAdjustmentStep`).
+/// whole degrees (`CropAdjustmentStep`).
 enum CropAdjustmentDescription {
-    static func text(for adjustment: CropAdjustment, videoSize: CGSize) -> String {
-        let zoom = Int((adjustment.scale * 100).rounded())
-        let degrees = Int((adjustment.rotationRadians * 180 / .pi).rounded())
+    static func text(scale: CGFloat, rotationRadians: Double) -> String {
+        let zoom = Int((scale * 100).rounded())
+        let degrees = Int((rotationRadians * 180 / .pi).rounded())
         let turn: String
         if degrees > 0 {
             turn = String(localized: "turned \(degrees)° clockwise")
@@ -31,32 +31,19 @@ enum CropAdjustmentDescription {
         } else {
             turn = String(localized: "not turned")
         }
-        let across = videoSize.width > 0 ? Int((adjustment.offset.width / videoSize.width * 100).rounded()) : 0
-        let down = videoSize.height > 0 ? Int((adjustment.offset.height / videoSize.height * 100).rounded()) : 0
-        var moves: [String] = []
-        if across != 0 {
-            moves.append(across > 0 ? String(localized: "\(across)% right") : String(localized: "\(-across)% left"))
-        }
-        if down != 0 {
-            moves.append(down > 0 ? String(localized: "\(down)% down") : String(localized: "\(-down)% up"))
-        }
-        let move = moves.isEmpty
-            ? String(localized: "not moved")
-            : String(localized: "moved \(moves.joined(separator: String(localized: " and ")))")
-        return String(localized: "Zoom \(zoom)%, \(turn), \(move)")
+        return String(localized: "Zoom \(zoom)%, \(turn)")
     }
 }
 
 /// The clip editor's state (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
-/// Holds the draft trim window, the crop rect the clip opened with, and the crop adjustment
-/// on top of it (pinch/rotate/drag, or the Auto crop and Auto rotate fits); the view
-/// commits `result` on back-navigation (the chevron or swipe-to-dismiss) — no separate save step, per the design
-/// doc. The crop rect never moves on its own: it is the anchor the marker is laid out
-/// from, and only the user's gestures and the Auto fits change the framing, as an
-/// adjustment on it. Trimming in particular leaves the framing alone — the framing is
-/// what the user last set, and a handle drag is a trim, not a re-crop; Auto crop is the
-/// one tap that refits the framing to whatever the trimmed window holds. Playback loops
+/// Holds the draft trim window, the crop rect the clip opened with, and the follow crop that
+/// moves the framing with the athlete over it (Auto follow's keyframes, the user's drags,
+/// pinches and turns at the playhead, and Auto rotate's turn); the view commits `result` on
+/// back-navigation (the chevron or swipe-to-dismiss) — no separate save step, per the design
+/// doc. The crop rect never moves on its own: it is the anchor the marker is laid out from and
+/// sets the crop's size. A trim moves no keyframe the user set — a handle drag is a trim, not a
+/// re-crop — and re-tracks only a follow crop that is still all Auto follow's. Playback loops
 /// the draft window; dragging a handle pauses and seeks to the handle so the preview shows
 /// the frame being trimmed to.
 ///
@@ -71,14 +58,8 @@ final class ClipEditorViewModel: ObservableObject {
     @Published private(set) var window: TrickWindow
     /// The crop rect the clip opened with — the pipeline's, or the full frame for a clip
     /// added by hand. Fixed for the editor's life: the marker is laid out so this rect
-    /// fills it, and every change to the framing is carried by `cropAdjustment`.
+    /// fills it, and every change to the framing is carried by `followCrop`.
     let cropRect: NormalizedRect
-    /// The adjustment on top of `cropRect` — the user's pinch/rotate/drag, or Auto crop's
-    /// and Auto rotate's fits — applied to the video while the crop rect's on-screen
-    /// marker stays fixed. Trimming never touches it. The preview draws it through `previewPan`.
-    @Published private(set) var cropAdjustment: CropAdjustment {
-        didSet { previewPan.still = cropAdjustment }
-    }
     @Published private(set) var duration: TimeInterval?
     @Published private(set) var playbackTime: TimeInterval = 0
     @Published private(set) var isPlaying = false
@@ -93,25 +74,15 @@ final class ClipEditorViewModel: ObservableObject {
     /// Set when Auto rotate found no horizon in the window, so the view can say so — a
     /// button whose tap changes nothing reads as broken. Cleared by the notice itself.
     @Published var isShowingNoHorizonNotice = false
-    /// True while the last Auto crop's fit is what's on screen — what turns the button into
-    /// "Reset crop", which returns the framing to the whole source video (`resetCrop`).
-    /// Cleared by the reset itself and by any manual crop gesture, since the fit is then no
-    /// longer what's on screen. The reset leaves the rotation alone, as Auto crop itself
-    /// does.
-    @Published private(set) var isAutoCropApplied = false
     /// True while the last Auto rotate's turn is what's on screen — "Reset rotate", which
-    /// returns the video to its original, unrotated orientation. Cleared the same way
-    /// `isAutoCropApplied` is.
+    /// returns the video to its original, unrotated orientation. Cleared by the reset itself
+    /// and by any change by hand to the framing, since the fit is then no longer what's on
+    /// screen.
     @Published private(set) var isAutoRotateApplied = false
 
-    /// Which framing the clip shows (`docs/UIUX.md` § "Two framing modes, Still and Follow").
-    /// Still's is `cropAdjustment`, Follow's `followCrop`; each mode keeps its own. Every clip
-    /// Name Clips opens is in Follow.
-    @Published private(set) var framingMode: FramingMode {
-        didSet { updatePreviewPan() }
-    }
-    /// Follow mode's framing: `nil` until the clip has been in Follow. The preview draws it frame
-    /// by frame through `followPan`.
+    /// The clip's framing (`docs/UIUX.md` § "Clip Detail / Editor"): the clip's own, or, for one
+    /// that opened without one, `nil` until media info has loaded and Auto follow's (or the whole
+    /// frame's) is worked out. The preview draws it frame by frame through `followPan`.
     @Published private(set) var followCrop: FollowCrop? {
         didSet { rebuildFollowPan() }
     }
@@ -120,8 +91,8 @@ final class ClipEditorViewModel: ObservableObject {
         didSet { updatePreviewPan() }
     }
     /// What the preview draws the picture with: the pan it draws now under the current generation
-    /// (none in Still, whose framing it carries as `still`), and the weights of every generation
-    /// still on screen. An ease (`easePan(_:)`) gives the new pan a new generation and animates the
+    /// (none before the follow crop is in hand), and the weights of every generation still on
+    /// screen. An ease (`easePan(_:)`) gives the new pan a new generation and animates the
     /// weights onto it; any other change replaces the current generation's pan.
     @Published private(set) var previewPan = PreviewPanBlend(pans: [:], weights: PreviewPanWeights([0: 1]))
     private var previewGeneration = 0
@@ -136,12 +107,12 @@ final class ClipEditorViewModel: ObservableObject {
     /// still. Cleared by the notice itself.
     @Published var isShowingNothingToFollowNotice = false
 
-    /// The pinch's committed scale is clamped here, and Auto crop's fitted scale too, so
-    /// neither can shrink the video to a sliver or blow it up past usefulness.
+    /// A keyframe's zoom is clamped here, and the automatic fits' zoom too, so neither can
+    /// shrink the video to a sliver or blow it up past usefulness.
     nonisolated static let scaleRange: ClosedRange<CGFloat> = 0.2...8
 
-    /// How Auto crop and Auto rotate move the video to their result: along the same
-    /// scale/rotation/offset the fingers drive, over this curve, so the user sees what
+    /// How Auto follow, Reset follow and Auto rotate move the video to their result: along the
+    /// same position, zoom and turn the fingers drive, over this curve, so the user sees what
     /// changed and from where (`docs/UIUX.md` § "An automatic change moves, it never cuts").
     nonisolated static let fitAnimation: Animation = .easeInOut(duration: fitDuration)
     nonisolated static let fitDuration: TimeInterval = 0.4
@@ -158,8 +129,8 @@ final class ClipEditorViewModel: ObservableObject {
     private let source: ClipEditorSource
     private let calculator: CropRectCalculator
     private let autoFollower: AutoFollow
-    /// Auto follow's crop for the window the editor opened with, when the clip opened in Follow
-    /// without one of its own. Still that crop at the close, the clip goes back without one.
+    /// Auto follow's crop for the window the editor opened with, when the clip opened without one
+    /// of its own. Still that crop at the close, the clip goes back without one.
     private var openingFollowCrop: FollowCrop?
     private var nominalFrameRate: Double = 30
     /// The source's real frame times around the window, once read.
@@ -224,23 +195,18 @@ final class ClipEditorViewModel: ObservableObject {
             aspectRatio: CGFloat(calculator.targetAspectRatio))
         self.window = source.window
         self.cropRect = source.cropRect
-        self.cropAdjustment = source.cropAdjustment
-        self.framingMode = source.framingMode
         self.followCrop = source.followCrop
-        previewPan.still = source.cropAdjustment
     }
 
     /// The committed edits, in the shape the clip list applies to its item.
     ///
-    /// A clip that opened in Follow without a follow crop goes back without one only while
-    /// both the crop and the window are as it opened: the Clip List works an unset crop out
-    /// for the clip's window, zoom included, and a trimmed window would get a new zoom there.
+    /// A clip that opened without a follow crop goes back without one only while both the crop
+    /// and the window are as it opened: the Clip List works an unset crop out for the clip's
+    /// window, zoom included, and a trimmed window would get a new zoom there.
     var result: ClipEditorResult {
         let openedWindow = duration.map { Self.clamped(window: source.window, to: $0) } ?? source.window
         let isAsOpened = openingFollowCrop != nil && followCrop == openingFollowCrop && window == openedWindow
-        return ClipEditorResult(
-            window: window, cropRect: cropRect, cropAdjustment: cropAdjustment, framingMode: framingMode,
-            followCrop: isAsOpened ? nil : followCrop)
+        return ClipEditorResult(window: window, cropRect: cropRect, followCrop: isAsOpened ? nil : followCrop)
     }
 
     /// "2.4s"-style duration of the draft window, via the one shared clip-duration
@@ -267,17 +233,12 @@ final class ClipEditorViewModel: ObservableObject {
         CGFloat(calculator.targetAspectRatio)
     }
 
-    /// The crop area's accessibility value (`CropAdjustmentDescription`).
+    /// The crop area's accessibility value (`CropAdjustmentDescription`): the follow crop's zoom
+    /// and turn at the playhead, or none before the clip has one.
     var cropAdjustmentDescription: String {
-        CropAdjustmentDescription.text(for: framingAtPlayhead, videoSize: previewOverlay?.videoSize ?? .zero)
-    }
-
-    /// The active mode's zoom, turn and on-screen offset at the playhead, in Still's terms: a
-    /// follow crop's zoom and turn there, with no offset.
-    var framingAtPlayhead: CropAdjustment {
-        guard framingMode == .follow, let followCrop else { return cropAdjustment }
-        let framing = followCrop.path.framing(at: playbackTime)
-        return CropAdjustment(scale: framing.scale, rotationRadians: framing.rotationRadians, offset: .zero)
+        let framing = followCrop?.path.framing(at: playbackTime)
+        return CropAdjustmentDescription.text(
+            scale: framing?.scale ?? 1, rotationRadians: framing?.rotationRadians ?? 0)
     }
 
     /// The stage geometry in one value: the displayed (upright) frame size plus the crop
@@ -425,188 +386,50 @@ final class ClipEditorViewModel: ObservableObject {
         player.pause()
     }
 
-    /// Applies a pinch's cumulative magnification since the gesture started: `delta`
-    /// multiplies onto the committed scale (standard iOS pinch-to-zoom — spreading
-    /// fingers zooms in), clamped so the video can't shrink to a sliver or blow up past
-    /// usefulness. In Follow it zooms the playhead's keyframe (`setFollowKeyframe`).
+    /// Zooms the playhead's keyframe by `delta` (`setFollowKeyframe`): VoiceOver's Zoom in and
+    /// Zoom out, which step what a pinch does.
     func applyCropScale(_ delta: CGFloat) {
-        guard delta.isFinite, delta > 0 else { return }
-        guard delta != 1 else { return }
-        if framingMode == .follow {
-            setFollowKeyframe(zoomedBy: delta)
-            return
-        }
-        clearAutoFits()
-        cropAdjustment.scale = Self.clampedScale(cropAdjustment.scale * delta)
+        guard delta.isFinite, delta > 0, delta != 1 else { return }
+        setFollowKeyframe(zoomedBy: delta)
     }
 
-    /// Applies a two-finger rotation's cumulative angle since the gesture started. In Follow it
-    /// turns the playhead's keyframe (`setFollowKeyframe`).
+    /// Turns the playhead's keyframe by `deltaRadians` (`setFollowKeyframe`): VoiceOver's Rotate
+    /// clockwise and Rotate counterclockwise, which step what a two-finger turn does.
     func applyCropRotation(_ deltaRadians: Double) {
-        guard deltaRadians.isFinite else { return }
-        guard deltaRadians != 0 else { return }
-        if framingMode == .follow {
-            setFollowKeyframe(turnedBy: deltaRadians)
-            return
-        }
-        clearAutoFits()
-        cropAdjustment.rotationRadians += deltaRadians
+        guard deltaRadians.isFinite, deltaRadians != 0 else { return }
+        setFollowKeyframe(turnedBy: deltaRadians)
     }
 
-    /// A manual gesture takes over the framing from both automatic fits at once: whatever
-    /// Auto crop or Auto rotate put on screen is no longer what's there, so both buttons
-    /// return to offering their fit. The gesture methods above and below call this only for
-    /// a gesture that actually changed something — a pinch that ends where it started is
-    /// not an edit. In Follow, Still's framing hasn't moved, so its Auto crop stays as it was;
-    /// the follow crop's own Auto follow is cleared where the gesture changes it.
-    private func clearAutoFits() {
-        if framingMode == .still {
-            isAutoCropApplied = false
-        }
+    /// A change by hand to the framing takes it over from Auto rotate: its turn is no longer
+    /// what's on screen, so the button returns to offering the fit. Called only for a change
+    /// that actually changed something — a pinch that ends where it started is not an edit.
+    /// Auto follow's own button reads the follow crop (`isAutoFollowApplied`).
+    private func clearAutoRotate() {
         isAutoRotateApplied = false
     }
 
-    /// Applies a drag's cumulative translation since the gesture started. `screenPoints`
-    /// is the raw gesture translation in the stage's on-screen point space;
-    /// `previewScale` is the stage's on-screen points per displayed pixel
-    /// (`ClipEditorStage.VideoPlacement.pointsPerDisplayedPixel`). Dividing by it converts
-    /// into the displayed-pixel space `ClipExportTransform.make` and `ClipThumbnailLoader`
-    /// both expect `cropAdjustment.offset` to already be in.
-    func applyCropOffset(_ screenPoints: CGSize, previewScale: CGFloat) {
-        guard previewScale.isFinite, previewScale > 0 else { return }
-        offsetCrop(byDisplayedPixels: CGSize(
-            width: screenPoints.width / previewScale,
-            height: screenPoints.height / previewScale))
-    }
-
-    /// Moves the crop area by a delta already in displayed-pixel space. What the editor's
-    /// VoiceOver actions use: there is no gesture translation to convert, and a step measured
-    /// in on-screen points would move a different amount of video on every device.
-    func offsetCrop(byDisplayedPixels delta: CGSize) {
-        guard delta.width.isFinite, delta.height.isFinite else { return }
-        guard delta != .zero, framingMode == .still else { return }
-        clearAutoFits()
-        cropAdjustment.offset.width += delta.width
-        cropAdjustment.offset.height += delta.height
-    }
-
-    /// The "Auto crop" action: frames every located keypoint in the draft window inside the
-    /// marker, at the current rotation — the one way the framing follows the trimmed
-    /// window. The rotation itself is kept — Auto rotate (or two fingers) owns it — and
-    /// the scale and offset are replaced by the fit, so a manual pinch or drag is
-    /// discarded. At zero rotation the fit is the pipeline's own framing for the window,
-    /// so on an untrimmed clip the adjustment returns to identity. A window with no
-    /// located keypoints leaves the adjustment alone. The video moves to the fit over
-    /// `fitAnimation` rather than cutting to it.
-    func autoCrop() {
-        guard let overlay = previewOverlay,
-              let adjustment = Self.autoCropAdjustment(
-                  normalizedKeypoints: CropRectCalculator.locatedPoints(in: framesInWindow),
-                  cropRect: overlay.cropRect,
-                  videoSize: overlay.videoSize,
-                  rotationRadians: cropAdjustment.rotationRadians,
-                  calculator: calculator)
-        else { return }
-        withAnimation(Self.fitAnimation) {
-            cropAdjustment = adjustment
-        }
-        isAutoCropApplied = true
-    }
-
-    /// Whether Auto crop has anything to fit: the clip came with pose analysis. A clip added
-    /// by hand ("Clip manually") never does, so for it the editor offers Reset crop alone,
-    /// enabled while `isCropAdjusted` — an Auto crop whose tap could never change anything
-    /// reads as broken.
-    var supportsAutoCrop: Bool {
-        !source.poseFrames.isEmpty
-    }
-
-    /// Whether the framing differs from the whole source video — the full frame centered in
-    /// the marker at the current rotation (`fullFrameAdjustment`), which is what Reset crop
-    /// returns to. The rotation alone doesn't count: Reset rotate owns it. `false` until
-    /// media info has loaded, since there is no framing to compare yet.
-    var isCropAdjusted: Bool {
-        guard let overlay = previewOverlay else { return false }
-        let fullFrame = Self.fullFrameAdjustment(
-            cropRect: overlay.cropRect, videoSize: overlay.videoSize,
-            rotationRadians: cropAdjustment.rotationRadians, calculator: calculator)
-        let tolerance: CGFloat = 1e-6
-        return abs(cropAdjustment.scale - fullFrame.scale) > tolerance
-            || abs(cropAdjustment.offset.width - fullFrame.offset.width) > tolerance
-            || abs(cropAdjustment.offset.height - fullFrame.offset.height) > tolerance
-    }
-
-    /// "Reset crop": returns the framing to the whole source video — the full frame centered
-    /// in the marker at the marker's ratio, the way a clip added by hand opens — moving
-    /// there the same way the fit moved. Not the detected crop and not the framing from
-    /// just before the Auto tap: the reset is the way back to the original video whatever
-    /// was done in between. The rotation stays, as Auto crop left it alone too. On a clip
-    /// with pose analysis the button then offers Auto crop again; on one without, it is
-    /// the only crop button and simply disables until the framing moves again.
-    func resetCrop() {
-        guard let overlay = previewOverlay, isAutoCropApplied || isCropAdjusted else { return }
-        isAutoCropApplied = false
-        let adjustment = Self.fullFrameAdjustment(
-            cropRect: overlay.cropRect, videoSize: overlay.videoSize,
-            rotationRadians: cropAdjustment.rotationRadians, calculator: calculator)
-        withAnimation(Self.fitAnimation) {
-            cropAdjustment = adjustment
-        }
-    }
-
-    /// The adjustment that shows the whole source frame in the marker: the full frame's own
-    /// marker-ratio box (`markerBox`, the same box a full-frame crop rect lays the marker out
-    /// from) scaled and moved onto the marker, in the same terms `autoCropAdjustment`
-    /// expresses its fit — the scale is the two boxes' width ratio, the offset moves the
-    /// box's center onto the marker's after the scale. The rotation passes through
-    /// untouched, and the frame is shown turned by it about the marker's center: the video
-    /// turns about the crop center before the offset applies, so the box's center is turned
-    /// the same way before the offset that cancels it is read off. For a clip whose crop
-    /// rect is already the full frame this is the identity.
-    nonisolated static func fullFrameAdjustment(
-        cropRect: CGRect, videoSize: CGSize, rotationRadians: Double, calculator: CropRectCalculator
-    ) -> CropAdjustment {
-        let aspectRatio = CGFloat(calculator.targetAspectRatio)
-        let marker = markerBox(around: cropRect, aspectRatio: aspectRatio)
-        let center = CGPoint(x: cropRect.midX, y: cropRect.midY)
-        let fullFrame = markerBox(around: CGRect(origin: .zero, size: videoSize), aspectRatio: aspectRatio)
-            .offsetBy(dx: -center.x, dy: -center.y)
-        guard marker.width > 0, fullFrame.width > 0 else {
-            return CropAdjustment(scale: 1, rotationRadians: rotationRadians, offset: .zero)
-        }
-        let scale = clampedScale(marker.width / fullFrame.width)
-        let turnedCenter = CGPoint(x: fullFrame.midX, y: fullFrame.midY)
-            .applying(CGAffineTransform(rotationAngle: rotationRadians))
-        return CropAdjustment(
-            scale: scale,
-            rotationRadians: rotationRadians,
-            offset: CGSize(width: -turnedCenter.x * scale, height: -turnedCenter.y * scale))
-    }
-
     /// "Reset rotate": returns the video to its original, unrotated orientation, moving
-    /// there the same way the turn moved. Scale and offset stay. The button then offers
+    /// there the same way the turn moved. Positions and zoom stay. The button then offers
     /// Auto rotate again.
     func resetRotate() {
         guard isAutoRotateApplied else { return }
         isAutoRotateApplied = false
         withAnimation(Self.fitAnimation) {
-            setRotation(CropAdjustment.identity.rotationRadians)
+            easePan { setRotation(0) }
         }
     }
 
-    /// Turns the active mode's framing: in Follow, every keyframe (`FollowCrop.setRotation`).
+    /// Turns every keyframe of the follow crop (`FollowCrop.setRotation`).
     private func setRotation(_ radians: Double) {
-        if framingMode == .follow, var followCrop {
-            followCrop.setRotation(radians)
-            self.followCrop = followCrop
-        } else {
-            cropAdjustment.rotationRadians = radians
-        }
+        guard var followCrop else { return }
+        followCrop.setRotation(radians)
+        self.followCrop = followCrop
     }
 
     /// The adjustment that frames `normalizedKeypoints` in the marker at `rotationRadians`,
-    /// or `nil` when there is nothing to frame. Pure, so the fit is unit-testable without a
-    /// player; the rotated case is the discriminating one.
+    /// or `nil` when there is nothing to frame: Auto follow's one keyframe for an athlete who
+    /// stays put (`AutoFollow`). Pure, so the fit is unit-testable without a player; the rotated
+    /// case is the discriminating one.
     ///
     /// The marker shows the video turned by the rotation about the crop rect's center, so
     /// the fit runs in that turned space: each keypoint is rotated about the center, the
@@ -709,8 +532,8 @@ final class ClipEditorViewModel: ObservableObject {
     /// The "Auto rotate" action: levels the clip by the take's own roll track when it has
     /// one, else by the horizon read off frames sampled across the draft window
     /// (`ClipLeveler`). Replaces the rotation rather than adding to it — the roll is
-    /// measured on the source, not on the rotated preview. Scale and offset stay as they
-    /// are; Auto crop refits them if the turn carries a limb out of the marker. One
+    /// measured on the source, not on the rotated preview. Positions and zoom stay as they
+    /// are; Auto follow refits them if the turn carries a limb out of the marker. One
     /// detection at a time: a tap while one is running is ignored, and `teardown()` cancels
     /// it. Finding nothing to level by raises the notice and changes nothing; finding a
     /// rotation turns the video to level over `fitAnimation` rather than cutting to it, and
@@ -727,7 +550,7 @@ final class ClipEditorViewModel: ObservableObject {
             isDetectingHorizon = false
             if let rotation {
                 withAnimation(Self.fitAnimation) {
-                    setRotation(rotation)
+                    easePan { setRotation(rotation) }
                 }
                 isAutoRotateApplied = true
             } else {
@@ -741,10 +564,11 @@ final class ClipEditorViewModel: ObservableObject {
 
     // MARK: - Follow mode
 
-    /// Whether Auto follow has anything to fit: the clip came with pose analysis, as for Auto
-    /// crop. A clip added by hand gets Reset follow alone.
+    /// Whether Auto follow has anything to fit: the clip came with pose analysis. A clip of a
+    /// video that skipped analysis ("Clip manually") never does, so it gets Reset follow alone —
+    /// an Auto follow whose tap could never change anything reads as broken.
     var supportsAutoFollow: Bool {
-        supportsAutoCrop
+        !source.poseFrames.isEmpty
     }
 
     /// True while the follow crop on screen is exactly what Auto follow wrote, which turns its
@@ -768,44 +592,6 @@ final class ClipEditorViewModel: ObservableObject {
         return differs(followCrop.resting) || followCrop.keyframes.contains { differs($0.framing) }
     }
 
-    /// Moves the clip between Still and Follow; no control offers it, since every clip opens in
-    /// Follow (`docs/UIUX.md` § "Two framing modes, Still and Follow"). Entering Follow the first
-    /// time on a clip Auto follow can fit runs Auto follow at once — Follow means following the
-    /// athlete — and on one it can't, starts from the whole frame. Each mode keeps its own
-    /// framing, and the picture moves from one to the other over `fitAnimation`, the marker with
-    /// it, since Follow's is shorter by the lane. The turn on screen carries the Auto rotate
-    /// button over only when both modes are turned the same.
-    func setFramingMode(_ mode: FramingMode) {
-        guard mode != framingMode, let overlay = previewOverlay else { return }
-        let rotationBefore = framingAtPlayhead.rotationRadians
-        var nothingToFollow = false
-        if mode == .follow, followCrop == nil {
-            let rotation = cropAdjustment.rotationRadians
-            if supportsAutoFollow, let fit = autoFollower.fit(
-                frames: framesInWindow, cropRect: overlay.cropRect, videoSize: overlay.videoSize,
-                rotationRadians: rotation) {
-                followCrop = fit.crop
-                nothingToFollow = !fit.moves
-            } else {
-                followCrop = FollowCrop.wholeFrame(
-                    cropRect: overlay.cropRect, videoSize: overlay.videoSize, rotationRadians: rotation,
-                    aspectRatio: targetAspectRatio)
-                nothingToFollow = supportsAutoFollow
-            }
-        }
-        withAnimation(Self.fitAnimation) {
-            easePan { framingMode = mode }
-        }
-        if framingAtPlayhead.rotationRadians != rotationBefore {
-            isAutoRotateApplied = false
-        }
-        if nothingToFollow {
-            withAnimation(Self.fitAnimation) {
-                isShowingNothingToFollowNotice = true
-            }
-        }
-    }
-
     /// "Auto follow": frames the athlete through the window at the turn the crop has at the
     /// playhead — the pipeline's follow path reduced to a few keyframes (`AutoFollow`), each
     /// zoomed to the room the athlete needs around then. Keeps the turn and replaces the zoom
@@ -814,7 +600,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// one keyframe and raises "Nothing to follow"; a window with nothing located changes
     /// nothing but the notice.
     func autoFollow() {
-        guard framingMode == .follow, supportsAutoFollow, let overlay = previewOverlay else { return }
+        guard supportsAutoFollow, let overlay = previewOverlay else { return }
         let rotation = followRotationAtPlayhead
         guard let fit = autoFollower.fit(
             frames: framesInWindow, cropRect: overlay.cropRect, videoSize: overlay.videoSize,
@@ -832,10 +618,9 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     /// "Reset follow": the whole source frame centered in the marker with no keyframes, so the
-    /// crop holds still, at the current turn, staying in Follow. Moves there the way Auto
-    /// follow moves.
+    /// crop holds still, at the current turn. Moves there the way Auto follow moves.
     func resetFollow() {
-        guard framingMode == .follow, let overlay = previewOverlay,
+        guard let overlay = previewOverlay,
               isAutoFollowApplied || isFollowAdjusted
         else { return }
         let rotation = followRotationAtPlayhead
@@ -848,10 +633,10 @@ final class ClipEditorViewModel: ObservableObject {
         }
     }
 
-    /// The follow crop's turn at the playhead, or Still's before the clip has one: the one turn
+    /// The follow crop's turn at the playhead, or none before the clip has one: the one turn
     /// Auto follow and Reset follow keep.
     private var followRotationAtPlayhead: Double {
-        followCrop?.path.framing(at: currentTime).rotationRadians ?? cropAdjustment.rotationRadians
+        followCrop?.path.framing(at: currentTime).rotationRadians ?? 0
     }
 
     /// Makes the pan change `change` makes ease in from where the picture is instead of cutting
@@ -881,9 +666,8 @@ final class ClipEditorViewModel: ObservableObject {
     /// Puts the pan the preview should draw now on the current generation: a change that doesn't
     /// ease of its own cuts to it, or, mid-ease, becomes what the ease is heading for.
     private func updatePreviewPan() {
-        let target = previewTarget
-        guard previewPan.pans[previewGeneration] != target else { return }
-        previewPan.pans[previewGeneration] = target
+        guard previewPan.pans[previewGeneration] != followPan else { return }
+        previewPan.pans[previewGeneration] = followPan
     }
 
     /// The follow crop's keyframes, for the lane: in time order.
@@ -917,18 +701,18 @@ final class ClipEditorViewModel: ObservableObject {
             .min { abs($0.time - time) < abs($1.time - time) }
     }
 
-    /// Touch-down on the crop area in Follow: the gesture sets the framing at this moment, so the
+    /// Touch-down on the crop area: the gesture sets the framing at this moment, so the
     /// clip stops here and stays stopped on release, until Play.
     func beginFollowTouch() {
-        guard framingMode == .follow, isPlaying else { return }
+        guard isPlaying else { return }
         player.pause()
         isPlaying = false
     }
 
-    /// One gesture on the crop area in Follow, committed as the fingers lift: its drag's
-    /// `translation` (on-screen points, at `previewScale` points per displayed pixel, as for
-    /// `applyCropOffset`), its pinch's `scale` and its turn's `rotation`, all written into the
-    /// playhead's keyframe at once (`setFollowKeyframe`).
+    /// One gesture on the crop area, committed as the fingers lift: its drag's `translation` (in
+    /// on-screen points, at `previewScale` points per displayed pixel —
+    /// `ClipEditorStage.VideoPlacement.pointsPerDisplayedPixel`), its pinch's `scale` and its
+    /// turn's `rotation`, all written into the playhead's keyframe at once (`setFollowKeyframe`).
     func applyFollowGesture(translation: CGSize, previewScale: CGFloat, scale: CGFloat, rotation: Double) {
         guard previewScale.isFinite, previewScale > 0 else { return }
         setFollowKeyframe(
@@ -950,7 +734,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// exactly where the fingers left it. The zoom stays within `scaleRange`. Any keyframe change
     /// hands Auto follow's button back.
     func setFollowKeyframe(movedBy delta: CGSize = .zero, zoomedBy factor: CGFloat = 1, turnedBy radians: Double = 0) {
-        guard framingMode == .follow, var crop = followCrop,
+        guard var crop = followCrop,
               delta.width.isFinite, delta.height.isFinite, factor.isFinite, factor > 0, radians.isFinite,
               delta != .zero || factor != 1 || radians != 0
         else { return }
@@ -974,7 +758,7 @@ final class ClipEditorViewModel: ObservableObject {
         keyframe.center.y -= unturned.y / keyframe.scale
         crop.keyframes[index] = keyframe
         crop.isAutoFollow = false
-        clearAutoFits()
+        clearAutoRotate()
         followCrop = crop
     }
 
@@ -994,14 +778,14 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     private func applyZoomAndTurnToAllKeyframes(scale: CGFloat, rotationRadians: Double) {
-        guard framingMode == .follow, var crop = followCrop, !crop.keyframes.isEmpty else { return }
+        guard var crop = followCrop, !crop.keyframes.isEmpty else { return }
         for index in crop.keyframes.indices {
             crop.keyframes[index].scale = scale
             crop.keyframes[index].rotationRadians = rotationRadians
         }
         guard crop != followCrop else { return }
         crop.isAutoFollow = false
-        clearAutoFits()
+        clearAutoRotate()
         withAnimation(Self.fitAnimation) {
             easePan { followCrop = crop }
         }
@@ -1018,12 +802,12 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     func addKeyframeAtPlayhead() {
-        guard framingMode == .follow, var crop = followCrop, keyframeAtPlayhead == nil else { return }
+        guard var crop = followCrop, keyframeAtPlayhead == nil else { return }
         let time = currentTime
         crop.keyframes.append(FollowKeyframe(time: time, framing: crop.path.framing(at: time)))
         crop.keyframes.sort { $0.time < $1.time }
         crop.isAutoFollow = false
-        clearAutoFits()
+        clearAutoRotate()
         followCrop = crop
     }
 
@@ -1031,7 +815,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// position, zoom and turn, hollow again; any other is deleted. The picture moves to the new
     /// curve the way an automatic change does, since the curve at the playhead can change.
     func removeKeyframe(_ keyframe: FollowKeyframe) {
-        guard framingMode == .follow, var crop = followCrop,
+        guard var crop = followCrop,
               let index = crop.keyframes.firstIndex(of: keyframe)
         else { return }
         if let auto = keyframe.autoFraming, auto != keyframe.framing {
@@ -1040,7 +824,7 @@ final class ClipEditorViewModel: ObservableObject {
             crop.keyframes.remove(at: index)
         }
         crop.isAutoFollow = false
-        clearAutoFits()
+        clearAutoRotate()
         withAnimation(Self.fitAnimation) {
             easePan { followCrop = crop }
         }
@@ -1077,11 +861,6 @@ final class ClipEditorViewModel: ObservableObject {
         if frameTimes?.frames(across: span) == nil {
             loadFrameTimes(covering: span)
         }
-    }
-
-    /// Follow's pan; `nil` in Still, whose framing the blend draws itself.
-    private var previewTarget: FollowPan? {
-        framingMode == .follow ? followPan : nil
     }
 
     private func loadFrameTimes(covering span: ClosedRange<TimeInterval>) {
@@ -1149,8 +928,8 @@ final class ClipEditorViewModel: ObservableObject {
     /// Called when a handle drag ends: resumes the preview loop from the new start,
     /// unless the user had manually paused — dragging a handle must not overrule Pause.
     ///
-    /// In Follow, a follow crop still all Auto follow's — every keyframe as Auto follow wrote
-    /// it — re-tracks the new window, positions and zoom, at the same turn, moving there the way
+    /// A follow crop still all Auto follow's — every keyframe as Auto follow wrote it —
+    /// re-tracks the new window, positions and zoom, at the same turn, moving there the way
     /// Auto follow does. A keyframe the user set never moves on a trim.
     func finishTrim() {
         isTrimming = false
@@ -1162,7 +941,7 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     private func retrackFollowCrop() {
-        guard framingMode == .follow, supportsAutoCrop, let followCrop, followCrop.isUntouchedAutoFollow,
+        guard supportsAutoFollow, let followCrop, followCrop.isUntouchedAutoFollow,
               let overlay = previewOverlay
         else { return }
         guard let fit = autoFollower.fit(
@@ -1181,7 +960,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// window's trailing buffer can overshoot the duration. Internal so tests can drive
     /// the trim math without an asset.
     ///
-    /// A clip that opens in Follow without a follow crop of its own gets Auto follow's for the
+    /// A clip that opens without a follow crop of its own gets Auto follow's for the
     /// window here, in the same update that first lays the video out, so the picture never
     /// shows another framing first.
     func setMediaInfo(
@@ -1192,7 +971,7 @@ final class ClipEditorViewModel: ObservableObject {
         nominalFrameRate = frameRate
         trackGeometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
         window = Self.clamped(window: window, to: duration)
-        if framingMode == .follow, followCrop == nil, let overlay = previewOverlay {
+        if followCrop == nil, let overlay = previewOverlay {
             let opening = autoFollower.defaultCrop(
                 poseFrames: source.poseFrames, window: window, cropRect: overlay.cropRect, videoSize: overlay.videoSize)
             openingFollowCrop = opening
@@ -1231,7 +1010,7 @@ final class ClipEditorViewModel: ObservableObject {
         return TrickWindow(startTime: window.startTime, endTime: newEnd)
     }
 
-    /// The sampled pose frames inside the draft window: what Auto crop fits.
+    /// The sampled pose frames inside the draft window: what Auto follow fits.
     private var framesInWindow: [PoseFrameResult] {
         source.poseFrames.filter {
             $0.timestamp >= window.startTime && $0.timestamp <= window.endTime

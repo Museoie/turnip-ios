@@ -78,19 +78,21 @@ final class ClipEditorTests: XCTestCase {
 
     /// The framing is what the user last set, and a handle drag is a trim, not a re-crop:
     /// widening the window over the athlete's whole travel must not grow the crop (which
-    /// showed as the video shrinking under the fixed marker). Only Auto crop refits.
+    /// showed as the video shrinking under the fixed marker). Only Auto follow refits, and a
+    /// follow crop still all Auto follow's re-tracks.
     @MainActor
-    func testTrimmingNeverChangesTheCropRectOrTheAdjustment() {
+    func testTrimmingNeverChangesTheCropRectOrAKeyframeTheUserSet() {
         let viewModel = makeViewModel(window: TrickWindow(startTime: 2, endTime: 2.5), frames: twoPositionFrames())
         viewModel.applyCropScale(2)
-        let cropRect = viewModel.cropRect, adjustment = viewModel.cropAdjustment
+        let cropRect = viewModel.cropRect, followCrop = viewModel.followCrop
 
         viewModel.trimStart(to: 0)
         viewModel.trimEnd(to: 3.9)
+        viewModel.finishTrim()
 
         XCTAssertEqual(viewModel.window, TrickWindow(startTime: 0, endTime: 3.9))
         XCTAssertEqual(viewModel.cropRect, cropRect)
-        XCTAssertEqual(viewModel.cropAdjustment, adjustment)
+        XCTAssertEqual(viewModel.followCrop, followCrop)
     }
 
     @MainActor
@@ -102,13 +104,24 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(viewModel.cropRect, NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1))
     }
 
-    // MARK: - Auto crop
+    // MARK: - Keyframe fit
 
-    /// Auto crop is the one way the framing follows the window: after widening the window
-    /// over the athlete's whole travel, the fit frames all of it, and the trimmed-in half
-    /// alone when the window is narrowed back.
+    /// The fit Auto follow gives an athlete who stays put (`ClipEditorViewModel.autoCropAdjustment`):
+    /// `frames` inside `window`, framed in `overlay`'s marker at `rotationRadians`.
+    private func keyframeFit(
+        _ frames: [PoseFrameResult], in window: TrickWindow, overlay: (videoSize: CGSize, cropRect: CGRect),
+        rotationRadians: Double = 0
+    ) -> CropAdjustment? {
+        let inWindow = frames.filter { $0.timestamp >= window.startTime && $0.timestamp <= window.endTime }
+        return ClipEditorViewModel.autoCropAdjustment(
+            normalizedKeypoints: CropRectCalculator.locatedPoints(in: inWindow), cropRect: overlay.cropRect,
+            videoSize: overlay.videoSize, rotationRadians: rotationRadians, calculator: CropRectCalculator())
+    }
+
+    /// The fit frames the window it is given: over the athlete's whole travel it frames all of
+    /// it, and the later half alone over a narrower window.
     @MainActor
-    func testAutoCropFitsTheTrimmedWindowsKeypoints() throws {
+    func testTheKeyframeFitFramesTheWindowsKeypoints() throws {
         // A portrait frame: the athlete's whole travel fits a 9:16 crop inside it, so the
         // fit can hold every keypoint without reaching past the frame.
         let frames = twoPositionFrames()
@@ -117,17 +130,14 @@ final class ClipEditorTests: XCTestCase {
         viewModel.setMediaInfo(
             duration: duration, naturalSize: CGSize(width: 100, height: 200), preferredTransform: .identity)
         let overlay = try XCTUnwrap(viewModel.previewOverlay)
+        let wideWindow = TrickWindow(startTime: 0, endTime: 3.9), narrowWindow = TrickWindow(startTime: 2, endTime: 3.9)
 
-        viewModel.autoCrop()
-        let wide = viewModel.cropAdjustment
-        viewModel.trimStart(to: 2.0)
-        viewModel.autoCrop()
-        let narrow = viewModel.cropAdjustment
+        let wide = try XCTUnwrap(keyframeFit(frames, in: wideWindow, overlay: overlay))
+        let narrow = try XCTUnwrap(keyframeFit(frames, in: narrowWindow, overlay: overlay))
 
         // Both fits keep every keypoint in play inside the marker...
         let marker = ClipEditorViewModel.markerBox(around: overlay.cropRect, aspectRatio: 9.0 / 16.0)
-        for (window, adjustment) in [(TrickWindow(startTime: 0, endTime: 3.9), wide),
-                                     (TrickWindow(startTime: 2, endTime: 3.9), narrow)] {
+        for (window, adjustment) in [(wideWindow, wide), (narrowWindow, narrow)] {
             let inWindow = frames.filter { $0.timestamp >= window.startTime && $0.timestamp <= window.endTime }
             for point in CropRectCalculator.locatedPoints(in: inWindow) {
                 let pixel = CGPoint(x: point.x * overlay.videoSize.width, y: point.y * overlay.videoSize.height)
@@ -143,10 +153,10 @@ final class ClipEditorTests: XCTestCase {
     }
 
     @MainActor
-    func testAutoCropAtZeroRotationReproducesThePipelinesFraming() {
+    func testTheKeyframeFitAtZeroRotationReproducesThePipelinesFraming() throws {
         // A clip that opens on the pipeline's rect for its window: the fit is that same
-        // rect, so a manual pinch and drag go and the adjustment is identity — to within
-        // the float dust the pipeline's Float rect carries into the marker's ratio.
+        // rect, so the adjustment is identity — to within the float dust the pipeline's Float
+        // rect carries into the marker's ratio.
         let frames = twoPositionFrames()
         let window = TrickWindow(startTime: 2, endTime: 3.9)
         let pipelineRect = CropRectCalculator().cropRect(
@@ -160,18 +170,16 @@ final class ClipEditorTests: XCTestCase {
         viewModel.setMediaInfo(duration: duration, naturalSize: naturalSize, preferredTransform: .identity)
         XCTAssertNotNil(pipelineRect)
 
-        viewModel.applyCropScale(2)
-        viewModel.applyCropOffset(CGSize(width: 10, height: 10), previewScale: 1)
-        viewModel.autoCrop()
+        let fit = try XCTUnwrap(keyframeFit(frames, in: window, overlay: try XCTUnwrap(viewModel.previewOverlay)))
 
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 1, accuracy: 0.00001)
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0)
-        XCTAssertEqual(viewModel.cropAdjustment.offset.width, 0, accuracy: 0.001)
-        XCTAssertEqual(viewModel.cropAdjustment.offset.height, 0, accuracy: 0.001)
+        XCTAssertEqual(fit.scale, 1, accuracy: 0.00001)
+        XCTAssertEqual(fit.rotationRadians, 0)
+        XCTAssertEqual(fit.offset.width, 0, accuracy: 0.001)
+        XCTAssertEqual(fit.offset.height, 0, accuracy: 0.001)
     }
 
     @MainActor
-    func testAutoCropFitsInDisplayedSpaceOnRotatedClips() throws {
+    func testTheKeyframeFitIsInDisplayedSpaceOnRotatedClips() throws {
         // 90°-rotated track: the encoded 200x100 is really a 100x200 portrait video. The
         // keypoints are measured in displayed space, so the fit's ratio snap must use the
         // displayed size — the encoded naturalSize transposes the dimensions and lands a
@@ -186,14 +194,14 @@ final class ClipEditorTests: XCTestCase {
         let overlay = try XCTUnwrap(viewModel.previewOverlay)
         XCTAssertEqual(overlay.videoSize, CGSize(width: 100, height: 200))
 
-        viewModel.autoCrop()
+        let fit = try XCTUnwrap(keyframeFit(frames, in: window, overlay: overlay))
 
         // The fit is the pipeline's rect for these frames in displayed space, expressed
         // on the full-frame anchor: the marker's width over the rect's is the scale.
         let expected = try XCTUnwrap(CropRectCalculator().cropRect(for: frames, renderedPixelSize: overlay.videoSize))
         let marker = ClipEditorViewModel.markerBox(around: overlay.cropRect, aspectRatio: 9.0 / 16.0)
         let expectedScale = marker.width / expected.denormalized(in: overlay.videoSize).width
-        XCTAssertEqual(viewModel.cropAdjustment.scale, expectedScale, accuracy: 0.0001)
+        XCTAssertEqual(fit.scale, expectedScale, accuracy: 0.0001)
     }
 
     func testMarkerBoxIsTheSmallestTargetRatioRectAroundTheCropRect() {
@@ -376,64 +384,7 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertFalse(viewModel.isTrimming)
     }
 
-    // MARK: - Crop adjustment
-
-    @MainActor
-    func testApplyCropScaleMultipliesOntoTheCommittedScale() {
-        let viewModel = makeViewModel()
-
-        viewModel.applyCropScale(2)
-        viewModel.applyCropScale(1.5)
-
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 3, accuracy: 0.0001)
-    }
-
-    @MainActor
-    func testApplyCropScaleClampsToASaneRange() {
-        let viewModel = makeViewModel()
-
-        viewModel.applyCropScale(0.001)
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 0.2, accuracy: 0.0001)
-
-        viewModel.applyCropScale(1000)
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 8, accuracy: 0.0001)
-    }
-
-    @MainActor
-    func testApplyCropRotationAccumulates() {
-        let viewModel = makeViewModel()
-
-        viewModel.applyCropRotation(.pi / 4)
-        viewModel.applyCropRotation(.pi / 4)
-
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, .pi / 2, accuracy: 0.0001)
-    }
-
-    @MainActor
-    func testApplyCropOffsetAccumulates() {
-        let viewModel = makeViewModel()
-
-        viewModel.applyCropOffset(CGSize(width: 10, height: -4), previewScale: 1)
-        viewModel.applyCropOffset(CGSize(width: 5, height: 1), previewScale: 1)
-
-        XCTAssertEqual(viewModel.cropAdjustment.offset, CGSize(width: 15, height: -3))
-    }
-
-    /// `previewScale` is on-screen points per displayed pixel — a source video's displayed
-    /// size is almost always many times the preview's on-screen point size, so dividing by
-    /// a realistic sub-1 scale must MAGNIFY the committed offset, not pass it through
-    /// unconverted. A fixture using `previewScale: 1` (as the accumulation test above does)
-    /// can't tell a correct conversion from a dropped one, since both produce the same
-    /// number when the scale is 1.
-    @MainActor
-    func testApplyCropOffsetConvertsScreenPointsToDisplayedPixels() {
-        let viewModel = makeViewModel()
-
-        // A 380pt-wide preview of a 1900px-displayed video: 0.2 points per pixel.
-        viewModel.applyCropOffset(CGSize(width: 38, height: -19), previewScale: 0.2)
-
-        XCTAssertEqual(viewModel.cropAdjustment.offset, CGSize(width: 190, height: -95))
-    }
+    // MARK: - Crop area actions
 
     /// Keypoints at the corners of a box in the middle of a portrait frame, small enough
     /// that its fit at a modest turn still lies inside the frame.
@@ -444,65 +395,32 @@ final class ClipEditorTests: XCTestCase {
         ]
     }
 
-    /// The editor's VoiceOver actions nudge in displayed-pixel space directly, since there is
-    /// no gesture translation to convert — the drag path's `previewScale` division must not
-    /// silently apply to them.
-    @MainActor
-    func testOffsetCropAccumulatesDisplayedPixels() {
-        let viewModel = makeViewModel()
-
-        viewModel.offsetCrop(byDisplayedPixels: CGSize(width: 24, height: -8))
-        viewModel.offsetCrop(byDisplayedPixels: CGSize(width: -4, height: 2))
-
-        XCTAssertEqual(viewModel.cropAdjustment.offset, CGSize(width: 20, height: -6))
-    }
-
-    @MainActor
-    func testOffsetCropRejectsANonFiniteDelta() {
-        let viewModel = makeViewModel()
-
-        viewModel.offsetCrop(byDisplayedPixels: CGSize(width: 10, height: 4))
-        // `CGFloat.nan` spelled out: `CGSize.init` is overloaded on CGFloat, Double and Int,
-        // and a bare `.nan` gives the compiler no way to choose between them.
-        viewModel.offsetCrop(byDisplayedPixels: CGSize(width: CGFloat.nan, height: 1))
-        viewModel.offsetCrop(byDisplayedPixels: CGSize(width: 1, height: CGFloat.infinity))
-
-        XCTAssertEqual(viewModel.cropAdjustment.offset, CGSize(width: 10, height: 4))
-    }
-
-    /// The crop area's value names what changed in the units the actions step by, so a press
-    /// of Move left reads back as a 5% move.
-    func testCropDescriptionSpellsOutZoomTurnAndMove() {
-        let videoSize = CGSize(width: 200, height: 100)
+    /// The crop area's value names the zoom and turn at the playhead in the units the actions
+    /// step by, so a press of Rotate clockwise reads back as a 5° turn.
+    func testCropDescriptionSpellsOutZoomAndTurn() {
+        XCTAssertEqual(CropAdjustmentDescription.text(scale: 1, rotationRadians: 0), "Zoom 100%, not turned")
         XCTAssertEqual(
-            CropAdjustmentDescription.text(for: .identity, videoSize: videoSize),
-            "Zoom 100%, not turned, not moved")
-        let adjusted = CropAdjustment(
-            scale: 1.25, rotationRadians: -3 * .pi / 180, offset: CGSize(width: -10, height: 30))
+            CropAdjustmentDescription.text(scale: 1.25, rotationRadians: -3 * .pi / 180),
+            "Zoom 125%, turned 3° counterclockwise")
         XCTAssertEqual(
-            CropAdjustmentDescription.text(for: adjusted, videoSize: videoSize),
-            "Zoom 125%, turned 3° counterclockwise, moved 5% left and 30% down")
-        let turned = CropAdjustment(scale: 0.5, rotationRadians: .pi / 2, offset: CGSize(width: 0, height: -5))
-        XCTAssertEqual(
-            CropAdjustmentDescription.text(for: turned, videoSize: videoSize),
-            "Zoom 50%, turned 90° clockwise, moved 5% up")
+            CropAdjustmentDescription.text(scale: 0.5, rotationRadians: .pi / 2), "Zoom 50%, turned 90° clockwise")
     }
 
     /// A zoom action is the gesture's own multiply, so the two paths land on the same framing
     /// and the clamp that protects the gesture protects the action too.
     @MainActor
     func testZoomActionStepsThroughTheSameClampedScale() {
-        let viewModel = makeViewModel()
+        let viewModel = makeFollowViewModel(followCrop: handFollowCrop())
 
         viewModel.applyCropScale(CropAdjustmentStep.zoomFactor)
 
-        XCTAssertEqual(viewModel.cropAdjustment.scale, CropAdjustmentStep.zoomFactor, accuracy: 1e-9)
+        XCTAssertEqual(viewModel.followCrop?.keyframes[0].scale ?? 0, 2 * CropAdjustmentStep.zoomFactor, accuracy: 1e-9)
 
         for _ in 0..<40 {
             viewModel.applyCropScale(CropAdjustmentStep.zoomFactor)
         }
 
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 8, "repeated zoom-in must stop at the clamp")
+        XCTAssertEqual(viewModel.followCrop?.keyframes[0].scale, 8, "repeated zoom-in must stop at the clamp")
     }
 
     /// The video point a position relative to the marker's center shows, under
@@ -554,32 +472,23 @@ final class ClipEditorTests: XCTestCase {
     }
 
     @MainActor
-    func testAutoCropKeepsEveryKeypointInsideTheMarkerAtTheCurrentRotation() throws {
+    func testTheKeyframeFitKeepsEveryKeypointInsideTheMarkerAtItsRotation() throws {
         let frames = centeredBoxFrames()
         let viewModel = ClipEditorViewModel(
             source: makeSource(window: TrickWindow(startTime: 2, endTime: 2.3), frames: frames))
         viewModel.setMediaInfo(
             duration: duration, naturalSize: CGSize(width: 100, height: 200), preferredTransform: .identity)
         let rotation = Double.pi / 18
-        viewModel.applyCropRotation(rotation)
-        // Zoomed in by hand: the keypoints sit outside the marker, so the fit has
-        // something to do.
-        viewModel.applyCropScale(3)
         let overlay = try XCTUnwrap(viewModel.previewOverlay)
         let keypoints = CropRectCalculator.locatedPoints(in: frames).map {
             CGPoint(x: $0.x * overlay.videoSize.width, y: $0.y * overlay.videoSize.height)
         }
         let marker = ClipEditorViewModel.markerBox(around: overlay.cropRect, aspectRatio: 9.0 / 16.0)
         let halfWidth = marker.width / 2, halfHeight = marker.height / 2
-        XCTAssertTrue(keypoints.contains { point in
-            let position = markerPosition(
-                of: point, cropRect: overlay.cropRect, adjustment: viewModel.cropAdjustment)
-            return abs(position.x) > halfWidth || abs(position.y) > halfHeight
-        })
 
-        viewModel.autoCrop()
+        let adjustment = try XCTUnwrap(keyframeFit(
+            frames, in: TrickWindow(startTime: 2, endTime: 2.3), overlay: overlay, rotationRadians: rotation))
 
-        let adjustment = viewModel.cropAdjustment
         XCTAssertEqual(adjustment.rotationRadians, rotation, accuracy: 0.0001)
         for point in keypoints {
             let position = markerPosition(of: point, cropRect: overlay.cropRect, adjustment: adjustment)
@@ -593,29 +502,31 @@ final class ClipEditorTests: XCTestCase {
     /// width, a 9:16 crop around all of it would reach past the top and bottom of the
     /// frame, so the fit zooms to the frame's height instead of letterboxing.
     @MainActor
-    func testAutoCropKeepsTheMarkerInsideTheVideo() throws {
-        let viewModel = makeViewModel(window: TrickWindow(startTime: 0, endTime: 4), frames: twoPositionFrames())
+    func testTheKeyframeFitKeepsTheMarkerInsideTheVideo() throws {
+        let window = TrickWindow(startTime: 0, endTime: 4)
+        let viewModel = makeViewModel(window: window, frames: twoPositionFrames())
         let overlay = try XCTUnwrap(viewModel.previewOverlay)
         XCTAssertEqual(overlay.videoSize, CGSize(width: 200, height: 100))
 
-        viewModel.autoCrop()
+        let fit = try XCTUnwrap(keyframeFit(twoPositionFrames(), in: window, overlay: overlay))
 
-        assertMarkerInsideTheVideo(overlay: overlay, adjustment: viewModel.cropAdjustment)
+        assertMarkerInsideTheVideo(overlay: overlay, adjustment: fit)
         // Zoomed in: the crop's footprint is the frame's full height, a 56.25-wide box
         // shown in the marker — which, around this landscape full-frame anchor, is the
         // anchor's 200 width tall enough for 9:16.
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 200 / 56.25, accuracy: 0.0001)
+        XCTAssertEqual(fit.scale, 200 / 56.25, accuracy: 0.0001)
     }
 
     @MainActor
-    func testAutoCropKeepsTheMarkerInsideTheVideoWhenRotated() throws {
-        let viewModel = makeViewModel(window: TrickWindow(startTime: 0, endTime: 4), frames: twoPositionFrames())
-        viewModel.applyCropRotation(.pi / 9)
+    func testTheKeyframeFitKeepsTheMarkerInsideTheVideoWhenRotated() throws {
+        let window = TrickWindow(startTime: 0, endTime: 4)
+        let viewModel = makeViewModel(window: window, frames: twoPositionFrames())
         let overlay = try XCTUnwrap(viewModel.previewOverlay)
 
-        viewModel.autoCrop()
+        let fit = try XCTUnwrap(
+            keyframeFit(twoPositionFrames(), in: window, overlay: overlay, rotationRadians: .pi / 9))
 
-        assertMarkerInsideTheVideo(overlay: overlay, adjustment: viewModel.cropAdjustment)
+        assertMarkerInsideTheVideo(overlay: overlay, adjustment: fit)
     }
 
     // MARK: - Containment
@@ -681,29 +592,16 @@ final class ClipEditorTests: XCTestCase {
     }
 
     @MainActor
-    func testAutoCropWithNoKeypointsInTheWindowLeavesTheAdjustmentAlone() {
-        // No frames fall in this window: there is nothing to frame, and a fit to nothing
-        // must not stomp the adjustment.
+    func testTheKeyframeFitWithNoKeypointsInTheWindowIsNil() throws {
         let viewModel = makeViewModel(window: TrickWindow(startTime: 10, endTime: 13))
 
-        viewModel.applyCropScale(2)
-        viewModel.autoCrop()
-
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 2, accuracy: 0.0001)
-    }
-
-    @MainActor
-    func testAutoCropBeforeMediaInfoLoadsIsANoOp() {
-        let viewModel = ClipEditorViewModel(source: makeSource(frames: twoPositionFrames()))
-
-        viewModel.applyCropScale(2)
-        viewModel.autoCrop()
-
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 2, accuracy: 0.0001)
+        XCTAssertNil(keyframeFit(
+            twoPositionFrames(), in: TrickWindow(startTime: 10, endTime: 13),
+            overlay: try XCTUnwrap(viewModel.previewOverlay)))
     }
 
     func testCalculatorKeepsAPointPastTheFrameEdgeWhenNotSlidIntoFrame() throws {
-        // Auto crop's reason for skipping the calculator's slide: in a turned space the
+        // The keyframe fit's reason for skipping the calculator's slide: in a turned space the
         // frame isn't `[0, 1]`, so the editor contains the rect itself, and the calculator
         // must hand it the unslid rect around every point.
         let calculator = CropRectCalculator()
@@ -722,6 +620,12 @@ final class ClipEditorTests: XCTestCase {
     }
 
     // MARK: - Auto rotate
+
+    /// The follow crop's zoom and turn at the playhead.
+    @MainActor
+    private func framingAtPlayhead(_ viewModel: ClipEditorViewModel) -> FollowFraming? {
+        viewModel.followCrop?.path.framing(at: viewModel.currentTime)
+    }
 
     /// A view model over a one-second clip whose horizon tilts `HorizonVideoFixture.tilt`
     /// clockwise, with media info loaded so Auto rotate has a window to sample. The movie
@@ -760,7 +664,7 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertFalse(viewModel.isDetectingHorizon)
         // A cancelled detection must not land late: give it the time it would have taken.
         try await Task.sleep(for: .seconds(2))
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0)
+        XCTAssertEqual(framingAtPlayhead(viewModel)?.rotationRadians, 0)
         XCTAssertFalse(viewModel.isShowingNoHorizonNotice)
     }
 
@@ -771,6 +675,7 @@ final class ClipEditorTests: XCTestCase {
         let viewModel = try await makeHorizonViewModel()
         viewModel.applyCropRotation(1)
         viewModel.applyCropScale(2)
+        let zoom = try XCTUnwrap(framingAtPlayhead(viewModel)?.scale)
 
         viewModel.autoRotate()
         XCTAssertTrue(viewModel.isDetectingHorizon)
@@ -780,13 +685,14 @@ final class ClipEditorTests: XCTestCase {
         }
 
         XCTAssertFalse(viewModel.isDetectingHorizon)
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, -HorizonVideoFixture.tilt, accuracy: 0.03)
+        let framing = try XCTUnwrap(framingAtPlayhead(viewModel))
+        XCTAssertEqual(framing.rotationRadians, -HorizonVideoFixture.tilt, accuracy: 0.03)
         // The fit only touches the rotation.
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 2, accuracy: 0.0001)
+        XCTAssertEqual(framing.scale, zoom, accuracy: 0.0001)
         XCTAssertFalse(viewModel.isShowingNoHorizonNotice)
     }
 
-    // MARK: - Auto fits toggle to resets
+    // MARK: - Auto rotate toggles to Reset rotate
 
     /// A view model whose Auto rotate answers at once with `rotation` (nil: nothing to
     /// level by), with media info loaded so the button is live.
@@ -810,128 +716,6 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertFalse(viewModel.isDetectingHorizon)
     }
 
-    /// A clip detected in the middle of a portrait frame, with media info loaded and a
-    /// leveler that answers at once, so both fits and both resets are live.
-    @MainActor
-    private func makeDetectedCropViewModel() -> ClipEditorViewModel {
-        let viewModel = ClipEditorViewModel(
-            source: ClipEditorSource(
-                window: TrickWindow(startTime: 0, endTime: 3.9),
-                cropRect: NormalizedRect(minX: 0.3, maxX: 0.7, minY: 0.2, maxY: 0.6),
-                asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
-                poseFrames: twoPositionFrames()),
-            levelingRotation: { _, _ in 0.25 })
-        viewModel.setMediaInfo(
-            duration: duration, naturalSize: CGSize(width: 100, height: 200), preferredTransform: .identity)
-        return viewModel
-    }
-
-    /// Reset crop shows the whole source video — the full frame's marker-ratio box landing
-    /// exactly on the marker, the way a clip added by hand opens — not the detected crop
-    /// and not whatever pinch or drag preceded the Auto tap.
-    @MainActor
-    func testResetCropShowsTheWholeSourceVideo() throws {
-        let viewModel = makeDetectedCropViewModel()
-        viewModel.applyCropScale(2)
-        viewModel.applyCropOffset(CGSize(width: 10, height: 5), previewScale: 1)
-        XCTAssertFalse(viewModel.isAutoCropApplied)
-        viewModel.autoCrop()
-        XCTAssertTrue(viewModel.isAutoCropApplied)
-
-        viewModel.resetCrop()
-
-        XCTAssertFalse(viewModel.isAutoCropApplied)
-        let overlay = try XCTUnwrap(viewModel.previewOverlay)
-        let marker = ClipEditorViewModel.markerBox(around: overlay.cropRect, aspectRatio: 9.0 / 16.0)
-        let fullFrame = ClipEditorViewModel.markerBox(
-            around: CGRect(origin: .zero, size: overlay.videoSize), aspectRatio: 9.0 / 16.0)
-        // Each corner of the full frame's box lands on the matching corner of the marker.
-        for (signX, signY) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-            let corner = CGPoint(
-                x: fullFrame.midX + signX * fullFrame.width / 2, y: fullFrame.midY + signY * fullFrame.height / 2)
-            let shown = markerPosition(of: corner, cropRect: overlay.cropRect, adjustment: viewModel.cropAdjustment)
-            XCTAssertEqual(shown.x, signX * marker.width / 2, accuracy: 0.01, "corner \(corner)")
-            XCTAssertEqual(shown.y, signY * marker.height / 2, accuracy: 0.01, "corner \(corner)")
-        }
-    }
-
-    /// Reset crop leaves the rotation alone, as Auto crop did: the turned full frame is
-    /// centered on the marker at the same turn.
-    @MainActor
-    func testResetCropKeepsTheRotation() throws {
-        let viewModel = makeDetectedCropViewModel()
-        viewModel.applyCropRotation(0.3)
-        viewModel.autoCrop()
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0.3, accuracy: 1e-9)
-
-        viewModel.resetCrop()
-
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0.3, accuracy: 1e-9)
-        let overlay = try XCTUnwrap(viewModel.previewOverlay)
-        let frameCenter = CGPoint(x: overlay.videoSize.width / 2, y: overlay.videoSize.height / 2)
-        let shown = markerPosition(of: frameCenter, cropRect: overlay.cropRect, adjustment: viewModel.cropAdjustment)
-        XCTAssertEqual(shown.x, 0, accuracy: 0.01)
-        XCTAssertEqual(shown.y, 0, accuracy: 0.01)
-    }
-
-    /// A clip that opened on the full frame is already showing the whole video: its reset is
-    /// the identity framing.
-    @MainActor
-    func testResetCropOnAFullFrameClipIsTheIdentity() {
-        let viewModel = makeLevelingViewModel(rotation: nil)
-        viewModel.applyCropScale(2)
-        viewModel.autoCrop()
-
-        viewModel.resetCrop()
-
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 1, accuracy: 1e-9)
-        XCTAssertEqual(viewModel.cropAdjustment.offset, .zero)
-    }
-
-    /// A clip without pose analysis (added by hand) has nothing for Auto crop to fit: it
-    /// offers Reset crop alone, which has something to do only once a pinch or drag has
-    /// moved the framing off the whole source video, and the rotation alone never counts.
-    @MainActor
-    func testAClipWithoutPoseFramesOffersResetCropAlone() {
-        let viewModel = makeViewModel(frames: [])
-        XCTAssertFalse(viewModel.supportsAutoCrop)
-        XCTAssertFalse(viewModel.isCropAdjusted)
-
-        viewModel.autoCrop()
-        XCTAssertFalse(viewModel.isAutoCropApplied)
-        XCTAssertEqual(viewModel.cropAdjustment, .identity)
-
-        viewModel.applyCropRotation(0.3)
-        XCTAssertFalse(viewModel.isCropAdjusted, "the rotation is Reset rotate's, not Reset crop's")
-
-        viewModel.applyCropScale(2)
-        viewModel.applyCropOffset(CGSize(width: 10, height: 5), previewScale: 1)
-        XCTAssertTrue(viewModel.isCropAdjusted)
-
-        viewModel.resetCrop()
-
-        XCTAssertFalse(viewModel.isCropAdjusted)
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 1, accuracy: 1e-9)
-        XCTAssertEqual(viewModel.cropAdjustment.offset, .zero)
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0.3, accuracy: 1e-9)
-    }
-
-    /// A clip with pose analysis keeps its Auto crop, and its framing counts as adjusted
-    /// both after a gesture and after Auto crop's own fit moves it off the whole frame.
-    @MainActor
-    func testAClipWithPoseFramesSupportsAutoCrop() {
-        let viewModel = makeDetectedCropViewModel()
-        XCTAssertTrue(viewModel.supportsAutoCrop)
-        XCTAssertTrue(viewModel.isCropAdjusted, "a detected crop is not the whole frame")
-
-        viewModel.resetCrop()
-        XCTAssertFalse(viewModel.isCropAdjusted)
-
-        viewModel.autoCrop()
-        XCTAssertTrue(viewModel.isAutoCropApplied)
-        XCTAssertTrue(viewModel.isCropAdjusted)
-    }
-
     /// Reset rotate returns the video to its original, unrotated orientation, not to the
     /// rotation the fingers had set before the Auto tap.
     @MainActor
@@ -939,70 +723,90 @@ final class ClipEditorTests: XCTestCase {
         let viewModel = makeLevelingViewModel(rotation: 0.25)
         viewModel.applyCropRotation(1)
         viewModel.applyCropScale(2)
+        let zoom = try XCTUnwrap(framingAtPlayhead(viewModel)?.scale)
 
         try await autoRotateAndWait(viewModel)
 
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(framingAtPlayhead(viewModel)?.rotationRadians ?? 0, 0.25, accuracy: 1e-9)
         XCTAssertTrue(viewModel.isAutoRotateApplied)
-        XCTAssertFalse(viewModel.isAutoCropApplied)
 
         viewModel.resetRotate()
 
         XCTAssertFalse(viewModel.isAutoRotateApplied)
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0, accuracy: 1e-9)
+        XCTAssertEqual(framingAtPlayhead(viewModel)?.rotationRadians ?? 1, 0, accuracy: 1e-9)
         // The reset only touches the rotation, as the fit did.
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 2, accuracy: 1e-9)
+        XCTAssertEqual(framingAtPlayhead(viewModel)?.scale ?? 0, zoom, accuracy: 1e-9)
     }
 
-    /// The two resets are independent: returning one to the original leaves the other's
-    /// result and its button alone.
+    /// Auto rotate and Reset rotate move the picture the way Auto follow does: each hands the
+    /// preview to a new generation of the pan and eases onto it, keeping the one it eases from.
     @MainActor
-    func testResetCropAndResetRotateAreIndependent() async throws {
+    func testAutoRotateAndResetRotateEaseThePreview() async throws {
         let viewModel = makeLevelingViewModel(rotation: 0.25)
-        viewModel.autoCrop()
+        let opened = try XCTUnwrap(viewModel.followPan)
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([0: 1]))
+
         try await autoRotateAndWait(viewModel)
-        XCTAssertTrue(viewModel.isAutoCropApplied)
-        XCTAssertTrue(viewModel.isAutoRotateApplied)
-        let fitted = viewModel.cropAdjustment
 
-        viewModel.resetCrop()
-
-        XCTAssertFalse(viewModel.isAutoCropApplied)
-        XCTAssertTrue(viewModel.isAutoRotateApplied)
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, fitted.rotationRadians, accuracy: 1e-9)
-        XCTAssertEqual(viewModel.cropAdjustment.scale, 1, accuracy: 1e-9)
+        let leveled = try XCTUnwrap(viewModel.followPan)
+        XCTAssertNotEqual(leveled, opened)
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([1: 1]))
+        XCTAssertEqual(viewModel.previewPan.pans, [0: opened, 1: leveled])
 
         viewModel.resetRotate()
 
-        XCTAssertFalse(viewModel.isAutoRotateApplied)
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0, accuracy: 1e-9)
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([2: 1]))
+        XCTAssertEqual(viewModel.previewPan.pans[1], leveled)
     }
 
-    /// A manual pinch, turn or drag takes over from both fits at once, so both buttons go
-    /// back to offering their fit; a gesture that changed nothing is not an edit.
+    /// Reset follow and Reset rotate are independent: returning one to the original leaves the
+    /// other's result and its button alone.
+    @MainActor
+    func testResetFollowAndResetRotateAreIndependent() async throws {
+        let viewModel = makeLevelingViewModel(rotation: 0.25)
+        try await autoRotateAndWait(viewModel)
+        XCTAssertTrue(viewModel.isAutoFollowApplied)
+        XCTAssertTrue(viewModel.isAutoRotateApplied)
+
+        viewModel.resetFollow()
+
+        XCTAssertFalse(viewModel.isAutoFollowApplied)
+        XCTAssertTrue(viewModel.isAutoRotateApplied)
+        XCTAssertEqual(viewModel.followCrop?.resting.rotationRadians ?? 0, 0.25, accuracy: 1e-9)
+
+        viewModel.autoFollow()
+        viewModel.resetRotate()
+
+        XCTAssertFalse(viewModel.isAutoRotateApplied)
+        XCTAssertTrue(viewModel.isAutoFollowApplied)
+        XCTAssertEqual(framingAtPlayhead(viewModel)?.rotationRadians ?? 1, 0, accuracy: 1e-9)
+    }
+
+    /// A pinch, turn or drag takes over from both fits at once, so both buttons go back to
+    /// offering their fit; a gesture that changed nothing is not an edit.
     @MainActor
     func testAManualGestureReturnsBothButtonsToAuto() async throws {
         let viewModel = makeLevelingViewModel(rotation: 0.25)
-        viewModel.autoCrop()
         try await autoRotateAndWait(viewModel)
+        XCTAssertTrue(viewModel.isAutoFollowApplied)
 
         viewModel.applyCropScale(1)
         viewModel.applyCropRotation(0)
-        viewModel.applyCropOffset(.zero, previewScale: 1)
-        XCTAssertTrue(viewModel.isAutoCropApplied, "a no-op pinch is not an edit")
+        viewModel.moveFollow(byDisplayedPixels: .zero)
+        XCTAssertTrue(viewModel.isAutoFollowApplied, "a no-op pinch is not an edit")
         XCTAssertTrue(viewModel.isAutoRotateApplied)
 
-        viewModel.applyCropOffset(CGSize(width: 1, height: 0), previewScale: 1)
-        XCTAssertFalse(viewModel.isAutoCropApplied)
+        viewModel.moveFollow(byDisplayedPixels: CGSize(width: 1, height: 0))
+        XCTAssertFalse(viewModel.isAutoFollowApplied)
         XCTAssertFalse(viewModel.isAutoRotateApplied)
 
-        viewModel.autoCrop()
+        viewModel.autoFollow()
         viewModel.applyCropScale(1.5)
-        XCTAssertFalse(viewModel.isAutoCropApplied)
+        XCTAssertFalse(viewModel.isAutoFollowApplied)
 
-        viewModel.autoCrop()
+        viewModel.autoFollow()
         viewModel.applyCropRotation(0.1)
-        XCTAssertFalse(viewModel.isAutoCropApplied)
+        XCTAssertFalse(viewModel.isAutoFollowApplied)
     }
 
     /// Nothing to level by (an imported clip with no horizon) changes nothing, so the button
@@ -1014,7 +818,7 @@ final class ClipEditorTests: XCTestCase {
         try await autoRotateAndWait(viewModel)
 
         XCTAssertFalse(viewModel.isAutoRotateApplied)
-        XCTAssertEqual(viewModel.cropAdjustment.rotationRadians, 0)
+        XCTAssertEqual(framingAtPlayhead(viewModel)?.rotationRadians, 0)
         XCTAssertTrue(viewModel.isShowingNoHorizonNotice)
     }
 
@@ -1023,12 +827,12 @@ final class ClipEditorTests: XCTestCase {
     @MainActor
     func testTrimmingLeavesTheResetButtonsInPlace() async throws {
         let viewModel = makeLevelingViewModel(rotation: 0.25)
-        viewModel.autoCrop()
         try await autoRotateAndWait(viewModel)
 
         viewModel.trimStart(to: 1)
+        viewModel.finishTrim()
 
-        XCTAssertTrue(viewModel.isAutoCropApplied)
+        XCTAssertTrue(viewModel.isAutoFollowApplied)
         XCTAssertTrue(viewModel.isAutoRotateApplied)
     }
 
@@ -1054,17 +858,16 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertTrue(viewModel.isMuted)
     }
 
-    // MARK: - Follow mode
+    // MARK: - Follow crop
 
     /// A clip over the athlete's whole move, from x≈0.3 to x≈0.7.
     @MainActor
     private func makeFollowViewModel(
-        framingMode: FramingMode = .still, followCrop: FollowCrop? = nil, frames: [PoseFrameResult]? = nil
+        followCrop: FollowCrop? = nil, frames: [PoseFrameResult]? = nil
     ) -> ClipEditorViewModel {
         let viewModel = ClipEditorViewModel(source: ClipEditorSource(
             window: TrickWindow(startTime: 0, endTime: 4),
             cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
-            framingMode: framingMode,
             followCrop: followCrop,
             asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
             poseFrames: frames ?? twoPositionFrames()))
@@ -1072,55 +875,11 @@ final class ClipEditorTests: XCTestCase {
         return viewModel
     }
 
-    /// Switching a clip with pose analysis to Follow runs Auto follow at once, and the button
-    /// then offers Reset follow; Still's framing is left as it was.
+    /// A pinch zooms the follow crop at the playhead and hands Auto follow's button back.
     @MainActor
-    func testSwitchingToFollowRunsAutoFollow() throws {
+    func testAPinchZoomsTheFollowCropAtThePlayhead() throws {
         let viewModel = makeFollowViewModel()
-        viewModel.applyCropScale(1.5)
-        let still = viewModel.cropAdjustment
-
-        viewModel.setFramingMode(.follow)
-
-        XCTAssertEqual(viewModel.framingMode, .follow)
-        let crop = try XCTUnwrap(viewModel.followCrop)
-        XCTAssertTrue(viewModel.isAutoFollowApplied)
-        XCTAssertGreaterThanOrEqual(crop.keyframes.count, 2)
-        XCTAssertLessThan(crop.keyframes[0].center.x, crop.keyframes[crop.keyframes.count - 1].center.x)
-        XCTAssertEqual(viewModel.cropAdjustment, still)
-        XCTAssertNotNil(viewModel.followPan)
-    }
-
-    /// Each mode keeps its own framing: Still → Follow → Still lands on the same still framing,
-    /// and Follow again finds its follow crop where it left it.
-    @MainActor
-    func testEachModeKeepsItsOwnFraming() throws {
-        let viewModel = makeFollowViewModel()
-        viewModel.applyCropScale(1.5)
-        let still = viewModel.cropAdjustment
-        viewModel.setFramingMode(.follow)
-        viewModel.applyCropScale(2)
-        let follow = try XCTUnwrap(viewModel.followCrop)
-
-        viewModel.setFramingMode(.still)
-        XCTAssertEqual(viewModel.cropAdjustment, still)
-        viewModel.setFramingMode(.follow)
-
-        XCTAssertEqual(viewModel.followCrop, follow)
-        XCTAssertEqual(viewModel.result.followCrop, follow)
-        XCTAssertEqual(viewModel.result.cropAdjustment, still)
-        XCTAssertEqual(viewModel.result.framingMode, .follow)
-    }
-
-    /// A pinch in Follow zooms the follow crop at the playhead and hands Auto follow's button
-    /// back; Still's zoom and its Auto crop stay as they were.
-    @MainActor
-    func testAPinchInFollowZoomsTheFollowCropOnly() throws {
-        let viewModel = makeFollowViewModel()
-        viewModel.autoCrop()
-        viewModel.setFramingMode(.follow)
         let before = try XCTUnwrap(viewModel.followCrop)
-        let still = viewModel.cropAdjustment
 
         viewModel.applyCropScale(0.5)
 
@@ -1130,14 +889,11 @@ final class ClipEditorTests: XCTestCase {
             after.path.framing(at: time).scale, before.path.framing(at: time).scale * 0.5, accuracy: 1e-6)
         XCTAssertEqual(after.path.framing(at: time).center.x, before.path.framing(at: time).center.x, accuracy: 1e-6)
         XCTAssertFalse(viewModel.isAutoFollowApplied)
-        XCTAssertEqual(viewModel.cropAdjustment, still)
-        XCTAssertTrue(viewModel.isAutoCropApplied)
     }
 
     @MainActor
     func testResetFollowReturnsToTheWholeFrameWithNoKeyframes() throws {
         let viewModel = makeFollowViewModel()
-        viewModel.setFramingMode(.follow)
 
         viewModel.resetFollow()
 
@@ -1145,30 +901,24 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertTrue(crop.keyframes.isEmpty)
         XCTAssertEqual(crop.resting.center, CGPoint(x: 100, y: 50))
         XCTAssertFalse(viewModel.isAutoFollowApplied)
-        XCTAssertEqual(viewModel.framingMode, .follow)
         viewModel.autoFollow()
         XCTAssertTrue(viewModel.isAutoFollowApplied)
     }
 
     /// An ease gives the new pan a generation of its own and hands it the weight, keeping the pan
-    /// it eases from: Still's unshifted picture on the switch to Follow, Auto follow's on Reset
-    /// follow.
+    /// it eases from: Auto follow's, the clip opened on, on Reset follow.
     @MainActor
     func testAnEaseHandsThePreviewToANewPanAndKeepsTheOldOne() throws {
         let viewModel = makeFollowViewModel()
-        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([0: 1]))
-        XCTAssertEqual(viewModel.previewPan.pans, [:])
-
-        viewModel.setFramingMode(.follow)
         let auto = try XCTUnwrap(viewModel.followPan)
-        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([1: 1]))
-        XCTAssertEqual(viewModel.previewPan.pans, [1: auto])
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([0: 1]))
+        XCTAssertEqual(viewModel.previewPan.pans, [0: auto])
 
         viewModel.resetFollow()
         let reset = try XCTUnwrap(viewModel.followPan)
         XCTAssertNotEqual(reset, auto)
-        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([2: 1]))
-        XCTAssertEqual(viewModel.previewPan.pans, [1: auto, 2: reset])
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([1: 1]))
+        XCTAssertEqual(viewModel.previewPan.pans, [0: auto, 1: reset])
     }
 
     /// A change that doesn't ease of its own replaces the pan on screen in place, and an ease
@@ -1176,29 +926,26 @@ final class ClipEditorTests: XCTestCase {
     @MainActor
     func testAChangeThatDoesntEaseReplacesThePanOnScreen() throws {
         let viewModel = makeFollowViewModel()
-        viewModel.setFramingMode(.follow)
         let weights = viewModel.previewPan.weights
 
         viewModel.moveFollow(byDisplayedPixels: CGSize(width: 10, height: 0))
         let moved = try XCTUnwrap(viewModel.followPan)
         XCTAssertEqual(viewModel.previewPan.weights, weights)
-        XCTAssertEqual(viewModel.previewPan.pans, [1: moved])
+        XCTAssertEqual(viewModel.previewPan.pans, [0: moved])
 
         viewModel.autoFollow()
         let auto = try XCTUnwrap(viewModel.followPan)
-        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([2: 1]))
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([1: 1]))
         viewModel.autoFollow()
-        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([2: 1]))
-        XCTAssertEqual(viewModel.previewPan.pans, [1: moved, 2: auto])
+        XCTAssertEqual(viewModel.previewPan.weights, PreviewPanWeights([1: 1]))
+        XCTAssertEqual(viewModel.previewPan.pans, [0: moved, 1: auto])
     }
 
-    /// Without pose analysis Follow starts from the whole frame, and Reset follow is enabled
+    /// Without pose analysis the clip opens on the whole frame, and Reset follow is enabled
     /// only once a pinch has moved it.
     @MainActor
     func testAClipWithoutPoseFramesFollowsByHandOnly() throws {
         let viewModel = makeFollowViewModel(frames: [])
-
-        viewModel.setFramingMode(.follow)
 
         XCTAssertFalse(viewModel.supportsAutoFollow)
         XCTAssertEqual(viewModel.followCrop?.keyframes, [])
@@ -1219,20 +966,23 @@ final class ClipEditorTests: XCTestCase {
         let standing = PoseFixture.frames(hipXPositions: Array(repeating: 0.5, count: 40))
         let viewModel = makeFollowViewModel(frames: standing)
 
-        viewModel.setFramingMode(.follow)
+        viewModel.autoFollow()
 
         XCTAssertEqual(viewModel.followCrop?.keyframes.count, 1)
         XCTAssertTrue(viewModel.isShowingNothingToFollowNotice)
     }
 
-    /// A clip that opens in Follow without a follow crop shows Auto follow's from its first
-    /// layout, and goes back without one if nothing changed it.
+    /// A clip that opens without a follow crop shows Auto follow's from its first layout — the
+    /// athlete's move, left to right — and goes back without one if nothing changed it.
     @MainActor
-    func testAClipOpeningInFollowWithoutACropShowsAutoFollows() throws {
-        let viewModel = makeFollowViewModel(framingMode: .follow)
+    func testAClipOpeningWithoutACropShowsAutoFollows() throws {
+        let viewModel = makeFollowViewModel()
 
-        XCTAssertNotNil(viewModel.followCrop)
+        let crop = try XCTUnwrap(viewModel.followCrop)
         XCTAssertTrue(viewModel.isAutoFollowApplied)
+        XCTAssertGreaterThanOrEqual(crop.keyframes.count, 2)
+        XCTAssertLessThan(crop.keyframes[0].center.x, crop.keyframes[crop.keyframes.count - 1].center.x)
+        XCTAssertNotNil(viewModel.followPan)
         XCTAssertNil(viewModel.result.followCrop)
 
         viewModel.applyCropScale(1.2)
@@ -1241,7 +991,7 @@ final class ClipEditorTests: XCTestCase {
 
         // A trim changes the window the Clip List would fit an unset crop to, zoom and all,
         // so even an untouched crop goes back set.
-        let trimmed = makeFollowViewModel(framingMode: .follow, frames: PoseFixture.frames(
+        let trimmed = makeFollowViewModel(frames: PoseFixture.frames(
             hipXPositions: Array(repeating: 0.5, count: 40)))
         trimmed.trimEnd(to: 3)
         trimmed.finishTrim()
@@ -1258,7 +1008,7 @@ final class ClipEditorTests: XCTestCase {
         let turned = try XCTUnwrap(AutoFollow().fit(
             frames: frames.filter { $0.timestamp <= 4 }, cropRect: full, videoSize: naturalSize,
             rotationRadians: 0.1)).crop
-        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: turned, frames: frames)
+        let viewModel = makeFollowViewModel(followCrop: turned, frames: frames)
 
         viewModel.trimEnd(to: 2.2)
         viewModel.finishTrim()
@@ -1280,7 +1030,7 @@ final class ClipEditorTests: XCTestCase {
 
         var handSet = retrackedFrom
         handSet.keyframes.append(FollowKeyframe(time: 3, center: CGPoint(x: 120, y: 50)))
-        let viewModel2 = makeFollowViewModel(framingMode: .follow, followCrop: handSet)
+        let viewModel2 = makeFollowViewModel(followCrop: handSet)
         viewModel2.trimEnd(to: 3.5)
         viewModel2.finishTrim()
         XCTAssertEqual(viewModel2.followCrop, handSet)
@@ -1304,7 +1054,7 @@ final class ClipEditorTests: XCTestCase {
     /// so the crop's center moved left in the source, by the move undone through the zoom.
     @MainActor
     func testADragNearAKeyframeMovesIt() throws {
-        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+        let viewModel = makeFollowViewModel(followCrop: handFollowCrop())
 
         viewModel.moveFollow(byDisplayedPixels: CGSize(width: 20, height: -10))
 
@@ -1319,8 +1069,7 @@ final class ClipEditorTests: XCTestCase {
     /// Turned, a drag across the screen is a drag along the turned frame's axes in the source.
     @MainActor
     func testADragOnATurnedCropMovesAlongTheTurn() throws {
-        let viewModel = makeFollowViewModel(
-            framingMode: .follow, followCrop: handFollowCrop(rotationRadians: .pi / 2))
+        let viewModel = makeFollowViewModel(followCrop: handFollowCrop(rotationRadians: .pi / 2))
 
         viewModel.moveFollow(byDisplayedPixels: CGSize(width: 20, height: 0))
 
@@ -1337,7 +1086,7 @@ final class ClipEditorTests: XCTestCase {
         for index in crop.keyframes.indices {
             crop.keyframes[index].time += 1
         }
-        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: crop)
+        let viewModel = makeFollowViewModel(followCrop: crop)
         let before = crop.path.center(at: 0)
 
         viewModel.moveFollow(byDisplayedPixels: CGSize(width: -8, height: 0))
@@ -1354,7 +1103,7 @@ final class ClipEditorTests: XCTestCase {
     /// user added, or one never moved, deletes it.
     @MainActor
     func testRemovingAKeyframeRevertsAMovedOneAndDeletesTheRest() throws {
-        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+        let viewModel = makeFollowViewModel(followCrop: handFollowCrop())
         viewModel.moveFollow(byDisplayedPixels: CGSize(width: 20, height: 0))
         let moved = try XCTUnwrap(viewModel.keyframeAtPlayhead)
 
@@ -1377,7 +1126,7 @@ final class ClipEditorTests: XCTestCase {
     /// change it alone, and it fills.
     @MainActor
     func testAPinchAndATurnSetThePlayheadsKeyframe() throws {
-        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+        let viewModel = makeFollowViewModel(followCrop: handFollowCrop())
 
         viewModel.applyCropScale(1.5)
         viewModel.applyCropRotation(0.2)
@@ -1395,7 +1144,7 @@ final class ClipEditorTests: XCTestCase {
     /// A pinch keeps the editor's own zoom range: the pixel floor is only Auto follow's.
     @MainActor
     func testAPinchInFollowKeepsTheEditorsZoomRange() throws {
-        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+        let viewModel = makeFollowViewModel(followCrop: handFollowCrop())
 
         viewModel.applyCropScale(1000)
 
@@ -1408,12 +1157,11 @@ final class ClipEditorTests: XCTestCase {
     /// source point where the committed keyframe draws it.
     @MainActor
     func testOneGestureWritesTheKeyframeTheLivePreviewDrew() throws {
-        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+        let viewModel = makeFollowViewModel(followCrop: handFollowCrop())
         let previewScale: CGFloat = 0.5
         let translation = CGSize(width: 20, height: -6)
         let cropCenter = CGPoint(x: 100, y: 50)
-        let live = viewModel.previewPan.framing(
-            at: viewModel.currentTime, cropCenter: cropCenter, gestureScale: 2, gestureRotation: .pi / 2)
+        let live = viewModel.previewPan.framing(at: viewModel.currentTime, gestureScale: 2, gestureRotation: .pi / 2)
 
         viewModel.applyFollowGesture(translation: translation, previewScale: previewScale, scale: 2, rotation: .pi / 2)
 
@@ -1421,7 +1169,7 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(crop.keyframes.count, 2)
         XCTAssertEqual(crop.keyframes[0].scale, 4, accuracy: 1e-9)
         XCTAssertEqual(crop.keyframes[0].rotationRadians, .pi / 2, accuracy: 1e-9)
-        let committed = viewModel.previewPan.framing(at: viewModel.currentTime, cropCenter: cropCenter)
+        let committed = viewModel.previewPan.framing(at: viewModel.currentTime)
         /// Where a framing draws `point`, in on-screen points from the marker's center, with a
         /// further on-screen `offset`.
         func drawn(_ point: CGPoint, _ framing: PreviewFraming, offset: CGSize = .zero) -> CGPoint {
@@ -1445,7 +1193,7 @@ final class ClipEditorTests: XCTestCase {
         for index in crop.keyframes.indices {
             crop.keyframes[index].time += 1
         }
-        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: crop)
+        let viewModel = makeFollowViewModel(followCrop: crop)
 
         viewModel.applyCropScale(1.5)
 
@@ -1461,7 +1209,7 @@ final class ClipEditorTests: XCTestCase {
     /// back all three.
     @MainActor
     func testRemovingAChangedKeyframeRestoresItsPositionZoomAndTurn() throws {
-        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: handFollowCrop())
+        let viewModel = makeFollowViewModel(followCrop: handFollowCrop())
         viewModel.applyFollowGesture(
             translation: CGSize(width: 10, height: 4), previewScale: 1, scale: 1.3, rotation: -0.1)
         let changed = try XCTUnwrap(viewModel.keyframeAtPlayhead)
@@ -1481,7 +1229,7 @@ final class ClipEditorTests: XCTestCase {
         crop.keyframes.sort { $0.time < $1.time }
         crop.keyframes[0].scale = 3
         crop.keyframes[0].rotationRadians = 0.25
-        let viewModel = makeFollowViewModel(framingMode: .follow, followCrop: crop)
+        let viewModel = makeFollowViewModel(followCrop: crop)
         let weights = viewModel.previewPan.weights
 
         viewModel.applyZoomAndTurnToAllKeyframes(from: crop.keyframes[0])
@@ -1503,7 +1251,6 @@ final class ClipEditorTests: XCTestCase {
     @MainActor
     func testApplyingToAllWithoutKeyframesDoesNothing() {
         let viewModel = makeFollowViewModel(frames: [])
-        viewModel.setFramingMode(.follow)
         let crop = viewModel.followCrop
 
         viewModel.applyZoomAndTurnAtPlayheadToAllKeyframes()
@@ -1511,38 +1258,15 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(viewModel.followCrop, crop)
     }
 
-    /// Still's framing rides the preview's blend, so its eases animate with it.
+    /// The crop area's value reads the zoom and turn at the playhead.
     @MainActor
-    func testStillsFramingRidesThePreviewBlend() {
+    func testTheCropDescriptionReadsTheTurnAtThePlayhead() {
         let viewModel = makeFollowViewModel()
+        XCTAssertTrue(viewModel.cropAdjustmentDescription.contains("not turned"))
 
-        viewModel.applyCropScale(2)
-        viewModel.applyCropOffset(CGSize(width: 10, height: 0), previewScale: 1)
-
-        XCTAssertEqual(viewModel.previewPan.still, viewModel.cropAdjustment)
-        XCTAssertNil(viewModel.previewPan.pans[0])
-    }
-
-    /// In Still a drag moves the whole clip and sets no keyframe.
-    @MainActor
-    func testFollowDragsDoNothingInStill() {
-        let viewModel = makeFollowViewModel(framingMode: .still, followCrop: handFollowCrop())
-
-        viewModel.moveFollow(byDisplayedPixels: CGSize(width: 20, height: 0))
-
-        XCTAssertEqual(viewModel.followCrop, handFollowCrop())
-    }
-
-    /// The crop area's value reads the active mode's zoom and turn.
-    @MainActor
-    func testTheCropDescriptionReadsTheActiveMode() {
-        let viewModel = makeFollowViewModel()
-        viewModel.setFramingMode(.follow)
         viewModel.applyCropRotation(.pi / 18)
 
         XCTAssertTrue(viewModel.cropAdjustmentDescription.contains("turned 10° clockwise"))
-        viewModel.setFramingMode(.still)
-        XCTAssertTrue(viewModel.cropAdjustmentDescription.contains("not turned"))
     }
 
     // MARK: - Commit
@@ -1557,7 +1281,8 @@ final class ClipEditorTests: XCTestCase {
         let result = viewModel.result
         XCTAssertEqual(result.window.startTime, 3, accuracy: 0.0001)
         XCTAssertEqual(result.cropRect, viewModel.cropRect)
-        XCTAssertEqual(result.cropAdjustment.scale, 2, accuracy: 0.0001)
+        XCTAssertNotNil(result.followCrop)
+        XCTAssertEqual(result.followCrop, viewModel.followCrop)
     }
 
     // MARK: - Overlay geometry

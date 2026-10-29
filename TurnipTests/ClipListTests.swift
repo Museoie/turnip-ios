@@ -122,16 +122,19 @@ final class ClipListTests: XCTestCase {
         let result = ClipEditorResult(
             window: TrickWindow(startTime: 1, endTime: 4),
             cropRect: NormalizedRect(minX: 0.1, maxX: 0.9, minY: 0.1, maxY: 0.9),
-            cropAdjustment: CropAdjustment(scale: 1.5, rotationRadians: 0, offset: .zero))
+            followCrop: FollowCrop.uniform(
+                scale: 1.5, rotationRadians: 0,
+                keyframes: [FollowKeyframe(time: 2, center: CGPoint(x: 10, y: 10), autoCenter: nil)],
+                restingCenter: CGPoint(x: 10, y: 10), isAutoFollow: false))
         viewModel.applyEditorResult(result, to: target.id)
 
-        // The editor's commit lands on the tapped item — window, crop rect, and crop
-        // adjustment — and leaves the rest of the list alone.
+        // The editor's commit lands on the tapped item — window, crop rect, and follow
+        // crop — and leaves the rest of the list alone.
         let updated = viewModel.items[2]
         XCTAssertEqual(updated.id, target.id)
         XCTAssertEqual(updated.window, result.window)
         XCTAssertEqual(updated.cropRect, result.cropRect)
-        XCTAssertEqual(updated.cropAdjustment, result.cropAdjustment)
+        XCTAssertEqual(updated.followCrop, result.followCrop)
         XCTAssertEqual(viewModel.items[1], other)
     }
 
@@ -143,8 +146,7 @@ final class ClipListTests: XCTestCase {
         viewModel.applyEditorResult(
             ClipEditorResult(
                 window: TrickWindow(startTime: 1, endTime: 4),
-                cropRect: fullFrame,
-                cropAdjustment: .identity),
+                cropRect: fullFrame),
             to: makeItem().id)
 
         XCTAssertEqual(viewModel.items[1], item)
@@ -164,8 +166,7 @@ final class ClipListTests: XCTestCase {
         viewModel.applyEditorResult(
             ClipEditorResult(
                 window: TrickWindow(startTime: 1, endTime: 4),
-                cropRect: fullFrame,
-                cropAdjustment: .identity),
+                cropRect: fullFrame),
             to: viewModel.items[1].id)
 
         XCTAssertFalse(viewModel.items[1].isSaved)
@@ -180,7 +181,7 @@ final class ClipListTests: XCTestCase {
         XCTAssertTrue(result)
 
         viewModel.applyEditorResult(
-            ClipEditorResult(window: window, cropRect: fullFrame, cropAdjustment: .identity),
+            ClipEditorResult(window: window, cropRect: fullFrame),
             to: viewModel.items[1].id)
 
         XCTAssertTrue(viewModel.items[1].isSaved)
@@ -205,14 +206,13 @@ final class ClipListTests: XCTestCase {
         viewModel.applyEditorResult(
             ClipEditorResult(
                 window: ClipEditorViewModel.clamped(window: overrunning.window, to: assetDuration),
-                cropRect: fullFrame,
-                cropAdjustment: .identity),
+                cropRect: fullFrame),
             to: viewModel.items[1].id)
 
         XCTAssertTrue(viewModel.items[1].isSaved)
     }
 
-    /// A crop rect change alone — what Auto crop moves — is an edit too.
+    /// A crop rect change alone is an edit too.
     @MainActor
     func testApplyEditorResultClearsTheSavedFlagOnACropRectChange() async {
         let viewModel = makeViewModel(items: [makeItem()])
@@ -222,8 +222,7 @@ final class ClipListTests: XCTestCase {
         viewModel.applyEditorResult(
             ClipEditorResult(
                 window: window,
-                cropRect: NormalizedRect(minX: 0.1, maxX: 0.9, minY: 0.1, maxY: 0.9),
-                cropAdjustment: .identity),
+                cropRect: NormalizedRect(minX: 0.1, maxX: 0.9, minY: 0.1, maxY: 0.9)),
             to: viewModel.items[1].id)
 
         XCTAssertFalse(viewModel.items[1].isSaved)
@@ -240,7 +239,6 @@ final class ClipListTests: XCTestCase {
             ClipEditorResult(
                 window: window,
                 cropRect: fullFrame,
-                cropAdjustment: .identity,
                 followCrop: FollowCrop.uniform(
                     scale: 2, rotationRadians: 0,
                     keyframes: [FollowKeyframe(time: 3, center: CGPoint(x: 10, y: 10), autoCenter: nil)],
@@ -255,8 +253,9 @@ final class ClipListTests: XCTestCase {
     /// `cropRect` (same window, same midpoint, so the seek target is identical both
     /// times) to a half-width crop — the decoded image's width is the discriminator: a
     /// stale cache hit would keep returning the full-width image, so this passes only
-    /// when the second call genuinely re-decodes. Asked of the clip in Still, whose poster
-    /// is the crop rect itself, so the half-width crop is exactly half as wide.
+    /// when the second call genuinely re-decodes. With no pose analysis the clip holds the
+    /// whole frame, whose poster is the marker's 9:16 box around the crop rect: 64 wide around
+    /// the full 64x64 frame, 36 wide around the half-width crop.
     @MainActor
     func testApplyEditorResultInvalidatesTheCachedThumbnail() async throws {
         let url = try await TestVideoWriter.writeTestVideo(frameCount: 1, width: 64, height: 64, fps: 30)
@@ -264,66 +263,64 @@ final class ClipListTests: XCTestCase {
         let asset = AVURLAsset(url: url)
         let item = ClipListItem(window: TrickWindow(startTime: 0, endTime: 1.0 / 30), cropRect: fullFrame)
         let viewModel = makeViewModel(items: [item], asset: asset, duration: 1.0 / 30)
-        var target = viewModel.items[1]
-        target.framingMode = .still
+        let target = viewModel.items[1]
 
         let beforeImage = await viewModel.thumbnail(for: target)
         let before = try XCTUnwrap(beforeImage)
         XCTAssertEqual(before.width, 64)
 
         let halfWidth = NormalizedRect(minX: 0, maxX: 0.5, minY: 0, maxY: 1)
-        let result = ClipEditorResult(
-            window: item.window, cropRect: halfWidth, cropAdjustment: .identity, framingMode: .still)
+        let result = ClipEditorResult(window: item.window, cropRect: halfWidth)
         viewModel.applyEditorResult(result, to: target.id)
         let updated = viewModel.items[1]
         XCTAssertEqual(updated.cropRect, halfWidth)
 
         let afterImage = await viewModel.thumbnail(for: updated)
         let after = try XCTUnwrap(afterImage)
-        XCTAssertEqual(after.width, 32)
+        XCTAssertEqual(after.width, 36)
     }
 
     /// Regression for the clip list's live preview player showing the raw, un-cropped,
-    /// un-adjusted source regardless of the item's crop rect or manual adjustment:
-    /// `videoComposition(cropRect:cropAdjustment:)` — what a tile's loop attaches to its
-    /// `AVPlayerItem` before looping — must render at the crop's own
-    /// size, not the source's, with the crop AND the adjustment actually wired into the
-    /// layer instruction, not just the render size. A half-width crop discriminates
-    /// `renderSize`: an un-composed player would report the full 64px width. A non-
-    /// identity `cropAdjustment` (not `.identity`, unlike a fixture that would pass even
-    /// with the argument dropped, since `ClipExportTransform.make`'s `cropAdjustment`
-    /// parameter defaults to `.identity`) plus `getTransformRamp` reading back exactly the
-    /// transform `ClipExportTransform.make` predicts discriminates the layer instruction
-    /// itself: the composition path shares `ClipExportTransform.makeVideoComposition` with
-    /// the exporter, but a future edit that dropped `setTransform`, or the `cropAdjustment`
-    /// argument at the call site, would leave `renderSize` alone (this test's first
-    /// assertion would still pass) while quietly un-cropping or un-rotating both the tile
-    /// and the exported clip.
+    /// un-framed source regardless of the item's crop rect or follow crop:
+    /// `videoComposition(for:)` — what a tile's loop attaches to its `AVPlayerItem` before
+    /// looping — must render at the marker's own size around the crop rect, not the source's,
+    /// with the follow crop's center, zoom AND turn actually wired into the layer instruction,
+    /// not just the render size. A half-width crop discriminates `renderSize`: an un-composed
+    /// player would report the full 64px width. A crop held off-center, zoomed and turned, read
+    /// back through `getTransformRamp` as exactly the transform the card's poster draws its
+    /// frame with (`ClipThumbnailLoader.followRect` through `ClipExportTransform.make`),
+    /// discriminates the layer instruction itself: a future edit that dropped `setTransform`
+    /// would leave `renderSize` alone (this test's first assertion would still pass) while
+    /// quietly un-cropping or un-rotating both the tile and the exported clip.
     @MainActor
-    func testVideoCompositionRendersAtTheCropRectsSizeAndAdjustment() async throws {
+    func testVideoCompositionRendersTheFollowCropAtTheMarkersSize() async throws {
         let url = try await TestVideoWriter.writeTestVideo(frameCount: 1, width: 64, height: 64, fps: 30)
         defer { try? FileManager.default.removeItem(at: url) }
         let asset = AVURLAsset(url: url)
         let halfWidth = NormalizedRect(minX: 0, maxX: 0.5, minY: 0, maxY: 1)
-        let adjustment = CropAdjustment(scale: 1.4, rotationRadians: .pi / 6, offset: CGSize(width: 2, height: -3))
+        let followCrop = FollowCrop(
+            keyframes: [], resting: FollowFraming(center: CGPoint(x: 20, y: 30), scale: 1.4, rotationRadians: .pi / 6),
+            isAutoFollow: false)
         let item = ClipListItem(
-            window: TrickWindow(startTime: 0, endTime: 1.0 / 30), cropRect: halfWidth,
-            cropAdjustment: adjustment)
+            window: TrickWindow(startTime: 0, endTime: 1.0 / 30), cropRect: halfWidth, followCrop: followCrop)
         let viewModel = makeViewModel(items: [item], asset: asset, duration: 1.0 / 30)
         let target = viewModel.items[1]
 
         let loadedComposition = await viewModel.videoComposition(for: ClipCardPlaybackGeometry(
-            window: target.window, cropRect: target.cropRect, cropAdjustment: target.cropAdjustment))
+            window: target.window, cropRect: target.cropRect, followCrop: target.followCrop))
         let composition = try XCTUnwrap(loadedComposition)
 
-        XCTAssertEqual(composition.renderSize, CGSize(width: 32, height: 64))
+        // The 9:16 marker around a 32x64 crop is 36 wide.
+        XCTAssertEqual(composition.renderSize, CGSize(width: 36, height: 64))
 
         let track = try await asset.loadTracks(withMediaType: .video)[0]
         let naturalSize = try await track.load(.naturalSize)
         let preferredTransform = try await track.load(.preferredTransform)
+        let posterRect = try XCTUnwrap(ClipThumbnailLoader.followRect(
+            followCrop, at: 0, cropRect: halfWidth, naturalSize: naturalSize, preferredTransform: preferredTransform))
         let expected = try XCTUnwrap(ClipExportTransform.make(
-            cropRect: halfWidth, naturalSize: naturalSize, preferredTransform: preferredTransform,
-            cropAdjustment: adjustment))
+            cropRect: posterRect, naturalSize: naturalSize, preferredTransform: preferredTransform,
+            cropAdjustment: CropAdjustment(scale: 1.4, rotationRadians: .pi / 6, offset: .zero)))
         let instruction = try XCTUnwrap(
             composition.instructions.first as? AVMutableVideoCompositionInstruction)
         let layerInstruction = try XCTUnwrap(instruction.layerInstructions.first)
@@ -331,8 +328,14 @@ final class ClipListTests: XCTestCase {
         var end = CGAffineTransform.identity
         var ramp = CMTimeRange(start: .zero, duration: .zero)
         XCTAssertTrue(layerInstruction.getTransformRamp(for: .zero, start: &start, end: &end, timeRange: &ramp))
-        XCTAssertEqual(start, expected.layerTransform)
-        XCTAssertEqual(end, expected.layerTransform)
+        for transform in [start, end] {
+            XCTAssertEqual(transform.a, expected.layerTransform.a, accuracy: 1e-9)
+            XCTAssertEqual(transform.b, expected.layerTransform.b, accuracy: 1e-9)
+            XCTAssertEqual(transform.c, expected.layerTransform.c, accuracy: 1e-9)
+            XCTAssertEqual(transform.d, expected.layerTransform.d, accuracy: 1e-9)
+            XCTAssertEqual(transform.tx, expected.layerTransform.tx, accuracy: 1e-6)
+            XCTAssertEqual(transform.ty, expected.layerTransform.ty, accuracy: 1e-6)
+        }
     }
 
     /// `dummyAsset()` resolves to nothing, so the track load `videoComposition(for:)` depends
@@ -345,7 +348,7 @@ final class ClipListTests: XCTestCase {
         let target = viewModel.items[1]
 
         let composition = await viewModel.videoComposition(for: ClipCardPlaybackGeometry(
-            window: target.window, cropRect: target.cropRect, cropAdjustment: target.cropAdjustment))
+            window: target.window, cropRect: target.cropRect, followCrop: target.followCrop))
 
         XCTAssertNil(composition)
     }
@@ -361,11 +364,10 @@ final class ClipListTests: XCTestCase {
     private func makePlaybackGeometry(
         window: TrickWindow? = nil,
         cropRect: NormalizedRect? = nil,
-        cropAdjustment: CropAdjustment = .identity
+        followCrop: FollowCrop? = nil
     ) -> ClipCardPlaybackGeometry {
         ClipCardPlaybackGeometry(
-            window: window ?? self.window, cropRect: cropRect ?? fullFrame,
-            cropAdjustment: cropAdjustment)
+            window: window ?? self.window, cropRect: cropRect ?? fullFrame, followCrop: followCrop)
     }
 
     func testPlaybackNeedsRebuildWhenTheBuiltWindowDiffersFromTarget() {
@@ -375,13 +377,14 @@ final class ClipListTests: XCTestCase {
         XCTAssertTrue(clipCardPlaybackNeedsRebuild(builtFor: builtFor, target: target))
     }
 
-    /// A crop-area or rotation edit alone (same window) needs a new `videoComposition`,
-    /// not just a resumed player: a gate that compared only the window would leave the
-    /// live tile playing the pre-edit framing indefinitely.
-    func testPlaybackNeedsRebuildWhenOnlyTheCropAdjustmentDiffersFromTarget() {
+    /// A follow-crop edit alone (same window) needs a new `videoComposition`, not just a
+    /// resumed player: a gate that compared only the window would leave the live tile playing
+    /// the pre-edit framing indefinitely.
+    func testPlaybackNeedsRebuildWhenOnlyTheFollowCropDiffersFromTarget() {
         let builtFor = makePlaybackGeometry()
-        let target = makePlaybackGeometry(
-            cropAdjustment: CropAdjustment(scale: 1.5, rotationRadians: 0, offset: .zero))
+        let target = makePlaybackGeometry(followCrop: FollowCrop(
+            keyframes: [], resting: FollowFraming(center: CGPoint(x: 10, y: 10), scale: 1.5, rotationRadians: 0),
+            isAutoFollow: false))
 
         XCTAssertTrue(clipCardPlaybackNeedsRebuild(builtFor: builtFor, target: target))
     }
@@ -438,12 +441,12 @@ final class ClipListTests: XCTestCase {
 
         XCTAssertEqual(source.window, item.window)
         XCTAssertEqual(source.cropRect, item.cropRect)
-        XCTAssertEqual(source.cropAdjustment, item.cropAdjustment)
+        XCTAssertEqual(source.followCrop, item.followCrop)
         XCTAssertTrue(source.asset === asset)
     }
 
     /// The video's scored frames reach the editor whole — not just the item's window's —
-    /// since a trim can pull frames outside the window into the crop, and Auto crop has
+    /// since a trim can pull frames outside the window into the crop, and Auto follow has
     /// nothing to fit without them.
     @MainActor
     func testEditorSourceCarriesTheVideosPoseFrames() {
@@ -456,7 +459,7 @@ final class ClipListTests: XCTestCase {
         XCTAssertEqual(source.poseFrames, frames)
     }
 
-    /// A clip found following everyone opens on its own person's frames, so Auto crop fits that
+    /// A clip found following everyone opens on its own person's frames, so Auto follow fits that
     /// person; a clip without a person still gets every scored frame.
     @MainActor
     func testEditorSourceCarriesTheClipsOwnPersonsFrames() {
@@ -477,7 +480,7 @@ final class ClipListTests: XCTestCase {
         let viewModel = makeViewModel(items: [item])
 
         viewModel.applyEditorResult(
-            ClipEditorResult(window: window, cropRect: fullFrame, cropAdjustment: .identity), to: item.id)
+            ClipEditorResult(window: window, cropRect: fullFrame), to: item.id)
 
         XCTAssertEqual(try XCTUnwrap(viewModel.items.last).personID, 2)
     }
@@ -939,23 +942,18 @@ final class ClipListTests: XCTestCase {
             items: items, poseFrames: poseFrames, asset: AVURLAsset(url: url), duration: 3, exportClip: exportClip)
     }
 
-    /// Every detected clip is in Follow, whatever it came in with, on Auto follow's crop until the
-    /// editor gives it one of its own.
+    /// A detected clip draws Auto follow's crop until the editor gives it one of its own.
     @MainActor
-    func testEveryDetectedClipStartsInFollow() async throws {
+    func testADetectedClipStartsWithoutAFollowCropOfItsOwn() async throws {
         let url = try await writeFollowVideo()
         defer { try? FileManager.default.removeItem(at: url) }
-        let viewModel = followViewModel(
-            items: [detectedItem(), ClipListItem(window: followedWindow, cropRect: fullFrame, framingMode: .still)],
-            poseFrames: crossingAthlete(), url: url)
+        let viewModel = followViewModel(items: [detectedItem()], poseFrames: crossingAthlete(), url: url)
 
-        XCTAssertEqual(viewModel.items[1].framingMode, .follow)
         XCTAssertNil(viewModel.items[1].followCrop)
-        XCTAssertEqual(viewModel.items[2].framingMode, .follow)
     }
 
-    /// Without pose analysis there is nothing for Auto follow to fit: the clip is still in
-    /// Follow, holding the whole frame with no keyframes.
+    /// Without pose analysis there is nothing for Auto follow to fit: the clip holds the whole
+    /// frame with no keyframes.
     @MainActor
     func testAClipWithoutPoseFollowsTheWholeFrameHeldStill() async throws {
         let url = try await writeFollowVideo()
@@ -964,26 +962,27 @@ final class ClipListTests: XCTestCase {
 
         let drawn = await viewModel.followCrop(for: viewModel.items[1])
 
-        XCTAssertEqual(viewModel.items[1].framingMode, .follow)
         XCTAssertEqual(drawn?.keyframes.count, 0)
     }
 
-    /// A "+" clip starts in Follow like every other.
+    /// A "+" clip draws Auto follow's crop like every other.
     @MainActor
-    func testAHandAddedClipStartsInFollow() async throws {
+    func testAHandAddedClipDrawsAutoFollows() async throws {
         let url = try await writeFollowVideo()
         defer { try? FileManager.default.removeItem(at: url) }
         let viewModel = followViewModel(items: [detectedItem()], poseFrames: crossingAthlete(), url: url)
 
         await viewModel.addClip()
 
-        XCTAssertEqual(viewModel.items[2].framingMode, .follow)
+        XCTAssertNil(viewModel.items[2].followCrop)
+        let drawn = await viewModel.followCrop(for: viewModel.items[2])
+        XCTAssertEqual(drawn?.isAutoFollow, true)
     }
 
-    /// A clip in Follow with no follow crop of its own draws Auto follow's for its window: a
-    /// few keyframes, not one per pose sample, marked as Auto follow's.
+    /// A clip with no follow crop of its own draws Auto follow's for its window: a few
+    /// keyframes, not one per pose sample, marked as Auto follow's.
     @MainActor
-    func testAClipInFollowWithoutACropDrawsAutoFollows() async throws {
+    func testAClipWithoutACropDrawsAutoFollows() async throws {
         let url = try await writeFollowVideo()
         defer { try? FileManager.default.removeItem(at: url) }
         let viewModel = followViewModel(items: [detectedItem()], poseFrames: crossingAthlete(), url: url)
@@ -1011,11 +1010,10 @@ final class ClipListTests: XCTestCase {
         XCTAssertEqual(drawn?.keyframes.count, 1)
     }
 
-    /// The editor hands back Still's adjustment beside Follow's crop; the clip keeps both. Only
-    /// Follow's is in the video, so a change to Still's alone isn't an edit of the saved clip,
-    /// and a change to Follow's is.
+    /// The editor hands back the clip's follow crop, and moving it changes the saved clip's
+    /// video; handing back the same crop doesn't.
     @MainActor
-    func testAnEditorCommitKeepsBothFramings() async throws {
+    func testAnEditorCommitKeepsTheFollowCrop() async throws {
         let url = try await writeFollowVideo()
         defer { try? FileManager.default.removeItem(at: url) }
         let followCrop = FollowCrop.uniform(
@@ -1024,27 +1022,19 @@ final class ClipListTests: XCTestCase {
             restingCenter: CGPoint(x: 32, y: 18), isAutoFollow: false)
         let item = ClipListItem(window: followedWindow, cropRect: fullFrame, followCrop: followCrop, isSaved: true)
         let viewModel = followViewModel(items: [item], poseFrames: crossingAthlete(), url: url)
-        let adjusted = CropAdjustment(scale: 1.5, rotationRadians: 0, offset: .zero)
 
         viewModel.applyEditorResult(
-            ClipEditorResult(
-                window: item.window, cropRect: item.cropRect, cropAdjustment: adjusted,
-                framingMode: .follow, followCrop: followCrop),
-            to: item.id)
+            ClipEditorResult(window: item.window, cropRect: item.cropRect, followCrop: followCrop), to: item.id)
 
-        XCTAssertEqual(viewModel.items[1].cropAdjustment, adjusted)
         XCTAssertEqual(viewModel.items[1].followCrop, followCrop)
-        XCTAssertTrue(viewModel.items[1].isSaved, "Still's framing isn't in a clip saved in Follow")
+        XCTAssertTrue(viewModel.items[1].isSaved, "the same follow crop is the same saved clip")
 
         let moved = FollowCrop.uniform(
             scale: 2, rotationRadians: 0,
             keyframes: [FollowKeyframe(time: 1, center: CGPoint(x: 40, y: 18), autoCenter: nil)],
             restingCenter: CGPoint(x: 32, y: 18), isAutoFollow: false)
         viewModel.applyEditorResult(
-            ClipEditorResult(
-                window: item.window, cropRect: item.cropRect, cropAdjustment: adjusted,
-                framingMode: .follow, followCrop: moved),
-            to: item.id)
+            ClipEditorResult(window: item.window, cropRect: item.cropRect, followCrop: moved), to: item.id)
 
         XCTAssertEqual(viewModel.items[1].followCrop, moved)
         XCTAssertFalse(viewModel.items[1].isSaved, "moving the saved clip's follow crop changes its video")
@@ -1086,8 +1076,8 @@ final class ClipListTests: XCTestCase {
         let viewModel = followViewModel(
             items: [detectedItem(window: window)], poseFrames: crossingAthlete(from: 10), url: url)
 
-        let loaded = await viewModel.videoComposition(for: ClipCardPlaybackGeometry(
-            window: window, cropRect: fullFrame, cropAdjustment: .identity, framingMode: .follow))
+        let loaded = await viewModel.videoComposition(
+            for: ClipCardPlaybackGeometry(window: window, cropRect: fullFrame))
 
         let composition = try XCTUnwrap(loaded)
         let instruction = try XCTUnwrap(
@@ -1114,14 +1104,12 @@ final class ClipListTests: XCTestCase {
         let url = try await writeFollowVideo()
         defer { try? FileManager.default.removeItem(at: url) }
         let viewModel = followViewModel(items: [detectedItem()], poseFrames: crossingAthlete(), url: url)
-        var still = viewModel.items[1]
-        still.framingMode = .still
 
         let followedPoster = await viewModel.thumbnail(for: viewModel.items[1])
-        let stillPoster = await viewModel.thumbnail(for: still)
+        let cropRectPoster = await ClipThumbnailLoader().thumbnail(for: viewModel.items[1], in: AVURLAsset(url: url))
 
         let portrait = try XCTUnwrap(followedPoster)
-        let landscape = try XCTUnwrap(stillPoster)
+        let landscape = try XCTUnwrap(cropRectPoster)
         XCTAssertLessThan(portrait.width, portrait.height)
         XCTAssertGreaterThan(landscape.width, landscape.height)
     }

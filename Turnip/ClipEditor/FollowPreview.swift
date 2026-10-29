@@ -13,21 +13,6 @@ struct PreviewFraming: Equatable {
     var rotationRadians: Double
 
     static let identity = PreviewFraming(shift: .zero, scale: 1, rotationRadians: 0)
-
-    /// A still adjustment's picture in these terms: the source point it puts at the marker's
-    /// center (`FramingConversion.followCenter`) moved onto the crop center, at its zoom and turn.
-    init(still adjustment: CropAdjustment, cropCenter: CGPoint) {
-        let center = FramingConversion.followCenter(of: adjustment, cropCenter: cropCenter)
-        self.init(
-            shift: CGPoint(x: cropCenter.x - center.x, y: cropCenter.y - center.y),
-            scale: adjustment.scale, rotationRadians: adjustment.rotationRadians)
-    }
-
-    init(shift: CGPoint, scale: CGFloat, rotationRadians: Double) {
-        self.shift = shift
-        self.scale = scale
-        self.rotationRadians = rotationRadians
-    }
 }
 
 /// A follow crop's movement in the editor's preview: how the picture is drawn at each frame the
@@ -100,42 +85,28 @@ struct PreviewPanWeights: VectorArithmetic {
     }
 }
 
-/// What the preview draws the picture with: a blend of follow pans, `nil` among them meaning
-/// Still's framing. Each frame's framing is worked out at the frame's own presentation time, so
-/// the pan, the zoom and the turn never step on a different refresh from their frame.
+/// What the preview draws the picture with: a blend of follow pans, `nil` among them meaning the
+/// unshifted frame, before the follow crop is in hand. Each frame's framing is worked out at the
+/// frame's own presentation time, so the pan, the zoom and the turn never step on a different
+/// refresh from their frame.
 ///
 /// The blend weighs each generation's shift, zoom and turn and adds them up, so an ease
 /// (`PreviewPanWeights`) moves all three along SwiftUI's curve together, the way SwiftUI used to
 /// animate a zoom and turn of the whole clip.
 struct PreviewPanBlend: Equatable {
-    /// The pans by generation; a generation without one draws Still's framing.
+    /// The pans by generation; a generation without one draws the unshifted frame.
     var pans: [Int: FollowPan]
     var weights: PreviewPanWeights
-    /// Still's framing (`ClipEditorViewModel.cropAdjustment`). SwiftUI animates it, as it animates
-    /// the weights, so Auto crop and Auto rotate move the picture as they always have.
-    var still: CropAdjustment = .identity
 
     /// The picture's framing for the frame presented at `time`, with a live pinch's `gestureScale`
-    /// and a live turn's `gestureRotation` on top. `cropCenter` is the clip's crop center, in
-    /// displayed pixels. A still framing keeps its on-screen offset through a pinch, as Still's
-    /// pinch commits it (`ClipEditorViewModel.applyCropScale`); a follow framing keeps its center.
-    func framing(
-        at time: TimeInterval, cropCenter: CGPoint, gestureScale: CGFloat = 1, gestureRotation: Double = 0
-    ) -> PreviewFraming {
+    /// and a live turn's `gestureRotation` on top; the framing keeps its center through both.
+    func framing(at time: TimeInterval, gestureScale: CGFloat = 1, gestureRotation: Double = 0) -> PreviewFraming {
         var total = PreviewFraming(shift: .zero, scale: 0, rotationRadians: 0)
         var weight: Double = 0
         for (generation, share) in weights.values {
-            var framing: PreviewFraming
-            if let pan = pans[generation] {
-                framing = pan.framing(at: time)
-                framing.scale *= gestureScale
-                framing.rotationRadians += gestureRotation
-            } else {
-                var adjustment = still
-                adjustment.scale *= gestureScale
-                adjustment.rotationRadians += gestureRotation
-                framing = PreviewFraming(still: adjustment, cropCenter: cropCenter)
-            }
+            var framing = pans[generation]?.framing(at: time) ?? .identity
+            framing.scale *= gestureScale
+            framing.rotationRadians += gestureRotation
             total.shift.x += framing.shift.x * share
             total.shift.y += framing.shift.y * share
             total.scale += framing.scale * share
@@ -300,8 +271,8 @@ final class DisplayLinkTarget: NSObject {
 /// center — laid out so the unshifted frame sits exactly on the view's bounds. Shared by the
 /// editor's stage and the expansion flight's card.
 ///
-/// `animatableData` is the pan's weights and Still's framing, so SwiftUI hands this view each
-/// step of an ease, and the view draws it on the frame on screen in the same commit.
+/// `animatableData` is the pan's weights, so SwiftUI hands this view each step of an ease, and
+/// the view draws it on the frame on screen in the same commit.
 struct EditorPlayerView: View, Animatable {
     let frames: PreviewFrames
     /// The source track's geometry, for the encoded frame's size and orientation; `nil` until
@@ -316,22 +287,9 @@ struct EditorPlayerView: View, Animatable {
     var gestureRotation: Double = 0
     var onReadyForDisplay: (() -> Void)?
 
-    /// The weights, then Still's zoom, turn and offset.
-    typealias AnimatableData = AnimatablePair<
-        PreviewPanWeights, AnimatablePair<CGFloat, AnimatablePair<Double, CGSize.AnimatableData>>
-    >
-
-    var animatableData: AnimatableData {
-        get {
-            AnimatablePair(pan.weights, AnimatablePair(
-                pan.still.scale, AnimatablePair(pan.still.rotationRadians, pan.still.offset.animatableData)))
-        }
-        set {
-            pan.weights = newValue.first
-            pan.still.scale = newValue.second.first
-            pan.still.rotationRadians = newValue.second.second.first
-            pan.still.offset.animatableData = newValue.second.second.second
-        }
+    var animatableData: PreviewPanWeights {
+        get { pan.weights }
+        set { pan.weights = newValue }
     }
 
     var body: some View {
@@ -489,8 +447,7 @@ struct EditorPlayerDrawing: Equatable {
 
     /// The framing for the frame presented at `time`; before any frame, the blend at time zero.
     func framing(at time: TimeInterval?) -> PreviewFraming {
-        pan.framing(
-            at: time ?? 0, cropCenter: cropCenter, gestureScale: gestureScale, gestureRotation: gestureRotation)
+        pan.framing(at: time ?? 0, gestureScale: gestureScale, gestureRotation: gestureRotation)
     }
 }
 

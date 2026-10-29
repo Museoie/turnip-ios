@@ -201,25 +201,25 @@ final class FollowCropTests: XCTestCase {
         }
     }
 
-    /// An athlete who stays put leaves nothing to follow: one keyframe, framed as Auto crop
-    /// would frame the window, here widened to Auto follow's floor: a region 768 px tall.
+    /// An athlete who stays put leaves nothing to follow: one keyframe, framed around every joint
+    /// in the window at once, here widened to Auto follow's floor: a region 768 px tall.
     func testAutoFollowOnAStandingAthleteIsOneKeyframe() throws {
         let frames = (0..<30).map {
             PoseFixture.frame(index: $0, hip: (x: 0.5, y: 0.6), upperBody: (x: 0.5, y: 0.3))
         }
         let fit = try XCTUnwrap(AutoFollow().fit(
             frames: frames, cropRect: fullFrame, videoSize: landscape, rotationRadians: 0))
-        let autoCrop = try XCTUnwrap(ClipEditorViewModel.autoCropAdjustment(
+        let wholeWindow = try XCTUnwrap(ClipEditorViewModel.autoCropAdjustment(
             normalizedKeypoints: CropRectCalculator.locatedPoints(in: frames), cropRect: fullFrame,
             videoSize: landscape, rotationRadians: 0, calculator: CropRectCalculator()))
 
         XCTAssertFalse(fit.moves)
         XCTAssertEqual(fit.crop.keyframes.count, 1)
         // The full frame's marker box is 1920 wide; the floor's region is 432 × 768.
-        XCTAssertGreaterThan(autoCrop.scale, 1920 / 432, "Auto crop alone would frame tighter than the floor")
+        XCTAssertGreaterThan(wholeWindow.scale, 1920 / 432, "the joints alone would frame tighter than the floor")
         XCTAssertEqual(fit.crop.keyframes[0].scale, 1920 / 432, accuracy: 1e-9)
         let center = AutoFollow.slidIntoFrame(
-            FramingConversion.followCenter(of: autoCrop, cropCenter: CGPoint(x: 960, y: 540)),
+            FramingConversion.followCenter(of: wholeWindow, cropCenter: CGPoint(x: 960, y: 540)),
             box: CGSize(width: 432, height: 768), rotationRadians: 0, in: landscape)
         XCTAssertEqual(fit.crop.keyframes[0].center.x, center.x, accuracy: 1e-6)
         XCTAssertEqual(fit.crop.keyframes[0].center.y, center.y, accuracy: 1e-6)
@@ -405,26 +405,20 @@ final class FollowCropTests: XCTestCase {
 
     // MARK: - FramingConversion
 
-    /// The discriminating case is turned and zoomed: at identity the two modes agree on
-    /// anything.
-    func testAStillAdjustmentAndItsFollowCenterDrawTheSamePicture() {
+    /// The discriminating case is turned and zoomed: at identity any point would do.
+    func testAnAdjustmentsFollowCenterIsThePointItDrawsAtTheMarkersCenter() {
         let adjustment = CropAdjustment(scale: 1.6, rotationRadians: 0.4, offset: CGSize(width: 37, height: -12))
         let cropCenter = CGPoint(x: 700, y: 400)
 
         let center = FramingConversion.followCenter(of: adjustment, cropCenter: cropCenter)
-        let offset = FramingConversion.stillOffset(
-            centering: center, cropCenter: cropCenter, scale: adjustment.scale,
-            rotationRadians: adjustment.rotationRadians)
 
-        // Still draws a source point p at R·s·(p − cropCenter) + offset from the marker's
-        // center: the follow center is the point drawn at the center.
+        // An adjustment draws a source point p at R·s·(p − cropCenter) + offset from the
+        // marker's center: the follow center is the point drawn at the center.
         let drawn = CGPoint(
             x: (center.x - cropCenter.x) * adjustment.scale, y: (center.y - cropCenter.y) * adjustment.scale)
             .applying(CGAffineTransform(rotationAngle: adjustment.rotationRadians))
         XCTAssertEqual(drawn.x + adjustment.offset.width, 0, accuracy: 1e-9)
         XCTAssertEqual(drawn.y + adjustment.offset.height, 0, accuracy: 1e-9)
-        XCTAssertEqual(offset.width, adjustment.offset.width, accuracy: 1e-9)
-        XCTAssertEqual(offset.height, adjustment.offset.height, accuracy: 1e-9)
     }
 
     // MARK: - FollowPan
