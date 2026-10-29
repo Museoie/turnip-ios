@@ -94,7 +94,7 @@ Everything this project pins has a named updater, so no pin rots unnoticed:
 | --- | --- | --- |
 | GitHub Actions commit SHAs | `.github/workflows/` | Dependabot (`github-actions`, weekly) |
 | CocoaPods and the gems it resolves | `Gemfile.lock` | Dependabot (`bundler`, weekly) |
-| `TensorFlowLiteSwift` | `Podfile.lock` | `dependency-check.yml` (weekly) |
+| `TensorFlowLiteSwift` | `Podspecs/TensorFlowLiteSwift.podspec.json`, `Podfile.lock` | `dependency-check.yml` (weekly) |
 | XcodeGen and its archive checksum | `ci_scripts/install-xcodegen.sh` | `dependency-check.yml` (weekly) |
 | SwiftLint and its archive checksum | `ci_scripts/install-swiftlint.sh` | `dependency-check.yml` (weekly) |
 | gitleaks and its archive checksums | `ci_scripts/install-gitleaks.sh` | `dependency-check.yml` (weekly) |
@@ -165,9 +165,21 @@ bump rather than on someone else's branch.
 
 ### Bumping TensorFlowLiteSwift
 
-The `Podfile` allows `~> 2.17.0`, so anything past 2.17.x needs that constraint
-widened before `bundle exec pod install` can re-resolve `Podfile.lock`. Both
-files are committed; they change together.
+The `Podfile` installs it from
+[`Podspecs/TensorFlowLiteSwift.podspec.json`](Podspecs/TensorFlowLiteSwift.podspec.json),
+a copy of trunk's podspec for the pinned version with one change: `source`
+names the release tag instead of trunk's commit. CocoaPods can only fetch a
+commit by cloning tensorflow/tensorflow's whole history (~1.4 GB), silently,
+which can outlast Xcode Cloud's 15-minute no-output limit; a tag it clones
+shallow. To bump:
+
+1. Copy the new version's spec from trunk:
+   `bundle exec pod spec cat TensorFlowLiteSwift --version=X.Y.Z`.
+2. Replace its `"commit": "…"` with `"tag": "vX.Y.Z"`, after checking that the
+   tag points at that commit (`git ls-remote https://github.com/tensorflow/tensorflow.git vX.Y.Z`).
+3. Run `bundle exec pod install` so `Podfile.lock` follows.
+
+The copy, the `Podfile` and `Podfile.lock` are committed; they change together.
 
 ## Branching workflow
 

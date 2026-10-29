@@ -23,8 +23,10 @@ workdir=$(mktemp -d)
 trap 'rm -rf "$workdir"' EXIT
 
 # --fail so an HTTP error page is not silently unzipped as if it were the
-# archive; --show-error so the reason reaches the build log.
-curl --fail --silent --show-error --location \
+# archive; --show-error so the reason reaches the build log. --retry-all-errors
+# because --retry alone skips failures it doesn't count as transient, such
+# as a failed TLS handshake (exit 35), which the Xcode Cloud VM does hit.
+curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
   -o "$workdir/xcodegen.zip" \
   "https://github.com/yonaskolb/XcodeGen/releases/download/${VERSION}/xcodegen.zip"
 

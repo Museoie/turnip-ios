@@ -2,7 +2,13 @@ platform :ios, '16.0'
 use_frameworks!
 
 target 'Turnip' do
-  pod 'TensorFlowLiteSwift', '~> 2.17.0'
+  # Trunk's 2.17.0 podspec, with one change: its `source` names the v2.17.0 tag
+  # rather than the commit that tag points at. CocoaPods can only fetch a commit
+  # by cloning tensorflow/tensorflow's whole history (~1.4 GB), and git prints
+  # nothing while it does, so on a slow link Xcode Cloud's post-clone step hits
+  # its 15-minute no-output timeout. A tag it clones shallow (~100 MB). Bumping
+  # it: CONTRIBUTING.md, "Bumping TensorFlowLiteSwift".
+  pod 'TensorFlowLiteSwift', :podspec => 'Podspecs/TensorFlowLiteSwift.podspec.json'
 
   target 'TurnipTests' do
     inherit! :search_paths
