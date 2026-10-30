@@ -152,6 +152,28 @@ final class ClipListTests: XCTestCase {
         XCTAssertEqual(viewModel.items[1], item)
     }
 
+    /// A retrimmed clip is no longer detection's window, but it is still the clip the model
+    /// proposed: its provenance stays, and goes with it into the library.
+    @MainActor
+    func testARetrimmedClipKeepsItsProposal() async {
+        let proposal = ModelProposal(modelVersion: "trick-v1.3", suggestedNames: ["cork"], suggestionsWithheld: false)
+        var saves: [LibrarySave] = []
+        let viewModel = makeViewModel(
+            items: [ClipListItem(
+                window: window, cropRect: fullFrame, names: proposal.prefilledNames, isAutoDetected: true,
+                proposal: proposal)],
+            recordSaved: { saves.append($0); return [] })
+
+        viewModel.applyEditorResult(
+            ClipEditorResult(window: TrickWindow(startTime: 1, endTime: 4), cropRect: fullFrame),
+            to: viewModel.items[1].id)
+        XCTAssertFalse(viewModel.items[1].isAutoDetected)
+        XCTAssertEqual(viewModel.items[1].proposal, proposal)
+
+        _ = await viewModel.save()
+        XCTAssertEqual(saves.first?.clips.map(\.proposal), [proposal])
+    }
+
     /// A clip the user retrimmed or recropped is not the clip that landed in Photos, so the
     /// editor's commit has to put it back in Save Clips' queue. Without this, an edit made after a
     /// partial failure would be silently dropped on the retry: the tile would show the new

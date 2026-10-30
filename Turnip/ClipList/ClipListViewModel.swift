@@ -310,7 +310,8 @@ final class ClipListViewModel: ObservableObject {
             personID: item.personID,
             names: item.names,
             isMe: item.isMe,
-            isAutoDetected: item.isAutoDetected && isSameWindow(result.window, as: item.window))
+            isAutoDetected: item.isAutoDetected && isSameWindow(result.window, as: item.window),
+            proposal: item.proposal)
     }
 
     /// Whether `result` would export the same video as `item`. The editor commits on every
@@ -569,7 +570,7 @@ final class ClipListViewModel: ObservableObject {
             guard !item.isOriginal, item.isSaved, let exportAssetID = exportAssetIDs[item.id] else { return nil }
             return LibrarySave.Clip(
                 id: item.id, window: item.window, exportAssetID: exportAssetID, names: item.names,
-                isMe: item.isMe, isAutoDetected: item.isAutoDetected)
+                isMe: item.isMe, isAutoDetected: item.isAutoDetected, proposal: item.proposal)
         }
         guard !saved.isEmpty else { return [] }
         return recordSaved(LibrarySave(

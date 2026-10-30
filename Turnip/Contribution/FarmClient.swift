@@ -216,6 +216,7 @@ struct SourceRegistration: Decodable, Equatable {
 
 /// One clip in a `POST /api/clips` batch. A heuristic or hand-made clip has no proposing model,
 /// so its provenance is the farm's defaults: no model version, no suggested names, not withheld.
+/// The farm refuses a name with `origin: model` on a clip without a model version.
 struct ClipSubmission: Encodable, Equatable, Sendable {
     let clipID: UUID
     let sourceID: String
@@ -223,6 +224,7 @@ struct ClipSubmission: Encodable, Equatable, Sendable {
     let startFrame: Int
     let endFrame: Int
     let autoDetected: Bool
+    var proposalModelVersion: String?
     var suggestedNames: [String] = []
     var suggestionsWithheld = false
     let labels: [ClipName]
@@ -234,6 +236,7 @@ struct ClipSubmission: Encodable, Equatable, Sendable {
         case startFrame = "start_frame"
         case endFrame = "end_frame"
         case autoDetected = "auto_detected"
+        case proposalModelVersion = "proposal_model_version"
         case suggestedNames = "suggested_names"
         case suggestionsWithheld = "suggestions_withheld"
         case labels
@@ -248,6 +251,7 @@ struct ClipSubmission: Encodable, Equatable, Sendable {
         try container.encode(startFrame, forKey: .startFrame)
         try container.encode(endFrame, forKey: .endFrame)
         try container.encode(autoDetected, forKey: .autoDetected)
+        try container.encode(proposalModelVersion, forKey: .proposalModelVersion)
         try container.encode(suggestedNames, forKey: .suggestedNames)
         try container.encode(suggestionsWithheld, forKey: .suggestionsWithheld)
         try container.encode(labels, forKey: .labels)

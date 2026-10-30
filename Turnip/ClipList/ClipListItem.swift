@@ -22,6 +22,8 @@ import Foundation
 /// the farm once saved is Settings' Contribute named clips, for every clip at once.
 /// `isAutoDetected` says the window is still the one detection proposed — the farm's
 /// `auto_detected` — and goes off for a clip added by hand or retrimmed in the editor.
+/// `proposal` is how the trick model proposed the clip, `nil` when it didn't; it stays with the
+/// clip through every edit, since it records what the model offered, not what the clip is now.
 ///
 /// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
 /// stands for the source video already in Photos rather than a derived clip: it
@@ -42,6 +44,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     var names: [ClipName]
     var isMe: Bool
     let isAutoDetected: Bool
+    let proposal: ModelProposal?
 
     init(
         id: UUID = UUID(),
@@ -53,7 +56,8 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         personID: Int? = nil,
         names: [ClipName] = [],
         isMe: Bool = true,
-        isAutoDetected: Bool = false
+        isAutoDetected: Bool = false,
+        proposal: ModelProposal? = nil
     ) {
         self.id = id
         self.window = window
@@ -65,6 +69,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.names = names
         self.isMe = isMe
         self.isAutoDetected = isAutoDetected
+        self.proposal = proposal
     }
 
     /// "2.4s"-style duration label for the card, via the one shared clip-duration

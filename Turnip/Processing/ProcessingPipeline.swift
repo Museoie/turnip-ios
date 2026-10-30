@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreGraphics
 import Foundation
+import os
 
 /// Typed failures of a processing run, surfaced by the screen's error state.
 enum ProcessingError: LocalizedError {
@@ -58,15 +59,17 @@ struct ProcessingProgress: Sendable {
 ///
 /// This is the processing screen's output contract. It deliberately mirrors — rather than
 /// reuses — `ClipListItem` (Turnip/ClipList/ClipListItem.swift): a screen's output contract
-/// should not be its neighbour's view model, so the home flow maps each clip with
-/// `ClipListItem(window: clip.window, cropRect: clip.cropRect, personID: clip.personID)` when it
-/// wires the two.
+/// should not be its neighbour's view model, so the home flow maps each clip to a
+/// `ClipListItem` when it wires the two.
 struct ProcessedClip: Hashable, Sendable {
     let window: TrickWindow
     let cropRect: NormalizedRect
     /// Whose trick this is, a `PoseTrack.id` in `DetectedClips.people`, when the run followed
     /// everyone; `nil` when it followed one person.
     var personID: Int?
+    /// How the trick model proposed the clip, with the names it starts with; `nil` when the
+    /// heuristic found it.
+    var proposal: ModelProposal?
 }
 
 /// What detection yields for one video: the clips, with every sampled frame they were cut
@@ -84,6 +87,9 @@ struct DetectedClips: Hashable, Sendable {
     /// The people whose tricks became clips, when the run followed everyone. Only those: the
     /// detection rides in the navigation path and is hashed on every push.
     var people: [PoseTrack] = []
+    /// The trick model's embeddings over each pose it proposed clips from: the one person's, or
+    /// each of `people`'s. Empty when the heuristic proposed.
+    var windowEmbeddings: [WindowEmbeddings] = []
 
     /// The frames a clip's crop, follow path and the editor's Auto follow read: its own person's
     /// when it has one, every scored frame otherwise.
@@ -151,6 +157,9 @@ struct ProcessingPipeline: Sendable {
     /// rather than per frame. The default loads the bundled MoveNet MultiPose model; tests
     /// inject a stub.
     typealias InferenceFactory = @Sendable () async throws -> @Sendable (SampledFrame) async throws -> [DetectedPerson]
+    /// The trick model a run proposes clips with, or `nil` for the heuristic: none is staged, or
+    /// it failed to load. The default is the app's one shared loader.
+    typealias TrickModelFactory = @Sendable () async -> TrickModel?
 
     let sampler: any FrameSampling
     /// Samples per second of footage this run targets — `TurnipSettings.analysisGranularity`
@@ -162,20 +171,27 @@ struct ProcessingPipeline: Sendable {
     let makeInference: InferenceFactory
     let cropRectCalculator: CropRectCalculator
     let windowDetector: TrickWindowDetector
+    let loadTrickModel: TrickModelFactory
+    let proposalRules: TrickProposalRules
     let personTracker = PersonTracker()
+    private static let logger = Logger(subsystem: "com.hoiekim.turnip", category: "TrickModel")
 
     init(
         sampler: (any FrameSampling)? = nil,
         sampleRate: Int = VideoFrameSampler.targetSamplesPerSecond,
         makeInference: @escaping InferenceFactory = ProcessingPipeline.defaultInference,
         cropRectCalculator: CropRectCalculator = CropRectCalculator(),
-        windowDetector: TrickWindowDetector? = nil
+        windowDetector: TrickWindowDetector? = nil,
+        loadTrickModel: @escaping TrickModelFactory = { await TrickModelLoader.shared.model() },
+        proposalRules: TrickProposalRules = TrickProposalRules()
     ) {
         self.sampler = sampler ?? VideoFrameSampler(sampleRate: sampleRate)
         self.sampleRate = sampleRate
         self.makeInference = makeInference
         self.cropRectCalculator = cropRectCalculator
         self.windowDetector = windowDetector ?? TrickWindowDetector()
+        self.loadTrickModel = loadTrickModel
+        self.proposalRules = proposalRules
     }
 
     /// Loads the bundled MoveNet MultiPose model once, then answers each frame with everyone it
@@ -229,7 +245,8 @@ struct ProcessingPipeline: Sendable {
         let duration = try await asset.load(.duration).seconds
         return ProcessingResult(
             detection: detect(
-                in: frames, people: mode, renderedPixelSize: renderedPixelSize, duration: duration),
+                in: frames, people: mode, renderedPixelSize: renderedPixelSize, duration: duration,
+                trickModel: await loadTrickModel()),
             asset: asset)
     }
 
@@ -271,7 +288,8 @@ struct ProcessingPipeline: Sendable {
         let renderedPixelSize = await accumulator.renderSize ?? partial.renderedPixelSize
         return ProcessingResult(
             detection: detect(
-                in: frames, people: mode, renderedPixelSize: renderedPixelSize, duration: duration),
+                in: frames, people: mode, renderedPixelSize: renderedPixelSize, duration: duration,
+                trickModel: await loadTrickModel()),
             asset: asset)
     }
 
@@ -287,67 +305,116 @@ struct ProcessingPipeline: Sendable {
     /// export confirmation row, and the exported file all read the same
     /// window instead of the card labelling up to the trailing buffer past
     /// the clip that actually exports.
+    /// With a `trickModel`, it proposes the clips, run once over each pose; without one, the
+    /// heuristic does.
     func detect(
         in frames: [MultiPoseFrame], people mode: PersonMode, renderedPixelSize: CGSize,
-        duration: TimeInterval? = nil
+        duration: TimeInterval? = nil, trickModel: TrickModel? = nil
     ) -> DetectedClips {
         let primary = frames.map(\.primary)
         guard mode == .everyone else {
+            let found = proposeClips(
+                in: primary, personID: nil, renderedPixelSize: renderedPixelSize, duration: duration,
+                trickModel: trickModel)
             return DetectedClips(
-                clips: detectClips(in: primary, renderedPixelSize: renderedPixelSize, duration: duration),
-                poseFrames: primary)
+                clips: found.clips, poseFrames: primary, windowEmbeddings: found.embeddings.map { [$0] } ?? [])
         }
         var clips: [ProcessedClip] = []
         var people: [PoseTrack] = []
+        var embeddings: [WindowEmbeddings] = []
         for track in personTracker.tracks(in: frames, renderedPixelSize: renderedPixelSize) {
-            let found = detectClips(in: track.frames, renderedPixelSize: renderedPixelSize, duration: duration)
-            guard !found.isEmpty else { continue }
+            let found = proposeClips(
+                in: track.frames, personID: track.id, renderedPixelSize: renderedPixelSize, duration: duration,
+                trickModel: trickModel)
+            guard !found.clips.isEmpty else { continue }
             people.append(track)
-            clips += found.map { ProcessedClip(window: $0.window, cropRect: $0.cropRect, personID: track.id) }
+            clips += found.clips
+            embeddings += found.embeddings.map { [$0] } ?? []
         }
         clips.sort { ($0.window.startTime, $0.personID ?? -1) < ($1.window.startTime, $1.personID ?? -1) }
-        return DetectedClips(clips: clips, poseFrames: primary, people: people)
+        return DetectedClips(clips: clips, poseFrames: primary, people: people, windowEmbeddings: embeddings)
     }
 
-    /// Steps 4-6 over frames that have already been scored: motion signal, trick windows, crop
-    /// rects. The one detection implementation for both frame sources — the file sampler above
-    /// and the camera's live inference, whose results arrive in the same frame-normalized,
+    /// Steps 4-6 over one person's frames, proposed by the trick model when one is loaded. A model
+    /// that fails at inference is logged and the heuristic proposes instead, so an analysis always
+    /// ends with proposals from one of the two.
+    private func proposeClips(
+        in frames: [PoseFrameResult], personID: Int?, renderedPixelSize: CGSize, duration: TimeInterval?,
+        trickModel: TrickModel?
+    ) -> (clips: [ProcessedClip], embeddings: WindowEmbeddings?) {
+        if let trickModel {
+            do {
+                var generator = SystemRandomNumberGenerator()
+                let found = try trickModel.proposals(
+                    over: frames, duration: duration, personID: personID, rules: proposalRules, using: &generator)
+                let clips = buildClips(
+                    proposed: found.clips.map { ($0.window, $0.proposal) }, personID: personID, frames: frames,
+                    renderedPixelSize: renderedPixelSize, duration: duration)
+                return (clips, found.embeddings)
+            } catch {
+                let reason = String(describing: error)
+                Self.logger.error("Trick model failed, the heuristic proposes: \(reason, privacy: .public)")
+            }
+        }
+        let windows = windowDetector.detectWindows(
+            in: MotionSignalBuilder.buildSignal(from: frames, renderedPixelSize: renderedPixelSize))
+        let clips = buildClips(
+            proposed: windows.map { ($0, nil) }, personID: personID, frames: frames,
+            renderedPixelSize: renderedPixelSize, duration: duration)
+        return (clips, nil)
+    }
+
+    /// Steps 4-6 over frames that have already been scored, by the heuristic: motion signal,
+    /// trick windows, crop rects. Both frame sources reach it — the file sampler above and the
+    /// camera's live inference, whose results arrive in the same frame-normalized,
     /// display-orientation space with file-relative timestamps at the same sample rate.
     func detectClips(
         in frames: [PoseFrameResult], renderedPixelSize: CGSize, duration: TimeInterval? = nil
     ) -> [ProcessedClip] {
-        let windows = windowDetector.detectWindows(
-            in: MotionSignalBuilder.buildSignal(from: frames, renderedPixelSize: renderedPixelSize))
-        return buildClips(windows: windows, frames: frames, renderedPixelSize: renderedPixelSize, duration: duration)
+        proposeClips(
+            in: frames, personID: nil, renderedPixelSize: renderedPixelSize, duration: duration, trickModel: nil
+        ).clips
     }
 
-    /// Pairs each detected window with the sampled frames inside it and computes its crop
-    /// rect. A window whose frames carry no usable keypoints still becomes a clip, with a
-    /// full-frame rect: the trick was detected from the motion signal, so dropping it would
-    /// hide a real candidate from triage; the editor can tighten the crop.
-    /// With a duration, windows are clamped to the asset first, and a window
-    /// with nothing inside the asset is dropped: it cannot become a clip,
-    /// and a zero-length window would break the looper and the export.
+    /// Pairs each detected window with the sampled frames inside it and computes its crop rect.
     func buildClips(
         windows: [TrickWindow],
         frames: [PoseFrameResult],
         renderedPixelSize: CGSize,
         duration: TimeInterval? = nil
     ) -> [ProcessedClip] {
-        let clampedWindows: [TrickWindow]
-        if let duration {
-            clampedWindows = windows.compactMap { $0.clamped(to: duration) }
-        } else {
-            clampedWindows = windows
-        }
-        return clampedWindows.map { window in
+        buildClips(
+            proposed: windows.map { ($0, nil) }, personID: nil, frames: frames,
+            renderedPixelSize: renderedPixelSize, duration: duration)
+    }
+
+    /// Pairs each proposed window with the sampled frames inside it and computes its crop
+    /// rect. A window whose frames carry no usable keypoints still becomes a clip, with a
+    /// full-frame rect: the trick was detected, so dropping it would hide a real candidate from
+    /// triage; the editor can tighten the crop.
+    /// With a duration, windows are clamped to the asset first, and a window
+    /// with nothing inside the asset is dropped: it cannot become a clip,
+    /// and a zero-length window would break the looper and the export.
+    private func buildClips(
+        proposed: [(window: TrickWindow, proposal: ModelProposal?)],
+        personID: Int?,
+        frames: [PoseFrameResult],
+        renderedPixelSize: CGSize,
+        duration: TimeInterval?
+    ) -> [ProcessedClip] {
+        proposed.compactMap { candidate in
+            var window = candidate.window
+            if let duration {
+                guard let clamped = window.clamped(to: duration) else { return nil }
+                window = clamped
+            }
             let inWindow = frames.filter {
                 $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
             }
             let cropRect = cropRectCalculator.cropRect(
                 for: inWindow, renderedPixelSize: renderedPixelSize)
                 ?? NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
-            return ProcessedClip(window: window, cropRect: cropRect)
+            return ProcessedClip(window: window, cropRect: cropRect, personID: personID, proposal: candidate.proposal)
         }
     }
 

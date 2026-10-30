@@ -11,9 +11,9 @@ import Foundation
 /// one, download the bytes, verify their SHA-256 against the manifest, and
 /// atomically stage them. Staging never swaps the model a running session is
 /// using — a session must not hot-swap models mid-inference — but it does
-/// delete the previously staged file, so the trick-model loader, still to come,
-/// must load `ModelUpdateStore.activeModelURL()` once at its own load and not
-/// reopen that path later in the session.
+/// delete the previously staged file, so `TrickModelLoader` loads
+/// `ModelUpdateStore.activeModelURL()` once at its own load and never reopens
+/// that path later in the session.
 ///
 /// An actor for three reasons: the check is `async` throughout (network,
 /// disk), `lastError` is written from the check's continuation, and the

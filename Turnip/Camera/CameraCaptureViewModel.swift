@@ -128,12 +128,15 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// `AnalysisMode` cases without touching `UserDefaults`.
     private let settingsProvider: @MainActor () -> TurnipSettings
 
-    typealias ClipDetection = @Sendable ([MultiPoseFrame], PersonMode, CGSize) -> DetectedClips
+    typealias ClipDetection = @Sendable ([MultiPoseFrame], PersonMode, CGSize) async -> DetectedClips
 
     init(
         makeDetectClips: @escaping (Int) -> ClipDetection = { rate in
             let pipeline = ProcessingPipeline(sampleRate: rate)
-            return { frames, mode, size in pipeline.detect(in: frames, people: mode, renderedPixelSize: size) }
+            return { frames, mode, size in
+                pipeline.detect(
+                    in: frames, people: mode, renderedPixelSize: size, trickModel: await pipeline.loadTrickModel())
+            }
         },
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettingsStore.shared.current }
     ) {
@@ -817,9 +820,10 @@ extension CameraCaptureViewModel {
                 frames: outcome.results, interval: interval, renderedPixelSize: liveRenderedPixelSize)
             return CameraRecording(fileURL: fileURL, detectedClips: nil, partialPose: partial)
         }
+        let detect = makeDetectClips(armedSampleRate)
         return CameraRecording(
             fileURL: fileURL,
-            detectedClips: makeDetectClips(armedSampleRate)(outcome.results, armedPersonMode, liveRenderedPixelSize))
+            detectedClips: await detect(outcome.results, armedPersonMode, liveRenderedPixelSize))
     }
 
     private func cancelLivePose() {

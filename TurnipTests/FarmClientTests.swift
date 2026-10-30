@@ -92,7 +92,7 @@ final class FarmClientTests: XCTestCase {
         XCTAssertEqual(sent["auto_detected"] as? Bool, true)
         XCTAssertEqual(sent["suggested_names"] as? [String], [])
         XCTAssertEqual(sent["suggestions_withheld"] as? Bool, false)
-        XCTAssertNil(sent["proposal_model_version"])
+        XCTAssertTrue(sent["proposal_model_version"] is NSNull)
         let labels = try XCTUnwrap(sent["labels"] as? [[String: String]])
         XCTAssertEqual(labels, [["name": "cork", "origin": "vocabulary"]])
     }
@@ -196,6 +196,29 @@ final class FarmClientTests: XCTestCase {
         let clip = try XCTUnwrap((try json(farm.requests[4])["clips"] as? [[String: Any]])?.first)
         XCTAssertEqual(clip["start_frame"] as? Int, 10)
         XCTAssertEqual(clip["end_frame"] as? Int, 20)
+    }
+
+    /// A clip the trick model proposed goes out with how it was proposed. Without the model version
+    /// the farm would refuse its `origin: model` name.
+    func testAModelProposedClipSendsItsProvenance() async throws {
+        let farm = ScriptedFarm([registration(blobPresent: true), .init(status: 200, body: #"{"clips":[]}"#), readBack])
+        var uploader = ContributionUploader(client: farm.client, credentials: FarmCredentials(store: MemorySecrets()))
+        uploader.sleep = { _ in }
+        let proposed = SourceContribution(
+            videoID: Self.videoID, pose: source().pose,
+            clips: [ClipContribution(
+                clipID: Self.clipID, window: TrickWindow(startTime: 1, endTime: 2), autoDetected: true,
+                names: [ClipName(name: "gainer", origin: .model)],
+                proposal: ModelProposal(
+                    modelVersion: "trick-v1.3", suggestedNames: ["gainer", "cork"], suggestionsWithheld: false))])
+
+        _ = try await uploader.contribute(proposed, session: "tok")
+
+        let clip = try XCTUnwrap((try json(farm.requests[1])["clips"] as? [[String: Any]])?.first)
+        XCTAssertEqual(clip["proposal_model_version"] as? String, "trick-v1.3")
+        XCTAssertEqual(clip["suggested_names"] as? [String], ["gainer", "cork"])
+        XCTAssertEqual(clip["suggestions_withheld"] as? Bool, false)
+        XCTAssertEqual(clip["labels"] as? [[String: String]], [["name": "gainer", "origin": "model"]])
     }
 
     /// The sheet reports success only when the farm gave back every clip with the names it was sent
