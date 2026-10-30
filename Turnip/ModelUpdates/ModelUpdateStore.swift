@@ -1,8 +1,8 @@
 import Foundation
 
 /// On-disk home for the staged OTA trick-detection model. The app's update
-/// check writes here (see `ModelUpdateLifecycle`); nothing reads it yet — the
-/// trick-model loader that will call `activeModelURL()` is still to come.
+/// check writes here (see `ModelUpdateLifecycle`); `TrickModelLoader` reads
+/// `activeModelURL()` and `activeVersion()` once per launch.
 /// Pose detection never comes through here: MoveNet is always the bundled file.
 ///
 /// Layout inside `baseURL` (`production`'s Application Support directory in

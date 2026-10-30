@@ -120,7 +120,8 @@ struct HomeView: View {
         NameClipsView(
             items: detection.clips.map {
                 ClipListItem(
-                    window: $0.window, cropRect: $0.cropRect, personID: $0.personID, isAutoDetected: true)
+                    window: $0.window, cropRect: $0.cropRect, personID: $0.personID,
+                    names: $0.proposal?.prefilledNames ?? [], isAutoDetected: true, proposal: $0.proposal)
             },
             poseFrames: detection.poseFrames,
             people: detection.people,

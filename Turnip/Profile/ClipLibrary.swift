@@ -25,6 +25,9 @@ struct LibraryClip: Codable, Hashable, Identifiable, Sendable {
     var names: [ClipName]
     var isMe: Bool
     var isAutoDetected: Bool
+    /// How the trick model proposed the clip; `nil` for a clip the heuristic proposed or the user
+    /// added, and for every clip saved before the app had a trick model.
+    var proposal: ModelProposal?
     /// When the trick happened: the source's recording date plus the clip's offset into it, or the
     /// save's date when Photos had no recording date. Sessions and the gallery's order read it.
     var recordedAt: Date
@@ -42,6 +45,7 @@ struct LibrarySave: Sendable {
         let names: [ClipName]
         let isMe: Bool
         let isAutoDetected: Bool
+        let proposal: ModelProposal?
     }
 
     let sourceAssetID: String
@@ -170,6 +174,7 @@ final class ClipLibrary: ObservableObject {
                 names: saved.names,
                 isMe: saved.isMe,
                 isAutoDetected: saved.isAutoDetected,
+                proposal: saved.proposal,
                 recordedAt: source.recordedAt?.addingTimeInterval(saved.window.startTime) ?? existing?.recordedAt
                     ?? savedAt,
                 savedAt: existing?.savedAt ?? savedAt)

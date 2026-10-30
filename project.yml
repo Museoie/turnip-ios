@@ -51,6 +51,9 @@ targets:
     platform: iOS
     sources:
       - path: TurnipTests
+        # The script that made the trick-model fixtures beside it, kept with them but not bundled.
+        excludes:
+          - Fixtures/*.py
     dependencies:
       - target: Turnip
     settings:

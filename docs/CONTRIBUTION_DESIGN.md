@@ -36,7 +36,7 @@ labeling platform" means: users label their own confirmed clips with
 free-text trick names; the farm trains trick detection from pose
 sequences, never from video.
 
-**Status (2026-10-24).** Built, in `Turnip/Contribution/` and
+**Status (2026-10-30).** Built, in `Turnip/Contribution/` and
 `Turnip/NameClips/`, against the farm at `https://turnip.hoie.kim`:
 
 - **The farm account** (§5.4) in Settings' Contribution section: Sign in
@@ -87,7 +87,17 @@ from this doc:
   more than one track per video.)*
 - Not built: reinstall reconciliation (§6), `video_id` for file imports
   (§1.1), an observer for `credentialRevokedNotification` (the foreground
-  check stands in), and the OTA trick model (§7).
+  check stands in), and the OTA trick model's delivery (§7.1).
+
+The OTA trick model's on-device half (§7.2) is built, in
+`Turnip/TrickModel/`: a staged model loads once per launch, analysis
+runs it once per pose, and its clips reach Name Clips with their
+confident names pre-filled and their provenance kept through to the
+upload. Its delivery is not: `Turnip/ModelUpdates/` decodes a manifest
+of its own (`downloadURL`, `fileName`, a dotted-numeric version), not
+the farm's (`url`, `r2_key`, `trick-v1.3`), so it can't stage a model
+the farm publishes yet, and it deletes the previous model as it stages,
+before the new one has loaded (`MODEL_CONTRACT.md` §4).
 
 ---
 
@@ -249,11 +259,12 @@ The flow rides the existing screens from `UIUX.md`:
 
 ### 3.2 Automatic detection, two generations
 
-- **Today**: the heuristic (`MotionSignalBuilder`,
-  `TrickWindowDetector` in `Turnip/TrickDetection/`) proposes windows.
-- **Later**: the OTA trick model (§7) proposes windows *and* suggested
-  names. Both generations surface identically on Name Clips; the
-  proposal source is not a user-facing distinction.
+- **The heuristic** (`MotionSignalBuilder`, `TrickWindowDetector` in
+  `Turnip/TrickDetection/`) proposes windows when no trick model is
+  loaded.
+- **The OTA trick model** (§7), when one is, proposes windows *and*
+  suggested names. Both generations surface identically on Name Clips;
+  the proposal source is not a user-facing distinction.
 
 ### 3.3 The confirmation step (new)
 
@@ -506,8 +517,8 @@ contribution ships, since changing it later orphans every source.
 
 `Turnip/ModelUpdates/` already ships a manifest client, a version
 store with atomic replace, and the launch/foreground poll, which stays a
-no-op until an endpoint is configured. Nothing loads the staged file
-yet: the trick-model loader (§7.2) is the missing consumer. The trick
+no-op until an endpoint is configured. `TrickModelLoader` (§7.2) loads
+the staged file. The trick
 model rides the same mechanism: `GET /api/models/current` — public, so
 the app polls it signed in or not — returns the trick-detection manifest
 — version, URL, checksum, `taxonomy_version`, the `vocabulary` list, and
@@ -549,6 +560,28 @@ distinguishes proposal sources.
   a model update is the one other pass over pose, a background task on
   external power, so the once-per-analysis rule above still holds for
   analysis.
+- **Built** (`Turnip/TrickModel/`). The loader unpacks the staged zip,
+  compiles `TrickDetector.mlpackage` with `MLModel.compileModel(at:)`
+  and keeps the loaded model for the launch; any failure leaves the
+  heuristic proposing. The input is the pose contribution encodes,
+  resampled to 10 Hz exactly as the farm's ingest resamples it, so the
+  model reads on device what it trained on. The run's
+  `window_embeddings` stay in memory with the analysis for
+  personalization (`PERSONALIZATION_DESIGN.md` §4.1). Calls this makes:
+  - Following everyone (`MULTI_PERSON.md`), the model runs once over
+    each tracked person's pose, as the heuristic does, so each clip
+    frames its own person. *(Judgment call.)*
+  - The model's classes and window grid come from the metadata its
+    export writes into the package; the version store keeps no
+    `output_desc`. *(Judgment call.)*
+  - A merged segment (`MODEL_CONTRACT.md` §3.3 step 3) takes the higher
+    of its parts' scores, and of each name's. *(Judgment call; the
+    contract is silent.)*
+  - The artifact must be a stored zip, as the export writes it; a
+    compressed or otherwise unexpected one fails to load. *(Judgment
+    call: iOS has no unzip API, and a stored zip needs none.)*
+  - The model runs on the CPU: it is tiny, and its fp32
+    standardization would not stay fp32 on the Neural Engine.
 
 ---
 

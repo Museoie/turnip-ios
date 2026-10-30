@@ -1,12 +1,14 @@
 import Foundation
 
 /// One clip as contribution sends it: its id (the same UUID Clip List minted for its tile), its
-/// window in source seconds, whether that window is still the detector's, and its names.
+/// window in source seconds, whether that window is still the detector's, its names, and how the
+/// trick model proposed it, `nil` when it didn't.
 struct ClipContribution: Equatable, Sendable {
     let clipID: UUID
     let window: TrickWindow
     let autoDetected: Bool
     let names: [ClipName]
+    var proposal: ModelProposal?
 }
 
 /// Everything contribution sends for one source video: its `video_id`, its pose, and the clips
@@ -90,7 +92,11 @@ struct ContributionUploader: Sendable {
             return ClipSubmission(
                 clipID: clip.clipID, sourceID: source.videoID, sourceKey: key,
                 startFrame: frames.start, endFrame: frames.end,
-                autoDetected: clip.autoDetected, labels: clip.names)
+                autoDetected: clip.autoDetected,
+                proposalModelVersion: clip.proposal?.modelVersion,
+                suggestedNames: clip.proposal?.suggestedNames ?? [],
+                suggestionsWithheld: clip.proposal?.suggestionsWithheld ?? false,
+                labels: clip.names)
         }
         _ = try await client.submitClips(submissions, session: session)
         return try await client.source(id: source.videoID, key: key, session: session)

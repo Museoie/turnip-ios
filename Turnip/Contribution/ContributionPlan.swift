@@ -50,7 +50,9 @@ struct ContributionPlan {
         source = quality == .unusable ? nil : SourceContribution(
             videoID: videoID, pose: pose,
             clips: ready.map {
-                ClipContribution(clipID: $0.id, window: $0.window, autoDetected: $0.isAutoDetected, names: $0.names)
+                ClipContribution(
+                    clipID: $0.id, window: $0.window, autoDetected: $0.isAutoDetected, names: $0.names,
+                    proposal: $0.proposal)
             })
     }
 

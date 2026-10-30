@@ -33,11 +33,12 @@ final class ClipLibraryTests: XCTestCase {
 
     private func savedClip(
         _ start: TimeInterval, export: String = "export-1", names: [String] = [], isMe: Bool = true,
-        id: UUID = UUID()
+        id: UUID = UUID(), proposal: ModelProposal? = nil
     ) -> LibrarySave.Clip {
         LibrarySave.Clip(
             id: id, window: TrickWindow(startTime: start, endTime: start + 1.5), exportAssetID: export,
-            names: names.map { ClipName(name: $0, origin: .typed) }, isMe: isMe, isAutoDetected: true)
+            names: names.map { ClipName(name: $0, origin: .typed) }, isMe: isMe, isAutoDetected: true,
+            proposal: proposal)
     }
 
     private func save(_ clips: [LibrarySave.Clip], source: String = "source-1") -> LibrarySave {
@@ -116,6 +117,24 @@ final class ClipLibraryTests: XCTestCase {
         let kept = try Data(contentsOf: directory.appendingPathComponent(setAside[0]))
         XCTAssertEqual(kept, Data("not json".utf8))
         XCTAssertEqual(makeLibrary().clips.count, 1)
+    }
+
+    /// How the model proposed a clip outlives the launch, for a contribution of it later; a file
+    /// written before clips carried it reads as clips without one.
+    func testAClipsProposalIsReadBackAndAnOlderFileHasNone() throws {
+        let proposal = ModelProposal(modelVersion: "trick-v1.3", suggestedNames: ["cork"], suggestionsWithheld: true)
+        makeLibrary().record(save([savedClip(4, proposal: proposal)]), sourceRecordedAt: recorded)
+        XCTAssertEqual(makeLibrary().clips.first?.proposal, proposal)
+
+        var object = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any])
+        var clips = try XCTUnwrap(object["clips"] as? [[String: Any]])
+        clips[0]["proposal"] = nil
+        object["clips"] = clips
+        try JSONSerialization.data(withJSONObject: object).write(to: fileURL)
+        let older = makeLibrary()
+        XCTAssertEqual(older.clips.count, 1)
+        XCTAssertNil(older.clips.first?.proposal)
     }
 
     func testAFileFromANewerSchemaIsSetAside() throws {
