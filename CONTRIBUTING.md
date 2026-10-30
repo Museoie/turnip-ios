@@ -308,7 +308,7 @@ see `.github/workflows/ci.yml`) and as a step of Xcode Cloud's
 domain, named for the domain they own (`App`, `Camera`, `ClipEditor`,
 `ClipList`, `Contribution`, `DesignSystem`, `Home`, `LivePose`, `Media`,
 `ModelUpdates`, `Models`, `NameClips`, `Photos`, `Pose`, `Processing`,
-`Profile`, `Resources`, `Settings`, `TrickDetection`).
+`Profile`, `Resources`, `Settings`, `TrickDetection`, `TrickModel`).
 `ci_scripts/check-directory-list.sh` compares that list against the tree on
 every PR, so adding a directory without naming it here fails CI.
 
