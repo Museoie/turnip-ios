@@ -63,12 +63,30 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     @Published private(set) var zoomFactor: CGFloat = 1
     @Published private(set) var isTorchAvailable = false
     @Published private(set) var isTorchOn = false
+    /// Why the session is interrupted right now (`nil` when it isn't): the
+    /// preview is frozen while this is set, and the torch is physically off
+    /// (see `stop()`). Set on `wasInterruptedNotification`, cleared on
+    /// `interruptionEndedNotification`; the view renders it as a scrim.
+    @Published private(set) var interruptionReason: AVCaptureSession.InterruptionReason?
     @Published private(set) var exposureBias: Float = 0
     @Published private(set) var exposureBiasRange: ClosedRange<Float> = 0...0
     @Published private(set) var availableFormats: [CameraFormatOption] = []
     @Published private(set) var currentFormatLabel = ""
 
     let session = AVCaptureSession()
+
+    /// Whether the session-lifecycle observers are registered. Set once,
+    /// when the session is first configured — `start()` can run again
+    /// (resume path) without re-registering, and NotificationCenter
+    /// delivers to every duplicate registration.
+    private var sessionObserversRegistered = false
+
+    deinit {
+        // Selector-based observers, so the one removal covers all three
+        // (the same shape `LivePoseFrameTap` uses for its thermal-state
+        // observer). Runs without touching `@MainActor` state.
+        NotificationCenter.default.removeObserver(self)
+    }
 
     private let movieOutput = AVCaptureMovieFileOutput()
     private var isConfigured = false
@@ -477,7 +495,7 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
         let movieOutput = self.movieOutput
         let dataOutput = livePoseTap.output
         let rollRecorder = self.rollRecorder
-        return await withCheckedContinuation { continuation in
+        let result = await withCheckedContinuation { continuation in
             sessionQueue.async {
                 session.beginConfiguration()
                 session.sessionPreset = .inputPriority
@@ -511,6 +529,87 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
                 continuation.resume(returning: (resultDevice, resultInput))
             }
         }
+        // Registered here, on the main actor once the configuration has
+        // committed — the registration itself can't run on `sessionQueue`
+        // (the observer is `self`, which a `@Sendable` closure can't capture).
+        registerSessionObservers()
+        return result
+    }
+
+    // MARK: - Session lifecycle observers
+
+    /// The session's runtime-error and interruption notifications, each with
+    /// `object: session` so another session's lifecycle can't trip them.
+    /// Registered once, when the session is first configured; removed in
+    /// `deinit`. The `@objc` shims are `nonisolated` — NotificationCenter
+    /// delivers on the posting thread — and each extracts only `Sendable`
+    /// values before hopping to the main actor.
+    private func registerSessionObservers() {
+        guard !sessionObserversRegistered else { return }
+        sessionObserversRegistered = true
+        let center = NotificationCenter.default
+        center.addObserver(
+            self, selector: #selector(sessionRuntimeErrorDidOccur(_:)),
+            name: .AVCaptureSessionRuntimeError, object: session)
+        center.addObserver(
+            self, selector: #selector(sessionWasInterrupted(_:)),
+            name: .AVCaptureSessionWasInterrupted, object: session)
+        center.addObserver(
+            self, selector: #selector(sessionInterruptionEnded(_:)),
+            name: .AVCaptureSessionInterruptionEnded, object: session)
+    }
+
+    @objc private nonisolated func sessionRuntimeErrorDidOccur(_ notification: Notification) {
+        let nsError = notification.userInfo?[AVCaptureSessionErrorKey] as? NSError
+        let isReset = nsError?.code == AVError.mediaServicesWereReset.rawValue
+        let message = nsError?.localizedDescription
+        Task { @MainActor [weak self] in
+            self?.handleSessionRuntimeError(isMediaServicesReset: isReset, message: message)
+        }
+    }
+
+    @objc private nonisolated func sessionWasInterrupted(_ notification: Notification) {
+        let reasonRaw = notification.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int
+        Task { @MainActor [weak self] in
+            self?.handleSessionInterruption(reasonRaw: reasonRaw)
+        }
+    }
+
+    @objc private nonisolated func sessionInterruptionEnded(_: Notification) {
+        Task { @MainActor [weak self] in
+            self?.handleSessionInterruptionEnded()
+        }
+    }
+
+    /// A media-services reset stops the session; the documented recovery is
+    /// to start it again if it was configured. Any other runtime error has
+    /// no recovery here, so it surfaces through the existing alert.
+    private func handleSessionRuntimeError(isMediaServicesReset: Bool, message: String?) {
+        guard isMediaServicesReset, isConfigured else {
+            errorMessage = message
+            return
+        }
+        Task { await resumeRunningSession() }
+    }
+
+    /// The session stopped on its own (incoming call, FaceTime, Split View,
+    /// backgrounding): the preview freezes on its last frame, and the torch
+    /// is physically off even though nothing called `stop()`, so the
+    /// published flag clears with it rather than claiming it's still on.
+    /// The reason stays published until the interruption ends, for the
+    /// view's scrim. A recording in progress is left to the movie-output
+    /// delegate, which finalizes the file with an error.
+    private func handleSessionInterruption(reasonRaw: Int?) {
+        interruptionReason = reasonRaw.flatMap(AVCaptureSession.InterruptionReason.init(rawValue:))
+        isTorchOn = false
+    }
+
+    /// The interruption ended: clear the scrim and re-read what the device
+    /// can do — the interruption may have changed it (another app may hold
+    /// the torch, a lens may have gone away).
+    private func handleSessionInterruptionEnded() {
+        interruptionReason = nil
+        refreshDeviceCapabilities()
     }
 
     private func refreshDeviceCapabilities() {

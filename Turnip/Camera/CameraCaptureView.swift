@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 /// The camera-recording screen, one of the two pages `RootTabView` swipes between:
@@ -20,6 +21,13 @@ struct CameraCaptureView: View {
     /// Whether this page has started the session and not yet stopped it — see
     /// `CameraPreviewView.isLive`.
     @State private var isPreviewLive = false
+    /// Whether the preview was live when the app backgrounded. The scene-phase
+    /// handler only restarts the session on return if the camera page was front:
+    /// the page stays in the `TabView` hierarchy, so its `.onChange` fires on
+    /// every tab — restarting unconditionally would start the camera under
+    /// whatever tab the user is on.
+    @State private var wasLiveBeforeBackground = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
@@ -67,7 +75,52 @@ struct CameraCaptureView: View {
             isPreviewLive = false
             viewModel.stop()
         }
+        // `.task` / `.onDisappear` fire on navigation; neither fires when the
+        // app is backgrounded or the session is interrupted, so without this
+        // the session would keep running behind the lock screen and the torch
+        // would stay on in the published state after the OS killed it.
+        // `.active` restarts only if the page was front when the app went
+        // away (`wasLiveBeforeBackground`) — see that property.
+        .onChange(of: scenePhase) { phase in
+            switch phase {
+            case .background:
+                wasLiveBeforeBackground = isPreviewLive
+                isPreviewLive = false
+                viewModel.stop()
+            case .active:
+                guard wasLiveBeforeBackground else { return }
+                wasLiveBeforeBackground = false
+                isPreviewLive = true
+                Task { await viewModel.start() }
+            case .inactive:
+                break
+            @unknown default:
+                break
+            }
+        }
+        .overlay {
+            if let reason = viewModel.interruptionReason {
+                interruptionScrim(reason: reason)
+            }
+        }
         .errorAlert("Couldn't record video", message: $viewModel.errorMessage)
+    }
+
+    /// The frozen preview while the session is interrupted: a dim over the
+    /// picture with the reason in words, so the camera never reads as alive
+    /// while it records nothing. The top controls stay above it (their
+    /// overlays are added after this one).
+    private func interruptionScrim(reason: AVCaptureSession.InterruptionReason) -> some View {
+        Color.black.opacity(0.6)
+            .ignoresSafeArea()
+            .overlay {
+                Text(reason.displayMessage)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .padding()
+            }
+            .accessibilityIdentifier("camera-interrupted")
     }
 
     /// Placed where a navigation bar's leading item would sit (`screenHeaderItemPlacement`),
@@ -284,5 +337,26 @@ private struct CameraAccessDeniedView: View {
                 : "Allow camera and microphone access in Settings to record a trick.",
             restricted: restricted,
             openSettingsIdentifier: "camera-open-settings")
+    }
+}
+
+extension AVCaptureSession.InterruptionReason {
+    /// What the interruption scrim says, in words: the reason enum is a
+    /// device-state code, not something to show the user raw.
+    var displayMessage: String {
+        switch self {
+        case .videoDeviceNotAvailableInBackground:
+            "Camera paused while the app is in the background"
+        case .audioDeviceInUseByAnotherClient:
+            "Microphone in use by another app"
+        case .videoDeviceInUseByAnotherClient:
+            "Camera in use by another app"
+        case .videoDeviceNotAvailableWithMultipleForegroundApps:
+            "Camera unavailable while another app is in the foreground"
+        case .videoDeviceNotAvailableDueToSystemPressure:
+            "Camera paused — the device needs to cool down"
+        @unknown default:
+            "Camera interrupted"
+        }
     }
 }
