@@ -747,10 +747,15 @@ struct PhotosAccessDeniedView: View {
         AccessDeniedStateView(
             systemImage: "photo.on.rectangle.angled",
             title: "Turnip needs access to your videos",
+            // One literal, not a `+` concatenation: a concatenated pair would type as
+            // `String`, and this parameter is a `LocalizedStringKey`. The `\` joins the
+            // lines without a newline, so the rendered sentence is unchanged.
             message: restricted
                 ? "Photos access is restricted on this device, so Turnip can't show your videos."
-                : "Turnip finds and trims tricks in recordings from your Photos library. "
-                    + "Allow access in Settings to get started.",
+                : """
+                Turnip finds and trims tricks in recordings from your Photos library. \
+                Allow access in Settings to get started.
+                """,
             restricted: restricted,
             openSettingsIdentifier: "open-settings")
         .frame(maxWidth: .infinity, maxHeight: .infinity)

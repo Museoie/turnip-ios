@@ -90,10 +90,12 @@ struct LibraryNamingView: View {
         .accessibilityIdentifier("needs-a-name-back")
     }
 
-    private var primaryTitle: String {
-        if isLast { return String(localized: "Done") }
+    /// `LocalizedStringKey`, matching `PrimaryActionBar`: the three titles are literals,
+    /// so they localize as keys rather than through `String(localized:)` wrappers.
+    private var primaryTitle: LocalizedStringKey {
+        if isLast { return "Done" }
         let hasName = clips.indices.contains(index) && !(clips[index].names.isEmpty && draft.isBlank)
-        return hasName ? String(localized: "Next") : String(localized: "Skip")
+        return hasName ? "Next" : "Skip"
     }
 
     // MARK: - Pager

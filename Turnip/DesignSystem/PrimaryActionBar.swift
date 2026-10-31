@@ -12,25 +12,30 @@ import SwiftUI
 /// "Analyze clips"). Part of this component rather than a sibling the caller stacks below
 /// it: a button outside the bar would sit on the screen's own backdrop between the bar and
 /// the home indicator, reading as a stray link rather than the bar's second choice.
+///
+/// `title` stays a `LocalizedStringKey` so call-site literals localize: a `String`
+/// parameter would pass the stored value through to `Text(title)`, which resolves to
+/// the non-localizing `StringProtocol` overload. A call site passing a computed string
+/// localizes it where the string is built instead (see `LibraryNamingView.primaryTitle`).
 struct PrimaryActionBar: View {
     /// The quieter second choice under the prominent button.
     struct SecondaryAction {
-        let title: String
+        let title: LocalizedStringKey
         let action: () -> Void
 
-        init(_ title: String, action: @escaping () -> Void) {
+        init(_ title: LocalizedStringKey, action: @escaping () -> Void) {
             self.title = title
             self.action = action
         }
     }
 
-    let title: String
+    let title: LocalizedStringKey
     let isEnabled: Bool
     let action: () -> Void
     let secondary: SecondaryAction?
 
     init(
-        _ title: String,
+        _ title: LocalizedStringKey,
         isEnabled: Bool = true,
         secondary: SecondaryAction? = nil,
         action: @escaping () -> Void

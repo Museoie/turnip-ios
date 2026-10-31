@@ -7,14 +7,17 @@ import SwiftUI
 /// screens that otherwise agree.
 struct StatusStateView<Actions: View>: View {
     let systemImage: String
-    let title: String
-    let message: String
+    /// `LocalizedStringKey` so call-site literals localize: `String` parameters would
+    /// pass the stored values through to `Text(title)` / `Text(message)`, which resolve
+    /// to the non-localizing `StringProtocol` overload.
+    let title: LocalizedStringKey
+    let message: LocalizedStringKey
     @ViewBuilder let actions: Actions
 
     init(
         systemImage: String,
-        title: String,
-        message: String,
+        title: LocalizedStringKey,
+        message: LocalizedStringKey,
         @ViewBuilder actions: () -> Actions = { EmptyView() }
     ) {
         self.systemImage = systemImage

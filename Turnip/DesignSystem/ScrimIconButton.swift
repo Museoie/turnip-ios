@@ -20,7 +20,10 @@ struct ScrimIconButton: View {
     }
 
     let systemImage: String
-    let accessibilityLabel: String
+    /// A `LocalizedStringKey` so call-site literals localize: a `String` parameter
+    /// would pass the stored value through to `.accessibilityLabel(_:)`, which resolves
+    /// to the non-localizing `StringProtocol` overload.
+    let accessibilityLabel: LocalizedStringKey
     var diameter: CGFloat = 44
     var font: Font = .body.weight(.semibold)
     var style: Style = .glass

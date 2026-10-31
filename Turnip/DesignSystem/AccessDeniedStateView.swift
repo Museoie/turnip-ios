@@ -4,8 +4,11 @@ import SwiftUI
 /// "Open Settings" link unless a restriction means Settings can't help either.
 struct AccessDeniedStateView: View {
     let systemImage: String
-    let title: String
-    let message: String
+    /// `LocalizedStringKey`, matching `StatusStateView` — these are forwarded straight
+    /// through, so `String` here would reintroduce the non-localizing pass-through
+    /// one level up.
+    let title: LocalizedStringKey
+    let message: LocalizedStringKey
     let restricted: Bool
     /// The link's accessibility identifier, for screens a UI test drives; `nil` leaves it
     /// unset, so two mounted pages never expose the same identifier.

@@ -8,6 +8,16 @@ enum MainTab: Hashable {
     case camera
     case home
     case profile
+
+    /// The floating tab bar's accessibility identifier for this tab. The home tab's is
+    /// "tab-videos": it names what the tab shows, not the enum case, and UI tests drive it.
+    var accessibilityIdentifier: String {
+        switch self {
+        case .camera: return "tab-camera"
+        case .home: return "tab-videos"
+        case .profile: return "tab-profile"
+        }
+    }
 }
 
 /// The floating bar's approximate footprint, shared with `VideoGalleryView` (grid scroll
@@ -167,7 +177,12 @@ private struct FloatingTabBar: View {
         }
     }
 
-    private func tabButton(_ tab: MainTab, systemImage: String, label: String) -> some View {
+    /// `label` stays a `LocalizedStringKey` so the call-site literals localize: a
+    /// `String` parameter would pass the stored value through to `.accessibilityLabel(_:)`,
+    /// which resolves to the non-localizing `StringProtocol` overload. The accessibility
+    /// identifier derives from the tab, not the label — the home tab's is "tab-videos",
+    /// naming what the tab shows rather than the enum case, and UI tests drive it.
+    private func tabButton(_ tab: MainTab, systemImage: String, label: LocalizedStringKey) -> some View {
         let isSelected = selectedTab == tab
         return Button {
             onSelect(tab)
@@ -184,7 +199,7 @@ private struct FloatingTabBar: View {
         }
         .accessibilityLabel(label)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityIdentifier("tab-\(label.lowercased())")
+        .accessibilityIdentifier(tab.accessibilityIdentifier)
     }
 
     /// The selected tab's pill. A plain translucent fill, not a second `.glassEffect` —

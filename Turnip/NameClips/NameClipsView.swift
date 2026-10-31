@@ -321,10 +321,10 @@ struct NameClipsView: View {
     @ViewBuilder
     private var actionBar: some View {
         if clips.isEmpty {
-            PrimaryActionBar(String(localized: "Add Clip"), action: addClip)
+            PrimaryActionBar("Add Clip", action: addClip)
                 .accessibilityIdentifier("name-clips-primary")
         } else {
-            PrimaryActionBar(String(localized: "Save Clips"), isEnabled: !viewModel.isSaving, action: save)
+            PrimaryActionBar("Save Clips", isEnabled: !viewModel.isSaving, action: save)
                 .accessibilityValue(saveAccessibilityValue)
                 .accessibilityIdentifier("name-clips-primary")
         }
