@@ -387,11 +387,11 @@ default empty state, so it never reads as "your library is empty."
 
 - One of the root tab view's two pages (see "Root navigation" above), not a
   modal — reached by tapping the floating bar's camera icon or swiping the
-  page right from Home. Minimal v1 scope: full-screen back-camera preview, a
-  cancel chevron (slides back to the gallery tab, the same slide a left
-  swipe plays), and one record button
-  (tap to start, tap again to stop) — no flip camera, flash, or zoom
-  (`Turnip/Camera/`).
+  page right from Home. Full-screen back-camera preview, a cancel chevron
+  (slides back to the gallery tab, the same slide a left swipe plays), one
+  record button (tap to start, tap again to stop), and the manual controls:
+  lens/zoom (pill row + pinch), front/rear flip, torch, resolution/fps, and
+  exposure bias (`Turnip/Camera/`).
 - Needs `NSCameraUsageDescription` and `NSMicrophoneUsageDescription`
   (Info.plist); denied/restricted access shows a message pointing at
   Settings, matching Home's own denied state.
