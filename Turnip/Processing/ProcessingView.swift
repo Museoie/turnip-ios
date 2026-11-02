@@ -310,6 +310,13 @@ struct ProcessingView<Destination: View>: View {
             hooks.onCancelled()
         }
         .onDisappear {
+            // Pause the player before this screen leaves the hierarchy:
+            // nothing would call `pause()` on it afterwards, so its audio
+            // would keep playing with no UI to stop it. Every dismissal
+            // path lands here — swipe-down, back, and programmatic dismiss
+            // alike — so the pause is on teardown, not on each exit; the
+            // same reason `commit(_:)` and `idleControls` pause first.
+            player?.pause()
             viewModel.cancel()
         }
     }
