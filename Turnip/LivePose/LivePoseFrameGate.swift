@@ -6,7 +6,7 @@ import Foundation
 /// undersample by however many were skipped. Time cannot be skipped.
 ///
 /// Kept frames land on a grid one interval apart, anchored at the first kept frame. A frame that
-/// arrives after a gap longer than one interval (a thermal stop lifting, a long stall) re-anchors
+/// arrives after a gap longer than one interval (a long stall) re-anchors
 /// the grid rather than admitting a burst of frames to "catch up". A change of interval applies
 /// from the last kept frame, so halving the rate under thermal pressure takes effect at once.
 ///

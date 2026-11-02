@@ -21,14 +21,19 @@ import os
 final class LivePoseFrameTap: NSObject, @unchecked Sendable {
     let output = AVCaptureVideoDataOutput()
 
-    private enum Phase {
+    /// Fileprivate (not private): `Session.phase` below must match it, and
+    /// `LivePoseFrameTap`'s own methods in this file read and write the phase.
+    fileprivate enum Phase {
         /// Record was tapped; the movie output has not confirmed it is writing yet.
         case armed
         case recording
     }
 
     /// One recording's capture-side state. Replaced wholesale on each `arm`.
-    private struct Session {
+    /// Internal (not private) so tests can exercise `apply(_:at:)` without a
+    /// capture session; `phase` is fileprivate because its type is, and only
+    /// this file's `LivePoseFrameTap` methods read or write it.
+    struct Session {
         let recording: LivePoseRecording
         let preparer: PoseInputPreparer
         let frameRate: Double
@@ -36,18 +41,35 @@ final class LivePoseFrameTap: NSObject, @unchecked Sendable {
         /// connection — passed to `preparer.prepare` so every kept frame is uprighted before it is
         /// letterboxed into the model's input.
         let rotationDegrees: Int
-        var phase = Phase.armed
+        /// Fileprivate because `Phase` is: the member must not outrank its type.
+        fileprivate var phase = Phase.armed
         var gate: LivePoseFrameGate
         var anchor = LivePoseTimestampAnchor()
         var metrics = LivePoseMetrics()
         /// System uptime when the thermal state last entered `.serious`; nil while it is not there.
         var seriousSince: TimeInterval?
 
+        /// The only production construction site is `arm`; tests use the
+        /// same init to pin `apply(_:at:)` without a capture session.
+        init(
+            recording: LivePoseRecording, preparer: PoseInputPreparer, frameRate: Double,
+            rotationDegrees: Int, gate: LivePoseFrameGate
+        ) {
+            self.recording = recording
+            self.preparer = preparer
+            self.frameRate = frameRate
+            self.rotationDegrees = rotationDegrees
+            self.gate = gate
+        }
+
         mutating func apply(_ response: LivePoseThermalPolicy.Response, at now: TimeInterval) {
-            gate.thermal = response
             if response == .stopped {
                 metrics.stoppedForThermal = true
             }
+            // A stop is terminal for this recording: `isComplete` already
+            // rejects any outcome after one, so a later cool-down must not
+            // revive the gate and spend inference on discarded frames.
+            gate.thermal = metrics.stoppedForThermal ? .stopped : response
             switch (response, seriousSince) {
             case (.halved, nil):
                 seriousSince = now
