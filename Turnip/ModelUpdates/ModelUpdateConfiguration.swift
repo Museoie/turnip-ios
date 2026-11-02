@@ -7,11 +7,10 @@ import Foundation
 /// `https://models.turnip.example`. The service polls
 /// `<baseURL>/api/models/current` against it.
 ///
-/// The key is empty in the committed Info.plist — there is no turnip-farm
-/// deployment to point at yet — so `endpoint` is nil and the update service is
-/// inert: `checkForUpdates` becomes a no-op with zero network traffic, keeping
-/// the v1 "nothing leaves the device" promise. When turnip-farm exists, set the
-/// key (e.g. via an xcconfig) and the service activates with no code change.
+/// The key is empty in the committed Info.plist, so `endpoint` is nil and the
+/// update service is inert: `checkForUpdates` becomes a no-op with zero network
+/// traffic, keeping the v1 "nothing leaves the device" promise. Set the key
+/// (e.g. via an xcconfig) and the service activates with no code change.
 /// https is enforced here *and* in the client: defense in depth for model bytes
 /// the app will load and run.
 enum ModelUpdateConfiguration {

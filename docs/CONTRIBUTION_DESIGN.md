@@ -86,18 +86,17 @@ from this doc:
   behind, marked so in the sheet. *(Judgment call, until the farm holds
   more than one track per video.)*
 - Not built: reinstall reconciliation (§6), `video_id` for file imports
-  (§1.1), an observer for `credentialRevokedNotification` (the foreground
-  check stands in), and the OTA trick model's delivery (§7.1).
+  (§1.1), and an observer for `credentialRevokedNotification` (the
+  foreground check stands in).
 
-The OTA trick model's on-device half (§7.2) is built, in
-`Turnip/TrickModel/`: a staged model loads once per launch, analysis
-runs it once per pose, and its clips reach Name Clips with their
-confident names pre-filled and their provenance kept through to the
-upload. Its delivery is not: `Turnip/ModelUpdates/` decodes a manifest
-of its own (`downloadURL`, `fileName`, a dotted-numeric version), not
-the farm's (`url`, `r2_key`, `trick-v1.3`), so it can't stage a model
-the farm publishes yet, and it deletes the previous model as it stages,
-before the new one has loaded (`MODEL_CONTRACT.md` §4).
+The OTA trick model (§7) is built, in `Turnip/ModelUpdates/` and
+`Turnip/TrickModel/`: the poll stages a model the farm publishes beside
+the one in use, a staged model loads once per launch and replaces the
+one in use only once it has loaded, analysis runs it once per pose, and
+its clips reach Name Clips with their confident names pre-filled and
+their provenance kept through to the upload. The poll is off until
+`TURNIP_MODEL_UPDATE_ENDPOINT` is set, and the farm has promoted no
+model yet.
 
 ---
 
@@ -515,19 +514,59 @@ contribution ships, since changing it later orphans every source.
 
 ### 7.1 Delivery (extends the existing OTA path)
 
-`Turnip/ModelUpdates/` already ships a manifest client, a version
-store with atomic replace, and the launch/foreground poll, which stays a
-no-op until an endpoint is configured. `TrickModelLoader` (§7.2) loads
-the staged file. The trick
-model rides the same mechanism: `GET /api/models/current` — public, so
-the app polls it signed in or not — returns the trick-detection manifest
-— version, URL, checksum, `taxonomy_version`, the `vocabulary` list, and
+**Built** (`Turnip/ModelUpdates/`), and inert until
+`TURNIP_MODEL_UPDATE_ENDPOINT` names the farm: it is blank in the
+committed Info.plist, so the app makes no model request.
+
+On launch and on every foreground the app polls
+`GET /api/models/current`, which is public, so signed in or not. The
+manifest (`MODEL_CONTRACT.md` §1) gives the version, the artifact's
+presigned `url`, its `sha256` and `byte_size`, `min_client_version`,
+`taxonomy_version`, the `vocabulary` list, the descriptors, and
 `name_metrics` (the Profile's impact feedback, `PROFILE_DESIGN.md` §9).
-Download via background `URLSession`, verify SHA-256 against the
-manifest, atomic-replace into the version store; activate only after
-verification. The heuristic detector remains the offline fallback when
-no model is present (first launch, failed download) — the UI never
-distinguishes proposal sources.
+The farm's `404 NO_MODEL`, before its first promotion, means nothing to
+do.
+
+- **Whether to update** (`MODEL_CONTRACT.md` §4): the manifest's
+  `version` differs from each model the app holds, and the app's
+  `CFBundleShortVersionString` is at least `min_client_version`, compared
+  as dotted numbers. Different, not greater: a rollback
+  (`trick-v1.3-rb1`) arrives like any release. An app too old for the
+  model skips it silently, with a log line.
+- **Download and verify**: the artifact downloads from the manifest's
+  `url`, and its length and SHA-256 are checked against `byte_size` and
+  `sha256` before anything is staged. The files are named after the
+  version; `r2_key` is never used.
+- **Two slots**: a verified model is staged as *pending*, beside the
+  *active* model, the one that last loaded. `TrickModelLoader` (§7.2)
+  tries the pending model at its first load of a launch. If it loads, it
+  becomes the active model and the old one is deleted; if it doesn't, it
+  is deleted and the active model loads instead. So the previous
+  artifact stays until the new one has loaded, as §4 asks. A manifest
+  that names the active model again drops a pending one.
+- **What is kept**: each model's manifest, as served, beside its
+  artifact, so its `vocabulary`, `output_desc` and `name_metrics` are on
+  the device for whatever reads them. Nothing reads them yet.
+- The heuristic detector proposes when no model loads (first launch,
+  nothing published, a failed download or load) — the UI never
+  distinguishes proposal sources.
+
+Calls this makes:
+
+- A model that fails to load is downloaded again by the next poll, as
+  §4's failure fallback asks, so a broken release costs one download per
+  launch until the farm publishes another. *(Judgment call, the
+  contract's; remembering the failed version would save it.)*
+- Only the fields the update acts on are decoded. The farm's descriptor
+  and metric fields are free-form JSON, so a change in their shape can't
+  stop a model from arriving. *(Judgment call.)*
+- The download is a plain `URLSession` download from a utility-priority
+  task, not a background session: the model is small, and a download the
+  system cuts off is retried by the next poll. *(Judgment call.)*
+- Not built: compiling the package once, as it is staged (§4's order).
+  The loader compiles it at its first load of every launch. No model is
+  bundled, so before the first download the heuristic proposes (§4's
+  first-run fallback).
 
 ### 7.2 On-device inference integration
 
@@ -572,8 +611,8 @@ distinguishes proposal sources.
     each tracked person's pose, as the heuristic does, so each clip
     frames its own person. *(Judgment call.)*
   - The model's classes and window grid come from the metadata its
-    export writes into the package; the version store keeps no
-    `output_desc`. *(Judgment call.)*
+    export writes into the package, not from the `output_desc` the
+    store keeps with the manifest. *(Judgment call.)*
   - A merged segment (`MODEL_CONTRACT.md` §3.3 step 3) takes the higher
     of its parts' scores, and of each name's. *(Judgment call; the
     contract is silent.)*

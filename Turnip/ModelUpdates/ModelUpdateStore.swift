@@ -1,137 +1,185 @@
 import Foundation
 
-/// On-disk home for the staged OTA trick-detection model. The app's update
-/// check writes here (see `ModelUpdateLifecycle`); `TrickModelLoader` reads
-/// `activeModelURL()` and `activeVersion()` once per launch.
-/// Pose detection never comes through here: MoveNet is always the bundled file.
+/// On-disk home for the OTA trick-detection model. The app's update check
+/// stages models here (see `ModelUpdateLifecycle`); `TrickModelLoader` loads
+/// one once per launch and reports whether it loaded. Pose detection never
+/// comes through here: MoveNet is always the bundled file.
+///
+/// Two slots, so a new model never costs the one that works
+/// (`MODEL_CONTRACT.md` §4):
+/// - **active**: the model that last loaded.
+/// - **pending**: a model staged since, not yet loaded. The loader tries it
+///   first. If it loads, it becomes active and the old active model is
+///   deleted (`markLoaded`). If it doesn't, it is deleted and the active
+///   model loads instead (`discard`).
 ///
 /// Layout inside `baseURL` (`production`'s Application Support directory in
 /// the app, a temp dir in tests):
-/// - `<fileName>` — the staged model bytes, written atomically.
-/// - `active-model.json` — `{ "version": "...", "fileName": "..." }`, written
-///   atomically *after* the bytes, so a crash between the two leaves the
-///   metadata pointing at the previous (complete) model rather than at bytes
-///   that never landed.
+/// - `<version>.mlpackage.zip`: a model's artifact, the bytes the farm served.
+/// - `<version>.manifest.json`: the manifest it arrived with, as served.
+/// - `staged-models.json`: `{ "active": "<version>", "pending": "<version>" }`,
+///   either absent when its slot is empty, written atomically *after* the
+///   files it names, so a crash between the two leaves it naming complete
+///   files.
 ///
-/// The version is persisted to disk, not cached in memory: the whole point of
-/// the feature is next-launch promotion, so a fresh store over the same
-/// directory must read back the version a previous launch staged. Otherwise
-/// every cold launch would treat the shipped model as newer and re-download
-/// the full weights — the exact cost the "cheap manifest fetch per launch"
-/// requirement exists to prevent.
+/// After each write of `staged-models.json`, everything else in the directory
+/// that isn't one of its two models' files is deleted: a replaced pending
+/// model, the active model a newer one succeeded, and any file the record
+/// doesn't name, such as a crash's leftovers. The versions are persisted, not
+/// cached, because a staged model waits for the next launch, and the next
+/// launch's store has to read them back.
+///
+/// Every write takes one process-wide lock: the update check and the loader
+/// each write through their own store over the same directory, and an
+/// interleaved stage and promotion could otherwise lose a slot and sweep away
+/// a model still in use.
 struct ModelUpdateStore: Sendable {
-    /// Name of the sidecar file the store reserves for its own metadata. It
-    /// is never a valid staged-model name: `stage` rejects it so the model
-    /// bytes and the metadata record can never collide on one path. Compared
-    /// case-insensitively, because the store also runs on case-insensitive
-    /// filesystems (macOS test runners), where `ACTIVE-MODEL.JSON` would hit
-    /// the same path.
-    private static let metadataFileName = "active-model.json"
+    /// A model in the store.
+    struct StagedModel: Equatable, Sendable {
+        let version: ModelVersion
+        /// The artifact as downloaded: the export's zip holding
+        /// `TrickDetector.mlpackage`.
+        let artifactURL: URL
+        /// The manifest the artifact arrived with, exactly as the farm served
+        /// it, kept for its `vocabulary`, `output_desc` and `name_metrics`.
+        let manifestURL: URL
 
-    /// The scalar allowlist for staged file names: ASCII only
-    /// (`[A-Za-z0-9._-]`). `CharacterSet.alphanumerics` is Unicode-wide and
-    /// would admit lookalikes (Cyrillic `м` is an alphanumeric), while the
-    /// documented contract is ASCII, so the set is spelled out explicitly.
-    private static let fileNameAllowedScalars = CharacterSet(charactersIn:
+        fileprivate init(version: ModelVersion, in directory: URL) {
+            self.version = version
+            artifactURL = directory.appendingPathComponent("\(version.rawValue).mlpackage.zip")
+            manifestURL = directory.appendingPathComponent("\(version.rawValue).manifest.json")
+        }
+    }
+
+    private static let recordFileName = "staged-models.json"
+
+    private static let lock = NSLock()
+
+    /// The scalars a version may hold, since it names the store's files:
+    /// ASCII only (`[A-Za-z0-9._-]`). `CharacterSet.alphanumerics` is
+    /// Unicode-wide and would admit lookalikes (Cyrillic `м` is an
+    /// alphanumeric), so the set is spelled out.
+    private static let versionAllowedScalars = CharacterSet(charactersIn:
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
 
-    /// The single fileName predicate every enforcement point uses. Both the
-    /// service's pre-download gate and `stage`'s write-time gate call this,
-    /// so the two can never disagree on one name — a name rejected here is
-    /// rejected before any download, and the write-time gate catches any
-    /// caller that bypasses the service.
-    ///
-    /// Valid names are a non-empty ASCII allowlist, a single path component
-    /// (no slashes, not `.` or `..`), and never the store's own metadata
-    /// name — compared case-insensitively, because the store also runs on
-    /// case-insensitive filesystems (macOS test runners), where
-    /// `ACTIVE-MODEL.JSON` would hit the same path as `active-model.json`.
-    static func validate(fileName: String) throws {
-        let safe = !fileName.isEmpty
-            && fileName != "."
-            && fileName != ".."
-            && fileName.unicodeScalars.allSatisfy(fileNameAllowedScalars.contains)
-            && fileName.lowercased() != metadataFileName
-        guard safe else {
+    /// Throws `invalidManifest` for a version that can't name a file here: an
+    /// empty one, one with a scalar outside the allowlist (a slash, a
+    /// lookalike), or one with a leading dot, which would hide the file. The
+    /// service checks it before any download, and `stage` before any write.
+    static func validate(version: ModelVersion) throws {
+        let raw = version.rawValue
+        guard !raw.isEmpty, !raw.hasPrefix("."),
+              raw.unicodeScalars.allSatisfy(versionAllowedScalars.contains)
+        else {
             throw ModelUpdateError.invalidManifest
         }
     }
 
-    /// Directory holding the staged model and its metadata. Not created until
-    /// the first stage — a store that never stages anything leaves no trace.
+    /// Directory holding the models and their record. Not created until the
+    /// first stage — a store that never stages anything leaves no trace.
     let baseURL: URL
 
     init(baseURL: URL) {
         self.baseURL = baseURL
     }
 
-    /// The staged version, or `nil` when nothing has been staged yet.
-    func activeVersion() -> ModelVersion? {
-        try? readRecord().map { ModelVersion($0.version) }
+    /// The model that last loaded, or `nil` when none has, or its artifact is
+    /// missing.
+    func activeModel() -> StagedModel? {
+        model(readableRecord()?.active)
     }
 
-    /// File URL of the staged model bytes, or `nil` when nothing is staged or
-    /// the bytes are missing (metadata without bytes is treated as no model).
-    func activeModelURL() -> URL? {
-        guard let record = try? readRecord() else { return nil }
-        let url = baseURL.appendingPathComponent(record.fileName)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    /// The model staged since the active one, waiting to be loaded, or `nil`
+    /// when there is none, or its artifact is missing.
+    func pendingModel() -> StagedModel? {
+        model(readableRecord()?.pending)
     }
 
-    /// Atomically replaces the staged model. Bytes land first, metadata
-    /// second (see the layout note above); once the metadata names the new
-    /// file, the file the previous record pointed at is deleted, so versioned
-    /// file names don't leave dead weights behind in Application Support.
-    /// A consumer must therefore load the model it reads from
-    /// `activeModelURL()` and keep it: the path can be gone after the next
-    /// stage, even within the same session.
-    func stage(modelData: Data, version: ModelVersion, fileName: String) throws {
-        // The write-time gate (one shared predicate, see validate(fileName:) above): rejects
-        // hostile names, the reserved metadata name, and non-ASCII names
-        // before touching the filesystem, so a malicious manifest can't
-        // stage outside the store dir or collide with the sidecar record.
-        try Self.validate(fileName: fileName)
-        try FileManager.default.createDirectory(
-            at: baseURL, withIntermediateDirectories: true)
-        // An unreadable sidecar (corrupt or future-schema) must not wedge the
-        // store: `stage` is the only writer, so a throwing read here could never
-        // heal. Treat it as "no previous model" — the stage proceeds and the
-        // sidecar is rewritten below.
-        let previous = try? readRecord()
-        try modelData.write(
-            to: baseURL.appendingPathComponent(fileName), options: .atomic)
-        let payload = try JSONEncoder().encode(
-            StoredModel(version: version.rawValue, fileName: fileName))
-        try payload.write(to: metadataURL, options: .atomic)
-        // The previous file must survive until the sidecar names the new
-        // file: a crash between the two writes leaves the old record intact,
-        // and deleting first would leave a dangling reference. The delete is
-        // best-effort — the update is complete at this point, so a failed
-        // removal must not turn a successful stage into a throw.
-        if let previous, previous.fileName != fileName {
-            try? FileManager.default.removeItem(
-                at: baseURL.appendingPathComponent(previous.fileName))
+    /// Stages a verified artifact as the pending model, replacing any pending
+    /// model before it. The active model stays until the new one loads.
+    ///
+    /// Staging the active model's own version restores its files and leaves
+    /// nothing pending. The update check never does: it skips a manifest that
+    /// names the active model.
+    func stage(artifact: Data, manifest: ModelUpdateManifest) throws {
+        try Self.validate(version: manifest.version)
+        try Self.lock.withLock {
+            try FileManager.default.createDirectory(
+                at: baseURL, withIntermediateDirectories: true)
+            let staged = StagedModel(version: manifest.version, in: baseURL)
+            try artifact.write(to: staged.artifactURL, options: .atomic)
+            try manifest.json.write(to: staged.manifestURL, options: .atomic)
+            // An unreadable record (corrupt, or of another schema) must not
+            // wedge the store, since a throwing read here could never heal:
+            // it counts as nothing staged, and the sweep clears what it named.
+            var record = readableRecord() ?? Record()
+            record.pending = record.active == manifest.version ? nil : manifest.version
+            try write(record)
         }
     }
 
-    private var metadataURL: URL {
-        baseURL.appendingPathComponent(Self.metadataFileName)
+    /// Makes the pending model `version` the active one, once it has loaded,
+    /// and deletes the model it succeeds. A no-op when `version` is no longer
+    /// pending: an update staged a newer model while it loaded, and that one
+    /// waits for the next launch, with the active model still kept.
+    ///
+    /// Best-effort, like `discard`: a failed write leaves the slots as they
+    /// were, and the next launch loads the same pending model and tries again.
+    func markLoaded(_ version: ModelVersion) {
+        Self.lock.withLock {
+            guard var record = readableRecord(), record.pending == version else { return }
+            record.active = version
+            record.pending = nil
+            try? write(record)
+        }
     }
 
-    private func readRecord() throws -> StoredModel? {
-        guard FileManager.default.fileExists(atPath: metadataURL.path) else {
-            return nil
+    /// Deletes the pending model `version`, which didn't load, so the active
+    /// model stays the one in use. A no-op when `version` is no longer
+    /// pending.
+    func discard(_ version: ModelVersion) {
+        Self.lock.withLock {
+            guard var record = readableRecord(), record.pending == version else { return }
+            record.pending = nil
+            try? write(record)
         }
-        return try JSONDecoder().decode(
-            StoredModel.self, from: Data(contentsOf: metadataURL))
+    }
+
+    private var recordURL: URL {
+        baseURL.appendingPathComponent(Self.recordFileName)
+    }
+
+    private func model(_ version: ModelVersion?) -> StagedModel? {
+        guard let version else { return nil }
+        let staged = StagedModel(version: version, in: baseURL)
+        return FileManager.default.fileExists(atPath: staged.artifactURL.path) ? staged : nil
+    }
+
+    private func readableRecord() -> Record? {
+        try? JSONDecoder().decode(Record.self, from: Data(contentsOf: recordURL))
+    }
+
+    /// Writes the record, then sweeps the directory down to it. The sweep is
+    /// best-effort: the slots are already right, and a file it misses goes on
+    /// the next write.
+    private func write(_ record: Record) throws {
+        try JSONEncoder().encode(record).write(to: recordURL, options: .atomic)
+        let kept = Set([record.active, record.pending].compactMap { $0 }.flatMap { version in
+            let staged = StagedModel(version: version, in: baseURL)
+            return [staged.artifactURL.lastPathComponent, staged.manifestURL.lastPathComponent]
+        } + [Self.recordFileName])
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: baseURL.path)) ?? []
+        for name in names where !kept.contains(name) {
+            try? FileManager.default.removeItem(at: baseURL.appendingPathComponent(name))
+        }
     }
 }
 
-/// The persisted sidecar; `Codable` so the store stays a thin file wrapper
-/// with no bespoke serialization format to drift.
-private struct StoredModel: Codable {
-    var version: String
-    var fileName: String
+/// The persisted slots; `Codable` so the store stays a thin file wrapper with
+/// no bespoke serialization format to drift.
+private struct Record: Codable {
+    var active: ModelVersion?
+    var pending: ModelVersion?
 }
 
 extension ModelUpdateStore {

@@ -76,8 +76,9 @@ so the take lands on `ClipList` straight from Stop, with no second decode
 it could not cover end to end goes through `Processing` like a tapped tile.
 
 One directory sits outside that flow: `ModelUpdates` checks for an OTA
-trick-detection model on launch and foreground. No endpoint is configured,
-so the check does nothing yet, and nothing loads a staged model.
+trick-detection model on launch and foreground, and stages it for
+`TrickModel` to load. No endpoint is configured, so the check does nothing
+yet.
 
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full architecture plan
 including the on-device labeling + continuous ML training that will

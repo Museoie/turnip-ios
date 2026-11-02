@@ -5,8 +5,7 @@ import Foundation
 /// The whole flow is inert until `TURNIP_MODEL_UPDATE_ENDPOINT` is configured:
 /// with no endpoint `ModelUpdateConfiguration.endpoint` is nil and
 /// `checkForUpdates` becomes a no-op with zero network traffic, so the v1
-/// "nothing leaves the device" promise holds until a turnip-farm deployment
-/// exists.
+/// "nothing leaves the device" promise holds until the endpoint is set.
 enum ModelUpdateLifecycle {
     /// One service for the process lifetime. `ModelUpdateService` suppresses
     /// overlapping checks with an in-flight guard, which only works when every
@@ -17,13 +16,15 @@ enum ModelUpdateLifecycle {
             ModelUpdateService(
                 baseURL: ModelUpdateConfiguration.endpoint,
                 client: URLSessionModelUpdateClient(),
-                store: $0)
+                store: $0,
+                clientVersion: Bundle.main.object(
+                    forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
         }
     }()
 
-    /// Runs one update check: fetch the manifest, and stage a newer
-    /// trick-detection model for a *later* launch. The running session never
-    /// hot-swaps models.
+    /// Runs one update check: fetch the manifest, and stage a different
+    /// trick-detection model for `TrickModelLoader`, which loads once per
+    /// launch. The running session never hot-swaps models.
     ///
     /// Concurrent firings are coalesced: a check that starts while another is
     /// in flight is dropped by the service — the in-flight check covers it.

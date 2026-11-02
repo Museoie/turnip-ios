@@ -1,19 +1,20 @@
 import CryptoKit
 import Foundation
+import os
 
-/// Polls for trick-detection model updates and stages them for a *later*
-/// launch. `ModelUpdateLifecycle` runs it on launch and on every foreground
+/// Polls for trick-detection model updates and stages them for the loader.
+/// `ModelUpdateLifecycle` runs it on launch and on every foreground
 /// transition. Pose detection is not its concern: MoveNet always loads from the
 /// app bundle.
 ///
-/// The flow per check: fetch the manifest from
-/// `<baseURL>/api/models/current`; if it names a newer version than the staged
-/// one, download the bytes, verify their SHA-256 against the manifest, and
-/// atomically stage them. Staging never swaps the model a running session is
-/// using — a session must not hot-swap models mid-inference — but it does
-/// delete the previously staged file, so `TrickModelLoader` loads
-/// `ModelUpdateStore.activeModelURL()` once at its own load and never reopens
-/// that path later in the session.
+/// The flow per check (`MODEL_CONTRACT.md` §4): fetch the manifest from
+/// `<baseURL>/api/models/current`; if its `version` differs from both the
+/// active and the pending model, and this app is at least its
+/// `min_client_version`, download the artifact from its `url`, check its
+/// `byte_size` and `sha256`, and stage it as the pending model. Staging never
+/// touches the active model: `TrickModelLoader` tries the pending one at its
+/// next load, once per launch, and only a successful load retires the active
+/// one (see `ModelUpdateStore`).
 ///
 /// An actor for three reasons: the check is `async` throughout (network,
 /// disk), `lastError` is written from the check's continuation, and the
@@ -21,18 +22,24 @@ import Foundation
 /// keeps all three data-race-free without manual locking.
 ///
 /// The service never throws: every failure is recorded on `lastError` and the
-/// staged model is left as it was. A failed update must be silent to
-/// the user, never a crash or a half-staged model. Cancellation is not a
-/// failure: a cancelled check leaves `lastError` nil instead of recording
-/// the cancellation as a failed check.
+/// staged models are left as they were. A failed update must be silent to
+/// the user, never a crash or a half-staged model. Neither cancellation nor a
+/// model this app is too old for is a failure: both leave `lastError` nil.
 ///
 /// Inert by default: a `nil` baseURL (no endpoint configured) makes
 /// `checkForUpdates` a no-op with zero network traffic, keeping the "nothing
-/// leaves the device" promise until a deployment exists.
+/// leaves the device" promise until an endpoint is set.
 actor ModelUpdateService<Client: ModelUpdateClient> {
+    private static var logger: Logger {
+        Logger(subsystem: "com.hoiekim.turnip", category: "ModelUpdates")
+    }
+
     private let baseURL: URL?
     private let client: Client
     private let store: ModelUpdateStore
+    /// The app's `CFBundleShortVersionString`, held against each manifest's
+    /// `min_client_version`.
+    private let clientVersion: String?
 
     /// The failure from the most recent check, or `nil` when the last check
     /// succeeded or was a no-op. Typed as `ModelUpdateError` (not `Error`)
@@ -46,20 +53,20 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
     /// caller is suppressed rather than queued.
     private var isChecking = false
 
-    init(baseURL: URL?, client: Client, store: ModelUpdateStore) {
+    init(baseURL: URL?, client: Client, store: ModelUpdateStore, clientVersion: String?) {
         self.baseURL = baseURL
         self.client = client
         self.store = store
+        self.clientVersion = clientVersion
     }
 
     func checkForUpdates() async {
         // didBecomeActive fires on every foreground transition and each
         // firing spawns its own detached task, so two firings in quick
         // succession (app-switcher bounce, notification shade) would each
-        // fetch the manifest and download the model bytes — and two
-        // stages of different versions racing leave the loser's bytes
-        // orphaned in Application Support. Try-acquire, not queued: the
-        // in-flight check already covers what the duplicate wanted.
+        // fetch the manifest and download the model bytes. Try-acquire, not
+        // queued: the in-flight check already covers what the duplicate
+        // wanted.
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
@@ -68,28 +75,29 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
         guard let baseURL else { return }
 
         do {
-            let manifest = try await client.fetchManifest(
+            guard let json = try await client.fetchManifest(
                 from: baseURL.appendingPathComponent("api/models/current"))
-            try Self.validate(manifest)
-            if let active = store.activeVersion(), manifest.version <= active {
-                // Same or older: the check stays a cheap manifest fetch, not a
-                // model fetch, on every launch.
-                return
-            }
-            let downloadedURL = try await client.downloadModel(
-                from: manifest.downloadURL)
+            else { return }
+            let manifest = try ModelUpdateManifest(json: json)
+            // The version names the store's files, so a version that can't
+            // is refused before any bytes move.
+            try ModelUpdateStore.validate(version: manifest.version)
+            guard shouldDownload(manifest) else { return }
+
+            let downloadedURL = try await client.downloadModel(from: manifest.url)
             // downloadModel hands us a temp file — delete it once the bytes
             // are in memory, so each check doesn't leave a model-sized file
             // behind in tmp/ waiting on the OS to purge it. Runs on every
-            // exit from this block, including the checksum-mismatch throw.
+            // exit from this block, including the verification throws.
             defer { try? FileManager.default.removeItem(at: downloadedURL) }
             let bytes = try Data(contentsOf: downloadedURL)
+            if let byteSize = manifest.byteSize, bytes.count != byteSize {
+                throw ModelUpdateError.sizeMismatch
+            }
             guard sha256Hex(bytes) == manifest.sha256.lowercased() else {
                 throw ModelUpdateError.checksumMismatch
             }
-            try store.stage(
-                modelData: bytes, version: manifest.version,
-                fileName: manifest.fileName)
+            try store.stage(artifact: bytes, manifest: manifest)
         } catch is CancellationError {
             // Cancellation is a deliberate stop, not a failed check: the
             // cancelled task is already winding down, so don't record it on
@@ -109,22 +117,30 @@ actor ModelUpdateService<Client: ModelUpdateClient> {
         }
     }
 
-    /// Rejects a manifest whose `fileName` could escape the OTA directory, or
-    /// whose `version` is not well-formed dotted-numeric.
-    /// Delegates filename validation to `ModelUpdateStore.validate(fileName:)` — one owner, one
-    /// rule — so this pre-download gate and the store's write-time gate can
-    /// never disagree on a name. Checked before any download, so hostile
-    /// bytes never move.
-    /// The version check guards the newer-than-staged comparison above:
-    /// `ModelVersion`'s `Comparable` falls back to lexicographic order for
-    /// non-numeric components, so a staged `"v2"` would out-sort every numeric
-    /// release and the client would never update again. Rejecting the shape
-    /// here keeps every staged version inside the numeric ordering.
-    private static func validate(_ manifest: ModelUpdateManifest) throws {
-        try ModelUpdateStore.validate(fileName: manifest.fileName)
-        guard manifest.version.isWellFormed else {
-            throw ModelUpdateError.invalidManifest
+    /// Whether the manifest names a model this app should download: one it
+    /// doesn't already have, active or pending, that is meant for this app's
+    /// version. A check that downloads nothing stays a cheap manifest fetch.
+    private func shouldDownload(_ manifest: ModelUpdateManifest) -> Bool {
+        if manifest.version == store.activeModel()?.version {
+            // The farm is back on the model in use, so a model staged since
+            // is no longer current and must not load at the next launch.
+            if let pending = store.pendingModel() {
+                store.discard(pending.version)
+            }
+            return false
         }
+        if manifest.version == store.pendingModel()?.version {
+            return false
+        }
+        guard manifest.admits(clientVersion: clientVersion) else {
+            // Contract §5: an app too old for the model skips it silently.
+            let version = manifest.version.rawValue
+            let minimum = manifest.minClientVersion ?? ""
+            Self.logger.notice(
+                "Skipped trick model \(version, privacy: .public): needs app \(minimum, privacy: .public)")
+            return false
+        }
+        return true
     }
 
     private func sha256Hex(_ data: Data) -> String {

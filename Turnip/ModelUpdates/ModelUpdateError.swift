@@ -14,16 +14,21 @@ enum ModelUpdateError: Error, Sendable {
     /// The endpoint or download URL was not `https`. Model bytes are trust
     /// material; they never move over plaintext.
     case endpointNotHTTPS
-    /// The manifest failed validation (e.g. a hostile `fileName`). The staged
-    /// model is untouched.
+    /// The manifest didn't decode, or its `version` can't name a file in the
+    /// store (anything outside `[A-Za-z0-9._-]`, or a leading dot). Checked
+    /// before any download; nothing staged is touched.
     case invalidManifest
+    /// The downloaded bytes were not the manifest's `byte_size` long. Nothing
+    /// is staged.
+    case sizeMismatch
     /// The downloaded bytes did not match the manifest's SHA-256. Nothing is
     /// staged — a corrupt model must never replace a working one.
     case checksumMismatch
-    /// Any transport or decoding failure underneath the client. Recorded, not
-    /// thrown, so a failed check is silent to the user and the staged model
-    /// is left as it was. The underlying error is boxed as its
-    /// `String` description — an `Error` is not `Sendable`, and this enum must
-    /// stay `Sendable` to cross the service actor's boundary.
+    /// Any transport failure underneath the client, including an HTTP status
+    /// other than success (an expired presigned `url` answers 403). Recorded,
+    /// not thrown, so a failed check is silent to the user and nothing staged
+    /// changes. The underlying error is boxed as its `String` description —
+    /// an `Error` is not `Sendable`, and this enum must stay `Sendable` to
+    /// cross the service actor's boundary.
     case network(underlying: String)
 }

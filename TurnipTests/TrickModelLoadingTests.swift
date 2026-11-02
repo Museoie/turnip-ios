@@ -163,33 +163,76 @@ final class TrickModelLoadingTests: XCTestCase {
 
     // MARK: - Loader
 
-    private func store(staging data: Data?) throws -> ModelUpdateStore {
+    private func store(staging data: Data?, as version: String = "trick-v0.0-smoke") throws -> ModelUpdateStore {
         let store = ModelUpdateStore(baseURL: scratch.appendingPathComponent("ModelUpdates"))
         if let data {
-            try store.stage(
-                modelData: data, version: ModelVersion("trick-v0.0-smoke"), fileName: "trick-v0.0-smoke.mlpackage.zip")
+            try stage(data, as: version, in: store)
         }
         return store
     }
 
-    /// The staged artifact loads once; every later call gets that same model.
+    private func stage(_ data: Data, as version: String, in store: ModelUpdateStore) throws {
+        let manifest = try ModelUpdateManifest(json: FarmManifestFixture.json(version: version, artifact: data))
+        try store.stage(artifact: data, manifest: manifest)
+    }
+
+    /// The staged artifact loads once, and becomes the store's active model; every later call
+    /// gets that same model.
     func testTheLoaderLoadsTheStagedModelOnce() async throws {
         let artifact = try Data(contentsOf: fixture("TrickDetectorSmoke.mlpackage.zip"))
-        let loader = TrickModelLoader(store: try store(staging: artifact))
+        let store = try store(staging: artifact)
+        let loader = TrickModelLoader(store: store)
         let first = await loader.model()
         let second = await loader.model()
         XCTAssertEqual(first?.version, "trick-v0.0-smoke")
         XCTAssertTrue(first === second)
+        XCTAssertEqual(store.activeModel()?.version, ModelVersion("trick-v0.0-smoke"))
+        XCTAssertNil(store.pendingModel())
     }
 
-    /// Nothing staged, or a staged artifact that doesn't load, leaves analysis to the heuristic.
+    /// Nothing staged, or a staged artifact that doesn't load, leaves analysis to the heuristic,
+    /// and the artifact that didn't load is deleted.
     func testTheLoaderHasNoModelWhenNothingLoads() async throws {
         let nothing = await TrickModelLoader(store: try store(staging: nil)).model()
         XCTAssertNil(nothing)
-        let broken = await TrickModelLoader(store: try store(staging: Data("not a zip".utf8))).model()
+        let brokenStore = try store(staging: Data("not a zip".utf8))
+        let broken = await TrickModelLoader(store: brokenStore).model()
         XCTAssertNil(broken)
+        XCTAssertNil(brokenStore.pendingModel())
+        XCTAssertNil(brokenStore.activeModel())
         let noStore = await TrickModelLoader(store: nil).model()
         XCTAssertNil(noStore)
+    }
+
+    /// A newer model that loads takes over from the active one, which the store then lets go.
+    func testAStagedModelThatLoadsReplacesTheActiveOne() async throws {
+        let artifact = try Data(contentsOf: fixture("TrickDetectorSmoke.mlpackage.zip"))
+        let store = try store(staging: artifact, as: "trick-v0.0-smoke")
+        _ = await TrickModelLoader(store: store).model()
+        let previous = try XCTUnwrap(store.activeModel())
+        try stage(artifact, as: "trick-v0.1-smoke", in: store)
+
+        let model = await TrickModelLoader(store: store).model()
+        XCTAssertEqual(model?.version, "trick-v0.1-smoke")
+        XCTAssertEqual(store.activeModel()?.version, ModelVersion("trick-v0.1-smoke"))
+        XCTAssertNil(store.pendingModel())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: previous.artifactURL.path))
+    }
+
+    /// A newer model that doesn't load is deleted, and the active model, kept for this, loads
+    /// instead (`MODEL_CONTRACT.md` §4).
+    func testAStagedModelThatDoesntLoadFallsBackToTheActiveOne() async throws {
+        let artifact = try Data(contentsOf: fixture("TrickDetectorSmoke.mlpackage.zip"))
+        let store = try store(staging: artifact, as: "trick-v0.0-smoke")
+        _ = await TrickModelLoader(store: store).model()
+        try stage(Data("not a zip".utf8), as: "trick-v0.1-broken", in: store)
+        let broken = try XCTUnwrap(store.pendingModel())
+
+        let model = await TrickModelLoader(store: store).model()
+        XCTAssertEqual(model?.version, "trick-v0.0-smoke")
+        XCTAssertEqual(store.activeModel()?.version, ModelVersion("trick-v0.0-smoke"))
+        XCTAssertNil(store.pendingModel())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: broken.artifactURL.path))
     }
 
     // MARK: - Proposals
