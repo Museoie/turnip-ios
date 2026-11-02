@@ -4,7 +4,10 @@ import SwiftUI
 /// (matching `ScrimIconButton`/`RootTabView`'s floating tab bar), an `.ultraThinMaterial`
 /// capsule pre-26. Dismissed by a tap or automatically after `autoDismissAfter` seconds.
 struct GlassNoticeView: View {
-    let message: String
+    /// `LocalizedStringKey` so call-site literals localize: a `String` parameter would
+    /// pass the stored value through to `Text(message)`, which resolves to the
+    /// non-localizing `StringProtocol` overload.
+    let message: LocalizedStringKey
     @Binding var isPresented: Bool
     var autoDismissAfter: TimeInterval = 5
     /// Reads whether a screen reader is driving the screen. A notice on a timer can expire

@@ -298,13 +298,15 @@ Not yet, from the plan:
   user-facing wording and will keep changing, an identifier is a contract.
 - **Localization-ready**: user-facing strings built in code go through `String(localized:)`
   (SwiftUI string literals are already `LocalizedStringKey`). No translations in v1.
-  - **Known gap:** the shared design-system components (`PrimaryActionBar`,
-    `ScrimIconButton`, `BackChevronButton`, `StatusStateView`, `GlassNoticeView`) type their
-    title/label parameters as `String`, so `Text(title)` resolves to the non-localizing
-    `StringProtocol` overload and a literal passed at the call site is never a
-    `LocalizedStringKey`. It looks localizable at every call site, which is what makes it easy
-    to miss. Fixing it means changing those parameters to `LocalizedStringKey` across all
-    their callers, which is tracked in #215 rather than folded into the accessibility sweep.
+  - The shared design-system components (`PrimaryActionBar`, `ScrimIconButton`,
+    `StatusStateView`, `GlassNoticeView`, `AccessDeniedStateView`, `RootTabView.tabButton`)
+    type their title/label/message parameters as `LocalizedStringKey`, so a literal passed
+    at the call site localizes (fixed in #215 — they used to take `String`, which made
+    `Text(title)` resolve to the non-localizing `StringProtocol` overload). A call site
+    passing a computed string localizes it where the string is built instead.
+  - **Remaining gap:** `GalleryFilter.label` returns a plain `String` ("All Items",
+    "Favorites"), so the filter name interpolated into Home's "No videos match …" empty
+    state renders verbatim rather than localizing with the rest of the sentence.
 
 ## Not in scope
 

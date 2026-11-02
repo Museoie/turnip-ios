@@ -797,7 +797,10 @@ struct ProcessingView<Destination: View>: View {
         StatusStateView(
             systemImage: "exclamationmark.triangle",
             title: "Couldn't analyze this video",
-            message: message
+            // A runtime failure string, already in its final form — it goes in verbatim
+            // via interpolation rather than as a localizable literal, so no table lookup
+            // is attempted on the whole message.
+            message: "\(message)"
         ) {
             VStack(spacing: 12) {
                 Button("Retry") { viewModel.retry(video: video, people: settings.personMode) }

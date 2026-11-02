@@ -160,7 +160,7 @@ struct ContributionSheet: View {
                         .accessibilityIdentifier("contribution-failure")
                 }
                 PrimaryActionBar(
-                    model.phase == .reviewing ? String(localized: "Contribute") : String(localized: "Try Again"),
+                    model.phase == .reviewing ? "Contribute" : "Try Again",
                     isEnabled: model.canConfirm
                 ) {
                     Task { await model.confirm() }
