@@ -1,7 +1,7 @@
 # Turnip iOS — On-Device Personalization Design
 
-*Draft · 2026-10-21 · Revised 2026-10-26: the model's embedding
-output is built (turnip-ml#58).*
+*Draft · 2026-10-21 · Revised 2026-11-04: the trick-model loader and
+the clip library are built; the library does not keep pose yet.*
 
 **Scope.** A companion to `docs/DESIGN.md`. The trick-detection model
 the app downloads (the central model, turnip-ml's champion, trained on
@@ -25,12 +25,15 @@ trick-model loader. Nothing here crosses the network, so neither the
 farm nor the master plan changes. Where this doc makes a call none of
 those cover, it says so as *(judgment call)*.
 
-**Status.** Nothing here is built. Of what it stands on, only the
-model's embedding output exists: `Training/export_coreml.py` emits
-`window_embeddings` for the baseline (`MODEL_CONTRACT.md` §3.2.2).
-The trick-model loader (`CONTRIBUTION_DESIGN.md` §7.2) and the clip
-library (`PROFILE_DESIGN.md` §2) are not built yet. This lands after
-Phase 4 (master plan §7) and is iOS-only.
+**Status.** Nothing here is built, but most of what it stands on is.
+`Training/export_coreml.py` emits `window_embeddings` for the baseline
+(`MODEL_CONTRACT.md` §3.2.2). The app has the trick-model loader, with
+pre-fill and the blind sample (`CONTRIBUTION_DESIGN.md` §7.2), and the
+clip library (`PROFILE_DESIGN.md` §2). Two things are still missing.
+The library does not keep a source's pose yet (`PROFILE_DESIGN.md`
+§2.2), which §3 and the rebuild (§6.2) depend on. And no model has
+been published, so no device has embeddings to read (§10). This work
+is iOS-only.
 
 ---
 
