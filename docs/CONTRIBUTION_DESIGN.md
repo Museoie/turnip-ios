@@ -663,8 +663,9 @@ Calls this makes:
   heuristic proposing. The input is the pose contribution encodes,
   resampled to 10 Hz exactly as the farm's ingest resamples it, so the
   model reads on device what it trained on. The run's
-  `window_embeddings` stay in memory with the analysis for
-  personalization (`PERSONALIZATION_DESIGN.md` §4.1). Calls this makes:
+  `window_embeddings` and `window_probs` stay in memory with the
+  analysis for personalization (`PERSONALIZATION_DESIGN.md` §4.1, §5).
+  Calls this makes:
   - Following everyone (`MULTI_PERSON.md`), the model runs once over
     each tracked person's pose, as the heuristic does, so each clip
     frames its own person. *(Judgment call.)*

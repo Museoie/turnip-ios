@@ -1,5 +1,8 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 26 · 2026-11-06 · Settings (§1a) gains Learn from my clips, which keeps a
+personal layer over the trick model on the device.*
+
 *Rev 25 · 2026-11-05 · Contributing asks once. The confirmation sheet opens
 after a save only until the account agrees; from then on a save (§3a) returns
 to Home at once and its named clips upload in the background, resuming by
@@ -90,7 +93,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -362,7 +365,7 @@ default empty state, so it never reads as "your library is empty."
   and the gear is a `ScrimIconButton` (`HomeSettingsButton`) in a corner overlay row, level with
   the wordmark. Presented as a sheet, not pushed onto the flow's `NavigationStack`: it has nothing
   to hand back to Home and isn't part of "pick a video, get clips."
-- Three preferences on this screen, `UserDefaults`-backed (`Turnip/Settings/TurnipSettingsStore.swift`),
+- Four preferences on this screen, `UserDefaults`-backed (`Turnip/Settings/TurnipSettingsStore.swift`),
   each taking effect at its own integration point rather than needing a restart:
   - **Analysis mode** (segmented Real-time / Offline) — whether the camera scores pose live while
     recording (§1b below) or always defers to Processing (§2). Real-time is the default.
@@ -373,12 +376,17 @@ default empty state, so it never reads as "your library is empty."
   - **Analysis granularity** (stepper, 1-30, default 10) — frames sampled per second of footage,
     replacing the fixed rate `docs/DESIGN.md`'s "Performance targets" describes; both the file
     path and the live path (§1b) sample at this rate.
-- A fourth preference lives in the same store but not on this screen: **person mode** (One
+  - **Learn from my clips** (switch, on by default) — whether the app keeps a personal layer over
+    the trick model, which ranks name suggestions by the user's own named clips
+    ([`PERSONALIZATION_DESIGN.md`](PERSONALIZATION_DESIGN.md) §8). Its footnote says it stays on
+    this iPhone. Off deletes what the layer derived; back on rebuilds it from the library. The app
+    never marks a suggestion as personal.
+- A fifth preference lives in the same store but not on this screen: **person mode** (One
   person / Everyone, default One person), whose tricks a take or an analysis is cut into clips
   for. It is chosen where it takes effect, on the camera before recording (§1b) and on
   Processing before "Analyze clips" (§2), and remembered between them.
 - Under the preferences, when the build points at a farm (`TURNIP_FARM_ENDPOINT`), a
-  **Contribution** section. It leads with a fifth preference, **Contribute named clips**
+  **Contribution** section. It leads with a sixth preference, **Contribute named clips**
   (switch, off by default): with it on, Name Clips' save (§3a) contributes the saved clips that
   have a name, on a video with pose analysis. The first save opens the contribution confirmation
   sheet, and nothing is sent until the user agrees there; after that each save sends in the
@@ -388,7 +396,7 @@ default empty state, so it never reads as "your library is empty."
   those, the account: Sign in with Apple while signed out; "Signed in with Apple", Sign Out and
   Delete Account once signed in, deletion confirming with the farm's disclosure first
   (§5.4). The account is not a preference, and nothing outside contribution reads it.
-- Further settings beyond these five are out of scope for this doc's current revision.
+- Further settings beyond these six are out of scope for this doc's current revision.
 
 ### 1b. Camera
 
@@ -843,7 +851,7 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
   trick, highlights, the Clip view — live in
   [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5–§8; this doc carries only the
   changes to the v1 flow, the ones not built yet marked *Planned*.
-- Further Settings options beyond the five §1a covers — aspect ratio, buffer
+- Further Settings options beyond the six §1a covers — aspect ratio, buffer
   duration, and whatever else a future issue asks for stay out of scope until
   one does; the per-clip crop/trim adjustment in Clip Detail's drag handles
   already covers per-clip framing without a setting.

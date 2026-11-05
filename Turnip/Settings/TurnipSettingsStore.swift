@@ -20,6 +20,7 @@ final class TurnipSettingsStore: ObservableObject {
         static let analysisGranularity = "settings.analysisGranularity"
         static let personMode = "settings.personMode"
         static let contributesClips = "settings.contributesClips"
+        static let learnsFromClips = "settings.learnsFromClips"
     }
 
     private let defaults: UserDefaults
@@ -40,6 +41,9 @@ final class TurnipSettingsStore: ObservableObject {
     @Published var contributesClips: Bool {
         didSet { defaults.set(contributesClips, forKey: Key.contributesClips) }
     }
+    @Published var learnsFromClips: Bool {
+        didSet { defaults.set(learnsFromClips, forKey: Key.learnsFromClips) }
+    }
 
     /// `defaults` is injectable so tests exercise a real round trip against an isolated
     /// `UserDefaults` suite rather than the app's shared one.
@@ -53,13 +57,15 @@ final class TurnipSettingsStore: ObservableObject {
             albumName: defaults.string(forKey: Key.albumName) ?? TurnipSettings.defaultAlbumName,
             analysisGranularity: storedGranularity ?? TurnipSettings.defaultGranularity,
             personMode: defaults.string(forKey: Key.personMode).flatMap(PersonMode.init(rawValue:)) ?? .one,
-            contributesClips: defaults.object(forKey: Key.contributesClips) as? Bool ?? false)
+            contributesClips: defaults.object(forKey: Key.contributesClips) as? Bool ?? false,
+            learnsFromClips: defaults.object(forKey: Key.learnsFromClips) as? Bool ?? true)
         analysisMode = loaded.analysisMode
         autoAddToAlbum = loaded.autoAddToAlbum
         albumName = loaded.albumName
         analysisGranularity = loaded.analysisGranularity
         personMode = loaded.personMode
         contributesClips = loaded.contributesClips
+        learnsFromClips = loaded.learnsFromClips
     }
 
     /// The Settings screen's stepper goes through this rather than a plain `@Published` setter,
@@ -83,6 +89,7 @@ final class TurnipSettingsStore: ObservableObject {
             albumName: albumName,
             analysisGranularity: analysisGranularity,
             personMode: personMode,
-            contributesClips: contributesClips)
+            contributesClips: contributesClips,
+            learnsFromClips: learnsFromClips)
     }
 }

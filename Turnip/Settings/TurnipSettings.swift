@@ -55,6 +55,10 @@ struct TurnipSettings: Equatable, Sendable {
     /// (`docs/CONTRIBUTION_DESIGN.md` §3.3). Off by default: contribution is opt-in, and the
     /// confirmation sheet still asks once before anything is sent.
     var contributesClips: Bool
+    /// Whether the app keeps a personal layer over the trick model
+    /// (`docs/PERSONALIZATION_DESIGN.md` §8). On by default: it stays on the device, and with
+    /// nothing to offer it falls back to the central model.
+    var learnsFromClips: Bool
 
     init(
         analysisMode: AnalysisMode = .realTime,
@@ -62,7 +66,8 @@ struct TurnipSettings: Equatable, Sendable {
         albumName: String = TurnipSettings.defaultAlbumName,
         analysisGranularity: Int = TurnipSettings.defaultGranularity,
         personMode: PersonMode = .one,
-        contributesClips: Bool = false
+        contributesClips: Bool = false,
+        learnsFromClips: Bool = true
     ) {
         self.analysisMode = analysisMode
         self.autoAddToAlbum = autoAddToAlbum
@@ -70,6 +75,7 @@ struct TurnipSettings: Equatable, Sendable {
         self.analysisGranularity = Self.clampedGranularity(analysisGranularity)
         self.personMode = personMode
         self.contributesClips = contributesClips
+        self.learnsFromClips = learnsFromClips
     }
 
     /// Clamps to `granularityRange` so a corrupt or out-of-range stored value, or a future

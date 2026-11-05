@@ -273,8 +273,8 @@ Built (`Turnip/Profile/`):
   (`docs/MULTI_PERSON.md`). A video reached without analysis has none. These
   files are in device backups, because they are the only copy once the
   original is gone from Photos. A pose is deleted when the last clip cut from
-  it leaves the library, and deleting the app deletes them all. Nothing reads
-  them yet.
+  it leaves the library, and deleting the app deletes them all. Only the
+  personal layer's rebuild reads them (below).
 - **New read, no new prompt.** `PHAsset.creationDate` of the video a save
   came from, under the existing Photos grant, to date its clips. The Profile
   also shows each saved clip's thumbnail and plays it from Photos by its
@@ -315,27 +315,37 @@ Planned:
 - **`site/privacy.html`** changes when this ships, not before: it describes
   what the shipped app does.
 
-## Planned: on-device personalization (not built)
+## On-device personalization (name ranking built; the rest planned)
 
-After the on-device trick model (master plan Phase 4), the app adapts it
-to its user on the device ([`PERSONALIZATION_DESIGN.md`](PERSONALIZATION_DESIGN.md)).
-Nothing below is collected in the App Store sense.
+With an on-device trick model (master plan Phase 4), the app adapts it to
+its user on the device ([`PERSONALIZATION_DESIGN.md`](PERSONALIZATION_DESIGN.md)).
+Nothing below is collected in the App Store sense. No published model
+carries embeddings yet, so on a real device the layer has nothing to read
+and stays off.
 
-- **No network.** Training runs on the device from the user's own clip
-  library. Nothing it learns or reads is uploaded, and it adds no field
-  to a contribution, so no App Store answer changes.
-- **New data on the device.**
-  - Each trashed trick-model proposal on a source the library keeps
-    leaves two frame indices behind, in the clip library in
-    `Application Support/`, so it is in device backups.
-  - A derived, rebuildable cache (clip embeddings, per-name prototypes,
-    a small keep-layer model) lives in `Caches/`, outside backups.
-- **Deleting it.** Settings' "Learn from my clips" toggle deletes both
-  when turned off; deleting the app deletes both. The farm holds none of
-  it.
+Built (`Turnip/Personalization/`):
+
+- **No network.** It works from the user's own clip library on the device.
+  Nothing it learns or reads is uploaded, and it adds no field to a
+  contribution, so no App Store answer changes.
+- **New data on the device.** A derived, rebuildable cache, each saved
+  clip's embedding and the central model's names for it, in
+  `Caches/Personalization/personal-cache.json`, outside backups. The library
+  doesn't hold it. It is logged as counts only.
+- **Deleting it.** Settings' "Learn from my clips" toggle deletes it when
+  turned off, and deleting the app deletes it. The farm holds none of it.
 - **Background work.** A rebuild after each model update runs as a
-  `BGProcessingTask` on external power. BackgroundTasks is not a
-  required-reason API, so the privacy manifest is unchanged.
+  `BGProcessingTask` on external power, reading the stored pose
+  ("The clip library and the Profile" above), never the video.
+  BackgroundTasks is not a required-reason API, so the privacy manifest is
+  unchanged.
+
+Planned:
+
+- **More data on the device.** Each trashed trick-model proposal on a source
+  the library keeps leaves two frame indices behind, in the clip library in
+  `Application Support/`, so it is in device backups. The cache gains a small
+  keep-layer model. The toggle deletes both.
 - **`site/privacy.html`** changes when this ships, not before.
 
 ## Deferred to v2 / later

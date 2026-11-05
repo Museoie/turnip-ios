@@ -1,7 +1,7 @@
 # Turnip iOS — On-Device Personalization Design
 
-*Draft · 2026-10-21 · Revised 2026-11-05: the library keeps each saved
-clip's pose.*
+*Draft · 2026-10-21 · Revised 2026-11-05: name ranking is built, on the
+pose the library now keeps.*
 
 **Scope.** A companion to `docs/DESIGN.md`. The trick-detection model
 the app downloads (the central model, turnip-ml's champion, trained on
@@ -25,14 +25,22 @@ trick-model loader. Nothing here crosses the network, so neither the
 farm nor the master plan changes. Where this doc makes a call none of
 those cover, it says so as *(judgment call)*.
 
-**Status.** Nothing here is built, but most of what it stands on is.
-`Training/export_coreml.py` emits `window_embeddings` for the baseline
-(`MODEL_CONTRACT.md` §3.2.2). The app has the trick-model loader, with
-pre-fill and the blind sample (`CONTRIBUTION_DESIGN.md` §7.2), and the
-clip library (`PROFILE_DESIGN.md` §2), which keeps each saved clip's
-pose (§2.2) for §3 and the rebuild (§6.2). One thing is still missing:
-no model has been published, so no device has embeddings to read
-(§10). This work is iOS-only.
+**Status.** Name ranking is built (`Turnip/Personalization/`): §4.1,
+§4.2, its gate in §5, §6, the cache in §7 and the toggle in §8. The keep
+layer (§4.3) and dismissed windows (§3) are not. What it stands on is
+in the app: the trick-model loader, with pre-fill and the blind sample
+(`CONTRIBUTION_DESIGN.md` §7.2), and the clip library
+(`PROFILE_DESIGN.md` §2), which keeps each saved clip's pose (§2.2). One
+thing is still missing: no model has been published, so no device has
+embeddings to read and the layer stays off (§10). How the build differs
+from this doc:
+
+- Tier 3 of §4.2, the model's below-bar names, is not built. The
+  suggestions go from tier 2 to the vocabulary.
+- The cache holds each clip's embedding and how far the rebuild has come,
+  not prototypes or gate results (§7).
+
+This work is iOS-only.
 
 ---
 
@@ -110,13 +118,15 @@ no model has been published, so no device has embeddings to read
 Almost everything is already in the clip library (`PROFILE_DESIGN.md`
 §2.1). This doc adds one record.
 
-- **Saved clips with a pose.** For each saved clip whose source has a
-  stored pose sequence (`PROFILE_DESIGN.md` §2.2), the library holds:
+- **Saved clips with a pose.** For each saved clip with a stored pose
+  (`PROFILE_DESIGN.md` §2.2), the library holds:
   its window in canonical 10 Hz frames, its names with their `origin`,
   and its provenance (`auto_detected`, `proposal_model_version`,
   `suggested_names`, `suggestions_withheld`). A clip marked "video
-  deleted" still counts, since its source's pose remains. Sources
-  reached by "Clip manually" have no pose and contribute nothing.
+  deleted" still counts, since its pose remains. Sources reached by
+  "Clip manually" have no pose and contribute nothing, nor do clips
+  saved before the library kept pose, or a clip added by hand following
+  everyone.
 - **Dismissed windows (new).** For each source a save writes to the
   library, one record per trick-model proposal shown on Name Clips and
   trashed there: the source, the proposed `start_frame` and
@@ -160,8 +170,7 @@ A segment's embedding is the same rule over the segment's frames.
   model once over the whole source (`CONTRIBUTION_DESIGN.md` §7.2), and
   its `window_embeddings` are still in memory when Save Clips writes
   the library.
-- **At rebuild,** the model runs again over every library source
-  (§6.2).
+- **At rebuild,** the model runs again over every stored pose (§6.2).
 
 ### 4.2 Name ranking
 
@@ -265,10 +274,17 @@ re-runs after every save and every rebuild.
   however many names it has. A name the central model cannot output,
   such as one outside the vocabulary, can never be a central hit.
   Tier 1 is left out of both sides, since it is the same with or
-  without the layer. Tier 2 is used when its hit rate is higher than
-  the central side's; a tie leaves it off, because it would add
-  nothing. *(Judgment call on the cutoff and on counting a clip
+  without the layer: the keys named on the video's other clips come
+  out of each side's list before it is cut at three, so a repeat within
+  a session scores for neither. Tier 2 is used when its hit rate is
+  higher than the central side's; a tie leaves it off, because it would
+  add nothing. *(Judgment call on the cutoff and on counting a clip
   once.)*
+  *(Judgment call: a clip's central scores are its classes' mean
+  `window_probs` over the rows §4.1 reads, a combo's score going to each
+  of its names. The baseline gives a segment one class, so its names
+  would leave the central side one or two names, and none for a "+"
+  clip, which would flatter the layer. This is the stricter test.)*
 - **Keep layer.** Hold out the newest 20% of labeled band segments, at
   least five, and fit on the rest. The layer passes when its log loss
   on the held-out segments is lower than the central prior's (`p = s`).
@@ -296,11 +312,12 @@ on the main thread.
 - Activating a new model version turns the personal layer off
   (`MODEL_CONTRACT.md` §4). The app runs as §3.3 says until the
   rebuild finishes.
-- **The rebuild.** Decode each library source's stored pose, resample
-  it to canonical 10 Hz, and run the new model over it. Then recompute
-  the clip embeddings and band segments, refit, and re-gate. The work
-  resumes per source, so an interrupted rebuild picks up where it
-  stopped.
+- **The rebuild.** Decode each stored pose, resample it to canonical
+  10 Hz, and run the new model over it. Then recompute the clip
+  embeddings and band segments, refit, and re-gate. The work resumes per
+  pose, so an interrupted rebuild picks up where it stopped. A pose that
+  can't be read or run is passed over, so one bad file can't hold the
+  layer off.
 - **It is bounded, because it is a second pass.** It runs over pose,
   not video (the library holds no video), as a `BGProcessingTask` that
   requires external power. It is deferrable, and skipped while the
@@ -311,9 +328,9 @@ on the main thread.
   of pose (`TRAINING_DESIGN.md` §4.2), a library of 200 five-minute
   sessions is about 100 s of inference.
 - **Build notes:** the deployment target is iOS 16, so BackgroundTasks
-  and Accelerate are available. The app gains a `processing`
-  background mode and a `BGTaskSchedulerPermittedIdentifiers` entry in
-  `project.yml`'s Info.plist. Neither is a required-reason API.
+  and Accelerate are available. The app has a `processing` background
+  mode and a `BGTaskSchedulerPermittedIdentifiers` entry in
+  `Turnip/Resources/Info.plist`. Neither is a required-reason API.
 
 ---
 
@@ -322,12 +339,15 @@ on the main thread.
 | Data | Where | Backed up | Lifetime |
 | --- | --- | --- | --- |
 | Dismissed windows (§3) | the clip library, `Application Support/` | yes, with the library | deleted with its source's pose, or when the toggle is turned off |
-| Personal cache: clip embeddings, prototypes, each source's band segments (frames, score, embedding, label), keep-layer parameters, gate results, keyed by model version | `Caches/` | no | rebuilt on a model update, or after iOS evicts it |
+| Personal cache: clip embeddings with their central names, how far the rebuild has come, and with the keep layer each source's band segments (frames, score, embedding, label) and its parameters, keyed by model version | `Caches/` | no | rebuilt on a model update, or after iOS evicts it |
 
 - The dismissed windows are the only copy of what they record, so they
   live with the library. The cache is derived and rebuildable, so it
   stays out of backups. A restore to a new device brings the library
   back, and the first rebuild there remakes the cache.
+- Prototypes and gate results aren't stored. They read the clips'
+  current names, which change after a save, and take milliseconds to
+  work out again.
 - **Size:** an embedding is 512 bytes at `D = 128`, kept per clip and
   per band segment. 200 clips with a few band segments per source come
   to a few hundred KB. A dismissed window is two integers.
@@ -349,8 +369,7 @@ on the main thread.
   windows and stops recording them. **Turning it back on** rebuilds
   from the library: names and saved clips are still there, and
   dismissed windows start again from empty.
-- `UIUX.md` §1a gains the toggle when this is built. Its current
-  revision covers five preferences.
+- `UIUX.md` §1a carries the toggle.
 - No other UI. The app never marks a suggestion or a proposal as
   personal, just as it never marks a blind clip (`PROFILE_DESIGN.md`
   §4.2).

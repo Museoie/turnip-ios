@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct TurnipApp: App {
     init() {
+        PersonalRebuildTask.register()
         // The sweep races in-flight resolutions: this session can export a fresh composition
         // while the detached sweep below is still snapshotting tmp/. The launch timestamp
         // captured here bounds what the sweep may delete, so only exports orphaned by
@@ -85,6 +86,7 @@ struct TurnipApp: App {
                 ModelUpdateLifecycle.checkForUpdates()
                 Task { await FarmAccount.shared.verifyAppleCredential() }
                 ContributionOutbox.shared.resume()
+                Task { await PersonalLayer.shared.start() }
             }
             // Forced here, not just in `ContentView`, so the DEBUG-only screenshot
             // harnesses above — which never mount `ContentView` — render dark too.

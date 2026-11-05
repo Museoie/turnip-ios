@@ -19,6 +19,8 @@ struct TrickModelOutput: Sendable {
     /// `window_embeddings`, one row per window on the descriptor's grid (§3.2.2); `nil` for a
     /// model without them.
     let embeddings: [[Float]]?
+    /// `window_probs` as the model returned it, one softmax row per window.
+    let windowProbabilities: [[Float]]
 }
 
 /// The trick-detection model (`MODEL_CONTRACT.md` §3), compiled and loaded from the artifact an
@@ -112,7 +114,9 @@ final class TrickModel: @unchecked Sendable {
             }
             embeddings = try Self.rows(of: values, count: windows, width: nil)
         }
-        return TrickModelOutput(segments: descriptor.segments(windowProbabilities: rows), embeddings: embeddings)
+        return TrickModelOutput(
+            segments: descriptor.segments(windowProbabilities: rows), embeddings: embeddings,
+            windowProbabilities: rows)
     }
 
     /// A two-dimensional output as rows, checked against the row count and, when given, the width

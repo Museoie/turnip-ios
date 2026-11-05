@@ -51,7 +51,7 @@ struct NameClipPage: View {
                         isHidden: isCardHidden, onOpen: openEditor, onPrevious: goToPrevious, onNext: goToNext)
                     VStack(alignment: .leading, spacing: 12) {
                         ClipNamingFields(
-                            names: item.names, isMe: item.isMe, usedNames: viewModel.namesUsedOnVideo,
+                            names: item.names, isMe: item.isMe, suggested: viewModel.suggestions(for: item),
                             vocabulary: vocabulary, draft: $draft, isFieldFocused: isFieldFocused,
                             isEnabled: isCurrent, commitDraft: commitDraft, actions: namingActions)
                     }

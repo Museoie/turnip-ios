@@ -64,6 +64,13 @@ struct SettingsView: View {
                         """)
                 }
 
+                Section {
+                    Toggle("Learn from my clips", isOn: $settings.learnsFromClips)
+                        .accessibilityIdentifier("settings-learn-from-clips")
+                } footer: {
+                    Text("Proposals and name suggestions adapt to the clips you save. This stays on this iPhone.")
+                }
+
                 if account.isAvailable {
                     FarmAccountSection(account: account, outbox: outbox, contributesClips: $settings.contributesClips)
                 }

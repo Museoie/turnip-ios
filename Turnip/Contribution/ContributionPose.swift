@@ -64,8 +64,12 @@ struct ContributionPose: Codable, Equatable, Sendable {
     /// A clip window in canonical frames, end exclusive, inside `0..<canonicalFrameCount`:
     /// the frames the farm validates and trains on.
     func canonicalFrames(of window: TrickWindow) -> (start: Int, end: Int) {
-        let count = canonicalFrameCount
-        let rate = Double(Self.canonicalRate)
+        Self.canonicalFrames(of: window, frameCount: canonicalFrameCount)
+    }
+
+    /// The same, for a timeline of `count` canonical frames.
+    static func canonicalFrames(of window: TrickWindow, frameCount count: Int) -> (start: Int, end: Int) {
+        let rate = Double(canonicalRate)
         let start = min(max(Int((window.startTime * rate).rounded(.down)), 0), max(count - 1, 0))
         let end = min(max(Int((window.endTime * rate).rounded(.up)), start + 1), count)
         return (start, end)

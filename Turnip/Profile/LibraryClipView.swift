@@ -53,7 +53,9 @@ struct LibraryClipView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("clip-view-date")
                 ClipNamingFields(
-                    names: clip.names, isMe: clip.isMe, usedNames: library.namesUsed(alongside: clip),
+                    names: clip.names, isMe: clip.isMe,
+                    suggested: PersonalLayer.shared.suggestions(
+                        forSaved: clip, used: library.namesUsed(alongside: clip)),
                     vocabulary: vocabulary.current, draft: $draft, isFieldFocused: $isFieldFocused,
                     isEnabled: true, commitDraft: commitDraft, actions: actions(for: clip.id))
                 Button(role: .destructive) {

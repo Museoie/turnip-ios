@@ -18,8 +18,9 @@ struct ClipNamingFields: View {
 
     let names: [ClipName]
     let isMe: Bool
-    /// Names already given on this clip's video: the first suggestions.
-    let usedNames: [String]
+    /// What the suggestions lead with: the names already given on this clip's video, and the
+    /// user's own names closest to it.
+    let suggested: PersonalSuggestions
     let vocabulary: TrickVocabulary
     @Binding var draft: String
     var isFieldFocused: FocusState<Bool>.Binding
@@ -96,10 +97,7 @@ struct ClipNamingFields: View {
         ChipFlow {
             ForEach(suggestions, id: \.self) { name in
                 Button(name) {
-                    // A pick from the vocabulary is `vocabulary`; a name used earlier on this video
-                    // that the vocabulary doesn't know was typed, so it stays `typed`.
-                    let origin: LabelOrigin = vocabulary.canonicalName(for: name) == nil ? .typed : .vocabulary
-                    actions.add(name, origin)
+                    actions.add(name, NamingSuggestions.origin(of: name, vocabulary: vocabulary))
                     draft = ""
                 }
                 .buttonStyle(ChipButtonStyle(isProminent: false))
@@ -108,17 +106,8 @@ struct ClipNamingFields: View {
         .accessibilityIdentifier("name-clips-suggestions")
     }
 
-    /// Names used on this video first, then the vocabulary's matches for what is typed, led by
-    /// a near-miss correction; none the clip already has.
     private var suggestions: [String] {
-        let query = TrickVocabulary.normalized(draft)
-        let used = usedNames.filter { query.isEmpty || TrickVocabulary.normalized($0).contains(query) }
-        let corrected = vocabulary.suggestedCorrection(for: draft).map { [$0] } ?? []
-        var seen = Set(names.map { TrickVocabulary.normalized($0.name) })
-        return (used + corrected + vocabulary.names(matching: query))
-            .filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
-            .prefix(8)
-            .map { $0 }
+        NamingSuggestions.ordered(draft: draft, given: names, suggested: suggested, vocabulary: vocabulary)
     }
 
     private var whoIsIn: some View {
@@ -128,5 +117,35 @@ struct ClipNamingFields: View {
         }
         .pickerStyle(.segmented)
         .accessibilityIdentifier("name-clips-who")
+    }
+}
+
+/// The naming step's suggestions (`docs/PERSONALIZATION_DESIGN.md` §4.2), the same on every screen
+/// that names a clip.
+enum NamingSuggestions {
+    private static let limit = 8
+
+    /// Names used on this video first, then the user's own names closest to the clip, then the
+    /// vocabulary's matches for what is typed, led by a near-miss correction; none the clip already
+    /// has.
+    static func ordered(
+        draft: String, given: [ClipName], suggested: PersonalSuggestions, vocabulary: TrickVocabulary
+    ) -> [String] {
+        let query = TrickVocabulary.normalized(draft)
+        let personal = (suggested.used + suggested.nearest).filter {
+            query.isEmpty || TrickVocabulary.normalized($0).contains(query)
+        }
+        let corrected = vocabulary.suggestedCorrection(for: draft).map { [$0] } ?? []
+        var seen = Set(given.map { TrickVocabulary.normalized($0.name) })
+        return (personal + corrected + vocabulary.names(matching: query))
+            .filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    /// A pick from the vocabulary is `vocabulary`. A name the vocabulary doesn't know was typed
+    /// once, on this video or an earlier one, so it stays `typed`.
+    static func origin(of name: String, vocabulary: TrickVocabulary) -> LabelOrigin {
+        vocabulary.canonicalName(for: name) == nil ? .typed : .vocabulary
     }
 }

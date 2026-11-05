@@ -32,6 +32,8 @@ final class TurnipSettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.current.personMode, .one)
         XCTAssertFalse(store.contributesClips)
         XCTAssertFalse(store.current.contributesClips)
+        XCTAssertTrue(store.learnsFromClips)
+        XCTAssertTrue(store.current.learnsFromClips)
     }
 
     @MainActor
@@ -43,6 +45,7 @@ final class TurnipSettingsStoreTests: XCTestCase {
         first.setAnalysisGranularity(24)
         first.personMode = .everyone
         first.contributesClips = true
+        first.learnsFromClips = false
 
         let second = TurnipSettingsStore(defaults: defaults)
 
@@ -54,6 +57,8 @@ final class TurnipSettingsStoreTests: XCTestCase {
         XCTAssertEqual(second.current.personMode, .everyone)
         XCTAssertTrue(second.contributesClips)
         XCTAssertTrue(second.current.contributesClips)
+        XCTAssertFalse(second.learnsFromClips)
+        XCTAssertFalse(second.current.learnsFromClips)
     }
 
     @MainActor

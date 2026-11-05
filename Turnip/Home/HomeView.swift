@@ -125,6 +125,7 @@ struct HomeView: View {
             },
             poseFrames: detection.poseFrames,
             people: detection.people,
+            windowEmbeddings: detection.windowEmbeddings,
             asset: asset,
             assetIdentifier: video.assetIdentifier,
             duration: video.duration,

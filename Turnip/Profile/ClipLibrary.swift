@@ -52,6 +52,9 @@ struct LibrarySave: Sendable {
         let isAutoDetected: Bool
         let proposal: ModelProposal?
         var poseID: String?
+        /// The clip's embedding under the model that analyzed it. For the personal layer, whose
+        /// cache keeps it; the library doesn't, since it would go into device backups.
+        var embedding: ClipEmbedding?
     }
 
     let sourceAssetID: String
@@ -81,7 +84,7 @@ final class ClipLibrary: ObservableObject {
     @Published private(set) var earned: [EarnedAchievement] = []
 
     private let fileURL: URL?
-    private let poseStore: SourcePoseStore
+    let poseStore: SourcePoseStore
     private let vocabulary: @MainActor () -> TrickVocabulary
     private let calendar: Calendar
     private let now: () -> Date
@@ -343,5 +346,7 @@ func storeSourcePose(_ frames: [PoseFrameResult], duration: TimeInterval) async 
 func recordInClipLibrary(_ save: LibrarySave) -> [EarnedAchievement] {
     let recordedAt = PHAsset.fetchAssets(withLocalIdentifiers: [save.sourceAssetID], options: nil)
         .firstObject?.creationDate
-    return ClipLibrary.shared.record(save, sourceRecordedAt: recordedAt)
+    let earned = ClipLibrary.shared.record(save, sourceRecordedAt: recordedAt)
+    PersonalLayer.shared.record(save)
+    return earned
 }

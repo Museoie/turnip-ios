@@ -44,6 +44,11 @@ typealias RecordSavedClips = @MainActor (LibrarySave) -> [EarnedAchievement]
 /// Concurrency contract: same as `ExportOneClip`.
 typealias StoreSourcePose = @Sendable (_ frames: [PoseFrameResult], _ duration: TimeInterval) async -> String?
 
+/// Orders a clip's suggestions (`docs/PERSONALIZATION_DESIGN.md` §4.2). `PersonalLayer` plugs in here.
+typealias RankClipNames = @MainActor (
+    _ embedding: ClipEmbedding?, _ proposal: ModelProposal?, _ used: [String], _ given: [ClipName]
+) -> PersonalSuggestions
+
 /// Names which of a clip's two independently-failable steps broke: export and the
 /// Photos-library write fail independently (e.g. Photos permission revoked
 /// mid-save), and the fix differs, so the failure message names the step.
@@ -153,6 +158,9 @@ final class ClipListViewModel: ObservableObject {
     /// (`DetectedClips.people`); a clip with a `personID` reads its own person's frames instead
     /// of `poseFrames`.
     private let people: [PoseTrack]
+    /// The trick model's embeddings over each pose it proposed clips from
+    /// (`DetectedClips.windowEmbeddings`); empty when the heuristic proposed.
+    private let windowEmbeddings: [WindowEmbeddings]
     /// The source video's `PHAsset.localIdentifier`: the clip library's source and the
     /// contribution's video id.
     private let assetIdentifier: String
@@ -166,6 +174,7 @@ final class ClipListViewModel: ObservableObject {
     private let saveToPhotos: SaveOneClipToPhotos
     private let recordSaved: RecordSavedClips
     private let storePose: StoreSourcePose
+    private let rankNames: RankClipNames
     /// The pose stored for each person with a saved clip, `nil` standing for a clip with no person:
     /// a retry after a partial failure keeps what the first run stored.
     private var storedPoseIDs: [Int?: String] = [:]
@@ -227,6 +236,7 @@ final class ClipListViewModel: ObservableObject {
         items: [ClipListItem],
         poseFrames: [PoseFrameResult] = [],
         people: [PoseTrack] = [],
+        windowEmbeddings: [WindowEmbeddings] = [],
         asset: AVAsset,
         assetIdentifier: String,
         duration: TimeInterval,
@@ -235,6 +245,9 @@ final class ClipListViewModel: ObservableObject {
         saveToPhotos: @escaping SaveOneClipToPhotos = saveOneClipToPhotos,
         recordSaved: @escaping RecordSavedClips = { recordInClipLibrary($0) },
         storePose: @escaping StoreSourcePose = { await storeSourcePose($0, duration: $1) },
+        rankNames: @escaping RankClipNames = {
+            PersonalLayer.shared.suggestions(for: $0, proposal: $1, used: $2, given: $3)
+        },
         makeDirectory: @escaping @Sendable () -> URL = defaultExportDirectory,
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettingsStore.shared.current },
         announce: @escaping AccessibilityAnnouncing = postAccessibilityAnnouncement,
@@ -248,6 +261,7 @@ final class ClipListViewModel: ObservableObject {
         self.items = [original] + items
         self.poseFrames = poseFrames
         self.people = people
+        self.windowEmbeddings = windowEmbeddings
         self.asset = asset
         self.assetIdentifier = assetIdentifier
         self.loader = loader
@@ -255,6 +269,7 @@ final class ClipListViewModel: ObservableObject {
         self.saveToPhotos = saveToPhotos
         self.recordSaved = recordSaved
         self.storePose = storePose
+        self.rankNames = rankNames
         self.makeDirectory = makeDirectory
         self.settingsProvider = settingsProvider
         self.announce = announce
@@ -605,7 +620,7 @@ final class ClipListViewModel: ObservableObject {
             return LibrarySave.Clip(
                 id: item.id, window: item.window, exportAssetID: exportAssetID, names: item.names,
                 isMe: item.isMe, isAutoDetected: item.isAutoDetected, proposal: item.proposal,
-                poseID: storedPoseIDs[item.personID])
+                poseID: storedPoseIDs[item.personID], embedding: embedding(of: item))
         }
         guard !saved.isEmpty else { return [] }
         return recordSaved(LibrarySave(
@@ -651,6 +666,17 @@ extension ClipListViewModel {
     var namesUsedOnVideo: [String] {
         var seen = Set<String>()
         return clipsToName.flatMap(\.names).map(\.name).filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
+    }
+
+    /// A clip's embedding, from its own person's run over its window as it stands now. `nil` for a
+    /// clip with no such run: the heuristic proposed, or following everyone it was added by hand.
+    func embedding(of item: ClipListItem) -> ClipEmbedding? {
+        windowEmbeddings.first { $0.personID == item.personID }?.clipEmbedding(of: item.window)
+    }
+
+    /// What a clip's suggestions lead with.
+    func suggestions(for item: ClipListItem) -> PersonalSuggestions {
+        rankNames(embedding(of: item), item.proposal, namesUsedOnVideo, item.names)
     }
 
     /// Adds a trick name to a clip, trimmed; a blank name, or one the clip already has in any

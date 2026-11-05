@@ -20,7 +20,7 @@ struct TrickSegment: Equatable, Sendable {
 
 /// What decoding the baseline's window classifier needs to know about it (`MODEL_CONTRACT.md`
 /// §3.2.1): its classes and the window grid its rows sit on.
-struct TrickModelDescriptor: Equatable, Sendable {
+struct TrickModelDescriptor: Hashable, Sendable {
     let classes: [String]
     let windowFrames: Int
     let windowStride: Int

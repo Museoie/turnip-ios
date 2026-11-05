@@ -127,7 +127,9 @@ struct LibraryNamingView: View {
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(String(localized: "Clip \(index + 1) of \(clips.count)"))
                 ClipNamingFields(
-                    names: clip.names, isMe: clip.isMe, usedNames: library.namesUsed(alongside: clip),
+                    names: clip.names, isMe: clip.isMe,
+                    suggested: PersonalLayer.shared.suggestions(
+                        forSaved: clip, used: library.namesUsed(alongside: clip)),
                     vocabulary: vocabulary.current, draft: isCurrent ? $draft : .constant(""),
                     isFieldFocused: $isFieldFocused, isEnabled: isCurrent, commitDraft: commitDraft,
                     actions: actions(for: clip.id))

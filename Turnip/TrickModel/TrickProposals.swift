@@ -25,10 +25,13 @@ struct WindowEmbeddings: Hashable, Sendable {
     /// when it followed one person.
     let personID: Int?
     let modelVersion: String
-    let windowFrames: Int
-    let windowStride: Int
+    /// The grid the rows sit on, and the classes `probabilities`' columns are.
+    let descriptor: TrickModelDescriptor
     /// Row `i` covers canonical frames `[i × windowStride, i × windowStride + windowFrames)`.
     let rows: [[Float]]
+    /// `window_probs` on the same grid: what the central model makes of each window, which the
+    /// personal layer's gate measures itself against (`docs/PERSONALIZATION_DESIGN.md` §5).
+    let probabilities: [[Float]]
 }
 
 /// The client's postprocessing of the model's segments (`MODEL_CONTRACT.md` §3.3, normative).
@@ -119,11 +122,15 @@ extension TrickModel {
         let clips = rules.segments(from: output.segments).map {
             ($0.window, rules.proposal(for: $0, modelVersion: version, using: &generator))
         }
-        let embeddings = output.embeddings.map {
+        return TrickModelProposals(clips: clips, embeddings: windowEmbeddings(of: output, personID: personID))
+    }
+
+    /// A run's embeddings as the personal layer reads them; `nil` for a model without them.
+    func windowEmbeddings(of output: TrickModelOutput, personID: Int?) -> WindowEmbeddings? {
+        output.embeddings.map {
             WindowEmbeddings(
-                personID: personID, modelVersion: version, windowFrames: descriptor.windowFrames,
-                windowStride: descriptor.windowStride, rows: $0)
+                personID: personID, modelVersion: version, descriptor: descriptor, rows: $0,
+                probabilities: output.windowProbabilities)
         }
-        return TrickModelProposals(clips: clips, embeddings: embeddings)
     }
 }

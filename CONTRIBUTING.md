@@ -307,8 +307,9 @@ see `.github/workflows/ci.yml`) and as a step of Xcode Cloud's
 `Turnip/` is a single Xcode target; its subdirectories are flat, one per
 domain, named for the domain they own (`App`, `Camera`, `ClipEditor`,
 `ClipList`, `Contribution`, `DesignSystem`, `Home`, `LivePose`, `Media`,
-`ModelUpdates`, `Models`, `NameClips`, `Photos`, `Pose`, `Processing`,
-`Profile`, `Resources`, `Settings`, `TrickDetection`, `TrickModel`).
+`ModelUpdates`, `Models`, `NameClips`, `Personalization`, `Photos`, `Pose`,
+`Processing`, `Profile`, `Resources`, `Settings`, `TrickDetection`,
+`TrickModel`).
 `ci_scripts/check-directory-list.sh` compares that list against the tree on
 every PR, so adding a directory without naming it here fails CI.
 
