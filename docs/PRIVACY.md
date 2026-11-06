@@ -179,6 +179,13 @@ require a manifest/signature. If a dependency is added, check both.
   that reaches Processing stays on disk in the eight-take store until it is
   evicted. It never leaves the device, is never backed up, and is deleted at
   end of use or swept at the next launch.
+- **Offline run scratch.** Processing a take from the file scores it the same
+  way and streams the scored frames to a `tmp/` scratch file
+  (`turnip-live-pose-<uuid>.bin`) instead of holding them in memory, so a long
+  take holds at most a 64 KB buffer in memory while it is scored and detected.
+  The file is deleted when the run ends — success, failure, or cancellation —
+  and swept at launch when a session died before that. It never leaves the
+  device, is never backed up, and holds only the packed keypoints, never video.
 - **Everyone in frame.** The pose model finds up to six people per frame, so
   bystanders' keypoints are computed and held alongside the athlete's, in either person mode (`docs/MULTI_PERSON.md`). Following
   everyone, the poses of the people who own a clip travel with the clips to Name Clips.

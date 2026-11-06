@@ -195,7 +195,9 @@ final class ProcessingPipelineClipTests: XCTestCase {
 /// asset: the regression test below needs frames whose display-orientation size differs from
 /// the video track's encoded size, which the fixture file alone cannot produce (it is written
 /// unrotated on purpose, so its track carries the landscape size).
-private struct ScriptedSampler: FrameSampling, Sendable {
+/// A scripted sampler for the pipeline tests: hands over canned pose results instead of
+/// decoding frames. Shared with `StreamingDetectionTests`, which drives `run()` the same way.
+struct ScriptedSampler: FrameSampling, Sendable {
     let renderSize: CGSize
     let results: [PoseFrameResult]
     /// Every `times` list a targeted call asked for, in call order.
@@ -248,7 +250,7 @@ private struct ScriptedSampler: FrameSampling, Sendable {
 
 /// What a `ScriptedSampler`'s targeted calls asked for. A class with a lock: the sampler is a
 /// `Sendable` struct and the calls come off the main actor.
-private final class RequestedTimes: @unchecked Sendable {
+final class RequestedTimes: @unchecked Sendable {
     private let lock = NSLock()
     private var calls: [[TimeInterval]] = []
 

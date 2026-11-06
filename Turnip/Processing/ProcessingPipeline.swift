@@ -216,20 +216,26 @@ struct ProcessingPipeline: Sendable {
         let totalFrames = await Self.estimatedSampledFrames(of: videoTrack, sampleRate: sampleRate)
 
         let infer = try await makeInference()
-        let accumulator = FrameAccumulator()
+        // The scored frames stream to a disk-backed store, not an array: a long take's
+        // frames would otherwise sit in memory twice over — once here, once in the result.
+        // The store holds 64 KB in memory; the detection pass re-reads it from disk.
+        let store = PoseFrameStore()
+        defer { store.discard() }
+        let firstRenderSize = FirstRenderSize()
         let reportClock = ProgressReportClock()
         try await sampler.sampleFrames(from: asset) { frame in
             let scored = MultiPoseFrame(
                 frameIndex: frame.frameIndex, timestamp: frame.timestamp, people: try await infer(frame))
-            let processed = await accumulator.append(scored, renderSize: frame.renderSize)
+            try store.append(scored)
+            await firstRenderSize.set(frame.renderSize)
             if await reportClock.shouldReport() {
                 await onProgress(ProcessingProgress(
-                    frame: processed, totalFrames: totalFrames,
+                    frame: store.count, totalFrames: totalFrames,
                     timestamp: frame.timestamp, skeletons: mode.skeletons(in: scored)))
             }
         }
+        try store.flush()
 
-        let frames = await accumulator.frames
         // Pose keypoints are measured in the composition's display-orientation space (see
         // SampledFrame.renderSize), so the crop rect is computed against the frames' renderSize,
         // not the track's encoded naturalSize: on a rotated (portrait phone) clip naturalSize
@@ -237,16 +243,16 @@ struct ProcessingPipeline: Sendable {
         // rect. No sampled frames means no keypoints, so the size is unused there —
         // `.zero` marks it unknown, which the calculator treats as unlocatable and buildClips
         // turns into the full-frame fallback.
-        let renderedPixelSize = await accumulator.renderSize ?? .zero
+        let renderedPixelSize = await firstRenderSize.value ?? .zero
         // The asset's duration, loaded here so the detected windows are
         // clamped before they reach triage: without it the trailing buffer
         // lets the last window run past the file, and the card labels a
         // longer clip than the export produces.
         let duration = try await asset.load(.duration).seconds
         return ProcessingResult(
-            detection: detect(
-                in: frames, people: mode, renderedPixelSize: renderedPixelSize, duration: duration,
-                trickModel: await loadTrickModel()),
+            detection: detectStreaming(
+                frames: { store.frames() }, people: mode, renderedPixelSize: renderedPixelSize,
+                duration: duration, trickModel: await loadTrickModel()),
             asset: asset)
     }
 
@@ -261,37 +267,45 @@ struct ProcessingPipeline: Sendable {
     ) async throws -> ProcessingResult {
         let duration = try await asset.load(.duration).seconds
         // An unreadable store (the system may purge `tmp/` while the app is suspended) reads as
-        // no live frames: the whole file is sampled instead of failing the run.
-        let live = (try? partial.store.loadAll())?.filter { $0.timestamp < duration } ?? []
+        // no live frames: the whole file is sampled instead of failing the run. Only the
+        // timestamps are collected — the live frames themselves stream from the store at
+        // detection, so the live take never sits in memory as an array.
+        let liveTimes = partial.store.frames().map(\.timestamp).filter { $0 < duration }
         let wanted = PoseBackfill.wantedTimes(
-            scored: live.map(\.timestamp), interval: partial.interval, duration: duration)
+            scored: liveTimes, interval: partial.interval, duration: duration)
 
-        let accumulator = FrameAccumulator()
+        // The gaps are sampled into a fresh store, and detection streams the live and
+        // backfilled stores merged by timestamp — neither take sits in memory as an array.
+        let store = PoseFrameStore()
+        defer { store.discard() }
+        let firstRenderSize = FirstRenderSize()
         if !wanted.isEmpty {
             let infer = try await makeInference()
             let reportClock = ProgressReportClock()
-            let totalFrames = live.count + wanted.count
+            let totalFrames = liveTimes.count + wanted.count
             try await sampler.sampleFrames(from: asset, at: wanted) { frame in
                 let scored = MultiPoseFrame(
                     frameIndex: frame.frameIndex, timestamp: frame.timestamp, people: try await infer(frame))
-                let processed = await accumulator.append(scored, renderSize: frame.renderSize)
+                try store.append(scored)
+                await firstRenderSize.set(frame.renderSize)
                 if await reportClock.shouldReport() {
                     await onProgress(ProcessingProgress(
-                        frame: live.count + processed, totalFrames: totalFrames,
+                        frame: liveTimes.count + store.count, totalFrames: totalFrames,
                         timestamp: frame.timestamp, skeletons: mode.skeletons(in: scored)))
                 }
             }
+            try store.flush()
         }
 
-        let frames = PoseBackfill.merged(
-            live: live, backfilled: await accumulator.frames, interval: partial.interval)
+        let frames = MergedPoseFrames(
+            live: partial.store, backfilled: store, interval: partial.interval, duration: duration)
         // The file's composition size when any frame came from the file, as `run` uses; the
         // live pass's own measure of the same picture otherwise.
-        let renderedPixelSize = await accumulator.renderSize ?? partial.renderedPixelSize
+        let renderedPixelSize = await firstRenderSize.value ?? partial.renderedPixelSize
         return ProcessingResult(
-            detection: detect(
-                in: frames, people: mode, renderedPixelSize: renderedPixelSize, duration: duration,
-                trickModel: await loadTrickModel()),
+            detection: detectStreaming(
+                frames: { AnySequence(frames) }, people: mode, renderedPixelSize: renderedPixelSize,
+                duration: duration, trickModel: await loadTrickModel()),
             asset: asset)
     }
 
@@ -335,6 +349,80 @@ struct ProcessingPipeline: Sendable {
         }
         clips.sort { ($0.window.startTime, $0.personID ?? -1) < ($1.window.startTime, $1.personID ?? -1) }
         return DetectedClips(clips: clips, poseFrames: primary, people: people, windowEmbeddings: embeddings)
+    }
+
+    /// Steps 4-6 over a take streamed from its store, one pass per step instead of one
+    /// array held through all of them: the frames are re-read from disk each pass, so a
+    /// long take's memory is the result the editor needs — every scored frame, in order —
+    /// plus a few seconds of working set, not the take held twice over. The steps are the
+    /// same ones `detect` runs, and the result is the same one: the equivalence tests pin
+    /// it. `frames` must be re-iterable — the store's sequences are — because the
+    /// heuristic's crop sweep passes over the take again after the signal.
+    private func detectStreaming(
+        frames: () -> AnySequence<MultiPoseFrame>, people mode: PersonMode,
+        renderedPixelSize: CGSize, duration: TimeInterval, trickModel: TrickModel?
+    ) -> DetectedClips {
+        // Pass 1: the result's frames and the motion signal, in one walk. The signal
+        // streamer holds a few seconds of frames; the primaries accumulate into the
+        // result — the editor needs every scored frame, so this is the run's floor.
+        var poseFrames: [PoseFrameResult] = []
+        var signal = StreamingMotionSignal(renderedPixelSize: renderedPixelSize)
+        for frame in frames() {
+            let primary = frame.primary
+            poseFrames.append(primary)
+            signal.consume(primary)
+        }
+        let samples = signal.finish()
+
+        guard mode == .everyone else {
+            if let trickModel {
+                // Whole-take inference by nature: it runs over the result array, no extra
+                // copy — the same call `detect` makes.
+                let found = proposeClips(
+                    in: poseFrames, personID: nil, renderedPixelSize: renderedPixelSize,
+                    duration: duration, trickModel: trickModel)
+                return DetectedClips(
+                    clips: found.clips, poseFrames: poseFrames,
+                    windowEmbeddings: found.embeddings.map { [$0] } ?? [])
+            }
+            // The heuristic's windows, from the streamed signal, then one sweep over the
+            // take collecting each frame into the windows containing it — the same
+            // window-to-frames pairing `buildClips` does, window by window. Windows are
+            // clamped before the sweep, so a frame past the asset's end cannot land in
+            // one: the batch form filters by the clamped window.
+            let windows = windowDetector.detectWindows(in: samples)
+                .compactMap { $0.clamped(to: duration) }
+                .sorted { $0.startTime < $1.startTime }
+            var inWindows: [[PoseFrameResult]] = Array(repeating: [], count: windows.count)
+            for frame in frames() {
+                let primary = frame.primary
+                for (index, window) in windows.enumerated()
+                where primary.timestamp >= window.startTime && primary.timestamp <= window.endTime {
+                    inWindows[index].append(primary)
+                }
+            }
+            var clips: [ProcessedClip] = []
+            for (index, window) in windows.enumerated() {
+                clips += buildClips(
+                    proposed: [(window, nil)], personID: nil, frames: inWindows[index],
+                    renderedPixelSize: renderedPixelSize, duration: duration)
+            }
+            return DetectedClips(clips: clips, poseFrames: poseFrames, windowEmbeddings: [])
+        }
+        var clips: [ProcessedClip] = []
+        var people: [PoseTrack] = []
+        var embeddings: [WindowEmbeddings] = []
+        for track in personTracker.tracks(in: frames(), renderedPixelSize: renderedPixelSize) {
+            let found = proposeClips(
+                in: track.frames, personID: track.id, renderedPixelSize: renderedPixelSize, duration: duration,
+                trickModel: trickModel)
+            guard !found.clips.isEmpty else { continue }
+            people.append(track)
+            clips += found.clips
+            embeddings += found.embeddings.map { [$0] } ?? []
+        }
+        clips.sort { ($0.window.startTime, $0.personID ?? -1) < ($1.window.startTime, $1.personID ?? -1) }
+        return DetectedClips(clips: clips, poseFrames: poseFrames, people: people, windowEmbeddings: embeddings)
     }
 
     /// Steps 4-6 over one person's frames, proposed by the trick model when one is loaded. A model
@@ -461,25 +549,21 @@ extension PersonMode {
     }
 }
 
-/// Collects the handler's per-frame results. The sampler's handler is `@Sendable` and runs
-/// off the main actor, so the accumulation point is an actor rather than a captured `var`.
-private actor FrameAccumulator {
-    private(set) var frames: [MultiPoseFrame] = []
-    /// The composition grid the run's frames were rendered onto, in display orientation. The
-    /// sampler builds one composition per run, so the first frame's size stands for all of
-    /// them; pose keypoints are measured in this space, so the crop math denormalizes against
-    /// it rather than the track's encoded `naturalSize`. Nil when the sampler
-    /// produced no frame.
-    private(set) var renderSize: CGSize?
+/// The first sampled frame's render size: the composition grid the run's frames were
+/// rendered onto, in display orientation. The sampler builds one composition per run, so
+/// the first frame's size stands for all of them; pose keypoints are measured in this
+/// space, so the crop math denormalizes against it rather than the track's encoded
+/// `naturalSize`. The sampler's handler is `@Sendable` and runs off the main actor, so
+/// the size crosses through this actor rather than a captured `var`. Nil when the
+/// sampler produced no frame.
+private actor FirstRenderSize {
+    private(set) var value: CGSize?
 
-    /// Appends the frame's inference result and returns the 1-based processed count for
-    /// progress reporting. Records the run's render size from the first frame.
-    func append(_ result: MultiPoseFrame, renderSize: CGSize) -> Int {
-        if self.renderSize == nil {
-            self.renderSize = renderSize
+    /// Records the first size seen; later frames keep the same composition.
+    func set(_ size: CGSize) {
+        if value == nil {
+            value = size
         }
-        frames.append(result)
-        return frames.count
     }
 }
 
