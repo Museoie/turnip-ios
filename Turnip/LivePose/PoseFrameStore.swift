@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// A disk-backed, append-only store for packed pose frames, written as the live drain scores
 /// them and read back when the take is detected or backfilled. A recording session scores a

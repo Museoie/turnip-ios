@@ -101,9 +101,9 @@ final class VideoLibraryViewModel: ObservableObject {
     /// Pose frames the camera scored for takes it did not cover end to end, newest last, keyed by
     /// asset. Every resolution looks here, so a take backed out of Processing unanalyzed and
     /// opened again later — from its tile, or swiped to — still analyzes only what live inference
-    /// missed. In memory for this session only, like the thumbnails: v1 persists no pose data
-    /// (docs/PRIVACY.md). Bounded, because a take whose tile is never opened again is never
-    /// removed.
+    /// missed. Packed to a `tmp/` scratch file for this session only, like the thumbnails: the file
+    /// is deleted when its partial is discarded or evicted, and swept at launch (docs/PRIVACY.md).
+    /// Bounded, because a take whose tile is never opened again is never removed.
     private var partialPoses: [(assetIdentifier: String, frames: PartialPoseFrames)] = []
 
     let thumbnails = ThumbnailLoader()

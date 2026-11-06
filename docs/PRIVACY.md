@@ -173,10 +173,12 @@ require a manifest/signature. If a dependency is added, check both.
   file as they are scored (`turnip-live-pose-<uuid>.bin`), on the pushed
   `SelectedVideo` and in `VideoLibraryViewModel`'s store of the last eight
   such takes, so Processing analyzes only the rest (`docs/LIVE_POSE.md`).
-  The file is deleted when the take is detected, backfilled, or discarded,
+  The file is deleted when the take is detected or its partial is discarded,
   and swept at launch when a session died before that — so a long session
-  holds at most a 64 KB buffer in memory instead of the whole take. It never
-  leaves the device, is never backed up, and is gone when the app quits.
+  holds at most a 64 KB buffer in memory instead of the whole take. A partial
+  that reaches Processing stays on disk in the eight-take store until it is
+  evicted. It never leaves the device, is never backed up, and is deleted at
+  end of use or swept at the next launch.
 - **Everyone in frame.** The pose model finds up to six people per frame, so
   bystanders' keypoints are computed and held alongside the athlete's, in either person mode (`docs/MULTI_PERSON.md`). Following
   everyone, the poses of the people who own a clip travel with the clips to Name Clips.

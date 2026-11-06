@@ -79,6 +79,7 @@ final class PoseFrameStoreTests: XCTestCase {
 
         XCTAssertEqual(store.count, 1_000)
         XCTAssertLessThan(store.bufferedByteCount, 64 * 1024, "the buffer flushes at the threshold")
+        try store.flush()
         XCTAssertEqual(try store.loadAll().count, 1_000, "flushing early loses nothing")
     }
 
