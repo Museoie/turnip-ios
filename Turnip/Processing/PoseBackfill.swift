@@ -6,12 +6,16 @@ import Foundation
 /// short. They are valid where they exist, so Processing keeps them and analyzes only the
 /// stretches they miss (`PoseBackfill`) instead of decoding the whole take again.
 ///
-/// Held in memory only — on the pushed `SelectedVideo` and in `VideoLibraryViewModel`'s
-/// per-session store — never written to disk: docs/PRIVACY.md has v1 persisting no pose data.
+/// Held on the pushed `SelectedVideo` and in `VideoLibraryViewModel`'s per-session store as a
+/// `PoseFrameStore`: packed frames in a `tmp/` scratch file, deleted when the partial is
+/// discarded and swept at launch when a session died before that (docs/PRIVACY.md). Never in
+/// `Documents/`, never backed up, never off the device.
 struct PartialPoseFrames: Hashable, Sendable {
-    /// File-relative, in timestamp order, with everyone the model found in each: the mode the
-    /// take is analyzed in is chosen on Processing, after the live pass.
-    let frames: [MultiPoseFrame]
+    /// The live-scored frames, packed and on disk, shared by reference: copies of this value
+    /// read the same file, and the file is deleted when the last copy is gone (or when the
+    /// store is discarded). Equality is by store identity: two partials are equal when they
+    /// carry the same stored recording, not merely the same frames.
+    let store: PoseFrameStore
     /// The spacing the live pass sampled at: 1 / the granularity it was armed with. The gaps are
     /// filled at this spacing too, not at whatever granularity Processing is set to by the time
     /// it runs, so the merged take is one grid and its motion signal one rate.
@@ -19,6 +23,20 @@ struct PartialPoseFrames: Hashable, Sendable {
     /// What the live keypoints are normalized against (`LivePoseCoverage.renderedPixelSize`), for
     /// the crop step when nothing needs filling and no file frame supplies a render size.
     let renderedPixelSize: CGSize
+
+    init(store: PoseFrameStore, interval: TimeInterval, renderedPixelSize: CGSize) {
+        self.store = store
+        self.interval = interval
+        self.renderedPixelSize = renderedPixelSize
+    }
+
+    /// A partial from frames already in memory — for tests and for call sites that build one
+    /// without a drain. Writes the frames to a fresh store.
+    init(frames: [MultiPoseFrame], interval: TimeInterval, renderedPixelSize: CGSize) throws {
+        self.store = try PoseFrameStore(frames: frames)
+        self.interval = interval
+        self.renderedPixelSize = renderedPixelSize
+    }
 }
 
 /// A sample with a place on a take's timeline, which is all `PoseBackfill.merged` needs of it.

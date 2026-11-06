@@ -151,6 +151,15 @@ struct PhotoVideoResolver {
             withPrefix: CameraCaptureViewModel.recordingFilenamePrefix, olderThan: launchDate)
     }
 
+    /// Removes live-pose stores orphaned by sessions that never reached their cleanup
+    /// (crash, force-quit, watchdog kill) — the same leak the export sweep bounds, for the
+    /// drain's temp files. Called once at launch from `TurnipApp` beside the export sweep,
+    /// with the same launch-date bound.
+    static func deleteOrphanedTemporaryPoseStores(olderThan launchDate: Date) {
+        deleteOrphanedTemporaryFiles(
+            withPrefix: PoseFrameStore.temporaryFilenamePrefix, olderThan: launchDate)
+    }
+
     private static func deleteOrphanedTemporaryFiles(withPrefix prefix: String, olderThan launchDate: Date) {
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: URL.temporaryDirectory, includingPropertiesForKeys: [.creationDateKey])

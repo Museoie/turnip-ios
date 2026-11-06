@@ -52,10 +52,10 @@ final class VideoLibrarySelectionTests: XCTestCase {
     /// A take the camera scored in part carries those frames to Processing, and opening the same
     /// take again later — backed out unanalyzed, tapped again from its tile — still finds them.
     /// Another video does not.
-    func testPartialLivePoseTravelsAndIsRememberedForTheSameTake() async {
+    func testPartialLivePoseTravelsAndIsRememberedForTheSameTake() async throws {
         let manager = ScriptedImageManager(.asset(AVURLAsset(url: URL(filePath: "/tmp/turnip-selection-partial.mov"))))
         let model = VideoLibraryViewModel(resolver: PhotoVideoResolver(imageManager: manager))
-        let partial = PartialPoseFrames(
+        let partial = try PartialPoseFrames(
             frames: PoseFixture.frames(hipXPositions: [0.4, 0.5]).map(MultiPoseFrame.init(single:)), interval: 0.1,
             renderedPixelSize: CGSize(width: 1080, height: 1920))
 
@@ -76,10 +76,10 @@ final class VideoLibrarySelectionTests: XCTestCase {
     }
 
     /// The store is per session and bounded: the oldest take falls out once it is full.
-    func testThePartialPoseStoreForgetsTheOldestTakeWhenFull() async {
+    func testThePartialPoseStoreForgetsTheOldestTakeWhenFull() async throws {
         let manager = ScriptedImageManager(.asset(AVURLAsset(url: URL(filePath: "/tmp/turnip-selection-capacity.mov"))))
         let model = VideoLibraryViewModel(resolver: PhotoVideoResolver(imageManager: manager))
-        let partial = PartialPoseFrames(
+        let partial = try PartialPoseFrames(
             frames: PoseFixture.frames(hipXPositions: [0.5]).map(MultiPoseFrame.init(single:)), interval: 0.1,
             renderedPixelSize: .zero)
 

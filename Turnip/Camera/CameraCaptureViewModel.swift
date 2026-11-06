@@ -921,14 +921,29 @@ extension CameraCaptureViewModel {
         // coverage is checked against the grid the recording actually ran, not the shipped default.
         let interval = 1.0 / Double(armedSampleRate)
         guard LivePoseCoverage.isComplete(outcome, interval: interval) else {
-            let partial = outcome.results.isEmpty ? nil : PartialPoseFrames(
-                frames: outcome.results, interval: interval, renderedPixelSize: liveRenderedPixelSize)
+            if outcome.results.isEmpty {
+                outcome.results.discard()
+                return CameraRecording(fileURL: fileURL, detectedClips: nil, partialPose: nil)
+            }
+            let partial = PartialPoseFrames(
+                store: outcome.results, interval: interval,
+                renderedPixelSize: liveRenderedPixelSize)
             return CameraRecording(fileURL: fileURL, detectedClips: nil, partialPose: partial)
         }
         let detect = makeDetectClips(armedSampleRate)
-        return CameraRecording(
-            fileURL: fileURL,
-            detectedClips: await detect(outcome.results, armedPersonMode, liveRenderedPixelSize))
+        do {
+            let frames = try outcome.results.loadAll()
+            let clips = await detect(frames, armedPersonMode, liveRenderedPixelSize)
+            outcome.results.discard()
+            return CameraRecording(fileURL: fileURL, detectedClips: clips)
+        } catch {
+            // The file is still handed on with no clips and no partial, so Processing analyzes
+            // it from scratch; the failure is logged, not shown — a store that cannot be read
+            // after a clean drain is a device I/O fault, not a problem with the take.
+            LivePoseLogger.logStoreLoadFailure(error)
+            outcome.results.discard()
+            return CameraRecording(fileURL: fileURL, detectedClips: nil, partialPose: nil)
+        }
     }
 
     private func cancelLivePose() {

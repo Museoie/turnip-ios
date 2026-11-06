@@ -260,7 +260,7 @@ struct ProcessingPipeline: Sendable {
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         let duration = try await asset.load(.duration).seconds
-        let live = partial.frames.filter { $0.timestamp < duration }
+        let live = try partial.store.loadAll().filter { $0.timestamp < duration }
         let wanted = PoseBackfill.wantedTimes(
             scored: live.map(\.timestamp), interval: partial.interval, duration: duration)
 
