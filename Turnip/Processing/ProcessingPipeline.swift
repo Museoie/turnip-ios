@@ -260,7 +260,9 @@ struct ProcessingPipeline: Sendable {
         onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         let duration = try await asset.load(.duration).seconds
-        let live = try partial.store.loadAll().filter { $0.timestamp < duration }
+        // An unreadable store (the system may purge `tmp/` while the app is suspended) reads as
+        // no live frames: the whole file is sampled instead of failing the run.
+        let live = (try? partial.store.loadAll())?.filter { $0.timestamp < duration } ?? []
         let wanted = PoseBackfill.wantedTimes(
             scored: live.map(\.timestamp), interval: partial.interval, duration: duration)
 
