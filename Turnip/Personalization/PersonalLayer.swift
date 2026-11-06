@@ -35,6 +35,7 @@ final class PersonalLayer {
     static let shared = PersonalLayer(
         library: .shared, settings: .shared, vocabulary: { VocabularyStore.shared.current },
         cacheStore: PersonalCacheStore(fileURL: PersonalCacheStore.defaultFileURL),
+        activeVersion: { ModelUpdateStore.production?.activeModel()?.version.rawValue },
         loadModel: { await TrickModelLoader.shared.model() },
         scheduler: PersonalRebuildTask.scheduler)
 
@@ -44,6 +45,7 @@ final class PersonalLayer {
     private let library: ClipLibrary
     private let vocabulary: @MainActor () -> TrickVocabulary
     private let cacheStore: PersonalCacheStore
+    private let activeVersion: @Sendable () -> String?
     private let loadModel: @Sendable () async -> PoseEmbedder?
     private let scheduler: PersonalRebuildScheduler
     private let isTooHot: @Sendable () -> Bool
@@ -64,6 +66,7 @@ final class PersonalLayer {
         settings: TurnipSettingsStore,
         vocabulary: @escaping @MainActor () -> TrickVocabulary,
         cacheStore: PersonalCacheStore,
+        activeVersion: @escaping @Sendable () -> String?,
         loadModel: @escaping @Sendable () async -> PoseEmbedder?,
         scheduler: PersonalRebuildScheduler,
         isTooHot: @escaping @Sendable () -> Bool = { PersonalLayer.thermalStateIsTooHot },
@@ -72,6 +75,7 @@ final class PersonalLayer {
         self.library = library
         self.vocabulary = vocabulary
         self.cacheStore = cacheStore
+        self.activeVersion = activeVersion
         self.loadModel = loadModel
         self.scheduler = scheduler
         self.isTooHot = isTooHot
@@ -122,14 +126,22 @@ final class PersonalLayer {
     /// Brings the layer to the active model: picks up the cache built against it, or drops another
     /// version's and starts again from the library (`MODEL_CONTRACT.md` §4). Safe to call as often
     /// as the app comes forward.
+    ///
+    /// Goes by the store's active version and never loads the model. `TrickModelLoader` loads once
+    /// per launch and keeps what it found, so a load from here, beside the launch's update check,
+    /// would keep a model staged moments later from every analysis of that launch, and the toggle
+    /// would decide which central model analysis uses. A version the first analysis activates
+    /// reaches the layer the next time the app comes forward.
     func start() async {
         guard isEnabled else { return }
-        guard let model = await loadModel(), model.hasEmbeddings else {
+        let activeVersion = activeVersion
+        let active = await Task.detached(priority: .utility) { activeVersion() }.value
+        guard let version = active else {
             cache = nil
             ranking = nil
             return
         }
-        guard cache?.modelVersion != model.version else {
+        guard cache?.modelVersion != version else {
             refresh()
             return
         }
@@ -142,11 +154,11 @@ final class PersonalLayer {
             return store.load()
         }.value
         // The toggle can go off, or another start land, while the file was being read.
-        guard isEnabled, cache?.modelVersion != model.version else { return }
-        if let stored, stored.modelVersion == model.version {
+        guard isEnabled, cache?.modelVersion != version else { return }
+        if let stored, stored.modelVersion == version {
             cache = stored
         } else {
-            var fresh = PersonalCache(modelVersion: model.version)
+            var fresh = PersonalCache(modelVersion: version)
             fresh.isRebuilt = !library.clips.contains { $0.poseID != nil }
             cache = fresh
         }
@@ -248,14 +260,23 @@ final class PersonalLayer {
     /// done, keeping its clips' embeddings, then turns the layer back on through the gate. Picks up
     /// where the last run stopped. Returns whether it finished; it stops early when `shouldStop`
     /// says so or the device runs hot, and asks to run again.
+    ///
+    /// Each pass picks its pose from the cache as it stands, because turning the toggle off and on
+    /// mid-run starts the cache over and the poses already done have to run again. A model without
+    /// embeddings, which only its load can show, has nothing to run: the rebuild ends there and the
+    /// layer stays off, with no clip to rank.
     @discardableResult
     func rebuild(shouldStop: @escaping @Sendable () -> Bool = { false }) async -> Bool {
         await start()
-        guard isEnabled, let model = await loadModel(), let cache, !cache.isRebuilt else { return true }
-        let clipsByPose = Dictionary(grouping: library.clips.filter { $0.poseID != nil }) { $0.poseID ?? "" }
+        guard isEnabled, cache?.isRebuilt == false, let model = await loadModel() else { return true }
+        // This load can be the one that activates a staged model, and the layer follows it.
+        await start()
+        let clipsWithPose = model.hasEmbeddings ? library.clips.filter { $0.poseID != nil } : []
+        let clipsByPose = Dictionary(grouping: clipsWithPose) { $0.poseID ?? "" }
+        let sortedPoses = clipsByPose.sorted { $0.key < $1.key }
         let poses = library.poseStore
-        for (poseID, clips) in clipsByPose.sorted(by: { $0.key < $1.key })
-        where !cache.rebuiltPoseIDs.contains(poseID) {
+        while isEnabled, let started = cache, started.modelVersion == model.version,
+              let (poseID, clips) = sortedPoses.first(where: { !started.rebuiltPoseIDs.contains($0.key) }) {
             guard !shouldStop(), !isTooHot() else {
                 scheduler.schedule()
                 return false
@@ -270,7 +291,7 @@ final class PersonalLayer {
             self.cache = current
             persist(current)
         }
-        guard isEnabled, var finished = self.cache else { return false }
+        guard isEnabled, var finished = self.cache, finished.modelVersion == model.version else { return false }
         finished.isRebuilt = true
         self.cache = finished
         scheduler.cancel()

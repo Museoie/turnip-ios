@@ -318,6 +318,15 @@ on the main thread.
   pose, so an interrupted rebuild picks up where it stopped. A pose that
   can't be read or run is passed over, so one bad file can't hold the
   layer off.
+- **The layer never loads the model to come forward.** It goes by the
+  store's active version, leaving the launch's one load to the first
+  analysis or the rebuild, so a model staged just after launch still
+  reaches that launch's analyses (`MODEL_CONTRACT.md` §4) and the toggle
+  has no say in which central model analysis uses. A version the first
+  analysis activates reaches the layer the next time the app comes
+  forward. Only a load shows whether a model has embeddings, so a model
+  without them ends its rebuild with nothing to run, and the layer
+  stays off.
 - **It is bounded, because it is a second pass.** It runs over pose,
   not video (the library holds no video), as a `BGProcessingTask` that
   requires external power. It is deferrable, and skipped while the

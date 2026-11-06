@@ -426,13 +426,19 @@ final class NameRankingGateTests: XCTestCase {
         XCTAssertEqual(outcome.personalHits, 50)
     }
 
-    /// Every prototype counts toward ranking, not just the fifty clips held out.
+    /// Every clip counts toward the prototypes, not just the fifty held out: only the two older
+    /// hooks keep a held-out hook's name above the three clips a prototype needs.
     func testClipsOlderThanTheFiftyStillShapeThePrototypes() throws {
-        let old = (0..<3).map { _ in PersonalFixture.example(["hook": 1], vector: PersonalFixture.axis(1), at: 0) }
-        let new = (0..<50).map { index in
-            PersonalFixture.example(["hook": 1], vector: PersonalFixture.axis(1), at: 100 + Double(index))
+        let old = (0..<2).map { _ in PersonalFixture.example(["hook": 1], vector: PersonalFixture.axis(1), at: 0) }
+        let corks = (0..<48).map { index in
+            PersonalFixture.example(["cork": 1], vector: PersonalFixture.axis(0), at: 100 + Double(index))
         }
-        XCTAssertEqual(try XCTUnwrap(NameRankingGate.outcome(of: old + new)).clips, 50)
+        let hooks = (0..<2).map { index in
+            PersonalFixture.example(["hook": 1], vector: PersonalFixture.axis(1), at: 200 + Double(index))
+        }
+        let outcome = try XCTUnwrap(NameRankingGate.outcome(of: old + corks + hooks))
+        XCTAssertEqual(outcome.clips, 50)
+        XCTAssertEqual(outcome.personalHits, 50)
     }
 
     /// The central model's fourth name doesn't count, however right it is.

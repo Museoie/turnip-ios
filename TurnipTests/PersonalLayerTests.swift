@@ -10,17 +10,27 @@ private final class FakeModel: PoseEmbedder, @unchecked Sendable {
     private let lock = NSLock()
     private var ranPoses: [ContributionPose] = []
     private let failing: Set<Float>
+    private let heldRun: Int?
+    private let release = DispatchSemaphore(value: 0)
 
-    init(version: String = "v1", hasEmbeddings: Bool = true, failing: Set<Float> = []) {
+    /// `heldRun` is the run, counting from 1, that waits inside the model until `releaseHeldRun()`.
+    init(version: String = "v1", hasEmbeddings: Bool = true, failing: Set<Float> = [], heldRun: Int? = nil) {
         self.version = version
         self.hasEmbeddings = hasEmbeddings
         self.failing = failing
+        self.heldRun = heldRun
     }
 
     var runCount: Int { lock.withLock { ranPoses.count } }
 
+    func releaseHeldRun() { release.signal() }
+
     func windowEmbeddings(over pose: ContributionPose) throws -> WindowEmbeddings? {
-        lock.withLock { ranPoses.append(pose) }
+        let run = lock.withLock { () -> Int in
+            ranPoses.append(pose)
+            return ranPoses.count
+        }
+        if run == heldRun { release.wait() }
         let first = pose.slots.first.flatMap { $0 }?.first ?? 0
         if failing.contains(first) { throw TrickModelError.unexpectedOutput }
         return WindowEmbeddings(
@@ -61,15 +71,22 @@ final class PersonalLayerTests: XCTestCase {
         try? FileManager.default.removeItem(at: directory)
     }
 
+    /// `activeVersion` is what the store reports after that many loads; left out, it is the model's
+    /// own.
     private func makeLayer(
-        model: PoseEmbedder? = FakeModel(), isTooHot: @escaping @Sendable () -> Bool = { false },
+        model: PoseEmbedder? = FakeModel(), activeVersion: (@Sendable (_ loads: Int) -> String?)? = nil,
+        isTooHot: @escaping @Sendable () -> Bool = { false },
         namingSettles: DispatchQueue.SchedulerTimeType.Stride = .seconds(600)
     ) -> PersonalLayer {
         let counts = Counts()
         self.counts = counts
         return PersonalLayer(
             library: library, settings: settings, vocabulary: { PersonalFixture.vocabulary }, cacheStore: cacheStore,
-            loadModel: { model },
+            activeVersion: { activeVersion.map { $0(counts.loadCount) } ?? model?.version },
+            loadModel: {
+                counts.addLoad()
+                return model
+            },
             scheduler: PersonalRebuildScheduler(schedule: { counts.addScheduled() }, cancel: { counts.addCancelled() }),
             isTooHot: isTooHot, namingSettles: namingSettles)
     }
@@ -78,10 +95,13 @@ final class PersonalLayerTests: XCTestCase {
         private let lock = NSLock()
         private var scheduled = 0
         private var cancelled = 0
+        private var loads = 0
         var scheduledCount: Int { lock.withLock { scheduled } }
         var cancelledCount: Int { lock.withLock { cancelled } }
+        var loadCount: Int { lock.withLock { loads } }
         func addScheduled() { lock.withLock { scheduled += 1 } }
         func addCancelled() { lock.withLock { cancelled += 1 } }
+        func addLoad() { lock.withLock { loads += 1 } }
     }
 
     private var counts = Counts()
@@ -127,12 +147,67 @@ final class PersonalLayerTests: XCTestCase {
         XCTAssertNil(layer.ranking)
     }
 
-    func testAModelWithoutEmbeddingsHasNoRanking() async {
-        let layer = makeLayer(model: FakeModel(hasEmbeddings: false))
-        await layer.start()
-        saveFlashKicks(12, layer: layer)
-        await layer.refresh().value
+    /// Only the load can show a model has no embeddings, so its rebuild runs nothing and ends, and
+    /// the layer stops asking for one.
+    func testAModelWithoutEmbeddingsHasNoRanking() async throws {
+        for index in 0..<12 {
+            save(name: "flash kick", embedding: nil, poseID: try storedPose(Float(index + 1) / 20), layer: nil)
+        }
+        let model = FakeModel(hasEmbeddings: false)
+        let layer = makeLayer(model: model)
+
+        let finished = await layer.rebuild()
+        await layer.settle()
+
+        XCTAssertTrue(finished)
+        XCTAssertEqual(model.runCount, 0)
         XCTAssertNil(layer.ranking)
+        XCTAssertEqual(cacheStore.load()?.isRebuilt, true)
+        let scheduledBefore = counts.scheduledCount
+        await layer.start()
+        await layer.settle()
+        XCTAssertEqual(counts.scheduledCount, scheduledBefore)
+    }
+
+    /// The launch's one load belongs to the first analysis, so a model staged moments after launch
+    /// still reaches it.
+    func testComingForwardNeverLoadsTheModel() async throws {
+        let first = makeLayer()
+        await first.start()
+        saveFlashKicks(10, layer: first)
+        await first.refresh().value
+        await first.settle()
+        XCTAssertNotNil(first.ranking)
+        XCTAssertEqual(counts.loadCount, 0)
+
+        save(name: "flash kick", embedding: nil, poseID: try storedPose(0.2), layer: nil)
+        let evicted = makeLayer(model: FakeModel(version: "v2"))
+        await evicted.start()
+        await evicted.settle()
+        XCTAssertEqual(counts.loadCount, 0, "even when the cache has to start again")
+    }
+
+    func testTheToggleBackOnNeverLoadsTheModel() async throws {
+        save(name: "flash kick", embedding: nil, poseID: try storedPose(0.2), layer: nil)
+        let layer = makeLayer()
+        settings.learnsFromClips = false
+        for _ in 0..<200 where counts.cancelledCount == 0 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        settings.learnsFromClips = true
+        for _ in 0..<200 where counts.scheduledCount == 0 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        await layer.settle()
+        XCTAssertGreaterThan(counts.scheduledCount, 0)
+        XCTAssertEqual(counts.loadCount, 0)
+    }
+
+    func testARebuildWithNothingToDoNeverLoadsTheModel() async {
+        let layer = makeLayer()
+        let finished = await layer.rebuild()
+        XCTAssertTrue(finished)
+        XCTAssertEqual(counts.loadCount, 0)
     }
 
     func testTooFewClipsHaveNoRanking() async {
@@ -349,6 +424,25 @@ final class PersonalLayerTests: XCTestCase {
         XCTAssertGreaterThan(counts.cancelledCount, 0, "and leaves no second run queued")
     }
 
+    /// The rebuild's load tries a staged model first, and the store makes it active, so the run that
+    /// began on the old version carries on under the new one.
+    func testTheRebuildFollowsTheModelItsLoadActivates() async throws {
+        for index in 0..<10 {
+            save(name: "flash kick", embedding: nil, poseID: try storedPose(Float(index + 1) / 20), layer: nil)
+        }
+        let staged = FakeModel(version: "v2")
+        let layer = makeLayer(model: staged, activeVersion: { loads in loads == 0 ? "v1" : "v2" })
+
+        let finished = await layer.rebuild()
+        await layer.settle()
+
+        XCTAssertTrue(finished)
+        XCTAssertEqual(staged.runCount, 10)
+        XCTAssertEqual(cacheStore.load()?.modelVersion, "v2")
+        XCTAssertEqual(cacheStore.load()?.isRebuilt, true)
+        XCTAssertNotNil(layer.ranking)
+    }
+
     /// Two clips of a person share a pose, which runs once.
     func testClipsThatShareAPoseRunItOnce() async throws {
         let poseID = try storedPose(0.2)
@@ -561,6 +655,43 @@ final class PersonalLayerTests: XCTestCase {
         await layer.settle()
         XCTAssertTrue(finished, "nothing to do while it's off")
         XCTAssertNil(cacheStore.load())
+    }
+
+    /// Off and back on mid-run starts the cache over, so the pose done before the flip runs again,
+    /// and the rebuild doesn't call itself finished with it missing.
+    func testTheToggleOffAndBackOnDuringARebuildRunsEveryPoseAgain() async throws {
+        for index in 0..<3 {
+            save(name: "flash kick", embedding: nil, poseID: try storedPose(Float(index + 1) / 10), layer: nil)
+        }
+        let model = FakeModel(heldRun: 2)
+        let layer = makeLayer(model: model)
+        let rebuild = Task { await layer.rebuild() }
+        for _ in 0..<400 where model.runCount < 2 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertEqual(model.runCount, 2)
+
+        settings.learnsFromClips = false
+        for _ in 0..<400 where counts.cancelledCount == 0 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        let scheduledBefore = counts.scheduledCount
+        settings.learnsFromClips = true
+        for _ in 0..<400 where counts.scheduledCount == scheduledBefore {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertGreaterThan(counts.scheduledCount, scheduledBefore)
+        model.releaseHeldRun()
+
+        let finished = await rebuild.value
+        await layer.settle()
+
+        XCTAssertTrue(finished)
+        let cache = try XCTUnwrap(cacheStore.load())
+        XCTAssertTrue(cache.isRebuilt)
+        XCTAssertEqual(cache.rebuiltPoseIDs.count, 3)
+        XCTAssertEqual(cache.clips.count, 3)
+        XCTAssertEqual(model.runCount, 4)
     }
 
     // MARK: - The real model
