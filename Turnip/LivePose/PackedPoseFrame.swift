@@ -31,7 +31,7 @@ struct PackedPosePerson: Hashable, Sendable {
     /// compares values (windows, crop rects), and the overlay reads the live rich frames,
     /// never the stored ones.
     func unpack() -> DetectedPerson {
-        let keypoints = (0..<(keypoints.count / 3)).map { index in
+        let unpacked = (0..<(keypoints.count / 3)).map { index in
             let base = index * 3
             return PoseKeypoint(
                 name: index < PoseKeypoint.names.count
@@ -40,7 +40,7 @@ struct PackedPosePerson: Hashable, Sendable {
                 x: keypoints[base + 1],
                 confidence: keypoints[base + 2])
         }
-        return DetectedPerson(score: score, box: box, keypoints: keypoints)
+        return DetectedPerson(score: score, box: box, keypoints: unpacked)
     }
 }
 
