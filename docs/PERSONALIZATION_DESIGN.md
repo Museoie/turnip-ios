@@ -101,7 +101,7 @@ is iOS-only.
 - **Federated learning.** It uploads model updates, and a personal
   model encodes how its user moves. That reopens the standing decision
   that only keypoints and opaque IDs leave the device, on explicit
-  per-clip opt-in (`CONTRIBUTION_DESIGN.md` §9 item 4). That is a
+  opt-in (`CONTRIBUTION_DESIGN.md` §9 item 4). That is a
   product decision, not part of this design.
 
 ---

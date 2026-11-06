@@ -83,6 +83,7 @@ struct TurnipApp: App {
             ) { _ in
                 ModelUpdateLifecycle.checkForUpdates()
                 Task { await FarmAccount.shared.verifyAppleCredential() }
+                ContributionOutbox.shared.resume()
             }
             // Forced here, not just in `ContentView`, so the DEBUG-only screenshot
             // harnesses above — which never mount `ContentView` — render dark too.

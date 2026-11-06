@@ -2,10 +2,11 @@ import AuthenticationServices
 import SwiftUI
 
 /// Settings' Contribution section (`docs/CONTRIBUTION_DESIGN.md` §3.3, §5.4): the Contribute named
-/// clips switch, then sign in with Apple, sign out, and delete the farm account. Shown only when
-/// the build points at a farm.
+/// clips switch, what is still waiting to send, then sign in with Apple, sign out, and delete the
+/// farm account. Shown only when the build points at a farm.
 struct FarmAccountSection: View {
     @ObservedObject var account: FarmAccount
+    @ObservedObject var outbox: ContributionOutbox
     @Binding var contributesClips: Bool
     @State private var isConfirmingDeletion = false
     @State private var failureMessage: String?
@@ -14,6 +15,12 @@ struct FarmAccountSection: View {
         Section {
             Toggle("Contribute named clips", isOn: $contributesClips)
                 .accessibilityIdentifier("settings-contribute-clips")
+            if outbox.waitingClipCount > 0 {
+                Label(waitingMessage, systemImage: "arrow.up.circle")
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(waitingMessage)
+                    .accessibilityIdentifier("settings-contribution-waiting")
+            }
             if account.isSignedIn {
                 Label("Signed in with Apple", systemImage: "checkmark.seal")
                     .accessibilityIdentifier("settings-farm-signed-in")
@@ -42,7 +49,7 @@ struct FarmAccountSection: View {
             Button("Delete Account", role: .destructive) {
                 Task {
                     do {
-                        try await account.deleteAccount()
+                        try await outbox.deleteAccount()
                     } catch {
                         failureMessage = error.localizedDescription
                     }
@@ -52,6 +59,16 @@ struct FarmAccountSection: View {
             Text(ContributionDisclosure.accountDeletion)
         }
         .errorAlert("Couldn't finish", message: $failureMessage)
+    }
+
+    /// Background uploads say nothing on their own, so this is where a queue stuck behind an
+    /// expired session gets noticed.
+    private var waitingMessage: String {
+        let count = outbox.waitingClipCount
+        let waiting = count == 1
+            ? String(localized: "1 clip waiting to send.")
+            : String(localized: "\(count) clips waiting to send.")
+        return account.isSignedIn ? waiting : "\(waiting) \(String(localized: "Sign in to finish."))"
     }
 }
 
@@ -97,9 +114,15 @@ enum ContributionDisclosure {
     static let consent = String(localized: """
         Contribute only clips of yourself, or of people who agreed.
         """)
+    static let ongoing = String(localized: """
+        You're only asked this once. After you agree, the named clips of each video you save are \
+        sent in the background without asking again, clips marked as someone else included. Turn \
+        off Contribute named clips in Settings to stop.
+        """)
     static let contributeSwitch = String(localized: """
-        With Contribute named clips on, saving an analyzed video's clips asks to send the named \
-        ones. Nothing is sent until you confirm.
+        With Contribute named clips on, your first save asks before anything is sent. After you \
+        agree, each save sends its named clips in the background, and an interrupted upload picks \
+        up again by itself. Turning this off cancels what's still waiting.
         """)
     static let accountFooter = String(localized: """
         Signing in lets you contribute named clips to train Turnip's trick detection. \

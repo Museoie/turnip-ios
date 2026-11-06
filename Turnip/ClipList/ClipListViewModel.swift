@@ -657,8 +657,8 @@ extension ClipListViewModel {
         items[index].isMe = isMe
     }
 
-    /// The contribution the saved, named clips make, laid out for the confirmation sheet — none
-    /// while Settings' Contribute named clips is off, or for a video with no pose analysis.
+    /// The contribution the saved, named clips make — none while Settings' Contribute named clips
+    /// is off, or for a video with no pose analysis.
     func contributionPlan() -> ContributionPlan {
         let contributes = settingsProvider().contributesClips && hasPose
         return ContributionPlan(

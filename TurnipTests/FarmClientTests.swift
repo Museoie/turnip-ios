@@ -2,51 +2,6 @@ import CryptoKit
 import XCTest
 @testable import Turnip
 
-/// Records every request and answers from a script, in order.
-private final class ScriptedFarm: @unchecked Sendable {
-    struct Reply {
-        let status: Int
-        let body: String
-        var headers: [String: String] = [:]
-    }
-
-    private let lock = NSLock()
-    private var replies: [Reply]
-    private(set) var requests: [URLRequest] = []
-
-    init(_ replies: [Reply]) {
-        self.replies = replies
-    }
-
-    var client: FarmClient {
-        FarmClient(baseURL: URL(string: "https://farm.test")!) { request in
-            try self.answer(request)
-        }
-    }
-
-    private func answer(_ request: URLRequest) throws -> (Data, URLResponse) {
-        lock.lock()
-        defer { lock.unlock() }
-        requests.append(request)
-        guard !replies.isEmpty else { throw URLError(.cannotConnectToHost) }
-        let reply = replies.removeFirst()
-        let response = HTTPURLResponse(
-            url: request.url!, statusCode: reply.status, httpVersion: nil, headerFields: reply.headers)!
-        return (Data(reply.body.utf8), response)
-    }
-}
-
-/// Every Keychain operation, in memory.
-private final class MemorySecrets: SecretStore, @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [String: String] = [:]
-
-    func value(for name: String) -> String? { lock.withLock { values[name] } }
-    func setValue(_ value: String, for name: String) { lock.withLock { values[name] = value } }
-    func removeValue(for name: String) { _ = lock.withLock { values.removeValue(forKey: name) } }
-    func names(withPrefix prefix: String) -> [String] { lock.withLock { values.keys.filter { $0.hasPrefix(prefix) } } }
-}
-
 final class FarmClientTests: XCTestCase {
     private static let videoID = String(repeating: "ab", count: 32)
     private static let clipID = UUID(uuidString: "8F0E2C4A-1B2D-4E5F-9A0B-1C2D3E4F5A6B")!
@@ -258,6 +213,59 @@ final class FarmClientTests: XCTestCase {
             XCTAssertEqual(error as? FarmError, .sourceAlreadyClaimed)
         }
         XCTAssertNil(credentials.sourceKey(for: Self.videoID))
+    }
+
+    /// A retry finds the key an interrupted try kept. A claim conflict proves it owns nothing all
+    /// the same, so it goes.
+    func testAClaimedVideoDropsTheKeyKeptFromAnEarlierTry() async throws {
+        let farm = ScriptedFarm([])
+        let credentials = FarmCredentials(store: MemorySecrets())
+        let uploader = ContributionUploader(client: farm.client, credentials: credentials)
+        _ = try? await uploader.contribute(source(), session: "tok")
+        XCTAssertNotNil(credentials.sourceKey(for: Self.videoID))
+
+        farm.script([.init(status: 409, body: #"{"error":{"code":"SOURCE_ALREADY_CLAIMED","message":"m"}}"#)])
+        _ = try? await uploader.contribute(source(), session: "tok")
+
+        XCTAssertNil(credentials.sourceKey(for: Self.videoID))
+    }
+
+    // MARK: - Consent
+
+    func testConsentBelongsToTheAppleUserWhoGaveIt() {
+        let credentials = FarmCredentials(store: MemorySecrets())
+        XCTAssertFalse(credentials.hasConsented)
+
+        credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
+        XCTAssertFalse(credentials.hasConsented)
+        credentials.recordConsent()
+        XCTAssertTrue(credentials.hasConsented)
+
+        credentials.signedOut()
+        XCTAssertTrue(credentials.hasConsented, "signing out doesn't take it back")
+
+        credentials.signedIn(sessionToken: "tok", appleUserID: "user-2")
+        XCTAssertFalse(credentials.hasConsented, "another account hasn't seen the disclosure")
+
+        credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
+        XCTAssertTrue(credentials.hasConsented)
+        credentials.withdrawConsent()
+        XCTAssertFalse(credentials.hasConsented)
+    }
+
+    /// The next account on this iPhone hasn't seen the disclosure, even signing in as the same
+    /// Apple user: the account that agreed is gone.
+    @MainActor
+    func testDeletingTheAccountWithdrawsConsent() async throws {
+        let farm = ScriptedFarm([.init(status: 204, body: "")])
+        let credentials = FarmCredentials(store: MemorySecrets())
+        credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
+        credentials.recordConsent()
+
+        try await FarmAccount(client: farm.client, credentials: credentials).deleteAccount()
+
+        credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
+        XCTAssertFalse(credentials.hasConsented)
     }
 
     func testGivesUpWaitingForIngestWithBlobMissing() async {

@@ -9,6 +9,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var settings: TurnipSettingsStore
     var account: FarmAccount = .shared
+    var outbox: ContributionOutbox = .shared
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -64,7 +65,7 @@ struct SettingsView: View {
                 }
 
                 if account.isAvailable {
-                    FarmAccountSection(account: account, contributesClips: $settings.contributesClips)
+                    FarmAccountSection(account: account, outbox: outbox, contributesClips: $settings.contributesClips)
                 }
             }
             .navigationTitle("Settings")

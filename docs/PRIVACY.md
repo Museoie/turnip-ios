@@ -201,8 +201,10 @@ What a build with `TURNIP_FARM_ENDPOINT` set sends to the farm
 - **Sign in with Apple**, from Settings or the contribution sheet, at the
   user's tap. No name or email scope is requested; the farm sees the
   identity token, whose only claim it keeps is the per-app `sub`.
-- **A contribution**, only from the confirmation sheet, only for clips the
-  user named and toggled, and only on Confirm: the video's `video_id`
+- **A contribution**, only with Contribute named clips on, only for clips
+  the user named and saved, and only once the account has agreed on the
+  confirmation sheet, which asks the first time and covers every later
+  save. It goes in the background, not at a tap: the video's `video_id`
   (SHA-256 of the Photos identifier, never the identifier), its pose
   keypoints as a TKP1 blob, each clip's window in pose frames, its trick
   names with how each was given, the session token and the source's key.
@@ -212,12 +214,16 @@ What a build with `TURNIP_FARM_ENDPOINT` set sends to the farm
   source the app holds a key for, then `DELETE /api/account`.
 
 On the device: the session token, the Apple user ID it belongs to (for the
-credential-state check) and one random key per contributed source live in
-the Keychain, readable after first unlock and never migrated off the device.
+credential-state check), the Apple user ID that agreed to contribute and one
+random key per contributed source live in the Keychain, readable after first
+unlock and never migrated off the device.
 The fetched vocabulary is cached in `Application Support/turnip-vocabulary.json`.
-Nothing is written to `Documents/`. No required-reason API was added: the
-Keychain isn't one, and the vocabulary cache is read and written without
-file metadata.
+A contribution waiting to send is kept in `Application Support/ContributionOutbox/`,
+with its pose keypoints, until the farm holds it. The folder is excluded from
+device backups, and turning Contribute named clips off or deleting the account
+empties it. Nothing is written to `Documents/`. No required-reason API was
+added: the Keychain isn't one, and the vocabulary cache and the outbox are read
+and written without file metadata.
 
 What changes before release, and is not decided here: the nutrition label
 (the Apple `sub` and pose keypoints, linked to the account for 30 days after
@@ -324,8 +330,9 @@ Nothing below is collected in the App Store sense.
     their last edit, then kept with no account link.
   - The account can be deleted in-app; that removes every contribution
     the app still holds a key for.
-  - The contribution sheet discloses both, and asks users to contribute
-    only clips of themselves or of people who agreed (`turnip-farm`
+  - The contribution sheet discloses both once, when the account first
+    agrees, and asks users to contribute only clips of themselves or of
+    people who agreed (`turnip-farm`
     `BACKEND_DESIGN.md` §1.2.17, §7.1, §8; `CONTRIBUTION_DESIGN.md` §5.4).
   - `site/privacy.html` needs the same update when contribution ships.
 - Analytics / crash-reporting consent — `docs/DESIGN.md` decision #7:

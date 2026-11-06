@@ -18,6 +18,7 @@ struct NameClipsView: View {
     @StateObject private var viewModel: ClipListViewModel
     @ObservedObject private var vocabulary: VocabularyStore
     @ObservedObject private var account: FarmAccount
+    private let outbox: ContributionOutbox
     /// A run that found nothing says so; a video that arrived by "Clip manually" wasn't looked at.
     let showsNoTricksFound: Bool
     let popToRoot: () -> Void
@@ -51,6 +52,7 @@ struct NameClipsView: View {
         showsNoTricksFound: Bool = false,
         vocabulary: VocabularyStore = .shared,
         account: FarmAccount = .shared,
+        outbox: ContributionOutbox = .shared,
         popToRoot: @escaping () -> Void = {}
     ) {
         _viewModel = StateObject(wrappedValue: ClipListViewModel(
@@ -58,6 +60,7 @@ struct NameClipsView: View {
             duration: duration, loader: loader))
         _vocabulary = ObservedObject(wrappedValue: vocabulary)
         _account = ObservedObject(wrappedValue: account)
+        self.outbox = outbox
         self.showsNoTricksFound = showsNoTricksFound
         self.popToRoot = popToRoot
     }
@@ -102,8 +105,10 @@ struct NameClipsView: View {
         .sheet(isPresented: $isShowingContribution, onDismiss: popToRoot) {
             if let contribution {
                 ContributionSheet(
-                    model: ContributionViewModel(plan: contribution, account: account),
-                    thumbnail: { await viewModel.thumbnail(for: $0) })
+                    plan: contribution,
+                    account: account,
+                    thumbnail: { await viewModel.thumbnail(for: $0) },
+                    confirm: { source in Task { await outbox.confirm(source) } })
             }
         }
         .onChange(of: clips.count) { count in
@@ -357,19 +362,25 @@ struct NameClipsView: View {
 
     // MARK: - Save
 
-    /// The save, then the contribution sheet when Settings' Contribute named clips is on, a saved
-    /// clip has a name and the farm can take it, and back to Home once that closes.
+    /// The save, then back to Home. When Settings' Contribute named clips is on, a saved clip has
+    /// a name and the farm can take it, the contribution sheet comes first if this account hasn't
+    /// agreed yet; once it has, the clips go to the outbox and Home doesn't wait for their upload.
     private func save() {
         commitDraft()
         isFieldFocused = false
         Task {
             guard await viewModel.save() else { return }
             let plan = viewModel.contributionPlan()
-            if account.isAvailable, plan.hasClips {
+            guard account.isAvailable, plan.hasClips else {
+                popToRoot()
+                return
+            }
+            if account.credentials.hasConsented {
+                if let source = plan.source { await outbox.enqueue(source) }
+                popToRoot()
+            } else {
                 contribution = plan
                 isShowingContribution = true
-            } else {
-                popToRoot()
             }
         }
     }

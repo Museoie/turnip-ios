@@ -12,14 +12,16 @@ protocol SecretStore: Sendable {
 
 /// The farm's credentials, by what they are rather than by Keychain name
 /// (`docs/CONTRIBUTION_DESIGN.md` §5.4): the farm session token, the Apple user the session was
-/// signed in as (for `getCredentialState(forUserID:)`), and one source key per contributed
-/// `video_id`. The source keys are the only record of what this app contributed — the farm keeps
-/// no list of anyone's sources — so they outlive sign-out and go only with account deletion.
+/// signed in as (for `getCredentialState(forUserID:)`), the Apple user who agreed to contribute,
+/// and one source key per contributed `video_id`. The source keys are the only record of what this
+/// app contributed — the farm keeps no list of anyone's sources — so they outlive sign-out and go
+/// only with account deletion.
 struct FarmCredentials: Sendable {
     let store: SecretStore
 
     private static let sessionName = "session-token"
     private static let appleUserName = "apple-user"
+    private static let consentName = "consenting-apple-user"
     private static let sourceKeyPrefix = "source-key."
 
     var sessionToken: String? { store.value(for: Self.sessionName) }
@@ -35,20 +37,38 @@ struct FarmCredentials: Sendable {
         store.removeValue(for: Self.appleUserName)
     }
 
+    /// Whether the confirmation sheet's disclosure has been agreed to. The farm asks for it once per
+    /// account (`BACKEND_DESIGN.md` §7.1), so it belongs to the Apple user who agreed: a different
+    /// signed-in account is asked afresh. It outlives sign-out, and with no one signed in there is
+    /// no other account to ask about.
+    var hasConsented: Bool {
+        guard let consenting = store.value(for: Self.consentName) else { return false }
+        return appleUserID.map { $0 == consenting } ?? true
+    }
+
+    func recordConsent() {
+        guard let appleUserID else { return }
+        store.setValue(appleUserID, for: Self.consentName)
+    }
+
+    func withdrawConsent() {
+        store.removeValue(for: Self.consentName)
+    }
+
     func sourceKey(for videoID: String) -> String? {
         store.value(for: Self.sourceKeyPrefix + videoID)
     }
 
     /// The source's key, minted and stored the first time the source is contributed: 32 random
     /// bytes, base64url without padding (the 43 characters the farm expects).
-    func sourceKeyMintingIfNeeded(for videoID: String) -> (key: String, isNew: Bool) {
-        if let existing = sourceKey(for: videoID) { return (existing, false) }
+    func sourceKeyMintingIfNeeded(for videoID: String) -> String {
+        if let existing = sourceKey(for: videoID) { return existing }
         var bytes = [UInt8](repeating: 0, count: 32)
         let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         precondition(status == errSecSuccess, "SecRandomCopyBytes failed: \(status)")
         let key = Data(bytes).base64URLEncodedString()
         store.setValue(key, for: Self.sourceKeyPrefix + videoID)
-        return (key, true)
+        return key
     }
 
     func removeSourceKey(for videoID: String) {

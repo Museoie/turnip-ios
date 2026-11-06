@@ -1,87 +1,23 @@
 import SwiftUI
 
-/// Drives the confirmation sheet: nothing is sent until Confirm, and what the sheet reports at
-/// the end is the farm's own read-back of the source — done only when every clip came back with
-/// the names it was sent with.
-@MainActor
-final class ContributionViewModel: ObservableObject {
-    enum Phase: Equatable {
-        case reviewing
-        case sending(ContributionUploader.Step)
-        case done(clipCount: Int)
-        case failed(String)
-    }
-
-    @Published private(set) var phase: Phase = .reviewing
-    let plan: ContributionPlan
-    let account: FarmAccount
-
-    init(plan: ContributionPlan, account: FarmAccount) {
-        self.plan = plan
-        self.account = account
-    }
-
-    var canConfirm: Bool {
-        guard account.isSignedIn, plan.source != nil else { return false }
-        switch phase {
-        case .reviewing, .failed: return true
-        case .sending, .done: return false
-        }
-    }
-
-    func confirm() async {
-        guard let source = plan.source, let client = account.client,
-              let session = account.credentials.sessionToken
-        else { return }
-        phase = .sending(.registering)
-        let uploader = ContributionUploader(client: client, credentials: account.credentials)
-        do {
-            let stored = try await uploader.contribute(source, session: session) { step in
-                Task { @MainActor in
-                    if case .sending = self.phase { self.phase = .sending(step) }
-                }
-            }
-            phase = source.clipsNotHeld(by: stored).isEmpty
-                ? .done(clipCount: source.clips.count)
-                : .failed(String(localized: """
-                    The farm's copy doesn't match what was sent: trick names are missing or different. \
-                    Try again later.
-                    """))
-        } catch FarmError.unauthenticated {
-            account.sessionEnded()
-            phase = .failed(FarmError.unauthenticated.localizedDescription)
-        } catch {
-            phase = .failed(error.localizedDescription)
-        }
-    }
-}
-
-/// The contribution confirmation sheet (`docs/CONTRIBUTION_DESIGN.md` §3.3): the saved, named
-/// clips Settings' Contribute named clips offers, with their names; what is sent and what never
-/// is; the disclosure the farm requires; sign-in when there is no session; and Confirm. Cancel
-/// sends nothing — the clips are already saved.
+/// The contribution confirmation sheet (`docs/CONTRIBUTION_DESIGN.md` §3.3), shown until the
+/// account has agreed: the saved, named clips Settings' Contribute named clips offers, with their
+/// names; what is sent and what never is; the disclosure the farm requires; sign-in when there is
+/// no session; and Confirm, which covers these clips and every later save. Cancel sends nothing
+/// and agrees to nothing — the clips are already saved.
 struct ContributionSheet: View {
-    @StateObject private var model: ContributionViewModel
-    @ObservedObject private var account: FarmAccount
+    let plan: ContributionPlan
+    @ObservedObject var account: FarmAccount
     let thumbnail: (ClipListItem) async -> CGImage?
+    let confirm: (SourceContribution) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var signInFailure: String?
-
-    init(
-        model: @autoclosure @escaping () -> ContributionViewModel,
-        thumbnail: @escaping (ClipListItem) async -> CGImage?
-    ) {
-        let built = model()
-        _model = StateObject(wrappedValue: built)
-        _account = ObservedObject(wrappedValue: built.account)
-        self.thumbnail = thumbnail
-    }
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(model.plan.clips, id: \.item.id) { entry in
+                    ForEach(plan.clips, id: \.item.id) { entry in
                         ContributionClipRow(item: entry.item, status: entry.status, thumbnail: thumbnail)
                     }
                 } footer: {
@@ -89,13 +25,15 @@ struct ContributionSheet: View {
                 }
                 Section("What's sent") {
                     Text(ContributionDisclosure.payload)
+                    Text(ContributionDisclosure.ongoing)
+                        .accessibilityIdentifier("contribution-ongoing")
                     Text(ContributionDisclosure.linkWindow)
                     Text(ContributionDisclosure.deletionReach)
                     Label {
                         Text(ContributionDisclosure.consent)
                     } icon: {
-                        Image(systemName: model.plan.includesSomeoneElse ? "exclamationmark.triangle.fill" : "person")
-                            .foregroundStyle(model.plan.includesSomeoneElse ? Color.yellow : Color.secondary)
+                        Image(systemName: plan.includesSomeoneElse ? "exclamationmark.triangle.fill" : "person")
+                            .foregroundStyle(plan.includesSomeoneElse ? Color.yellow : Color.secondary)
                     }
                     .accessibilityIdentifier("contribution-consent")
                 }
@@ -113,30 +51,25 @@ struct ContributionSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(isDone ? "Done" : "Not Now") { dismiss() }
-                        .disabled(isSending)
+                    Button("Not Now") { dismiss() }
                         .accessibilityIdentifier("contribution-dismiss")
                 }
             }
-            .safeAreaInset(edge: .bottom) { footer }
+            .safeAreaInset(edge: .bottom) {
+                PrimaryActionBar("Agree and Contribute", isEnabled: account.isSignedIn && plan.source != nil) {
+                    guard let source = plan.source else { return }
+                    confirm(source)
+                    dismiss()
+                }
+                .accessibilityIdentifier("contribution-confirm")
+            }
             .errorAlert("Couldn't sign in", message: $signInFailure)
         }
-        .interactiveDismissDisabled(isSending)
-    }
-
-    private var isSending: Bool {
-        if case .sending = model.phase { return true }
-        return false
-    }
-
-    private var isDone: Bool {
-        if case .done = model.phase { return true }
-        return false
     }
 
     @ViewBuilder
     private var qualityNote: some View {
-        switch model.plan.quality {
+        switch plan.quality {
         case .good: EmptyView()
         case .patchy:
             Text("Pose tracking lost the athlete in parts of these clips. They can still help.")
@@ -145,57 +78,6 @@ struct ContributionSheet: View {
                 Pose tracking couldn't follow this video well enough to contribute it. \
                 A slo-mo re-record usually helps.
                 """)
-        }
-    }
-
-    @ViewBuilder
-    private var footer: some View {
-        switch model.phase {
-        case .reviewing, .failed:
-            VStack(spacing: 8) {
-                if case .failed(let message) = model.phase {
-                    Text(message)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .accessibilityIdentifier("contribution-failure")
-                }
-                PrimaryActionBar(
-                    model.phase == .reviewing ? "Contribute" : "Try Again",
-                    isEnabled: model.canConfirm
-                ) {
-                    Task { await model.confirm() }
-                }
-                .accessibilityIdentifier("contribution-confirm")
-            }
-        case .sending(let step):
-            ProgressView { Text(Self.label(for: step)) }
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(.thinMaterial)
-                .accessibilityIdentifier("contribution-progress")
-        case .done(let clipCount):
-            Label(Self.doneMessage(clipCount: clipCount), systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(.thinMaterial)
-                .accessibilityIdentifier("contribution-done")
-        }
-    }
-
-    /// Counts what the farm's read-back holds of the clips just sent.
-    private static func doneMessage(clipCount: Int) -> String {
-        clipCount == 1
-            ? String(localized: "The farm has this clip. Thank you.")
-            : String(localized: "The farm has these \(clipCount) clips. Thank you.")
-    }
-
-    private static func label(for step: ContributionUploader.Step) -> String {
-        switch step {
-        case .registering: return String(localized: "Registering the video…")
-        case .uploadingPose: return String(localized: "Uploading pose keypoints…")
-        case .waitingForFarm: return String(localized: "Waiting for the farm to process the pose…")
-        case .sendingNames: return String(localized: "Sending trick names…")
         }
     }
 }

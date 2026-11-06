@@ -55,7 +55,8 @@ struct LibrarySave: Sendable {
 
 /// The on-device clip library (`docs/PROFILE_DESIGN.md` §2): every clip Name Clips saved, its
 /// names and whether it shows the user, and the achievements earned from them. The Profile is
-/// computed from it on the device; nothing in it is sent anywhere.
+/// computed from it on the device. All that ever leaves is what a contribution sends: a saved
+/// clip's id and names, read here so a waiting upload sends the clip as it stands.
 ///
 /// Kept as one JSON file in `Application Support/`, which is in the user's device backups and is
 /// never evicted, rewritten whole and atomically on every change. The file carries a schema

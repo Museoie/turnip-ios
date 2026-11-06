@@ -71,9 +71,8 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
    achievement state on any server. A user may still share a highlight
    video through the Share Sheet; that is their file, sent by them.
 2. **Never gated on contribution.** Every Profile feature works for a
-   user who never signs in and never contributes. Contribution stays a
-   per-clip opt-in; a feature that required it would make the consent
-   a price.
+   user who never signs in and never contributes. Contribution stays an
+   opt-in; a feature that required it would make the consent a price.
 3. **Rewards are outcome-neutral.** Progress depends on which trick a
    clip is counted under and nothing else about its name: not whether
    the name came from the model, not whether the user kept or removed a
@@ -321,9 +320,12 @@ also where an analysis lands: Clip List's triage moved onto it, UIUX
   clips, and any clip can change it.
 - `is_me` never leaves the device. Clips marked someone else appear in
   the gallery under its filter (§7) and count toward nothing (§6).
-- When such a clip is in a contribution, the confirmation sheet shows
-  the consent reminder `BACKEND_DESIGN.md` §7.1 requires: contribute
-  only clips of people who agreed.
+- The confirmation sheet carries the consent reminder
+  `BACKEND_DESIGN.md` §7.1 requires: contribute only clips of people who
+  agreed. It flags the reminder when such a clip is in the contribution,
+  and says later saves include such clips: after the one agreement they
+  go in the background, with no sheet to remind on
+  (`CONTRIBUTION_DESIGN.md` §3.3).
 
 ### 4.4 Grouping names by trick
 

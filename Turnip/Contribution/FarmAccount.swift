@@ -63,7 +63,11 @@ final class FarmAccount: ObservableObject {
         isWorking = true
         defer { isWorking = false }
         let grant = try await client.signIn(identityToken: identityToken, authorizationCode: code, nonce: nonce)
-        credentials.signedIn(sessionToken: grant.sessionToken, appleUserID: credential.user)
+        signedIn(sessionToken: grant.sessionToken, appleUserID: credential.user)
+    }
+
+    func signedIn(sessionToken: String, appleUserID: String) {
+        credentials.signedIn(sessionToken: sessionToken, appleUserID: appleUserID)
         isSignedIn = true
     }
 
@@ -82,12 +86,13 @@ final class FarmAccount: ObservableObject {
         isSignedIn = false
     }
 
-    /// Deletes every source this app holds a key for, then the account, then the keys and the
-    /// session (`BACKEND_DESIGN.md` §7.3 "Client first"). A source the farm no longer has under
-    /// its key answers `404` and only loses its key; any other failure stops before the account
-    /// goes, so a retry finds every source still deletable.
+    /// Withdraws the agreement to contribute, then deletes every source this app holds a key for,
+    /// then the account, then the keys and the session (`BACKEND_DESIGN.md` §7.3 "Client first"). A
+    /// source the farm no longer has under its key answers `404` and only loses its key; any other
+    /// failure stops before the account goes, so a retry finds every source still deletable.
     func deleteAccount() async throws {
         guard let client, let session = credentials.sessionToken else { return }
+        credentials.withdrawConsent()
         isWorking = true
         defer { isWorking = false }
         for videoID in credentials.contributedVideoIDs {

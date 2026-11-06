@@ -7,7 +7,7 @@ import zlib
 /// landed. Raw, never reconstructed: the farm resamples to its canonical 10 Hz on ingest and
 /// refuses to interpolate across gaps, so nothing here fills one in
 /// (`docs/CONTRIBUTION_DESIGN.md` §2.2).
-struct ContributionPose: Equatable, Sendable {
+struct ContributionPose: Codable, Equatable, Sendable {
     /// Samples per second of the grid, as float32 because that is what the blob's header and
     /// the farm's frame-count arithmetic carry.
     let sampleRate: Float

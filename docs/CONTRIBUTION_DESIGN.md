@@ -5,7 +5,9 @@ moves to the core clip flow ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4)
 and contribution uploads clips already named there, from the on-device
 clip library; uploads carry label provenance. Revised 2026-10-21: §7.2
 and §8 point to on-device personalization
-([`PERSONALIZATION_DESIGN.md`](PERSONALIZATION_DESIGN.md)).*
+([`PERSONALIZATION_DESIGN.md`](PERSONALIZATION_DESIGN.md)). Revised
+2026-11-05: the confirmation sheet asks once per account (§3.3), and every
+upload runs in the background from an outbox (§5.3).*
 
 **Scope.** This is a companion to `docs/DESIGN.md`, not a rewrite of it.
 `DESIGN.md` specifies the on-device pipeline (capture → pose → clip
@@ -36,7 +38,7 @@ labeling platform" means: users label their own confirmed clips with
 free-text trick names; the farm trains trick detection from pose
 sequences, never from video.
 
-**Status (2026-10-30).** Built, in `Turnip/Contribution/` and
+**Status (2026-11-05).** Built, in `Turnip/Contribution/` and
 `Turnip/NameClips/`, against the farm at `https://turnip.hoie.kim`:
 
 - **The farm account** (§5.4) in Settings' Contribution section: Sign in
@@ -49,18 +51,22 @@ sequences, never from video.
   there as revoked, a just-issued one included.
 - **`video_id`** (§1.1) for Photos-backed videos, `VideoIdentity`.
 - **Settings' Contribute named clips switch** and **the confirmation
-  sheet** (§3.3), which opens once Name Clips' save finishes, with the clips and their
-  names, the someone-else flag, the disclosure, and the pose-quality gate
-  of §2.3 (warn over 30% gaps, refuse over 60%).
+  sheet** (§3.3), which opens once Name Clips' save finishes until the
+  account has agreed, with the clips and their names, the someone-else
+  flag, the disclosure, and the pose-quality gate of §2.3 (warn over 30%
+  gaps, refuse over 60%). After that a save goes straight to the outbox.
 - **The upload** (§5.1): register with the source key, PUT the gzipped TKP1
   blob with a `Content-MD5` header (the presigned URL signs only `host`, so
   the unsigned-safe checksum), re-register until the farm's
   ingest (a 30-second sweep) reports `blob_present`, send the clips, then
-  `GET /api/sources/:id` and report what the farm holds: the sheet says
-  done only when every clip came back with the names it was sent with. The canonical
+  `GET /api/sources/:id` for what the farm holds: a job is finished only
+  when every clip came back with the names it was sent with. The canonical
   `frame_count` is computed exactly as the farm's ingest computes it; a
   window maps to canonical frames start-floor, end-ceiling, clamped inside
   the sequence.
+- **The outbox** (§5.3): each contribution waits on disk and uploads in the
+  background, picking up by itself after an interruption. Settings says
+  what is still waiting.
 - **The vocabulary fetch** (`GET /api/taxonomy/current`) when Name Clips
   opens, at most every six hours, kept in `Application Support/` and used
   over the bundled seed when its `taxonomy_version` is greater.
@@ -73,14 +79,15 @@ The clip library ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §2) is built
 without its pose store or contribution state, so the built flow differs
 from this doc:
 
-- The pose is encoded when the sheet opens, from the analysis still in
-  memory, not read from the library. So a clip can be contributed only in
-  the save that names it: no "Contribute named clips" on the Profile and no
-  toggle on a Clip view yet.
-- No outbox (§5.3). A failed upload is retried from the sheet ("Try
-  Again") while it is open; closing it drops the upload. No
-  `contributed_at` or dirty flag (§5.2), so an edit after contributing is
-  not re-sent, and no label-only update (`POST /api/clips/:id/labels`).
+- The pose comes from the analysis still in memory when the save
+  finishes, not from the library, and an outbox job keeps its own copy
+  until it is sent. So a clip can be contributed only in the save that
+  names it: no "Contribute named clips" on the Profile, no toggle on a Clip
+  view yet, and naming a clip later (Needs a name) sends nothing.
+- No `contributed_at` or dirty flag (§5.2), so an edit after a clip has
+  gone is not re-sent, and no label-only update
+  (`POST /api/clips/:id/labels`). An edit while it is still waiting does
+  go (§5.3).
 - One pose sequence per source, the first contributed clip's person's
   (`MULTI_PERSON.md`); a clip of another person in the same video stays
   behind, marked so in the sheet. *(Judgment call, until the farm holds
@@ -230,6 +237,9 @@ training. When pose quality is poor:
   clip/export flow is unaffected — contribution is opt-in and separate.
 - If **>30%** are gaps, contribution is allowed but the confirmation
   sheet (§5) shows a quality warning.
+- Both show only on the sheet (§3.3). Once the account has agreed there
+  is none: a blocked source just isn't sent, and a patchy one goes
+  without a warning. *(Judgment call: a save shouldn't stop to say so.)*
 - Thresholds are starting points, tunable without a schema change
   *(judgment call)*.
 
@@ -246,7 +256,7 @@ The flow rides the existing screens from `UIUX.md`:
 - **Name Clips** (`UIUX.md` §3a, `PROFILE_DESIGN.md` §4) — the screen an
   analysis lands on, one clip at a time, where clips are triaged (open
   in the editor, discard, add), named, contributed or not, and saved.
-  Whether its saved, named clips are offered is Settings' Contribute
+  Whether its saved, named clips are contributed is Settings' Contribute
   named clips switch (§3.3). It took over Clip List's triage on
   2026-10-27 (`UIUX.md` §3).
 - **Clip Detail / Editor (§4)** — window trimming via the scrub-bar
@@ -275,21 +285,30 @@ video can never be confirmed.
   leads with one **Contribute named clips** switch (`UIUX.md` §1a,
   default off) that decides for every clip at once. With it on, the
   clips a Name Clips save writes that have a name, on a video with pose
-  analysis, go to the confirmation sheet; the sheet's Confirm is the
-  opt-in for exactly the clips it lists. Each saved clip's Clip view in
+  analysis, are contributed. The first time, they go to the confirmation
+  sheet, whose Confirm is the farm's one consent moment
+  (`BACKEND_DESIGN.md` §7.1): it covers the clips it lists and every
+  later save. After that a save asks nothing: its clips go to the outbox
+  (§5.3) and Name Clips returns to Home at once. The agreement is the
+  Apple account's: it outlives sign-out, a different account is asked
+  afresh, and account deletion withdraws it. Turning the switch off stops
+  contributing and cancels what's waiting; turned on again, the same
+  account isn't asked again. Each saved clip's Clip view in
   the Profile is planned to gain a **contribute toggle** ("Contribute
   this clip", persisted in the clip library, default off, disabled until
   the clip has a name). The Clip Editor gets none.
 - The **confirmation sheet** opens in two ways: by itself when the user
-  finishes Name Clips with the switch on and a named clip saved — once
-  the save has finished, so saving and contributing stay separate
-  steps — or from
+  finishes Name Clips with the switch on, a named clip saved and no
+  agreement yet — once the save has finished, so saving and contributing
+  stay separate steps — or, planned, from
   the Profile's **"Contribute named clips"**, a list of named clips not
   yet contributed, each chosen individually. The sheet lists the clips
   with their trick-name chips, the payload summary ("pose keypoints,
-  clip windows, labels — video never leaves your device"), and a
-  Confirm button. Cancelling sends nothing; the clips stay saved and
-  can be contributed later from the Profile. *(Judgment call on
+  clip windows, labels — video never leaves your device"), what agreeing
+  means for later saves, and a Confirm button ("Agree and Contribute").
+  Cancelling sends nothing and agrees to nothing, so the next save asks
+  again; the clips stay saved and can be contributed later from the
+  Profile. *(Judgment call on
   placement: contribution never sits on the editor, which is already
   full. The exact affordance is UI polish; the boundary
   semantics are not.)*
@@ -303,10 +322,13 @@ video can never be confirmed.
   - contribute only clips of yourself, or of people who agreed: the
     person in a clip may not be the account holder. A clip marked as
     someone else (`PROFILE_DESIGN.md` §4.3) is flagged next to this
-    line.
+    line. The sheet says that later saves include such clips, so this
+    one reminder covers them too. *(Judgment call: the farm asks for
+    this at consent, not per contribution, and a save after consent has
+    no sheet to flag anything on.)*
 - A contributed clip needs at least one trick name, given in the core
-  flow (`PROFILE_DESIGN.md` §4); a clip with no names cannot be
-  confirmed (inline hint in the sheet).
+  flow (`PROFILE_DESIGN.md` §4); a clip with no names is never
+  contributed.
 - Nothing in the app is gated on contributing, the Profile included
   (`PROFILE_DESIGN.md` §1).
 
@@ -357,7 +379,7 @@ farm stores one label row per `(clip_id, trick_name)`
 
 ### 5.1 Payload and endpoints
 
-On Confirm (per-clip opt-in, §3.3), with a farm session (§5.4). The v1
+From the outbox (§5.3), with a farm session (§5.4). The v1
 export flow and the Profile stay anonymous; contribution is the first
 authenticated action, and the sheet prompts sign-in when needed. Every
 contribution request also carries the source's key (§5.4).
@@ -368,7 +390,8 @@ contribution request also carries the source's key (§5.4).
    sends a blob digest; the farm computes the stored digest at ingest.
    `409 SOURCE_ALREADY_CLAIMED` means the video is already contributed
    under another key (a byte-identical import from someone else, or
-   this app's key was lost); the clip stays local-only.
+   this app's key was lost); the clip stays local-only, and the key the
+   app tried is deleted, since it owns nothing.
    - `frame_count` / `start_frame` / `end_frame` are indices into the
      **canonical 10 Hz** sequence. The client maps its analysis-rate
      indices through the POSE_FORMAT.md §6 resampling map — the same mapping §7.2
@@ -403,13 +426,44 @@ re-confirmation safe and idempotent.
 
 ### 5.3 Retry, offline, dedup
 
-- An **outbox queue** in the app's local persistence holds pending
-  uploads across app restarts. Failed attempts retry with exponential
-  backoff; the user can cancel a pending upload. Order per source:
+- An **outbox queue** (`ContributionOutbox`) holds pending uploads across
+  app restarts: one JSON file per contribution in
+  `Application Support/ContributionOutbox/`, outside device backups, with
+  its pose. Jobs go oldest first, one at a time, the upload steps of §5.1
+  running off the main thread, and no screen waits for them. A file this
+  build can't read is removed: a job is a passing copy whose clips stay
+  saved, not the library's irreplaceable record, so it isn't set aside.
+  Order per source:
   `POST /api/sources` first (it returns the presigned `upload_url`),
   then PUT the blob, then `POST /api/clips` (§5.1).
-- If the PUT succeeded but a later step failed, retry from the failed
-  step — the PUT targets the same staging key, so a repeated PUT
+- **It resumes by itself.** A failed attempt retries after a wait that
+  doubles from 30 seconds to an hour, or at once on launch, on return to
+  the foreground, when the network comes back, and after sign-in. A job
+  that keeps failing doesn't hold back the ones behind it. A running
+  attempt takes the seconds iOS grants an app leaving the foreground; past
+  those it freezes with the app and starts over at the next resume, from
+  the step `blob_present` says it can skip to. *(Judgment call: nothing
+  runs while the app is closed. That needs `BGTaskScheduler`, which isn't
+  worth a background mode for data with no deadline.)*
+- **What each failure means.** Unreachable, a `5xx`, `INTERNAL`,
+  `BLOB_MISSING`, or a read-back without the names sent: retry. `429`: wait
+  out `Retry-After`, which a resume doesn't cut short. `401`: sign out and
+  keep the job for the next sign-in, and Settings says so.
+  `SOURCE_ALREADY_CLAIMED`, `ACCOUNT_BLOCKED`, `VALIDATION_ERROR`,
+  `UNSUPPORTED_FORMAT` and `NOT_FOUND`: another try gets the same answer,
+  so the job is dropped, its clips stay saved and only the log records it.
+  A job still unsent after 30 days is dropped too, so pose data a farm
+  fault keeps from landing doesn't stay on the device forever.
+- **A job sends the clip as it is now.** Right before each attempt the
+  job is read against the clip library: a clip removed since the save
+  stays behind, and a renamed one goes with its current names.
+- **Cancelling.** The Contribute named clips switch cancels every pending
+  upload, and any under way, when turned off, as account deletion does.
+  Signing out only pauses them. *(Judgment call: no per-upload cancel; a
+  pending clip the user doesn't want sent can be removed from the
+  library.)*
+- If the PUT succeeded but a later step failed, the retry starts over from
+  registration — the PUT targets the same staging key, so a repeated PUT
   overwrites identical bytes and is harmless but unnecessary
   (BACKEND_DESIGN.md §7.3).
 - **Re-contribution dedups by construction**: the deterministic
@@ -440,6 +494,8 @@ record of whose a contribution is.
   the session token, and show the signed-out state; also observe
   `credentialRevokedNotification`. On any `401`, delete the token and
   sign in again.
+- **Consent.** The confirmation sheet's agreement (§3.3) is kept in the
+  Keychain as the Apple user who gave it, with the same accessibility.
 - **Source keys.** The first time a source is contributed, generate 32
   random bytes as its key and store it in the Keychain under its
   `video_id`, with the same accessibility as the session token. The key
@@ -447,7 +503,9 @@ record of whose a contribution is.
   app deletion and reinstall on current iOS, but Apple doesn't
   guarantee it, so a missing key is an expected state: the source is
   contributed but unmanageable from this install.
-- **Account deletion** (Settings): delete every source the app holds a
+- **Account deletion** (Settings): withdraw the agreement and empty the
+  outbox, waiting out any upload under way, so nothing reaches a source
+  after its deletion; delete every source the app holds a
   key for (`DELETE /api/sources/:id`), call `DELETE /api/account`, then
   delete the local keys and session token. Before confirming, repeat the
   §3.3 disclosure: contributions this app can no longer find stay in
@@ -638,7 +696,7 @@ on-device personal layer with everything it learns from
 (`PERSONALIZATION_DESIGN.md` §7, §9).
 
 **Leaves only on explicit opt-in** (Settings' Contribute named clips
-switch, then the confirmation sheet's Confirm, §3.3):
+switch, and the confirmation sheet's Confirm once per account, §3.3):
 - `video_id` — opaque deterministic ID (§1)
 - pose-format keypoint sequence — stick figures, no face, no background,
   no identity (residual honesty per the master plan: gait-from-keypoints

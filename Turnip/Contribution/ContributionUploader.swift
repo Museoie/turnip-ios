@@ -3,17 +3,17 @@ import Foundation
 /// One clip as contribution sends it: its id (the same UUID Clip List minted for its tile), its
 /// window in source seconds, whether that window is still the detector's, its names, and how the
 /// trick model proposed it, `nil` when it didn't.
-struct ClipContribution: Equatable, Sendable {
+struct ClipContribution: Codable, Equatable, Sendable {
     let clipID: UUID
     let window: TrickWindow
     let autoDetected: Bool
-    let names: [ClipName]
+    var names: [ClipName]
     var proposal: ModelProposal?
 }
 
 /// Everything contribution sends for one source video: its `video_id`, its pose, and the clips
 /// of it the user confirmed.
-struct SourceContribution: Equatable, Sendable {
+struct SourceContribution: Codable, Equatable, Sendable {
     let videoID: String
     let pose: ContributionPose
     let clips: [ClipContribution]
@@ -42,13 +42,6 @@ struct PoseEncodingError: LocalizedError {
 /// Every step is an upsert keyed by ids the app owns, so running it again after a failure at any
 /// step is safe; a repeated PUT overwrites the same staged bytes.
 struct ContributionUploader: Sendable {
-    enum Step: Equatable, Sendable {
-        case registering
-        case uploadingPose
-        case waitingForFarm
-        case sendingNames
-    }
-
     let client: FarmClient
     let credentials: FarmCredentials
     /// How long to wait before each re-registration that asks whether the uploaded pose has been
@@ -59,34 +52,29 @@ struct ContributionUploader: Sendable {
         try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
     }
 
-    func contribute(
-        _ source: SourceContribution, session: String, progress: @Sendable (Step) -> Void = { _ in }
-    ) async throws -> RemoteSource {
-        let (key, isNewKey) = credentials.sourceKeyMintingIfNeeded(for: source.videoID)
+    func contribute(_ source: SourceContribution, session: String) async throws -> RemoteSource {
+        let key = credentials.sourceKeyMintingIfNeeded(for: source.videoID)
         let request = SourceRegistrationRequest(
             videoID: source.videoID, sourceKey: key,
             frameCount: source.pose.canonicalFrameCount, sampleRate: Double(source.pose.sampleRate))
-        progress(.registering)
         var registration: SourceRegistration
         do {
             registration = try await client.registerSource(request, session: session)
         } catch FarmError.sourceAlreadyClaimed {
-            // A key minted just now owns nothing; keeping it would claim a contribution there isn't.
-            if isNewKey { credentials.removeSourceKey(for: source.videoID) }
+            // Claimed under a different key, so this one owns nothing, even kept from an earlier try;
+            // keeping it would claim a contribution there isn't.
+            credentials.removeSourceKey(for: source.videoID)
             throw FarmError.sourceAlreadyClaimed
         }
         if !registration.blobPresent {
             guard let blob = source.pose.gzippedTKP1 else { throw PoseEncodingError() }
-            progress(.uploadingPose)
             try await client.uploadPose(blob, to: registration.uploadURL)
-            progress(.waitingForFarm)
             for delay in ingestPollDelays where !registration.blobPresent {
                 try await sleep(delay)
                 registration = try await client.registerSource(request, session: session)
             }
             guard registration.blobPresent else { throw FarmError.blobMissing }
         }
-        progress(.sendingNames)
         let submissions = source.clips.map { clip in
             let frames = source.pose.canonicalFrames(of: clip.window)
             return ClipSubmission(

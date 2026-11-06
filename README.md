@@ -31,7 +31,8 @@ and no analytics. The Profile — your saved clips' trick names, levels and
 reps — is computed and kept on your iPhone only. Contribution, built but not
 yet released, adds an opt-in
 Sign in with Apple account that sends a named clip's pose keypoints and
-trick names to `turnip-farm`, only from its confirmation sheet. The app asks for Photos access to show your videos, save the
+trick names to `turnip-farm`, only once you have agreed on its confirmation
+sheet. The app asks for Photos access to show your videos, save the
 clips you export and delete a saved clip's video when you ask it to, and
 for camera and microphone access to record takes in the app. The App
 Store privacy answers, the privacy manifest, and temp-file hygiene are
@@ -47,8 +48,9 @@ video in your Photos library — the first of the v1 screens in
 `Processing` runs the detection pipeline and pushes Name Clips: one detected
 clip at a time, where a tap opens `ClipEditor`, clips can be discarded or
 added, each gets its trick names, and the clips are saved to Photos ("Save
-now" saves without going through every clip). A clip toggled to contribute goes
-to `turnip-farm` from a confirmation sheet after the save
+now" saves without going through every clip). With contributing switched on,
+a confirmation sheet asks once, then each save's named clips go to
+`turnip-farm` in the background
 ([`docs/CONTRIBUTION_DESIGN.md`](docs/CONTRIBUTION_DESIGN.md), not yet
 released).
 

@@ -31,7 +31,8 @@ control:
 - Every control carries a stable `accessibilityIdentifier`: `settings-analysis-mode` (the
   segmented picker), `settings-auto-add-album`, `settings-album-name` (only present while the
   toggle above is on), `settings-granularity`, `settings-contribute-clips` (only in a build
-  that points at a farm), `settings-done`.
+  that points at a farm), `settings-contribution-waiting` (only while clips wait to upload),
+  `settings-done`.
 - The granularity `Stepper` exposes the `.adjustable` trait natively (SwiftUI's `Stepper`
   already does — no extra work), so VoiceOver can change it with increment/decrement gestures
   without a drag.

@@ -6,7 +6,7 @@ import Foundation
 /// the pipeline clamps it to the asset's duration before any consumer sees it
 /// (`clamped(to:)`), and clip trimming clamps it again on the way out. Two windows may overlap where their
 /// buffers meet — each is a standalone clip of its own trick, not a partition of the video.
-struct TrickWindow: Hashable, Sendable {
+struct TrickWindow: Codable, Hashable, Sendable {
     let startTime: TimeInterval
     let endTime: TimeInterval
 

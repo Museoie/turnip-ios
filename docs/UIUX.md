@@ -1,5 +1,10 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 25 · 2026-11-05 · Contributing asks once. The confirmation sheet opens
+after a save only until the account agrees; from then on a save (§3a) returns
+to Home at once and its named clips upload in the background, resuming by
+themselves after an interruption. Settings (§1a) says what is still waiting.*
+
 *Rev 24 · 2026-10-28 · The Clip Detail / Editor (§4) describes only what it
 does: every clip's crop follows the athlete. Still's framing, Auto crop and
 Reset crop, which no clip has reached since Rev 23, are removed from the app
@@ -85,7 +90,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -215,7 +220,7 @@ flowchart TD
     N -->|tap the clip| D[Clip Detail / Editor]
     D -->|back, commits edits| N
     N -->|back| A
-    N -->|Save Clips, then contribution sheet if Contribute named clips is on| A
+    N -->|Save Clips, then contribution sheet the first time Contribute named clips is on| A
     P -->|Needs a name| NN[Needs a name]
     NN -->|Done / back| P
     P -->|gallery row, then a tile| CV[Clip view]
@@ -374,11 +379,13 @@ default empty state, so it never reads as "your library is empty."
   Processing before "Analyze clips" (§2), and remembered between them.
 - Under the preferences, when the build points at a farm (`TURNIP_FARM_ENDPOINT`), a
   **Contribution** section. It leads with a fifth preference, **Contribute named clips**
-  (switch, off by default): with it on, Name Clips' save (§3a) opens the contribution
-  confirmation sheet for the saved clips that have a name, on a video with pose analysis, and
-  nothing is sent until the user confirms there
-  ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §3.3). Read when the save finishes. Under
-  it, the account: Sign in with Apple while signed out; "Signed in with Apple", Sign Out and
+  (switch, off by default): with it on, Name Clips' save (§3a) contributes the saved clips that
+  have a name, on a video with pose analysis. The first save opens the contribution confirmation
+  sheet, and nothing is sent until the user agrees there; after that each save sends in the
+  background ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §3.3, §5.3). Read when the save
+  finishes; turning it off also cancels what is still waiting. While clips are waiting a row
+  under it counts them, and asks for a sign-in when that is what they need. Under
+  those, the account: Sign in with Apple while signed out; "Signed in with Apple", Sign Out and
   Delete Account once signed in, deletion confirming with the farm's disclosure first
   (§5.4). The account is not a preference, and nothing outside contribution reads it.
 - Further settings beyond these five are out of scope for this doc's current revision.
@@ -578,7 +585,10 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
   opening the editor and a save all commit it as typed. With Settings'
   Contribute named clips on (§1a), when a saved clip has a name and the video
   has pose analysis, the contribution confirmation sheet opens once the save
-  has finished, before Home; "Not Now" sends nothing.
+  has finished, before Home, until the account has agreed; "Not Now" sends
+  nothing, and the next save asks again. Once it has agreed, the save goes
+  straight to Home and the clips upload in the background, with nothing on
+  screen and nothing waiting on them.
 - When the name field has focus, the page scrolls the field and the
   suggestions above the keyboard, and keeps them there as names are added;
   the card scrolls up with the page rather than shrinking.
@@ -828,7 +838,7 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
   [`ACCESSIBILITY.md`](ACCESSIBILITY.md) (issue #22) and are checked on each screen's PR.
 - The contribution confirmation sheet and the farm account in Settings —
   [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §3.3 and §5.4. This doc
-  carries only where the sheet opens (§3a).
+  carries only when the sheet opens (§3a).
 - The Profile tab's own screens — Needs a name, achievements, the gallery by
   trick, highlights, the Clip view — live in
   [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5–§8; this doc carries only the
@@ -985,3 +995,12 @@ Resolved 2026-09-04.
    app, and a still crop for a clip — Still's code stays in the editor, but
    no clip reaches it. *Recorded 2026-10-28 (Rev 24): Still's code is removed
    from the editor, Auto crop and Reset crop with it.*
+11. **Contributing asks once → Changed.** Recorded 2026-11-05 (Rev 25): the
+   confirmation sheet stops being the opt-in for each save's clips and
+   becomes a one-time agreement per account, covering every later save. A
+   save after that asks nothing and doesn't wait: uploads run in the
+   background and resume by themselves. Given up: seeing each save's clips
+   before they go, the someone-else reminder on each save that has such a
+   clip, the pose-quality note on each save (a video tracked too poorly to
+   contribute now just stays behind, unannounced), and the sheet's progress
+   and "The farm has this clip".
