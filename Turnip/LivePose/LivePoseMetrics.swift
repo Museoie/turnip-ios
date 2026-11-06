@@ -86,8 +86,9 @@ struct LivePoseMetrics: Equatable, Sendable {
 struct LivePoseOutcome: Sendable {
     /// In timestamp order: the capture callback is serial and the queue is FIFO. Everyone the
     /// model found in each sample, since which mode the take is detected in is read at the
-    /// hand-off.
-    let results: [MultiPoseFrame]
+    /// hand-off. The frames are packed and on disk, not in memory — the drain appends as it
+    /// scores, and the consumer reads the store back (and discards it) at the hand-off.
+    let results: PoseFrameStore
     let metrics: LivePoseMetrics
     let errorMessage: String?
 }

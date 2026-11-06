@@ -18,4 +18,11 @@ enum LivePoseLogger {
         let message = (error as? PoseError)?.errorDescription ?? error.localizedDescription
         logger.error("Live pose unavailable: \(message, privacy: .public)")
     }
+
+    /// The stored frames could not be read back after a clean drain, so the take goes to
+    /// Processing with no clips and no partial. Logged, not shown: a store that cannot be
+    /// read after a clean drain is a device I/O fault, not a problem with the take.
+    static func logStoreLoadFailure(_ error: Error) {
+        logger.error("Live pose results unreadable: \(error.localizedDescription, privacy: .public)")
+    }
 }

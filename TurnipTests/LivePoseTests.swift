@@ -316,7 +316,7 @@ final class LivePoseTests: XCTestCase {
 
     // MARK: - Recording (drain loop)
 
-    func testRecordingScoresEverySampleInOrderAndMergesMetrics() async {
+    func testRecordingScoresEverySampleInOrderAndMergesMetrics() async throws {
         let channel = LivePoseSampleChannel(capacity: 10)
         let streamed = StreamedResults()
         // Queued before the consumer exists, so the queue's high-water mark is deterministic:
@@ -333,12 +333,13 @@ final class LivePoseTests: XCTestCase {
         recording.finish(producer: producer)
 
         let outcome = await recording.outcome()
+        let frames = try outcome.results.loadAll()
 
-        XCTAssertEqual(outcome.results.map(\.frameIndex), [0, 1, 2])
+        XCTAssertEqual(frames.map(\.frameIndex), [0, 1, 2])
         // Each result also went to the live consumer, unmodified, as it was scored.
         XCTAssertEqual(streamed.frameIndices, [0, 1, 2])
         XCTAssertEqual(streamed.firstKeypointX, 0.1, accuracy: 1e-6)
-        XCTAssertEqual(outcome.results.map(\.timestamp), [0, 0.1, 0.2])
+        XCTAssertEqual(frames.map(\.timestamp), [0, 0.1, 0.2])
         XCTAssertNil(outcome.errorMessage)
         XCTAssertFalse(outcome.metrics.wasCancelled)
         XCTAssertEqual(outcome.metrics.recordingDuration, 0.3, "the capture side's figures survive the merge")
@@ -348,14 +349,14 @@ final class LivePoseTests: XCTestCase {
         XCTAssertEqual(outcome.metrics.maxQueueDepth, 3)
         // Keypoints pass through the drain unmodified: uprighting happens in
         // PoseInputPreparer, before inference, not as a post-hoc rotation here.
-        XCTAssertEqual(outcome.results[0].primary.keypoints[0].x, 0.1, accuracy: 1e-6)
-        XCTAssertEqual(outcome.results[0].primary.keypoints[0].y, 0.2, accuracy: 1e-6)
-        XCTAssertEqual(outcome.results[0].people.count, 1, "everyone found is kept for the hand-off")
+        XCTAssertEqual(frames[0].primary.keypoints[0].x, 0.1, accuracy: 1e-6)
+        XCTAssertEqual(frames[0].primary.keypoints[0].y, 0.2, accuracy: 1e-6)
+        XCTAssertEqual(frames[0].people.count, 1, "everyone found is kept for the hand-off")
     }
 
     /// A model failure is a reviewable ending, not an abandoned one: the error is reported and
     /// `wasCancelled` stays false so the camera screen presents the review instead of skipping it.
-    func testRecordingReportsAnInferenceFailureWithoutClaimingCancellation() async {
+    func testRecordingReportsAnInferenceFailureWithoutClaimingCancellation() async throws {
         let channel = LivePoseSampleChannel(capacity: 10)
         let recording = LivePoseRecording(
             inference: { input in
@@ -370,8 +371,9 @@ final class LivePoseTests: XCTestCase {
         recording.finish(producer: LivePoseMetrics())
 
         let outcome = await recording.outcome()
+        let frames = try outcome.results.loadAll()
 
-        XCTAssertEqual(outcome.results.map(\.frameIndex), [0], "scoring stops at the failure")
+        XCTAssertEqual(frames.map(\.frameIndex), [0], "scoring stops at the failure")
         XCTAssertEqual(outcome.errorMessage, "Pose inference failed: op unsupported")
         XCTAssertFalse(outcome.metrics.wasCancelled)
         XCTAssertEqual(outcome.metrics.framesInferred, 1)
@@ -396,7 +398,7 @@ final class LivePoseTests: XCTestCase {
     /// queue closes first and that frame's push is refused. It was never queued, so it must not
     /// count as a kept sample the model failed to score, or a fully scored take falls back to
     /// Processing.
-    func testASampleRefusedAfterStopDoesNotCountAgainstCoverage() async {
+    func testASampleRefusedAfterStopDoesNotCountAgainstCoverage() async throws {
         let channel = LivePoseSampleChannel(capacity: 10)
         let recording = LivePoseRecording(inference: { _ in [] }, channel: channel)
         for index in 0..<3 {
@@ -409,8 +411,9 @@ final class LivePoseTests: XCTestCase {
         channel.push(sample(3))
 
         let outcome = await recording.outcome()
+        let frames = try outcome.results.loadAll()
 
-        XCTAssertEqual(outcome.results.map(\.frameIndex), [0, 1, 2])
+        XCTAssertEqual(frames.map(\.frameIndex), [0, 1, 2])
         XCTAssertEqual(outcome.metrics.framesKept, 3, "the refused push is not a kept sample")
         XCTAssertEqual(outcome.metrics.framesInferred, 3)
         XCTAssertTrue(LivePoseCoverage.isComplete(outcome), "every sample the queue accepted was scored")
@@ -510,7 +513,7 @@ final class LivePoseTests: XCTestCase {
         metrics.framesInferred = inferred
         metrics.recordingDuration = duration
         adjust(&metrics)
-        return LivePoseOutcome(results: [], metrics: metrics, errorMessage: errorMessage)
+        return LivePoseOutcome(results: PoseFrameStore(), metrics: metrics, errorMessage: errorMessage)
     }
 
     /// Collects what the recording's live result handler receives. A class with a lock rather

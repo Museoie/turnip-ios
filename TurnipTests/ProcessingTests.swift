@@ -363,7 +363,7 @@ final class ProcessingPipelineRunTests: XCTestCase {
         }
         let renderSize = CGSize(width: 48, height: 64)
         let missing = Set(16...20).union(30...34)
-        let partial = PartialPoseFrames(
+        let partial = try PartialPoseFrames(
             frames: fixtures.indices.filter { !missing.contains($0) }.map { MultiPoseFrame(single: fixtures[$0]) },
             interval: 0.1, renderedPixelSize: renderSize)
         let makeInference: ProcessingPipeline.InferenceFactory = {
@@ -393,7 +393,7 @@ final class ProcessingPipelineRunTests: XCTestCase {
         XCTAssertFalse(viaWholeFile.clips.isEmpty, "the fixture should yield a clip to compare")
         XCTAssertEqual(viaBackfill.clips, viaWholeFile.clips)
         let first = try XCTUnwrap(progress.reports.first)
-        XCTAssertEqual(first.frame, partial.frames.count + 1, "the live frames count as already processed")
+        XCTAssertEqual(first.frame, partial.store.count + 1, "the live frames count as already processed")
         XCTAssertEqual(first.totalFrames, fixtures.count)
     }
 
@@ -419,7 +419,13 @@ final class ProcessingPipelineRunTests: XCTestCase {
         ) { _ in }
 
         XCTAssertTrue(sampler.requests.all.isEmpty)
-        XCTAssertEqual(result.detection.poseFrames, fixtures)
+        // The frames round-tripped through the store, so their keypoints carry fresh ids:
+        // compare values, not identity.
+        XCTAssertEqual(result.detection.poseFrames.map(\.frameIndex), fixtures.map(\.frameIndex))
+        XCTAssertEqual(result.detection.poseFrames.map(\.timestamp), fixtures.map(\.timestamp))
+        XCTAssertEqual(
+            result.detection.poseFrames.map { $0.keypoints.map { [$0.y, $0.x, $0.confidence] } },
+            fixtures.map { $0.keypoints.map { [$0.y, $0.x, $0.confidence] } })
         // The backfill run clamps to the asset duration, so the direct route
         // must be given the same duration for the equality to hold.
         let duration = try await asset.load(.duration).seconds

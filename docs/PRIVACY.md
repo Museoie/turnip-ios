@@ -169,16 +169,20 @@ require a manifest/signature. If a dependency is added, check both.
   cache. If one ever lands, it belongs in `Caches/`, never `Documents/`,
   so iOS can evict it and it isn't backed up.
 - **Partial live pose.** When live inference covers a take only in part,
-  the keypoints it did score stay in memory, on the pushed `SelectedVideo`
-  and in `VideoLibraryViewModel`'s store of the last eight such takes, so
-  Processing analyzes only the rest (`docs/LIVE_POSE.md`). They are never
-  written to disk and are gone when the app quits.
+  the keypoints it did score are packed and streamed to a `tmp/` scratch
+  file as they are scored (`turnip-live-pose-<uuid>.bin`), on the pushed
+  `SelectedVideo` and in `VideoLibraryViewModel`'s store of the last eight
+  such takes, so Processing analyzes only the rest (`docs/LIVE_POSE.md`).
+  The file is deleted when the take is detected, backfilled, or discarded,
+  and swept at launch when a session died before that — so a long session
+  holds at most a 64 KB buffer in memory instead of the whole take. It never
+  leaves the device, is never backed up, and is gone when the app quits.
 - **Everyone in frame.** The pose model finds up to six people per frame, so
-  bystanders' keypoints are computed and held in memory alongside the
-  athlete's, in either person mode (`docs/MULTI_PERSON.md`). Following
+  bystanders' keypoints are computed and held alongside the athlete's, in either person mode (`docs/MULTI_PERSON.md`). Following
   everyone, the poses of the people who own a clip travel with the clips to Name Clips.
-  Only the pose of someone with a saved clip is written to disk ("The clip library
-  and the Profile" below); the rest is gone when the app quits.
+  None of it leaves the device: it rides the same session scratch file as the
+  athlete's frames and is gone with it; only the pose of someone with a saved
+  clip is kept on disk ("The clip library and the Profile" below).
 - **Logs** go to `os.Logger` only; nothing is written to log files.
 - Nothing is written to `Documents/` anywhere in v1.
 

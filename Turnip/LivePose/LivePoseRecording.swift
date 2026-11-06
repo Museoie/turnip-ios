@@ -64,7 +64,7 @@ final class LivePoseRecording: Sendable {
         onResult: ResultHandler,
         producerMetrics: OSAllocatedUnfairLock<LivePoseMetrics?>
     ) async -> LivePoseOutcome {
-        var results: [MultiPoseFrame] = []
+        let store = PoseFrameStore()
         var inferenceStats = DurationStats()
         var errorMessage: String?
         while let sample = await channel.next() {
@@ -75,21 +75,28 @@ final class LivePoseRecording: Sendable {
                 let result = MultiPoseFrame(
                     frameIndex: sample.frameIndex, timestamp: sample.timestamp, people: people)
                 PoseResultLogger.log(result.primary)
-                results.append(result)
+                try store.append(result)
                 onResult(result)
             } catch {
                 errorMessage = (error as? PoseError)?.errorDescription ?? error.localizedDescription
                 channel.cancel()
             }
         }
+        do {
+            try store.flush()
+        } catch {
+            if errorMessage == nil {
+                errorMessage = (error as? PoseError)?.errorDescription ?? error.localizedDescription
+            }
+        }
         var metrics = producerMetrics.withLock { $0 } ?? LivePoseMetrics()
         let stats = channel.stats
         metrics.framesKept = stats.pushCount
-        metrics.framesInferred = results.count
+        metrics.framesInferred = store.count
         metrics.inference = inferenceStats
         metrics.queueDrops = stats.dropCount
         metrics.maxQueueDepth = stats.maxDepth
         metrics.wasCancelled = errorMessage == nil && channel.isCancelled
-        return LivePoseOutcome(results: results, metrics: metrics, errorMessage: errorMessage)
+        return LivePoseOutcome(results: store, metrics: metrics, errorMessage: errorMessage)
     }
 }
