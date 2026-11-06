@@ -1,7 +1,7 @@
 # Turnip iOS — On-Device Personalization Design
 
-*Draft · 2026-10-21 · Revised 2026-11-04: the trick-model loader and
-the clip library are built; the library does not keep pose yet.*
+*Draft · 2026-10-21 · Revised 2026-11-05: the library keeps each saved
+clip's pose.*
 
 **Scope.** A companion to `docs/DESIGN.md`. The trick-detection model
 the app downloads (the central model, turnip-ml's champion, trained on
@@ -29,11 +29,10 @@ those cover, it says so as *(judgment call)*.
 `Training/export_coreml.py` emits `window_embeddings` for the baseline
 (`MODEL_CONTRACT.md` §3.2.2). The app has the trick-model loader, with
 pre-fill and the blind sample (`CONTRIBUTION_DESIGN.md` §7.2), and the
-clip library (`PROFILE_DESIGN.md` §2). Two things are still missing.
-The library does not keep a source's pose yet (`PROFILE_DESIGN.md`
-§2.2), which §3 and the rebuild (§6.2) depend on. And no model has
-been published, so no device has embeddings to read (§10). This work
-is iOS-only.
+clip library (`PROFILE_DESIGN.md` §2), which keeps each saved clip's
+pose (§2.2) for §3 and the rebuild (§6.2). One thing is still missing:
+no model has been published, so no device has embeddings to read
+(§10). This work is iOS-only.
 
 ---
 

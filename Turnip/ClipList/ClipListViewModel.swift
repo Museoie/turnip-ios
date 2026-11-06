@@ -37,6 +37,13 @@ typealias SaveOneClipToPhotos = @Sendable (_ fileURL: URL, _ albumTitle: String?
 /// `recordInClipLibrary` plugs in here.
 typealias RecordSavedClips = @MainActor (LibrarySave) -> [EarnedAchievement]
 
+/// Keeps one pose for the clip library and returns the ID its clips name, or `nil` when there is
+/// nothing to keep or it couldn't be written, which costs the clips their pose and not their save.
+/// `storeSourcePose` plugs in here.
+///
+/// Concurrency contract: same as `ExportOneClip`.
+typealias StoreSourcePose = @Sendable (_ frames: [PoseFrameResult], _ duration: TimeInterval) async -> String?
+
 /// Names which of a clip's two independently-failable steps broke: export and the
 /// Photos-library write fail independently (e.g. Photos permission revoked
 /// mid-save), and the fix differs, so the failure message names the step.
@@ -158,6 +165,10 @@ final class ClipListViewModel: ObservableObject {
     private let exportClip: ExportOneClip
     private let saveToPhotos: SaveOneClipToPhotos
     private let recordSaved: RecordSavedClips
+    private let storePose: StoreSourcePose
+    /// The pose stored for each person with a saved clip, `nil` standing for a clip with no person:
+    /// a retry after a partial failure keeps what the first run stored.
+    private var storedPoseIDs: [Int?: String] = [:]
     /// The Photos asset each saved clip landed as, by item id: what the clip library records, and
     /// replaced when an edited clip is saved again.
     private var exportAssetIDs: [UUID: String] = [:]
@@ -223,6 +234,7 @@ final class ClipListViewModel: ObservableObject {
         exportClip: @escaping ExportOneClip = exportOneClip,
         saveToPhotos: @escaping SaveOneClipToPhotos = saveOneClipToPhotos,
         recordSaved: @escaping RecordSavedClips = { recordInClipLibrary($0) },
+        storePose: @escaping StoreSourcePose = { await storeSourcePose($0, duration: $1) },
         makeDirectory: @escaping @Sendable () -> URL = defaultExportDirectory,
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettingsStore.shared.current },
         announce: @escaping AccessibilityAnnouncing = postAccessibilityAnnouncement,
@@ -242,6 +254,7 @@ final class ClipListViewModel: ObservableObject {
         self.exportClip = exportClip
         self.saveToPhotos = saveToPhotos
         self.recordSaved = recordSaved
+        self.storePose = storePose
         self.makeDirectory = makeDirectory
         self.settingsProvider = settingsProvider
         self.announce = announce
@@ -547,6 +560,7 @@ final class ClipListViewModel: ObservableObject {
         }
         // A partial failure records what did land, so a clip in Photos is never missing from the
         // Profile.
+        await storePoses()
         let earned = recordLibrary()
         guard failures.isEmpty else {
             saveFailureMessage = failures.joined(separator: "\n")
@@ -563,6 +577,26 @@ final class ClipListViewModel: ObservableObject {
         return true
     }
 
+    /// Keeps the pose of each person with a clip in Photos. Runs before the library records them,
+    /// so a clip never names a pose that isn't there yet.
+    private func storePoses() async {
+        let duration = await assetDuration() ?? sourceDuration
+        let owners = Set(items.filter { $0.isSaved && exportAssetIDs[$0.id] != nil }.map(\.personID))
+        for owner in owners where storedPoseIDs[owner] == nil {
+            storedPoseIDs[owner] = await storePose(framesToKeep(forPerson: owner), duration)
+        }
+    }
+
+    /// The frames kept for a person's clips. Following everyone, a clip with no person, one added
+    /// by hand, keeps none: `poseFrames` then mixes whoever the model was surest of in each frame,
+    /// and only the people who own a clip are stored (`docs/MULTI_PERSON.md`).
+    private func framesToKeep(forPerson personID: Int?) -> [PoseFrameResult] {
+        guard let personID else { return people.isEmpty ? poseFrames : [] }
+        return people.first { $0.id == personID }?.frames ?? []
+    }
+
+    private var sourceDuration: TimeInterval { loadedAssetDuration ?? items[0].window.endTime }
+
     /// Writes every clip in Photos into the clip library with the names it has now: a name given
     /// between a partial failure and the retry reaches the library too.
     private func recordLibrary() -> [EarnedAchievement] {
@@ -570,12 +604,12 @@ final class ClipListViewModel: ObservableObject {
             guard !item.isOriginal, item.isSaved, let exportAssetID = exportAssetIDs[item.id] else { return nil }
             return LibrarySave.Clip(
                 id: item.id, window: item.window, exportAssetID: exportAssetID, names: item.names,
-                isMe: item.isMe, isAutoDetected: item.isAutoDetected, proposal: item.proposal)
+                isMe: item.isMe, isAutoDetected: item.isAutoDetected, proposal: item.proposal,
+                poseID: storedPoseIDs[item.personID])
         }
         guard !saved.isEmpty else { return [] }
         return recordSaved(LibrarySave(
-            sourceAssetID: assetIdentifier, sourceDuration: loadedAssetDuration ?? items[0].window.endTime,
-            clips: saved))
+            sourceAssetID: assetIdentifier, sourceDuration: sourceDuration, clips: saved))
     }
 
     /// Records that one clip's video is now in Photos. Resolved by id rather than

@@ -64,6 +64,11 @@ struct TrickModelInput: Equatable, Sendable {
     /// needs. `duration` extends the grid to the end of the video when it is known.
     init?(frames: [PoseFrameResult], duration: TimeInterval?) {
         guard let pose = ContributionPose(frames: frames, duration: duration ?? 0) else { return nil }
+        self.init(pose: pose)
+    }
+
+    /// The input for a pose already on its grid, one the clip library kept or one just laid out.
+    init(pose: ContributionPose) {
         self.init(canonicalSlots: pose.canonicalSlots)
     }
 }

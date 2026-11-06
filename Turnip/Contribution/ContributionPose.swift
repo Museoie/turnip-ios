@@ -16,6 +16,7 @@ struct ContributionPose: Codable, Equatable, Sendable {
 
     static let canonicalRate: Float = 10
     static let keypointCount = 17
+    private static let headerSize = 24
 
     /// Lays `frames` on a grid anchored at the video's start: slot `j` sits at `j / rate`, the
     /// rate read off the frames' own spacing (the median step, so a dropped sample doesn't skew
@@ -88,7 +89,7 @@ struct ContributionPose: Codable, Equatable, Sendable {
     /// own rate as `source_sample_rate_hz`), then every slot's 17 × (x, y, confidence) float32
     /// little-endian, gaps as 204 zero bytes.
     var tkp1: Data {
-        var data = Data(capacity: 24 + slots.count * Self.keypointCount * 12)
+        var data = Data(capacity: Self.headerSize + slots.count * Self.keypointCount * 12)
         data.append(contentsOf: Array("TKP1".utf8))
         data.appendLittleEndian(UInt16(1))
         data.appendLittleEndian(UInt16(Self.keypointCount))
@@ -107,6 +108,43 @@ struct ContributionPose: Codable, Equatable, Sendable {
 
     /// The blob as uploaded: the whole of `tkp1` as one gzip member.
     var gzippedTKP1: Data? { Self.gzip(tkp1) }
+
+    /// Reads back what `tkp1` wrote, slot for slot: a slot of all zeros is a gap, which a real
+    /// sample can't be, since one needs a keypoint above the confidence floor. `nil` for anything
+    /// but one whole blob of this version and keypoint layout.
+    init?(tkp1: Data) {
+        let parsed = tkp1.withUnsafeBytes { bytes -> (rate: Float, slots: [[Float]?])? in
+            func read<Value: FixedWidthInteger>(_ offset: Int, as _: Value.Type) -> Value {
+                Value(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: Value.self))
+            }
+            guard bytes.count >= Self.headerSize, bytes.starts(with: Array("TKP1".utf8)),
+                  read(4, as: UInt16.self) == 1, read(6, as: UInt16.self) == UInt16(Self.keypointCount)
+            else { return nil }
+            let count = Int(read(8, as: UInt32.self))
+            let rate = Float(bitPattern: read(16, as: UInt32.self))
+            let width = Self.keypointCount * 3
+            let stride = width * MemoryLayout<UInt32>.size
+            guard rate.isFinite, rate > 0, count > 0, bytes.count == Self.headerSize + count * stride else {
+                return nil
+            }
+            let slots = (0..<count).map { slot -> [Float]? in
+                let start = Self.headerSize + slot * stride
+                let values = (0..<width).map {
+                    Float(bitPattern: read(start + $0 * MemoryLayout<UInt32>.size, as: UInt32.self))
+                }
+                return values.allSatisfy { $0 == 0 } ? nil : values
+            }
+            return (rate, slots)
+        }
+        guard let parsed else { return nil }
+        self.init(sampleRate: parsed.rate, slots: parsed.slots)
+    }
+
+    /// Reads back what `gzippedTKP1` wrote.
+    init?(gzippedTKP1: Data) {
+        guard let tkp1 = Self.gunzip(gzippedTKP1) else { return nil }
+        self.init(tkp1: tkp1)
+    }
 
     static func gzip(_ input: Data) -> Data? {
         var stream = z_stream()
@@ -128,6 +166,33 @@ struct ContributionPose: Codable, Equatable, Sendable {
         }
         guard status == Z_STREAM_END else { return nil }
         return output.prefix(Int(stream.total_out))
+    }
+
+    /// One gzip member's contents; `nil` when it is cut short or corrupt, which the member's own
+    /// CRC catches.
+    static func gunzip(_ input: Data) -> Data? {
+        var stream = z_stream()
+        guard inflateInit2_(&stream, 15 + 16, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else {
+            return nil
+        }
+        defer { inflateEnd(&stream) }
+        var output = Data()
+        var chunk = [UInt8](repeating: 0, count: 64 * 1024)
+        let status = input.withUnsafeBytes { (source: UnsafeRawBufferPointer) -> Int32 in
+            stream.next_in = source.bindMemory(to: Bytef.self).baseAddress.map(UnsafeMutablePointer.init(mutating:))
+            stream.avail_in = uInt(input.count)
+            while true {
+                let status = chunk.withUnsafeMutableBytes { (target: UnsafeMutableRawBufferPointer) -> Int32 in
+                    stream.next_out = target.bindMemory(to: Bytef.self).baseAddress
+                    stream.avail_out = uInt(target.count)
+                    return inflate(&stream, Z_NO_FLUSH)
+                }
+                guard status == Z_OK || status == Z_STREAM_END else { return status }
+                output.append(contentsOf: chunk.prefix(chunk.count - Int(stream.avail_out)))
+                if status == Z_STREAM_END { return status }
+            }
+        }
+        return status == Z_STREAM_END ? output : nil
     }
 }
 

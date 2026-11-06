@@ -28,6 +28,11 @@ struct LibraryClip: Codable, Hashable, Identifiable, Sendable {
     /// How the trick model proposed the clip; `nil` for a clip the heuristic proposed or the user
     /// added, and for every clip saved before the app had a trick model.
     var proposal: ModelProposal?
+    /// The stored pose this clip was cut from (`SourcePoseStore`). A clip names its own, rather
+    /// than its source holding one, because following everyone gives a video a pose per person,
+    /// and a person's ID only means something inside one analysis. `nil` when the save had no
+    /// pose to keep, and for every clip saved before the library kept pose.
+    var poseID: String?
     /// When the trick happened: the source's recording date plus the clip's offset into it, or the
     /// save's date when Photos had no recording date. Sessions and the gallery's order read it.
     var recordedAt: Date
@@ -46,6 +51,7 @@ struct LibrarySave: Sendable {
         let isMe: Bool
         let isAutoDetected: Bool
         let proposal: ModelProposal?
+        var poseID: String?
     }
 
     let sourceAssetID: String
@@ -75,6 +81,7 @@ final class ClipLibrary: ObservableObject {
     @Published private(set) var earned: [EarnedAchievement] = []
 
     private let fileURL: URL?
+    private let poseStore: SourcePoseStore
     private let vocabulary: @MainActor () -> TrickVocabulary
     private let calendar: Calendar
     private let now: () -> Date
@@ -102,6 +109,7 @@ final class ClipLibrary: ObservableObject {
         announce: @escaping AccessibilityAnnouncing = postAccessibilityAnnouncement
     ) {
         self.fileURL = fileURL
+        self.poseStore = SourcePoseStore(besideLibraryFile: fileURL)
         self.vocabulary = vocabulary
         self.calendar = calendar
         self.now = now
@@ -176,6 +184,7 @@ final class ClipLibrary: ObservableObject {
                 isMe: saved.isMe,
                 isAutoDetected: saved.isAutoDetected,
                 proposal: saved.proposal,
+                poseID: saved.poseID ?? existing?.poseID,
                 recordedAt: source.recordedAt?.addingTimeInterval(saved.window.startTime) ?? existing?.recordedAt
                     ?? savedAt,
                 savedAt: existing?.savedAt ?? savedAt)
@@ -217,14 +226,18 @@ final class ClipLibrary: ObservableObject {
     }
 
     /// Removes a clip from the library; its video in Photos is the caller's to delete or keep. A
-    /// video with no clip left goes too. What the clip earned stays earned.
+    /// video with no clip left goes too, and so does a pose no clip names any more. What the clip
+    /// earned stays earned.
     func delete(_ id: UUID) {
         guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
-        let sourceAssetID = clips.remove(at: index).sourceAssetID
-        if !clips.contains(where: { $0.sourceAssetID == sourceAssetID }) {
-            sources.removeAll { $0.assetID == sourceAssetID }
+        let removed = clips.remove(at: index)
+        if !clips.contains(where: { $0.sourceAssetID == removed.sourceAssetID }) {
+            sources.removeAll { $0.assetID == removed.sourceAssetID }
         }
         persist()
+        if let poseID = removed.poseID, !clips.contains(where: { $0.poseID == poseID }) {
+            poseStore.remove(poseID)
+        }
     }
 
     /// Records and announces what the library earns under today's vocabulary: a newer one can merge
@@ -312,6 +325,16 @@ final class ClipLibrary: ObservableObject {
             Self.logger.error("Library write failed: \(error.localizedDescription, privacy: .public)")
         }
     }
+}
+
+/// The production pose writer for `ClipListViewModel`: lays the frames on their grid and writes
+/// them off the main actor, since a long take is megabytes to compress.
+func storeSourcePose(_ frames: [PoseFrameResult], duration: TimeInterval) async -> String? {
+    await Task.detached(priority: .utility) {
+        ContributionPose(frames: frames, duration: duration).flatMap {
+            SourcePoseStore(besideLibraryFile: ClipLibrary.defaultFileURL).store($0)
+        }
+    }.value
 }
 
 /// The production library writer for `ClipListViewModel`: reads the video's recording date from

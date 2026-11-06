@@ -33,12 +33,12 @@ final class ClipLibraryTests: XCTestCase {
 
     private func savedClip(
         _ start: TimeInterval, export: String = "export-1", names: [String] = [], isMe: Bool = true,
-        id: UUID = UUID(), proposal: ModelProposal? = nil
+        id: UUID = UUID(), proposal: ModelProposal? = nil, poseID: String? = nil
     ) -> LibrarySave.Clip {
         LibrarySave.Clip(
             id: id, window: TrickWindow(startTime: start, endTime: start + 1.5), exportAssetID: export,
             names: names.map { ClipName(name: $0, origin: .typed) }, isMe: isMe, isAutoDetected: true,
-            proposal: proposal)
+            proposal: proposal, poseID: poseID)
     }
 
     private func save(_ clips: [LibrarySave.Clip], source: String = "source-1") -> LibrarySave {
@@ -234,21 +234,113 @@ final class ClipLibraryTests: XCTestCase {
         XCTAssertEqual(library.namesUsed(alongside: unnamed), ["Gainer", "cork"])
     }
 
+    // MARK: - Pose
+
+    private var poseStore: SourcePoseStore { SourcePoseStore(besideLibraryFile: fileURL) }
+
+    private func storedPose(_ value: Float) throws -> String {
+        try XCTUnwrap(poseStore.store(
+            ContributionPose(sampleRate: 10, slots: [Array(repeating: value, count: 51), nil])))
+    }
+
+    func testAClipKeepsItsPoseAcrossLaunches() throws {
+        let poseID = try storedPose(0.2)
+        makeLibrary().record(save([savedClip(4, poseID: poseID)]), sourceRecordedAt: recorded)
+        XCTAssertEqual(makeLibrary().clips.first?.poseID, poseID)
+    }
+
+    /// A library written before pose was kept has no such key.
+    func testAClipSavedBeforePoseWasKeptLoadsWithoutOne() throws {
+        makeLibrary().record(save([savedClip(4)]), sourceRecordedAt: recorded)
+        let older = try String(contentsOf: fileURL, encoding: .utf8)
+        XCTAssertFalse(older.contains("poseID"))
+        XCTAssertNil(makeLibrary().clips.first?.poseID)
+    }
+
+    func testDeletingTheLastClipOfAPoseDeletesThePose() throws {
+        let poseID = try storedPose(0.2)
+        let library = makeLibrary()
+        library.record(save([savedClip(4, poseID: poseID)]), sourceRecordedAt: recorded)
+        library.delete(try XCTUnwrap(library.clips.first?.id))
+        XCTAssertNil(poseStore.pose(poseID))
+    }
+
+    func testDeletingOneClipKeepsAPoseAnotherClipNames() throws {
+        let poseID = try storedPose(0.2)
+        let library = makeLibrary()
+        library.record(
+            save([savedClip(4, poseID: poseID), savedClip(9, poseID: poseID)]), sourceRecordedAt: recorded)
+        library.delete(try XCTUnwrap(library.clips.first?.id))
+        XCTAssertNotNil(poseStore.pose(poseID))
+    }
+
+    /// Stored pose keeps only the people with a saved clip, so a person goes with their last clip
+    /// even while the video stays for someone else's.
+    func testDeletingOnePersonsLastClipLeavesTheOtherPersonsPose() throws {
+        let first = try storedPose(0.2)
+        let second = try storedPose(0.7)
+        let library = makeLibrary()
+        library.record(
+            save([savedClip(4, poseID: first), savedClip(9, poseID: second)]), sourceRecordedAt: recorded)
+        library.delete(try XCTUnwrap(library.clips.first { $0.poseID == first }?.id))
+
+        XCTAssertNil(poseStore.pose(first))
+        XCTAssertNotNil(poseStore.pose(second))
+        XCTAssertEqual(library.sources.count, 1)
+    }
+
+    /// Two analyses of one video: each clip stays with the pose it was cut from.
+    func testASecondAnalysisOfAVideoLeavesTheFirstsClipsTheirPose() throws {
+        let first = try storedPose(0.2)
+        let second = try storedPose(0.7)
+        let library = makeLibrary()
+        let earlier = savedClip(4, poseID: first)
+        library.record(save([earlier]), sourceRecordedAt: recorded)
+        library.record(save([savedClip(9, poseID: second)]), sourceRecordedAt: recorded)
+
+        XCTAssertEqual(library.clip(earlier.id)?.poseID, first)
+        XCTAssertEqual(Set(library.clips.compactMap(\.poseID)), [first, second])
+    }
+
+    /// A retry whose pose write failed this time keeps what the clip already has.
+    func testSavingAClipAgainWithoutAPoseKeepsTheOneItHas() throws {
+        let poseID = try storedPose(0.2)
+        let library = makeLibrary()
+        let id = UUID()
+        library.record(save([savedClip(4, id: id, poseID: poseID)]), sourceRecordedAt: recorded)
+        library.record(save([savedClip(4, id: id)]), sourceRecordedAt: recorded)
+        XCTAssertEqual(library.clip(id)?.poseID, poseID)
+    }
+
+    /// A clip whose pose never reached the library deletes like any other.
+    func testDeletingAClipWithNoPoseTouchesNoPose() throws {
+        let other = try storedPose(0.2)
+        let library = makeLibrary()
+        library.record(save([savedClip(4)]), sourceRecordedAt: recorded)
+        library.delete(try XCTUnwrap(library.clips.first?.id))
+        XCTAssertNotNil(poseStore.pose(other))
+    }
+
     // MARK: - Name Clips' save writes the library
 
     private func nameClipsModel(
         _ items: [ClipListItem],
         saveToPhotos: @escaping SaveOneClipToPhotos = { url, _ in "asset-\(url.lastPathComponent)" },
         recordSaved: @escaping RecordSavedClips,
+        poseFrames: [PoseFrameResult] = [],
+        people: [PoseTrack] = [],
+        storePose: @escaping StoreSourcePose = { _, _ in nil },
+        asset: AVAsset = AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
         announceAfterScreenChange: @escaping AccessibilityAnnouncing = { _ in }
     ) -> ClipListViewModel {
         ClipListViewModel(
-            items: items, asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
+            items: items, poseFrames: poseFrames, people: people,
+            asset: asset,
             assetIdentifier: "source-1", duration: 30,
             exportClip: { spec, _, directory, _ in
                 directory.appendingPathComponent("clip-\(Int(spec.window.startTime)).mp4")
             },
-            saveToPhotos: saveToPhotos, recordSaved: recordSaved,
+            saveToPhotos: saveToPhotos, recordSaved: recordSaved, storePose: storePose,
             makeDirectory: {
                 FileManager.default.temporaryDirectory.appendingPathComponent("turnip-test-\(UUID().uuidString)")
             },
@@ -256,10 +348,12 @@ final class ClipLibraryTests: XCTestCase {
             announceAfterScreenChange: announceAfterScreenChange)
     }
 
-    private func item(_ start: TimeInterval, names: [String] = [], isMe: Bool = true) -> ClipListItem {
+    private func item(
+        _ start: TimeInterval, names: [String] = [], isMe: Bool = true, personID: Int? = nil
+    ) -> ClipListItem {
         ClipListItem(
             window: TrickWindow(startTime: start, endTime: start + 1),
-            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1), personID: personID,
             names: names.map { ClipName(name: $0, origin: .vocabulary) }, isMe: isMe, isAutoDetected: true)
     }
 
@@ -310,6 +404,214 @@ final class ClipLibraryTests: XCTestCase {
         XCTAssertTrue(second)
         XCTAssertEqual(saves.last?.clips.map(\.exportAssetID), ["asset-clip-2.mp4", "asset-clip-6.mp4"])
         XCTAssertEqual(saves.last?.clips.first?.names.map(\.name), ["cork"])
+    }
+
+    // MARK: - Name Clips' save keeps the pose
+
+    /// Stands in for the store: remembers what it was asked to keep, and names a pose by how many
+    /// frames it holds, the way the real one has nothing to name when there are no frames.
+    private actor PoseRecorder {
+        private(set) var stored: [[PoseFrameResult]] = []
+        private(set) var durations: [TimeInterval] = []
+        var isFailing = false
+
+        func store(_ frames: [PoseFrameResult], _ duration: TimeInterval) -> String? {
+            stored.append(frames)
+            durations.append(duration)
+            return frames.isEmpty || isFailing ? nil : "pose-\(frames.count)"
+        }
+
+        func setFailing(_ failing: Bool) { isFailing = failing }
+    }
+
+    private func frames(_ count: Int) -> [PoseFrameResult] {
+        PoseFixture.frames(hipXPositions: Array(repeating: 0.5, count: count))
+    }
+
+    func testFollowingOnePersonKeepsEveryScoredFrameOnceForAllTheirClips() async {
+        var saves: [LibrarySave] = []
+        let recorder = PoseRecorder()
+        let model = nameClipsModel(
+            [item(2), item(6)], recordSaved: { saves.append($0); return [] }, poseFrames: frames(12),
+            storePose: { await recorder.store($0, $1) })
+
+        _ = await model.save()
+
+        let stored = await recorder.stored
+        let durations = await recorder.durations
+        XCTAssertEqual(stored.map(\.count), [12])
+        XCTAssertEqual(durations, [30])
+        XCTAssertEqual(saves.last?.clips.map(\.poseID), ["pose-12", "pose-12"])
+    }
+
+    /// The grid runs to the file's own length, as analysis laid it, whatever Photos reported: this
+    /// model was told 30 seconds, of a one-second video.
+    func testThePoseIsLaidOnTheVideosOwnDuration() async throws {
+        let url = try await TestVideoWriter.writeTestVideo(frameCount: 30, width: 64, height: 36, fps: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let recorder = PoseRecorder()
+        let model = nameClipsModel(
+            [item(0.2)], recordSaved: { _ in [] }, poseFrames: frames(12),
+            storePose: { await recorder.store($0, $1) }, asset: AVURLAsset(url: url))
+
+        _ = await model.save()
+
+        let durations = await recorder.durations
+        XCTAssertEqual(try XCTUnwrap(durations.first), 1, accuracy: 0.05)
+    }
+
+    func testFollowingEveryoneKeepsEachPersonsOwnTrackForTheirOwnClips() async {
+        var saves: [LibrarySave] = []
+        let recorder = PoseRecorder()
+        let model = nameClipsModel(
+            [item(2, personID: 0), item(6, personID: 3), item(9, personID: 0)],
+            recordSaved: { saves.append($0); return [] }, poseFrames: frames(20),
+            people: [PoseTrack(id: 0, frames: frames(5)), PoseTrack(id: 3, frames: frames(7))],
+            storePose: { await recorder.store($0, $1) })
+
+        _ = await model.save()
+
+        let stored = await recorder.stored
+        XCTAssertEqual(Set(stored.map(\.count)), [5, 7])
+        XCTAssertEqual(saves.last?.clips.map(\.poseID), ["pose-5", "pose-7", "pose-5"])
+    }
+
+    /// Only the people who own a clip are stored. Following everyone, `poseFrames` is whoever the
+    /// model was surest of frame by frame, which can be anyone the camera saw.
+    func testFollowingEveryoneAClipAddedByHandKeepsNoPose() async {
+        var saves: [LibrarySave] = []
+        let recorder = PoseRecorder()
+        let model = nameClipsModel(
+            [item(2, personID: 0), item(6)], recordSaved: { saves.append($0); return [] }, poseFrames: frames(20),
+            people: [PoseTrack(id: 0, frames: frames(5))], storePose: { await recorder.store($0, $1) })
+
+        _ = await model.save()
+
+        let stored = await recorder.stored
+        XCTAssertFalse(stored.map(\.count).contains(20))
+        XCTAssertEqual(saves.last?.clips.map(\.poseID), ["pose-5", nil])
+    }
+
+    /// A person's clip keeps nothing rather than someone else's pose if their track is missing.
+    func testAClipWhoseTrackIsMissingKeepsNoPose() async {
+        var saves: [LibrarySave] = []
+        let recorder = PoseRecorder()
+        let model = nameClipsModel(
+            [item(2, personID: 9)], recordSaved: { saves.append($0); return [] }, poseFrames: frames(20),
+            people: [PoseTrack(id: 0, frames: frames(5))], storePose: { await recorder.store($0, $1) })
+
+        _ = await model.save()
+
+        XCTAssertEqual(saves.last?.clips.map(\.poseID), [nil])
+    }
+
+    func testAVideoWithNoAnalysisKeepsNoPose() async {
+        var saves: [LibrarySave] = []
+        let recorder = PoseRecorder()
+        let model = nameClipsModel(
+            [item(2)], recordSaved: { saves.append($0); return [] }, storePose: { await recorder.store($0, $1) })
+
+        let saved = await model.save()
+
+        XCTAssertTrue(saved)
+        XCTAssertEqual(saves.last?.clips.map(\.poseID), [nil])
+    }
+
+    /// The retry saves the clip that failed, and that clip names the pose the first run stored.
+    func testARetryKeepsThePoseTheFirstRunStored() async {
+        actor Photos {
+            var isRejecting = true
+            func accept() { isRejecting = false }
+        }
+        var saves: [LibrarySave] = []
+        let photos = Photos()
+        let recorder = PoseRecorder()
+        let model = nameClipsModel(
+            [item(2), item(6)],
+            saveToPhotos: { url, _ in
+                if url.lastPathComponent == "clip-6.mp4", await photos.isRejecting {
+                    throw ClipSaveError.photosSaveFailed(reason: "denied")
+                }
+                return "asset-\(url.lastPathComponent)"
+            },
+            recordSaved: { saves.append($0); return [] }, poseFrames: frames(12),
+            storePose: { await recorder.store($0, $1) })
+
+        _ = await model.save()
+        await photos.accept()
+        model.saveFailureMessage = nil
+        _ = await model.save()
+
+        let stored = await recorder.stored
+        XCTAssertEqual(stored.count, 1)
+        XCTAssertEqual(saves.last?.clips.map(\.poseID), ["pose-12", "pose-12"])
+    }
+
+    /// Nothing in Photos means nothing to keep a pose for.
+    func testASaveWithNothingInPhotosKeepsNoPose() async {
+        let recorder = PoseRecorder()
+        let model = nameClipsModel(
+            [item(2)], saveToPhotos: { _, _ in throw ClipSaveError.photosSaveFailed(reason: "denied") },
+            recordSaved: { _ in [] }, poseFrames: frames(12), storePose: { await recorder.store($0, $1) })
+
+        _ = await model.save()
+
+        let stored = await recorder.stored
+        XCTAssertTrue(stored.isEmpty)
+    }
+
+    /// A pose that can't be written costs the clips their pose, not their save, and the next save
+    /// tries again.
+    func testAPoseThatCantBeWrittenStillSavesTheClipsAndIsRetried() async {
+        actor Photos {
+            var isRejecting = true
+            func accept() { isRejecting = false }
+        }
+        var saves: [LibrarySave] = []
+        let photos = Photos()
+        let recorder = PoseRecorder()
+        await recorder.setFailing(true)
+        let model = nameClipsModel(
+            [item(2), item(6)],
+            saveToPhotos: { url, _ in
+                if url.lastPathComponent == "clip-6.mp4", await photos.isRejecting {
+                    throw ClipSaveError.photosSaveFailed(reason: "denied")
+                }
+                return "asset-\(url.lastPathComponent)"
+            },
+            recordSaved: { saves.append($0); return [] }, poseFrames: frames(12),
+            storePose: { await recorder.store($0, $1) })
+
+        _ = await model.save()
+        XCTAssertEqual(saves.last?.clips.map(\.poseID), [nil])
+
+        await recorder.setFailing(false)
+        await photos.accept()
+        model.saveFailureMessage = nil
+        _ = await model.save()
+        XCTAssertEqual(saves.last?.clips.map(\.poseID), ["pose-12", "pose-12"])
+    }
+
+    /// The whole path on real files: a save leaves the library naming a pose that reads back as the
+    /// frames the analysis scored, and deleting the clip leaves nothing behind.
+    func testASavedClipsPoseReadsBackAsItsFramesAndGoesWithIt() async throws {
+        let library = makeLibrary()
+        let scored = PoseFixture.frames(hipXPositions: (0..<40).map { Float($0) / 40 }, blankFrames: [3])
+        let store = poseStore
+        let model = nameClipsModel(
+            [item(2)], recordSaved: { library.record($0, sourceRecordedAt: nil) }, poseFrames: scored,
+            storePose: { frames, duration in
+                ContributionPose(frames: frames, duration: duration).flatMap(store.store)
+            })
+
+        _ = await model.save()
+
+        let clip = try XCTUnwrap(library.clips.first)
+        let poseID = try XCTUnwrap(clip.poseID)
+        XCTAssertEqual(store.pose(poseID), ContributionPose(frames: scored, duration: 30))
+
+        library.delete(clip.id)
+        XCTAssertNil(store.pose(poseID))
     }
 
     func testTheSavesAnnouncementSpeaksWhatTheSaveEarned() async {

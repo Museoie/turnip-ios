@@ -177,7 +177,8 @@ require a manifest/signature. If a dependency is added, check both.
   bystanders' keypoints are computed and held in memory alongside the
   athlete's, in either person mode (`docs/MULTI_PERSON.md`). Following
   everyone, the poses of the people who own a clip travel with the clips to Name Clips.
-  None of it is written to disk, and all of it is gone when the app quits.
+  Only the pose of someone with a saved clip is written to disk ("The clip library
+  and the Profile" below); the rest is gone when the app quits.
 - **Logs** go to `os.Logger` only; nothing is written to log files.
 - Nothing is written to `Documents/` anywhere in v1.
 
@@ -250,12 +251,24 @@ Built (`Turnip/Profile/`):
   and by naming on the Profile: for each video that produced a saved clip,
   its Photos identifier, recording date and duration; for each saved clip,
   its clip ID, window in seconds, its own Photos identifier, trick names,
-  whether it shows the user, whether detection found it, and its date; and
+  whether it shows the user, whether detection found it, how the trick model
+  proposed it, which stored pose it was cut from, and its date; and
   the levels and rep milestones earned. Not `Documents/`, which stays empty,
   and not `Caches/`: it is in the user's iCloud and Finder device backups,
   which is how it survives a reinstall today. A file the app can't read is
   renamed `library-unreadable-<date>.json` beside it rather than overwritten.
   Deleting the app deletes it.
+- **Pose keypoints.** Each save keeps the pose its clips were cut from, as
+  gzipped TKP1 files in `Application Support/ClipLibrary/poses/`: the same
+  keypoints a contribution would send, kept whether or not the user ever
+  contributes. Following one person that is the take's pose; following
+  everyone it is one file per person with a saved clip, and a clip added by
+  hand keeps none, so nobody else the camera saw is written down
+  (`docs/MULTI_PERSON.md`). A video reached without analysis has none. These
+  files are in device backups, because they are the only copy once the
+  original is gone from Photos. A pose is deleted when the last clip cut from
+  it leaves the library, and deleting the app deletes them all. Nothing reads
+  them yet.
 - **New read, no new prompt.** `PHAsset.creationDate` of the video a save
   came from, under the existing Photos grant, to date its clips. The Profile
   also shows each saved clip's thumbnail and plays it from Photos by its
@@ -268,11 +281,9 @@ Built (`Turnip/Profile/`):
 
 Planned:
 
-- **More in the library.** Each source's pose keypoint sequence, a copy of
-  the source video's location when it has one, spot names and favorites
-  join the same file's directory in `Application Support/`: not `Caches/`,
-  since the pose there is the only copy once the user has deleted an
-  original from Photos.
+- **More in the library.** A copy of the source video's location when it
+  has one, spot names and favorites join the same file's directory in
+  `Application Support/`.
 - **Data written into the user's own files.** Each clip Save Clips exports
   carries a small Turnip metadata item (its clip ID, trick names, and whether
   it shows the user) and is named `turnip-clip-<clip_id>.mov`, the same

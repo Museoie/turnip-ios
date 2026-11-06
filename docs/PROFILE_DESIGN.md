@@ -35,9 +35,15 @@ tab with Needs a name, Achievements and the Gallery (§5.1, §6.1, §6.3–§6.5
   rewritten atomically on every change, with a schema version; a file the
   build can't read is moved aside, never overwritten. Each source keeps its
   asset ID, recording date and duration; each clip its window in seconds,
-  saved asset ID, names, `is_me`, `auto_detected` and date. Not stored yet:
-  the pose (§2.2), the copied location and spot, the crop and rotation,
-  `favorite`, the model provenance fields, and contribution state.
+  saved asset ID, names, `is_me`, `auto_detected`, how the model proposed it,
+  the pose it was cut from, and date. Not stored yet: the copied location and
+  spot, the crop and rotation, `favorite`, and contribution state.
+- Pose (§2.2) is kept per clip rather than per source: each clip names the
+  file its pose is in, under `Application Support/ClipLibrary/poses/`. The
+  files are named by a hash of the pose, so a person's clips share one, and a
+  second analysis of a video can't overwrite the pose an earlier clip was cut
+  from. A person's ID can't do that job, because it only means something
+  inside one analysis. Clips saved before pose was kept have none.
 - Not built: the file record and Restore library (§3.2), the achievement
   detail (§6.2), tracking a video deleted in Photos (§2.3: such a clip
   keeps its record and shows a "not in Photos" glyph, with no skeleton),
@@ -126,11 +132,14 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
     (`CONTRIBUTION_DESIGN.md` §5.2).
 - **Earned achievement** — trick, kind, level, `earned_at` (§6.4).
 
-### 2.2 Pose kept per source
+### 2.2 Pose kept for saved clips
 
 - The source's pose sequence is stored as the TKP1 blob contribution
   would upload: encoded once at the analysis rate, gap frames as all
-  zeros (`CONTRIBUTION_DESIGN.md` §2.2), gzip-compressed.
+  zeros (`CONTRIBUTION_DESIGN.md` §2.2), gzip-compressed. Following
+  everyone, a source has one for each person with a saved clip and none
+  for anyone else the camera saw (`MULTI_PERSON.md`). A clip added by hand
+  on such a video belongs to no person, so it keeps no pose.
 - Why keep it: the user can delete the original from Photos once its
   clips are saved, and with it any way to re-run pose. Without the
   stored pose a clip named today could never be contributed later.
@@ -139,7 +148,8 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
 - Cost: about 2 KB per second of source at 10 frames/sec, scaling with
   the analysis rate — a five-minute session is about 600 KB at the
   default rate, and 200 of them about 120 MB.
-- A source's pose is deleted when its last clip leaves the library.
+- A pose is deleted when the last clip cut from it leaves the library, so
+  a source's pose goes with its last clip, and a person's with theirs.
 - Sources reached by "Clip manually" (UIUX §2) have no pose. Their
   clips are stored and nameable but cannot be contributed, as today
   (`CONTRIBUTION_DESIGN.md` §2.3).
