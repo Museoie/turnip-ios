@@ -214,7 +214,7 @@ struct MergedPoseFrames: Sequence {
                 backfilledPeek = nil
                 let before = previousLive.map { abs(backfilledFrame.timestamp - $0.timestamp) } ?? .infinity
                 let after = liveFrame.timestamp - backfilledFrame.timestamp
-                if min(before, after) < interval / 2 {
+                if Swift.min(before, after) < interval / 2 {
                     continue
                 }
                 return backfilledFrame
