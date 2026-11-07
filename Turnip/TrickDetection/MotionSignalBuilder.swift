@@ -57,7 +57,10 @@ enum MotionSignalBuilder {
 
     // MARK: - Joints
 
-    private typealias Point = SIMD2<Double>
+    /// Joints are `SIMD2<Double>` pixels; the alias is internal because `located`,
+    /// `torsoLength`, and `speed` are called from `StreamingMotionSignal` and expose
+    /// it in their signatures (a private alias there is a compile error).
+    typealias Point = SIMD2<Double>
 
     /// Left/right joint pairs. Pose models trade the two labels when an athlete turns side-on or
     /// spins, which would read a still athlete's crossed labels as both joints jumping.
