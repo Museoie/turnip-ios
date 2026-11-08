@@ -124,3 +124,124 @@ enum PoseBackfill {
         return times
     }
 }
+
+/// The live and backfilled frames as one timestamp-ordered take, streamed: the iterator
+/// pulls from whichever store is earlier, dropping a backfilled frame that lands within
+/// half an interval of a live sample — the same rule `merged` applies, so the two agree
+/// frame for frame. Re-iterable: each iteration opens fresh store sequences, so the
+/// pipeline can pass over the merged take once for the signal and again for the crop
+/// frames, without ever holding it as an array.
+struct MergedPoseFrames: Sequence {
+    private let live: PoseFrameStore
+    private let backfilled: PoseFrameStore
+    private let interval: TimeInterval
+    /// Frames at or past the end of the file are dropped on either side, as `backfill`
+    /// drops the live ones: the camera keeps scoring between Stop and its hand-off, and
+    /// a backfilled sample past the end is no frame at all.
+    private let duration: TimeInterval
+
+    init(live: PoseFrameStore, backfilled: PoseFrameStore, interval: TimeInterval, duration: TimeInterval) {
+        self.live = live
+        self.backfilled = backfilled
+        self.interval = interval
+        self.duration = duration
+    }
+
+    func makeIterator() -> Iterator {
+        Iterator(
+            live: live.frames().makeIterator(),
+            backfilled: backfilled.frames().makeIterator(),
+            interval: interval,
+            duration: duration)
+    }
+
+    struct Iterator: IteratorProtocol {
+        private var live: AnyIterator<MultiPoseFrame>
+        private var backfilled: AnyIterator<MultiPoseFrame>
+        private let interval: TimeInterval
+        private let duration: TimeInterval
+        private var livePeek: MultiPoseFrame?
+        private var backfilledPeek: MultiPoseFrame?
+        /// The last live frame emitted: with `livePeek` (the next live frame) it brackets
+        /// any backfilled frame, so the nearest live time is one of the two — both
+        /// sequences are timestamp-ordered, so no other live frame can be nearer.
+        private var previousLive: MultiPoseFrame?
+
+        init(
+            live: AnyIterator<MultiPoseFrame>, backfilled: AnyIterator<MultiPoseFrame>,
+            interval: TimeInterval, duration: TimeInterval
+        ) {
+            self.live = live
+            self.backfilled = backfilled
+            self.interval = interval
+            self.duration = duration
+        }
+
+        mutating func next() -> MultiPoseFrame? {
+            while true {
+                if livePeek == nil {
+                    livePeek = nextLive()
+                }
+                if backfilledPeek == nil {
+                    backfilledPeek = nextBackfilled()
+                }
+                guard let backfilledFrame = backfilledPeek else {
+                    // No backfilled frame left: the rest is live, in order.
+                    let frame = livePeek
+                    livePeek = nil
+                    if let frame {
+                        previousLive = frame
+                    }
+                    return frame
+                }
+                guard let liveFrame = livePeek else {
+                    // No live frame left (or none within the file): the rest is backfilled,
+                    // kept unless it lands on a live sample already emitted.
+                    backfilledPeek = nil
+                    if let previous = previousLive,
+                       abs(backfilledFrame.timestamp - previous.timestamp) < interval / 2 {
+                        continue
+                    }
+                    return backfilledFrame
+                }
+                if liveFrame.timestamp <= backfilledFrame.timestamp {
+                    livePeek = nil
+                    previousLive = liveFrame
+                    return liveFrame
+                }
+                // The backfilled frame is earlier than the next live frame: keep it unless
+                // it lands within half an interval of the live frame either side of it.
+                backfilledPeek = nil
+                let before = previousLive.map { abs(backfilledFrame.timestamp - $0.timestamp) } ?? .infinity
+                let after = liveFrame.timestamp - backfilledFrame.timestamp
+                if Swift.min(before, after) < interval / 2 {
+                    continue
+                }
+                return backfilledFrame
+            }
+        }
+
+        /// The next live frame inside the file, skipping the ones past its end.
+        private mutating func nextLive() -> MultiPoseFrame? {
+            while let frame = live.next() {
+                if frame.timestamp < duration {
+                    return frame
+                }
+            }
+            return nil
+        }
+
+        /// The next backfilled frame inside the file, skipping the ones past its end.
+        /// The sampler only asks for times inside the file, so this is a guard, not a
+        /// path the backfill flow reaches — the merge keeps the same contract on both
+        /// sides rather than trusting one of them.
+        private mutating func nextBackfilled() -> MultiPoseFrame? {
+            while let frame = backfilled.next() {
+                if frame.timestamp < duration {
+                    return frame
+                }
+            }
+            return nil
+        }
+    }
+}

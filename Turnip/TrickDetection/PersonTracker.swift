@@ -25,10 +25,17 @@ struct PersonTracker: Sendable {
 
     /// Every person found in `frames`, in the order they first appeared. `renderedPixelSize` is
     /// what the frame-normalized boxes are measured against, so a distance means the same thing
-    /// across a portrait frame as down it.
-    func tracks(in frames: [MultiPoseFrame], renderedPixelSize: CGSize) -> [PoseTrack] {
+    /// across a portrait frame as down it. `frames` is walked once, in order — the pipeline
+    /// streams it from the store, so a long take never sits in memory as an array; an array
+    /// call site reads the same.
+    func tracks<Frames: Sequence>(in frames: Frames, renderedPixelSize: CGSize) -> [PoseTrack]
+    where Frames.Element == MultiPoseFrame {
         var open: [OpenTrack] = []
+        /// Each walked position's frame index and timestamp, in order: the tracks are built
+        /// from this plus the sightings, so the take's frames are never held.
+        var timeline: [(frameIndex: Int, timestamp: TimeInterval)] = []
         for (position, frame) in frames.enumerated() {
+            timeline.append((frame.frameIndex, frame.timestamp))
             for index in open.indices where !open[index].isClosed
                 && frame.timestamp - open[index].lastSeen > maximumGap + 1e-6 {
                 open[index].isClosed = true
@@ -59,7 +66,7 @@ struct PersonTracker: Sendable {
                 open.append(track)
             }
         }
-        return open.map { $0.track(over: frames) }
+        return open.map { $0.track(timeline: timeline) }
     }
 
     /// A possible match: a person in the frame, a track, and how good a match they are.
@@ -142,15 +149,17 @@ private struct OpenTrack {
     }
 
     /// The person's pose from their first sighting to their last, empty where unseen in between.
-    func track(over frames: [MultiPoseFrame]) -> PoseTrack {
+    /// `timeline` carries each position's frame index and timestamp, so the track no longer
+    /// needs the take's frames to build from.
+    func track(timeline: [(frameIndex: Int, timestamp: TimeInterval)]) -> PoseTrack {
         let positions = sightings.keys
         guard let first = positions.min(), let last = positions.max() else {
             return PoseTrack(id: id, frames: [])
         }
         return PoseTrack(id: id, frames: (first...last).map { position in
             PoseFrameResult(
-                frameIndex: frames[position].frameIndex,
-                timestamp: frames[position].timestamp,
+                frameIndex: timeline[position].frameIndex,
+                timestamp: timeline[position].timestamp,
                 keypoints: sightings[position]?.keypoints ?? [])
         })
     }
