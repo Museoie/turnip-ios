@@ -258,11 +258,10 @@ struct ProcessingPipeline: Sendable {
         // lets the last window run past the file, and the card labels a
         // longer clip than the export produces.
         let duration = try await asset.load(.duration).seconds
-        let trickModel = await loadTrickModel()
         return ProcessingResult(
             detection: detectStreaming(
                 frames: { store.frames() }, people: mode, renderedPixelSize: renderedPixelSize,
-                duration: duration, trickModel: trickModel, keepLayer: await keepLayer(for: trickModel)),
+                duration: duration, proposer: await loadProposer()),
             asset: asset)
     }
 
@@ -312,18 +311,18 @@ struct ProcessingPipeline: Sendable {
         // The file's composition size when any frame came from the file, as `run` uses; the
         // live pass's own measure of the same picture otherwise.
         let renderedPixelSize = await firstRenderSize.value ?? partial.renderedPixelSize
-        let trickModel = await loadTrickModel()
         return ProcessingResult(
             detection: detectStreaming(
                 frames: { AnySequence(frames) }, people: mode, renderedPixelSize: renderedPixelSize,
-                duration: duration, trickModel: trickModel, keepLayer: await keepLayer(for: trickModel)),
+                duration: duration, proposer: await loadProposer()),
             asset: asset)
     }
 
-    /// The keep layer for an analysis by `trickModel`: none without a model, which proposes
-    /// nothing for the layer to decide.
-    func keepLayer(for trickModel: TrickModel?) async -> PersonalKeepLayer? {
-        trickModel == nil ? nil : await loadKeepLayer()
+    /// The trick model and keep layer an analysis proposes with; `nil` without a model, when the
+    /// heuristic proposes and there is no band for a layer to decide.
+    func loadProposer() async -> TrickProposer? {
+        guard let model = await loadTrickModel() else { return nil }
+        return TrickProposer(model: model, keepLayer: await loadKeepLayer())
     }
 
     /// Steps 4-6 for a take whose frames hold everyone the model found. Following one person,
@@ -338,17 +337,17 @@ struct ProcessingPipeline: Sendable {
     /// export confirmation row, and the exported file all read the same
     /// window instead of the card labelling up to the trailing buffer past
     /// the clip that actually exports.
-    /// With a `trickModel`, it proposes the clips, run once over each pose, its `keepLayer`
+    /// With a `proposer`, its model proposes the clips, run once over each pose, its keep layer
     /// deciding the band; without one, the heuristic does.
     func detect(
         in frames: [MultiPoseFrame], people mode: PersonMode, renderedPixelSize: CGSize,
-        duration: TimeInterval? = nil, trickModel: TrickModel? = nil, keepLayer: PersonalKeepLayer? = nil
+        duration: TimeInterval? = nil, proposer: TrickProposer? = nil
     ) -> DetectedClips {
         let primary = frames.map(\.primary)
         guard mode == .everyone else {
             let found = proposeClips(
                 in: primary, personID: nil, renderedPixelSize: renderedPixelSize, duration: duration,
-                trickModel: trickModel, keepLayer: keepLayer)
+                proposer: proposer)
             return DetectedClips(
                 clips: found.clips, poseFrames: primary, windowEmbeddings: found.embeddings.map { [$0] } ?? [])
         }
@@ -358,7 +357,7 @@ struct ProcessingPipeline: Sendable {
         for track in personTracker.tracks(in: frames, renderedPixelSize: renderedPixelSize) {
             let found = proposeClips(
                 in: track.frames, personID: track.id, renderedPixelSize: renderedPixelSize, duration: duration,
-                trickModel: trickModel, keepLayer: keepLayer)
+                proposer: proposer)
             guard !found.clips.isEmpty else { continue }
             people.append(track)
             clips += found.clips
@@ -377,8 +376,7 @@ struct ProcessingPipeline: Sendable {
     /// heuristic's crop sweep passes over the take again after the signal.
     private func detectStreaming(
         frames: () -> AnySequence<MultiPoseFrame>, people mode: PersonMode,
-        renderedPixelSize: CGSize, duration: TimeInterval, trickModel: TrickModel?,
-        keepLayer: PersonalKeepLayer? = nil
+        renderedPixelSize: CGSize, duration: TimeInterval, proposer: TrickProposer?
     ) -> DetectedClips {
         // Pass 1: the result's frames and the motion signal, in one walk. The signal
         // streamer holds a few seconds of frames; the primaries accumulate into the
@@ -393,12 +391,12 @@ struct ProcessingPipeline: Sendable {
         let samples = signal.finish()
 
         guard mode == .everyone else {
-            if let trickModel {
+            if proposer != nil {
                 // Whole-take inference by nature: it runs over the result array, no extra
                 // copy — the same call `detect` makes.
                 let found = proposeClips(
                     in: poseFrames, personID: nil, renderedPixelSize: renderedPixelSize,
-                    duration: duration, trickModel: trickModel, keepLayer: keepLayer)
+                    duration: duration, proposer: proposer)
                 return DetectedClips(
                     clips: found.clips, poseFrames: poseFrames,
                     windowEmbeddings: found.embeddings.map { [$0] } ?? [])
@@ -433,7 +431,7 @@ struct ProcessingPipeline: Sendable {
         for track in personTracker.tracks(in: frames(), renderedPixelSize: renderedPixelSize) {
             let found = proposeClips(
                 in: track.frames, personID: track.id, renderedPixelSize: renderedPixelSize, duration: duration,
-                trickModel: trickModel, keepLayer: keepLayer)
+                proposer: proposer)
             guard !found.clips.isEmpty else { continue }
             people.append(track)
             clips += found.clips
@@ -448,14 +446,13 @@ struct ProcessingPipeline: Sendable {
     /// ends with proposals from one of the two.
     private func proposeClips(
         in frames: [PoseFrameResult], personID: Int?, renderedPixelSize: CGSize, duration: TimeInterval?,
-        trickModel: TrickModel?, keepLayer: PersonalKeepLayer? = nil
+        proposer: TrickProposer?
     ) -> (clips: [ProcessedClip], embeddings: WindowEmbeddings?) {
-        if let trickModel {
+        if let proposer {
             do {
                 var generator = SystemRandomNumberGenerator()
-                let found = try trickModel.proposals(
-                    over: frames, duration: duration, personID: personID, rules: proposalRules, keepLayer: keepLayer,
-                    using: &generator)
+                let found = try proposer.proposals(
+                    over: frames, duration: duration, personID: personID, rules: proposalRules, using: &generator)
                 let clips = buildClips(
                     proposed: found.clips.map { ($0.window, $0) }, personID: personID,
                     frames: frames, renderedPixelSize: renderedPixelSize, duration: duration)
@@ -481,7 +478,7 @@ struct ProcessingPipeline: Sendable {
         in frames: [PoseFrameResult], renderedPixelSize: CGSize, duration: TimeInterval? = nil
     ) -> [ProcessedClip] {
         proposeClips(
-            in: frames, personID: nil, renderedPixelSize: renderedPixelSize, duration: duration, trickModel: nil
+            in: frames, personID: nil, renderedPixelSize: renderedPixelSize, duration: duration, proposer: nil
         ).clips
     }
 
