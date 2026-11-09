@@ -24,6 +24,9 @@ import Foundation
 /// `auto_detected` — and goes off for a clip added by hand or retrimmed in the editor.
 /// `proposal` is how the trick model proposed the clip, `nil` when it didn't; it stays with the
 /// clip through every edit, since it records what the model offered, not what the clip is now.
+/// `proposedFrames` stays with it for the same reason: the canonical frames the model proposed,
+/// which a trashed proposal leaves behind for the personal layer
+/// (`docs/PERSONALIZATION_DESIGN.md` §3). It is never saved or contributed.
 ///
 /// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
 /// stands for the source video already in Photos rather than a derived clip: it
@@ -45,6 +48,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     var isMe: Bool
     let isAutoDetected: Bool
     let proposal: ModelProposal?
+    let proposedFrames: Range<Int>?
 
     init(
         id: UUID = UUID(),
@@ -57,7 +61,8 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         names: [ClipName] = [],
         isMe: Bool = true,
         isAutoDetected: Bool = false,
-        proposal: ModelProposal? = nil
+        proposal: ModelProposal? = nil,
+        proposedFrames: Range<Int>? = nil
     ) {
         self.id = id
         self.window = window
@@ -70,6 +75,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.isMe = isMe
         self.isAutoDetected = isAutoDetected
         self.proposal = proposal
+        self.proposedFrames = proposedFrames
     }
 
     /// "2.4s"-style duration label for the card, via the one shared clip-duration

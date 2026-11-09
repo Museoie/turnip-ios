@@ -17,15 +17,14 @@ extension WindowEmbeddings {
     /// L2-normalized. `nil` when there is no row, or its values are all zero.
     func clipEmbedding(of window: TrickWindow) -> ClipEmbedding? {
         let indices = rowIndices(for: window)
-        guard let width = indices.first.map({ rows[$0].count }) else { return nil }
-        var sum = [Float](repeating: 0, count: width)
-        for index in indices {
-            for (column, value) in rows[index].enumerated() {
-                sum[column] += value
-            }
-        }
-        guard let vector = sum.unitLength else { return nil }
+        guard let vector = meanVector(over: indices) else { return nil }
         return ClipEmbedding(modelVersion: modelVersion, vector: vector, centralNames: centralNames(over: indices))
+    }
+
+    /// The same rule over canonical frames `[start, end)`: a segment's embedding, which the keep
+    /// layer reads (`docs/PERSONALIZATION_DESIGN.md` §4.3).
+    func embedding(fromFrame start: Int, to end: Int) -> [Float]? {
+        meanVector(over: rowIndices(fromFrame: start, to: end))
     }
 
     /// The rows §3.5 reads for `window`.
@@ -33,12 +32,29 @@ extension WindowEmbeddings {
         guard !rows.isEmpty else { return [] }
         let stride = descriptor.windowStride, width = descriptor.windowFrames
         let frames = ContributionPose.canonicalFrames(of: window, frameCount: (rows.count - 1) * stride + width)
-        let inside = rows.indices.filter { frames.start <= $0 * stride && $0 * stride + width <= frames.end }
+        return rowIndices(fromFrame: frames.start, to: frames.end)
+    }
+
+    private func rowIndices(fromFrame start: Int, to end: Int) -> [Int] {
+        let stride = descriptor.windowStride, width = descriptor.windowFrames
+        let inside = rows.indices.filter { start <= $0 * stride && $0 * stride + width <= end }
         guard inside.isEmpty else { return inside }
         func overlap(_ row: Int) -> Int {
-            min(frames.end, row * stride + width) - max(frames.start, row * stride)
+            min(end, row * stride + width) - max(start, row * stride)
         }
         return rows.indices.max { overlap($0) < overlap($1) }.map { [$0] } ?? []
+    }
+
+    /// The mean of `indices`' rows at unit length; `nil` with no row, or a mean of zeros.
+    private func meanVector(over indices: [Int]) -> [Float]? {
+        guard let width = indices.first.map({ rows[$0].count }) else { return nil }
+        var sum = [Float](repeating: 0, count: width)
+        for index in indices {
+            for (column, value) in rows[index].enumerated() {
+                sum[column] += value
+            }
+        }
+        return sum.unitLength
     }
 
     /// Each name's score over `indices`: its class's mean probability, the highest of them for a

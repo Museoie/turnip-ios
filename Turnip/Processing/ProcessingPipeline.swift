@@ -70,6 +70,10 @@ struct ProcessedClip: Hashable, Sendable {
     /// How the trick model proposed the clip, with the names it starts with; `nil` when the
     /// heuristic found it.
     var proposal: ModelProposal?
+    /// The canonical frames the trick model proposed, before any clamp to the video: what a
+    /// trashed proposal leaves behind (`docs/PERSONALIZATION_DESIGN.md` §3). `nil` when the
+    /// heuristic found it.
+    var proposedFrames: Range<Int>?
 }
 
 /// What detection yields for one video: the clips, with every sampled frame they were cut
@@ -160,6 +164,8 @@ struct ProcessingPipeline: Sendable {
     /// The trick model a run proposes clips with, or `nil` for the heuristic: none is staged, or
     /// it failed to load. The default is the app's one shared loader.
     typealias TrickModelFactory = @Sendable () async -> TrickModel?
+    /// The personal keep layer in use, if any (`docs/PERSONALIZATION_DESIGN.md` §4.3).
+    typealias KeepLayerFactory = @Sendable () async -> PersonalKeepLayer?
 
     let sampler: any FrameSampling
     /// Samples per second of footage this run targets — `TurnipSettings.analysisGranularity`
@@ -172,6 +178,7 @@ struct ProcessingPipeline: Sendable {
     let cropRectCalculator: CropRectCalculator
     let windowDetector: TrickWindowDetector
     let loadTrickModel: TrickModelFactory
+    let loadKeepLayer: KeepLayerFactory
     let proposalRules: TrickProposalRules
     let personTracker = PersonTracker()
     private static let logger = Logger(subsystem: "com.hoiekim.turnip", category: "TrickModel")
@@ -183,6 +190,7 @@ struct ProcessingPipeline: Sendable {
         cropRectCalculator: CropRectCalculator = CropRectCalculator(),
         windowDetector: TrickWindowDetector? = nil,
         loadTrickModel: @escaping TrickModelFactory = { await TrickModelLoader.shared.model() },
+        loadKeepLayer: @escaping KeepLayerFactory = { await PersonalLayer.shared.keepLayer },
         proposalRules: TrickProposalRules = TrickProposalRules()
     ) {
         self.sampler = sampler ?? VideoFrameSampler(sampleRate: sampleRate)
@@ -191,6 +199,7 @@ struct ProcessingPipeline: Sendable {
         self.cropRectCalculator = cropRectCalculator
         self.windowDetector = windowDetector ?? TrickWindowDetector()
         self.loadTrickModel = loadTrickModel
+        self.loadKeepLayer = loadKeepLayer
         self.proposalRules = proposalRules
     }
 
@@ -249,10 +258,11 @@ struct ProcessingPipeline: Sendable {
         // lets the last window run past the file, and the card labels a
         // longer clip than the export produces.
         let duration = try await asset.load(.duration).seconds
+        let trickModel = await loadTrickModel()
         return ProcessingResult(
             detection: detectStreaming(
                 frames: { store.frames() }, people: mode, renderedPixelSize: renderedPixelSize,
-                duration: duration, trickModel: await loadTrickModel()),
+                duration: duration, trickModel: trickModel, keepLayer: await keepLayer(for: trickModel)),
             asset: asset)
     }
 
@@ -302,11 +312,18 @@ struct ProcessingPipeline: Sendable {
         // The file's composition size when any frame came from the file, as `run` uses; the
         // live pass's own measure of the same picture otherwise.
         let renderedPixelSize = await firstRenderSize.value ?? partial.renderedPixelSize
+        let trickModel = await loadTrickModel()
         return ProcessingResult(
             detection: detectStreaming(
                 frames: { AnySequence(frames) }, people: mode, renderedPixelSize: renderedPixelSize,
-                duration: duration, trickModel: await loadTrickModel()),
+                duration: duration, trickModel: trickModel, keepLayer: await keepLayer(for: trickModel)),
             asset: asset)
+    }
+
+    /// The keep layer for an analysis by `trickModel`: none without a model, which proposes
+    /// nothing for the layer to decide.
+    func keepLayer(for trickModel: TrickModel?) async -> PersonalKeepLayer? {
+        trickModel == nil ? nil : await loadKeepLayer()
     }
 
     /// Steps 4-6 for a take whose frames hold everyone the model found. Following one person,
@@ -321,17 +338,17 @@ struct ProcessingPipeline: Sendable {
     /// export confirmation row, and the exported file all read the same
     /// window instead of the card labelling up to the trailing buffer past
     /// the clip that actually exports.
-    /// With a `trickModel`, it proposes the clips, run once over each pose; without one, the
-    /// heuristic does.
+    /// With a `trickModel`, it proposes the clips, run once over each pose, its `keepLayer`
+    /// deciding the band; without one, the heuristic does.
     func detect(
         in frames: [MultiPoseFrame], people mode: PersonMode, renderedPixelSize: CGSize,
-        duration: TimeInterval? = nil, trickModel: TrickModel? = nil
+        duration: TimeInterval? = nil, trickModel: TrickModel? = nil, keepLayer: PersonalKeepLayer? = nil
     ) -> DetectedClips {
         let primary = frames.map(\.primary)
         guard mode == .everyone else {
             let found = proposeClips(
                 in: primary, personID: nil, renderedPixelSize: renderedPixelSize, duration: duration,
-                trickModel: trickModel)
+                trickModel: trickModel, keepLayer: keepLayer)
             return DetectedClips(
                 clips: found.clips, poseFrames: primary, windowEmbeddings: found.embeddings.map { [$0] } ?? [])
         }
@@ -341,7 +358,7 @@ struct ProcessingPipeline: Sendable {
         for track in personTracker.tracks(in: frames, renderedPixelSize: renderedPixelSize) {
             let found = proposeClips(
                 in: track.frames, personID: track.id, renderedPixelSize: renderedPixelSize, duration: duration,
-                trickModel: trickModel)
+                trickModel: trickModel, keepLayer: keepLayer)
             guard !found.clips.isEmpty else { continue }
             people.append(track)
             clips += found.clips
@@ -360,7 +377,8 @@ struct ProcessingPipeline: Sendable {
     /// heuristic's crop sweep passes over the take again after the signal.
     private func detectStreaming(
         frames: () -> AnySequence<MultiPoseFrame>, people mode: PersonMode,
-        renderedPixelSize: CGSize, duration: TimeInterval, trickModel: TrickModel?
+        renderedPixelSize: CGSize, duration: TimeInterval, trickModel: TrickModel?,
+        keepLayer: PersonalKeepLayer? = nil
     ) -> DetectedClips {
         // Pass 1: the result's frames and the motion signal, in one walk. The signal
         // streamer holds a few seconds of frames; the primaries accumulate into the
@@ -380,7 +398,7 @@ struct ProcessingPipeline: Sendable {
                 // copy — the same call `detect` makes.
                 let found = proposeClips(
                     in: poseFrames, personID: nil, renderedPixelSize: renderedPixelSize,
-                    duration: duration, trickModel: trickModel)
+                    duration: duration, trickModel: trickModel, keepLayer: keepLayer)
                 return DetectedClips(
                     clips: found.clips, poseFrames: poseFrames,
                     windowEmbeddings: found.embeddings.map { [$0] } ?? [])
@@ -415,7 +433,7 @@ struct ProcessingPipeline: Sendable {
         for track in personTracker.tracks(in: frames(), renderedPixelSize: renderedPixelSize) {
             let found = proposeClips(
                 in: track.frames, personID: track.id, renderedPixelSize: renderedPixelSize, duration: duration,
-                trickModel: trickModel)
+                trickModel: trickModel, keepLayer: keepLayer)
             guard !found.clips.isEmpty else { continue }
             people.append(track)
             clips += found.clips
@@ -430,16 +448,17 @@ struct ProcessingPipeline: Sendable {
     /// ends with proposals from one of the two.
     private func proposeClips(
         in frames: [PoseFrameResult], personID: Int?, renderedPixelSize: CGSize, duration: TimeInterval?,
-        trickModel: TrickModel?
+        trickModel: TrickModel?, keepLayer: PersonalKeepLayer? = nil
     ) -> (clips: [ProcessedClip], embeddings: WindowEmbeddings?) {
         if let trickModel {
             do {
                 var generator = SystemRandomNumberGenerator()
                 let found = try trickModel.proposals(
-                    over: frames, duration: duration, personID: personID, rules: proposalRules, using: &generator)
+                    over: frames, duration: duration, personID: personID, rules: proposalRules, keepLayer: keepLayer,
+                    using: &generator)
                 let clips = buildClips(
-                    proposed: found.clips.map { ($0.window, $0.proposal) }, personID: personID, frames: frames,
-                    renderedPixelSize: renderedPixelSize, duration: duration)
+                    proposed: found.clips.map { ($0.window, $0) }, personID: personID,
+                    frames: frames, renderedPixelSize: renderedPixelSize, duration: duration)
                 return (clips, found.embeddings)
             } catch {
                 let reason = String(describing: error)
@@ -486,7 +505,7 @@ struct ProcessingPipeline: Sendable {
     /// with nothing inside the asset is dropped: it cannot become a clip,
     /// and a zero-length window would break the looper and the export.
     private func buildClips(
-        proposed: [(window: TrickWindow, proposal: ModelProposal?)],
+        proposed: [(window: TrickWindow, model: ProposedClip?)],
         personID: Int?,
         frames: [PoseFrameResult],
         renderedPixelSize: CGSize,
@@ -504,7 +523,9 @@ struct ProcessingPipeline: Sendable {
             let cropRect = cropRectCalculator.cropRect(
                 for: inWindow, renderedPixelSize: renderedPixelSize)
                 ?? NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
-            return ProcessedClip(window: window, cropRect: cropRect, personID: personID, proposal: candidate.proposal)
+            return ProcessedClip(
+                window: window, cropRect: cropRect, personID: personID, proposal: candidate.model?.proposal,
+                proposedFrames: candidate.model?.frames)
         }
     }
 

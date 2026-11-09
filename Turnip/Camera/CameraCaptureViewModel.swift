@@ -152,8 +152,10 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
         makeDetectClips: @escaping (Int) -> ClipDetection = { rate in
             let pipeline = ProcessingPipeline(sampleRate: rate)
             return { frames, mode, size in
-                pipeline.detect(
-                    in: frames, people: mode, renderedPixelSize: size, trickModel: await pipeline.loadTrickModel())
+                let trickModel = await pipeline.loadTrickModel()
+                return pipeline.detect(
+                    in: frames, people: mode, renderedPixelSize: size, trickModel: trickModel,
+                    keepLayer: await pipeline.keepLayer(for: trickModel))
             }
         },
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettingsStore.shared.current }

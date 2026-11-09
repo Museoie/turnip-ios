@@ -22,14 +22,15 @@ struct PersonalRebuildScheduler: Sendable {
 }
 
 /// The device's personal layer over the central model (`docs/PERSONALIZATION_DESIGN.md`): it keeps
-/// each saved clip's embedding under the active model, and offers name ranking while that beats the
-/// central model on the user's own clips. In every other case, with the toggle off, too few clips,
-/// a rebuild in progress or a model without embeddings, `ranking` is `nil` and the app behaves as
+/// each saved clip's embedding and each stored pose's band segments under the active model, and
+/// offers name ranking and the keep layer, each while it beats the central model on the user's own
+/// clips. In every other case, with the toggle off, too few clips, a rebuild in progress or a model
+/// without embeddings, `ranking` and `keepLayer` are `nil` and the app behaves as
 /// `MODEL_CONTRACT.md` §3.3 says.
 ///
 /// `@MainActor` because the naming screens read `ranking` as they draw. The work behind it, the
-/// gate, the cache's file and the rebuild's model runs, stays off the main actor. Nothing here
-/// leaves the device or is logged beyond counts.
+/// fits, the gates, the cache's file and the rebuild's model runs, stays off the main actor.
+/// Nothing here leaves the device or is logged beyond counts.
 @MainActor
 final class PersonalLayer {
     static let shared = PersonalLayer(
@@ -41,6 +42,9 @@ final class PersonalLayer {
 
     /// Name ranking when it is in use, `nil` otherwise.
     private(set) var ranking: PersonalNameRanking?
+    /// The keep layer when it is in use, `nil` otherwise. Analysis reads it as it starts, and only
+    /// under the model version it was fit for.
+    private(set) var keepLayer: PersonalKeepLayer?
 
     private let library: ClipLibrary
     private let vocabulary: @MainActor () -> TrickVocabulary
@@ -51,7 +55,7 @@ final class PersonalLayer {
     private let isTooHot: @Sendable () -> Bool
     private var isEnabled: Bool
     private var cache: PersonalCache?
-    private var rankingTask: Task<Void, Never>?
+    private var refreshTask: Task<Void, Never>?
     /// The last write or delete of the cache's file: each waits on the one before, so the file
     /// ends as the last call left it.
     private var lastFileChange: Task<Void, Never>?
@@ -139,6 +143,7 @@ final class PersonalLayer {
         guard let version = active else {
             cache = nil
             ranking = nil
+            keepLayer = nil
             return
         }
         guard cache?.modelVersion != version else {
@@ -165,46 +170,59 @@ final class PersonalLayer {
         refresh()
     }
 
-    /// A save's embeddings, from the analysis that just ran (§6.1). Nothing else to do: no model
-    /// runs over earlier sources.
+    /// A save's embeddings and band segments, from the analysis that just ran (§6.1). Nothing else
+    /// to do: no model runs over earlier sources.
     func record(_ save: LibrarySave) {
         guard isEnabled, var cache else { return }
         for clip in save.clips {
             guard let embedding = clip.embedding, embedding.modelVersion == cache.modelVersion else { continue }
             cache.clips[clip.id.uuidString] = embedding
         }
+        for (poseID, run) in save.runs where run.modelVersion == cache.modelVersion {
+            cache.bandSegments[poseID] = run.bandSegments
+        }
         self.cache = cache
         refresh()
     }
 
-    /// Works prototypes and the gate out again from the library's current names, off the main actor,
-    /// and keeps the cache's file in step. Clips gone from the library leave the cache here.
+    /// Works prototypes, the keep layer and both gates out again from the library's current names,
+    /// clips and trashed proposals, off the main actor, and keeps the cache's file in step. Clips
+    /// and poses gone from the library leave the cache here.
     @discardableResult
     func refresh() -> Task<Void, Never> {
-        rankingTask?.cancel()
+        refreshTask?.cancel()
         guard isEnabled, var cache else {
             ranking = nil
+            keepLayer = nil
             return Task {}
         }
         let clips = library.clips
         let known = Set(clips.map(\.id.uuidString))
+        let storedPoses = Set(clips.compactMap(\.poseID))
         cache.clips = cache.clips.filter { known.contains($0.key) }
+        cache.bandSegments = cache.bandSegments.filter { storedPoses.contains($0.key) }
         self.cache = cache
         persist(cache)
         guard cache.isRebuilt else {
             ranking = nil
+            keepLayer = nil
             scheduler.schedule()
             return Task {}
         }
         let vocabulary = vocabulary()
+        let dismissed = library.dismissedWindows
         let task = Task { [weak self] in
-            let ranking = await Task.detached(priority: .utility) {
-                Self.ranking(of: clips, cache: cache, vocabulary: vocabulary)
+            let (ranking, keepLayer) = await Task.detached(priority: .utility) {
+                (
+                    Self.ranking(of: clips, cache: cache, vocabulary: vocabulary),
+                    Self.keepLayer(of: clips, dismissed: dismissed, cache: cache)
+                )
             }.value
             guard !Task.isCancelled else { return }
             self?.ranking = ranking
+            self?.keepLayer = keepLayer
         }
-        rankingTask = task
+        refreshTask = task
         return task
     }
 
@@ -222,17 +240,38 @@ final class PersonalLayer {
             modelVersion: cache.modelVersion, prototypes: NamePrototypes(examples).all(), vocabulary: vocabulary)
     }
 
+    /// The keep layer fit on every labeled band segment, once it has passed its gate (§4.3, §5).
+    private nonisolated static func keepLayer(
+        of clips: [LibraryClip], dismissed: [DismissedWindow], cache: PersonalCache
+    ) -> PersonalKeepLayer? {
+        let examples = KeepExample.examples(bandSegments: cache.bandSegments, clips: clips, dismissed: dismissed)
+        guard let width = examples.first?.vector.count,
+              let outcome = KeepLayerGate.outcome(of: examples, width: width)
+        else {
+            logger.notice("Keep layer gate: \(examples.count) labeled band segments, too few")
+            return nil
+        }
+        logger.notice("""
+            Keep layer gate: \(outcome.examples) labeled band segments, \(outcome.heldOut) held out, \
+            \(outcome.passes ? "passed" : "failed")
+            """)
+        guard outcome.passes else { return nil }
+        return PersonalKeepLayer(modelVersion: cache.modelVersion, parameters: KeepLayerFit.fit(examples, width: width))
+    }
+
     private func setEnabled(_ isOn: Bool) async {
         isEnabled = isOn
         guard !isOn else {
             await start()
             return
         }
-        rankingTask?.cancel()
+        refreshTask?.cancel()
         ranking = nil
+        keepLayer = nil
         cache = nil
         scheduler.cancel()
         changeFile { $0.delete() }
+        library.removeDismissedWindows()
     }
 
     private func persist(_ cache: PersonalCache) {
@@ -250,14 +289,15 @@ final class PersonalLayer {
 
     /// Waits for what `refresh` and the cache's file have in flight.
     func settle() async {
-        await rankingTask?.value
+        await refreshTask?.value
         await lastFileChange?.value
     }
 
     // MARK: - Rebuilding
 
     /// The second pass after a model update (§6.2): runs the model over each stored pose not yet
-    /// done, keeping its clips' embeddings, then turns the layer back on through the gate. Picks up
+    /// done, keeping its clips' embeddings and its band segments, then turns the layer back on
+    /// through the gates. Picks up
     /// where the last run stopped. Returns whether it finished; it stops early when `shouldStop`
     /// says so or the device runs hot, and asks to run again.
     ///
@@ -282,11 +322,14 @@ final class PersonalLayer {
                 return false
             }
             let windows = clips.map { (id: $0.id, window: TrickWindow(startTime: $0.startTime, endTime: $0.endTime)) }
-            let embeddings = await Task.detached(priority: .utility) {
-                Self.embeddings(of: windows, poseID: poseID, poses: poses, model: model)
+            let rebuilt = await Task.detached(priority: .utility) {
+                Self.rebuilt(windows, poseID: poseID, poses: poses, model: model)
             }.value
             guard isEnabled, var current = self.cache, current.modelVersion == model.version else { return false }
-            current.clips.merge(embeddings) { _, rebuilt in rebuilt }
+            current.clips.merge(rebuilt.embeddings) { _, rebuilt in rebuilt }
+            if let bandSegments = rebuilt.bandSegments {
+                current.bandSegments[poseID] = bandSegments
+            }
             current.rebuiltPoseIDs.insert(poseID)
             self.cache = current
             persist(current)
@@ -296,26 +339,30 @@ final class PersonalLayer {
         self.cache = finished
         scheduler.cancel()
         await refresh().value
-        Self.logger.notice("Personal rebuild finished: \(clipsByPose.count) poses, \(finished.clips.count) clips")
+        let bandSegments = finished.bandSegments.values.reduce(0) { $0 + $1.count }
+        Self.logger.notice("""
+            Personal rebuild finished: \(clipsByPose.count) poses, \(finished.clips.count) clips, \
+            \(bandSegments) band segments
+            """)
         return true
     }
 
-    /// One stored pose's clips under `model`. A pose that can't be read or run contributes nothing
-    /// and isn't tried again, so one bad file can't hold the layer off.
-    private nonisolated static func embeddings(
-        of clips: [(id: UUID, window: TrickWindow)], poseID: String, poses: SourcePoseStore, model: PoseEmbedder
-    ) -> [String: ClipEmbedding] {
-        guard let pose = poses.pose(poseID) else { return [:] }
+    /// One stored pose's clips and band segments under `model`. A pose that can't be read or run
+    /// contributes nothing and isn't tried again, so one bad file can't hold the layer off.
+    private nonisolated static func rebuilt(
+        _ clips: [(id: UUID, window: TrickWindow)], poseID: String, poses: SourcePoseStore, model: PoseEmbedder
+    ) -> (embeddings: [String: ClipEmbedding], bandSegments: [BandSegment]?) {
+        guard let pose = poses.pose(poseID) else { return ([:], nil) }
         do {
-            guard let rows = try model.windowEmbeddings(over: pose) else { return [:] }
+            guard let rows = try model.windowEmbeddings(over: pose) else { return ([:], nil) }
             var embeddings: [String: ClipEmbedding] = [:]
             for clip in clips {
                 embeddings[clip.id.uuidString] = rows.clipEmbedding(of: clip.window)
             }
-            return embeddings
+            return (embeddings, rows.bandSegments)
         } catch {
             logger.error("Personal rebuild skipped a pose: \(String(describing: error), privacy: .public)")
-            return [:]
+            return ([:], nil)
         }
     }
 }

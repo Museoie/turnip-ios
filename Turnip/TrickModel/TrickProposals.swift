@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// How the trick model proposed a clip (`MODEL_CONTRACT.md` §3.3 steps 5–6): the model, the names
 /// it pre-filled, or on a blind clip would have, and whether the clip is in the blind sample. The
@@ -38,6 +39,9 @@ struct WindowEmbeddings: Hashable, Sendable {
 struct TrickProposalRules: Sendable {
     /// Step 1: a segment scoring below this is dropped.
     var scoreThreshold: Float = 0.5
+    /// Step 1's band: a personal keep layer that has passed its gate decides the segments scoring
+    /// inside it, and only those (`MODEL_CONTRACT.md` §3.5).
+    static let personalBand: Range<Float> = 0.3..<0.7
     /// Step 2: of two segments overlapping by more than this (temporal IoU), the lower-scoring one
     /// is dropped, whatever their names.
     var suppressionOverlap: Float = 0.5
@@ -51,8 +55,22 @@ struct TrickProposalRules: Sendable {
     /// Steps 1–3, in video order. A merged segment spans both parts and takes the higher score
     /// of the two, and of each name's two scores: the merge bridges flicker inside one trick, so
     /// the trick is as sure as its surest part.
-    func segments(from decoded: [TrickSegment]) -> [TrickSegment] {
-        merged(suppressed(decoded.filter { $0.score >= scoreThreshold }))
+    ///
+    /// `keep` is the personal keep layer's decision for a segment in `personalBand`, `nil` where it
+    /// can't decide one; without it, and for every segment outside the band, step 1 is the
+    /// threshold.
+    func segments(
+        from decoded: [TrickSegment], keeping keep: ((TrickSegment) -> Bool?)? = nil
+    ) -> [TrickSegment] {
+        merged(suppressed(decoded.filter { passesStepOne($0, keeping: keep) }))
+    }
+
+    /// Step 1 for one segment.
+    func passesStepOne(_ segment: TrickSegment, keeping keep: ((TrickSegment) -> Bool?)?) -> Bool {
+        guard Self.personalBand.contains(segment.score), let decided = keep?(segment) else {
+            return segment.score >= scoreThreshold
+        }
+        return decided
     }
 
     /// Steps 4–6 for one surviving segment, made once, when its clip is created: the names that
@@ -101,10 +119,18 @@ struct TrickProposalRules: Sendable {
     }
 }
 
-/// What the trick model proposes over one person's pose: each clip's window with how it was
-/// proposed, in video order, and the run's embeddings.
+/// One clip the trick model proposes: its window, the canonical frames it was proposed over, and
+/// how it was proposed.
+struct ProposedClip: Sendable {
+    let window: TrickWindow
+    let frames: Range<Int>
+    let proposal: ModelProposal
+}
+
+/// What the trick model proposes over one person's pose: its clips, in video order, and the run's
+/// embeddings.
 struct TrickModelProposals: Sendable {
-    let clips: [(window: TrickWindow, proposal: ModelProposal)]
+    let clips: [ProposedClip]
     let embeddings: WindowEmbeddings?
 }
 
@@ -112,18 +138,33 @@ extension TrickModel {
     /// Runs the model once over `frames`, one person's scored frames, and turns what it finds
     /// into proposals: §3.3's rules, then each surviving segment's names and blind draw. Frames
     /// too few to lay on a grid, or shorter than one window, propose nothing.
+    ///
+    /// A `keepLayer` fit under this model decides step 1's band, from each segment's embedding
+    /// (`docs/PERSONALIZATION_DESIGN.md` §4.3). Everything after step 1 is the same either way: the
+    /// blind draw is made on every proposal however it passed, and its names are the central ones.
     func proposals<Generator: RandomNumberGenerator>(
         over frames: [PoseFrameResult], duration: TimeInterval?, personID: Int?,
-        rules: TrickProposalRules, using generator: inout Generator
+        rules: TrickProposalRules, keepLayer: PersonalKeepLayer? = nil, using generator: inout Generator
     ) throws -> TrickModelProposals {
         guard let input = TrickModelInput(frames: frames, duration: duration), let output = try run(input) else {
             return TrickModelProposals(clips: [], embeddings: nil)
         }
-        let clips = rules.segments(from: output.segments).map {
-            ($0.window, rules.proposal(for: $0, modelVersion: version, using: &generator))
+        let embeddings = windowEmbeddings(of: output, personID: personID)
+        let keep = embeddings?.keepDecision(by: keepLayer)
+        if keep != nil {
+            let band = output.segments.filter { TrickProposalRules.personalBand.contains($0.score) }
+            let kept = band.filter { rules.passesStepOne($0, keeping: keep) }.count
+            Self.personalizationLogger.notice("Keep layer decided \(band.count) band segments, kept \(kept)")
         }
-        return TrickModelProposals(clips: clips, embeddings: windowEmbeddings(of: output, personID: personID))
+        let clips = rules.segments(from: output.segments, keeping: keep).map {
+            ProposedClip(
+                window: $0.window, frames: $0.startFrame..<$0.endFrame,
+                proposal: rules.proposal(for: $0, modelVersion: version, using: &generator))
+        }
+        return TrickModelProposals(clips: clips, embeddings: embeddings)
     }
+
+    private static let personalizationLogger = Logger(subsystem: "com.hoiekim.turnip", category: "Personalization")
 
     /// A run's embeddings as the personal layer reads them; `nil` for a model without them.
     func windowEmbeddings(of output: TrickModelOutput, personID: Int?) -> WindowEmbeddings? {
