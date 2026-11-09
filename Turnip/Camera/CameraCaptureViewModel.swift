@@ -153,7 +153,7 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
             let pipeline = ProcessingPipeline(sampleRate: rate)
             return { frames, mode, size in
                 pipeline.detect(
-                    in: frames, people: mode, renderedPixelSize: size, trickModel: await pipeline.loadTrickModel())
+                    in: frames, people: mode, renderedPixelSize: size, proposer: await pipeline.loadProposer())
             }
         },
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettingsStore.shared.current }

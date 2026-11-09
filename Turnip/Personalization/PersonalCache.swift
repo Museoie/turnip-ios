@@ -2,16 +2,19 @@ import Foundation
 import os
 
 /// What the personal layer has derived under one model version
-/// (`docs/PERSONALIZATION_DESIGN.md` §7): each clip's embedding, and how far the rebuild has come.
-/// Prototypes and the gate are left out because they read the clips' current names, which change
-/// after a save, and take milliseconds to work out again.
+/// (`docs/PERSONALIZATION_DESIGN.md` §7): each clip's embedding, each stored pose's band segments,
+/// and how far the rebuild has come. Prototypes, the band segments' labels, the keep layer's
+/// parameters and both gates are left out because they read the library's current names, clips
+/// and trashed proposals, which change after a save, and take milliseconds to work out again.
 struct PersonalCache: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
 
     var schemaVersion = PersonalCache.currentSchemaVersion
     let modelVersion: String
     /// By clip ID.
     var clips: [String: ClipEmbedding] = [:]
+    /// By pose ID: every band segment of the model's run over the pose.
+    var bandSegments: [String: [BandSegment]] = [:]
     /// The stored poses the model has run over since this version activated, so an interrupted
     /// rebuild picks up where it stopped.
     var rebuiltPoseIDs: Set<String> = []

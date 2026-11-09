@@ -121,7 +121,8 @@ struct HomeView: View {
             items: detection.clips.map {
                 ClipListItem(
                     window: $0.window, cropRect: $0.cropRect, personID: $0.personID,
-                    names: $0.proposal?.prefilledNames ?? [], isAutoDetected: true, proposal: $0.proposal)
+                    names: $0.proposal?.prefilledNames ?? [], isAutoDetected: true, proposal: $0.proposal,
+                    proposedFrames: $0.proposedFrames)
             },
             poseFrames: detection.poseFrames,
             people: detection.people,

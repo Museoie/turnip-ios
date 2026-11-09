@@ -1,5 +1,8 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 27 · 2026-11-09 · Learn from my clips (§1a) also decides borderline proposals,
+from the proposals the user keeps and trashes on Name Clips.*
+
 *Rev 26 · 2026-11-06 · Settings (§1a) gains Learn from my clips, which keeps a
 personal layer over the trick model on the device.*
 
@@ -93,7 +96,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -377,10 +380,12 @@ default empty state, so it never reads as "your library is empty."
     replacing the fixed rate `docs/DESIGN.md`'s "Performance targets" describes; both the file
     path and the live path (§1b) sample at this rate.
   - **Learn from my clips** (switch, on by default) — whether the app keeps a personal layer over
-    the trick model, which ranks name suggestions by the user's own named clips
+    the trick model, which ranks name suggestions by the user's own named clips and decides the
+    proposals the model is unsure of from the ones the user kept and trashed on Name Clips
     ([`PERSONALIZATION_DESIGN.md`](PERSONALIZATION_DESIGN.md) §8). Its footnote says it stays on
-    this iPhone. Off deletes what the layer derived; back on rebuilds it from the library. The app
-    never marks a suggestion as personal.
+    this iPhone. Off deletes what the layer derived and the trashed proposals it kept, and stops
+    keeping them; back on rebuilds it from the library. The app never marks a suggestion or a
+    proposal as personal.
 - A fifth preference lives in the same store but not on this screen: **person mode** (One
   person / Everyone, default One person), whose tricks a take or an analysis is cut into clips
   for. It is chosen where it takes effect, on the camera before recording (§1b) and on
