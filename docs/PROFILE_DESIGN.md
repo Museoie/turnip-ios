@@ -44,6 +44,10 @@ tab with Needs a name, Achievements and the Gallery (§5.1, §6.1, §6.3–§6.5
   second analysis of a video can't overwrite the pose an earlier clip was cut
   from. A person's ID can't do that job, because it only means something
   inside one analysis. Clips saved before pose was kept have none.
+- While Learn from my clips is on, the library also keeps each trick-model
+  proposal trashed on Name Clips whose pose it stores: the source, the pose
+  and two frame indices (§2.3). They go with their pose, and all of them when
+  the toggle is turned off.
 - Not built: the file record and Restore library (§3.2), the achievement
   detail (§6.2), tracking a video deleted in Photos (§2.3: such a clip
   keeps its record and shows a "not in Photos" glyph, with no skeleton),
@@ -160,8 +164,8 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
   gets a clip record with its `export_asset_id` and whatever names it
   was given; its source gets a source record and its pose. Trashed clips
   are not stored. The one exception is on-device personalization: a
-  trashed trick-model proposal on a saved source leaves its window's
-  two frame indices behind, and nothing else
+  trashed trick-model proposal on a saved source leaves the source, its
+  pose and two frame indices behind, and nothing else
   (`PERSONALIZATION_DESIGN.md` §3).
 - Backing out of Name Clips without saving stores nothing.
 - A saved clip can later have its names, `is_me` and `favorite`

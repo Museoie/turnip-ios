@@ -41,6 +41,17 @@ struct LibraryClip: Codable, Hashable, Identifiable, Sendable {
     var duration: TimeInterval { endTime - startTime }
 }
 
+/// A trick-model proposal shown on Name Clips and trashed there, on a pose the library keeps
+/// (`docs/PERSONALIZATION_DESIGN.md` §3): the source, the pose of the person it was proposed for,
+/// and the canonical 10 Hz frames it was proposed over, end exclusive. Nothing else: not a clip,
+/// an export or a name. The personal keep layer reads it as a segment the user didn't keep.
+struct DismissedWindow: Codable, Hashable, Sendable {
+    let sourceAssetID: String
+    let poseID: String
+    let startFrame: Int
+    let endFrame: Int
+}
+
 /// What one Name Clips save hands the library: the video and each of its clips now in Photos.
 struct LibrarySave: Sendable {
     struct Clip: Sendable {
@@ -60,6 +71,12 @@ struct LibrarySave: Sendable {
     let sourceAssetID: String
     let sourceDuration: TimeInterval
     let clips: [Clip]
+    /// The proposals trashed on the video, each on a pose this save stores. Empty while Settings'
+    /// Learn from my clips is off.
+    var dismissedWindows: [DismissedWindow] = []
+    /// The trick model's run over each stored pose, by pose ID, for the personal layer's cache;
+    /// the library doesn't keep it, for the same reason as `Clip.embedding`.
+    var runs: [String: WindowEmbeddings] = [:]
 }
 
 /// The on-device clip library (`docs/PROFILE_DESIGN.md` §2): every clip Name Clips saved, its
@@ -82,6 +99,9 @@ final class ClipLibrary: ObservableObject {
     @Published private(set) var clips: [LibraryClip] = []
     @Published private(set) var sources: [LibrarySource] = []
     @Published private(set) var earned: [EarnedAchievement] = []
+    /// Trashed proposals on the poses the library keeps, for the personal layer. Each goes with
+    /// its pose, and all of them when Learn from my clips is turned off.
+    @Published private(set) var dismissedWindows: [DismissedWindow] = []
 
     private let fileURL: URL?
     let poseStore: SourcePoseStore
@@ -98,6 +118,8 @@ final class ClipLibrary: ObservableObject {
         var sources: [LibrarySource]
         var clips: [LibraryClip]
         var earned: [EarnedAchievement]
+        /// Optional so a file written before the library kept them still reads.
+        var dismissedWindows: [DismissedWindow]?
     }
 
     private struct SchemaHeader: Decodable {
@@ -197,6 +219,11 @@ final class ClipLibrary: ObservableObject {
                 clips.append(clip)
             }
         }
+        let storedPoses = Set(clips.compactMap(\.poseID))
+        for window in save.dismissedWindows
+        where storedPoses.contains(window.poseID) && !dismissedWindows.contains(window) {
+            dismissedWindows.append(window)
+        }
         let newlyEarned = recordEarned()
         persist()
         return newlyEarned
@@ -229,18 +256,32 @@ final class ClipLibrary: ObservableObject {
     }
 
     /// Removes a clip from the library; its video in Photos is the caller's to delete or keep. A
-    /// video with no clip left goes too, and so does a pose no clip names any more. What the clip
-    /// earned stays earned.
+    /// video with no clip left goes too, and so does a pose no clip names any more, with the
+    /// trashed proposals on it. What the clip earned stays earned.
     func delete(_ id: UUID) {
         guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
         let removed = clips.remove(at: index)
         if !clips.contains(where: { $0.sourceAssetID == removed.sourceAssetID }) {
             sources.removeAll { $0.assetID == removed.sourceAssetID }
         }
-        persist()
-        if let poseID = removed.poseID, !clips.contains(where: { $0.poseID == poseID }) {
-            poseStore.remove(poseID)
+        let releasedPose = removed.poseID.flatMap { poseID in
+            clips.contains { $0.poseID == poseID } ? nil : poseID
         }
+        if let releasedPose {
+            dismissedWindows.removeAll { $0.poseID == releasedPose }
+        }
+        persist()
+        if let releasedPose {
+            poseStore.remove(releasedPose)
+        }
+    }
+
+    /// Forgets every trashed proposal: Learn from my clips turned off
+    /// (`docs/PERSONALIZATION_DESIGN.md` §8).
+    func removeDismissedWindows() {
+        guard !dismissedWindows.isEmpty else { return }
+        dismissedWindows = []
+        persist()
     }
 
     /// Records and announces what the library earns under today's vocabulary: a newer one can merge
@@ -295,6 +336,7 @@ final class ClipLibrary: ObservableObject {
             sources = snapshot.sources
             clips = snapshot.clips
             earned = snapshot.earned
+            dismissedWindows = snapshot.dismissedWindows ?? []
         } catch {
             Self.logger.error("Library unreadable: \(error.localizedDescription, privacy: .public)")
             setAside(fileURL)
@@ -316,7 +358,9 @@ final class ClipLibrary: ObservableObject {
 
     private func persist() {
         guard let fileURL else { return }
-        let snapshot = Snapshot(schemaVersion: Self.schemaVersion, sources: sources, clips: clips, earned: earned)
+        let snapshot = Snapshot(
+            schemaVersion: Self.schemaVersion, sources: sources, clips: clips, earned: earned,
+            dismissedWindows: dismissedWindows)
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]

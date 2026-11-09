@@ -11,14 +11,20 @@ private final class FakeModel: PoseEmbedder, @unchecked Sendable {
     private var ranPoses: [ContributionPose] = []
     private let failing: Set<Float>
     private let heldRun: Int?
+    private let fixedRun: WindowEmbeddings?
     private let release = DispatchSemaphore(value: 0)
 
     /// `heldRun` is the run, counting from 1, that waits inside the model until `releaseHeldRun()`.
-    init(version: String = "v1", hasEmbeddings: Bool = true, failing: Set<Float> = [], heldRun: Int? = nil) {
+    /// `run`, when given, is what every pose comes out as.
+    init(
+        version: String = "v1", hasEmbeddings: Bool = true, failing: Set<Float> = [], heldRun: Int? = nil,
+        run: WindowEmbeddings? = nil
+    ) {
         self.version = version
         self.hasEmbeddings = hasEmbeddings
         self.failing = failing
         self.heldRun = heldRun
+        fixedRun = run
     }
 
     var runCount: Int { lock.withLock { ranPoses.count } }
@@ -33,6 +39,7 @@ private final class FakeModel: PoseEmbedder, @unchecked Sendable {
         if run == heldRun { release.wait() }
         let first = pose.slots.first.flatMap { $0 }?.first ?? 0
         if failing.contains(first) { throw TrickModelError.unexpectedOutput }
+        if let fixedRun { return fixedRun }
         return WindowEmbeddings(
             personID: nil, modelVersion: version,
             descriptor: TrickModelDescriptor(classes: ["background", "cork"], windowFrames: 10, windowStride: 5),
@@ -694,6 +701,151 @@ final class PersonalLayerTests: XCTestCase {
         XCTAssertEqual(model.runCount, 4)
     }
 
+    // MARK: - The keep layer
+
+    /// A run of `count` band segments, every other one kept: the kept ones score 0.45 along axis 0
+    /// and the trashed ones 0.6 along axis 1, a user the central model misjudges both ways.
+    private func pickyRun(_ count: Int, version: String = "v1") -> WindowEmbeddings {
+        KeepFixture.run(
+            scores: (0..<count).map { $0.isMultiple(of: 2) ? 0.45 : 0.6 },
+            axes: (0..<count).map { $0.isMultiple(of: 2) ? 0 : 1 }, version: version)
+    }
+
+    /// A save of `pickyRun(count)`'s source on `poseID`: a clip over each kept segment, and the
+    /// rest trashed on Name Clips.
+    @discardableResult
+    private func savePickySession(
+        _ count: Int, poseID: String, version: String = "v1", layer: PersonalLayer?
+    ) -> LibrarySave {
+        let source = UUID().uuidString
+        let segments = 0..<count
+        let saved = LibrarySave(
+            sourceAssetID: source, sourceDuration: 100,
+            clips: segments.filter { $0.isMultiple(of: 2) }.map { index in
+                LibrarySave.Clip(
+                    id: UUID(), window: TrickWindow(startTime: Double(2 * index), endTime: Double(2 * index + 1)),
+                    exportAssetID: "export", names: [], isMe: true, isAutoDetected: true, proposal: nil,
+                    poseID: poseID)
+            },
+            dismissedWindows: segments.filter { !$0.isMultiple(of: 2) }.map { index in
+                DismissedWindow(
+                    sourceAssetID: source, poseID: poseID, startFrame: 20 * index, endFrame: 20 * index + 10)
+            },
+            runs: [poseID: pickyRun(count, version: version)])
+        library.record(saved, sourceRecordedAt: Date())
+        layer?.record(saved)
+        return saved
+    }
+
+    /// The layer turns on once the user's own outcomes beat the central model, and then keeps what
+    /// they keep and hides what they trash inside the band, without ever loading the model.
+    func testTheKeepLayerTurnsOnOnceTheUsersOutcomesBeatTheCentralModel() async throws {
+        let layer = makeLayer()
+        await layer.start()
+        savePickySession(24, poseID: "pose-a", layer: layer)
+        await layer.refresh().value
+
+        let keepLayer = try XCTUnwrap(layer.keepLayer)
+        XCTAssertEqual(keepLayer.modelVersion, "v1")
+        XCTAssertEqual(keepLayer.keeps(score: 0.45, vector: PersonalFixture.axis(0)), true)
+        XCTAssertEqual(keepLayer.keeps(score: 0.6, vector: PersonalFixture.axis(1)), false)
+        XCTAssertEqual(counts.loadCount, 0)
+    }
+
+    func testTooFewLabeledBandSegmentsLeaveTheKeepLayerOff() async {
+        let layer = makeLayer()
+        await layer.start()
+        savePickySession(18, poseID: "pose-a", layer: layer)
+        await layer.refresh().value
+        XCTAssertNil(layer.keepLayer)
+    }
+
+    func testWithoutAModelThereIsNoKeepLayer() async {
+        let layer = makeLayer(model: nil)
+        await layer.start()
+        savePickySession(24, poseID: "pose-a", layer: layer)
+        await layer.refresh().value
+        XCTAssertNil(layer.keepLayer)
+    }
+
+    func testBandSegmentsFromAnotherVersionAreNotKept() async {
+        let layer = makeLayer()
+        await layer.start()
+        savePickySession(24, poseID: "pose-a", version: "v0", layer: layer)
+        await layer.settle()
+        XCTAssertEqual(cacheStore.load()?.bandSegments, [:])
+        XCTAssertNil(layer.keepLayer)
+    }
+
+    /// A save's band segments join the cache under their pose, and leave it with the pose.
+    func testAPosesBandSegmentsLeaveTheCacheWithThePose() async throws {
+        let layer = makeLayer()
+        await layer.start()
+        savePickySession(24, poseID: "pose-a", layer: layer)
+        await layer.settle()
+        XCTAssertEqual(cacheStore.load()?.bandSegments["pose-a"], pickyRun(24).bandSegments)
+
+        for clip in library.clips {
+            library.delete(clip.id)
+        }
+        await layer.refresh().value
+        await layer.settle()
+
+        XCTAssertEqual(cacheStore.load()?.bandSegments, [:])
+        XCTAssertEqual(library.dismissedWindows, [])
+        XCTAssertNil(layer.keepLayer)
+    }
+
+    /// After a model update the rebuild works each stored pose's band segments out again under the
+    /// new model, and the layer's labels come from the library's clips and trashed proposals.
+    func testTheRebuildKeepsEachPosesBandSegments() async throws {
+        let poseID = try storedPose(0.2)
+        savePickySession(24, poseID: poseID, layer: nil)
+        let layer = makeLayer(model: FakeModel(run: pickyRun(24)))
+
+        let finished = await layer.rebuild()
+        await layer.settle()
+
+        XCTAssertTrue(finished)
+        XCTAssertEqual(cacheStore.load()?.bandSegments[poseID], pickyRun(24).bandSegments)
+        XCTAssertNotNil(layer.keepLayer)
+    }
+
+    func testTurningTheToggleOffDeletesTheTrashedProposalsAndTheKeepLayer() async throws {
+        let layer = makeLayer()
+        await layer.start()
+        savePickySession(24, poseID: "pose-a", layer: layer)
+        await layer.refresh().value
+        XCTAssertNotNil(layer.keepLayer)
+
+        settings.learnsFromClips = false
+        for _ in 0..<200 where layer.keepLayer != nil {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        await layer.settle()
+
+        XCTAssertNil(layer.keepLayer)
+        XCTAssertEqual(library.dismissedWindows, [])
+        let reloaded = ClipLibrary(fileURL: libraryURL, vocabulary: { PersonalFixture.vocabulary }, announce: { _ in })
+        XCTAssertEqual(reloaded.dismissedWindows, [])
+        XCTAssertEqual(reloaded.clips.count, 12, "the clips themselves stay")
+    }
+
+    /// Analysis asks the layer for its keep layer as it starts, and nothing about that loads the
+    /// model.
+    func testAnalysisReadsTheKeepLayerWithoutLoadingTheModel() async throws {
+        let layer = makeLayer()
+        await layer.start()
+        savePickySession(24, poseID: "pose-a", layer: layer)
+        await layer.refresh().value
+        let pipeline = ProcessingPipeline(loadTrickModel: { nil }, loadKeepLayer: { await layer.keepLayer })
+
+        let read = await pipeline.loadKeepLayer()
+
+        XCTAssertEqual(read, layer.keepLayer)
+        XCTAssertEqual(counts.loadCount, 0)
+    }
+
     // MARK: - The real model
 
     /// The rebuild reads a stored pose the way analysis read the frames, so a clip comes out with the
@@ -754,6 +906,7 @@ final class PersonalCacheStoreTests: XCTestCase {
     func testACacheRoundTrips() {
         var cache = PersonalCache(modelVersion: "v1")
         cache.clips["id"] = ClipEmbedding(modelVersion: "v1", vector: [0.6, 0.8], centralNames: ["cork"])
+        cache.bandSegments["pose"] = [BandSegment(startFrame: 20, endFrame: 30, score: 0.55, vector: [0.6, 0.8])]
         cache.rebuiltPoseIDs = ["pose"]
         cache.isRebuilt = true
         store.save(cache)
@@ -767,6 +920,15 @@ final class PersonalCacheStoreTests: XCTestCase {
     func testAnUnreadableFileReadsAsAbsent() throws {
         store.save(PersonalCache(modelVersion: "v1"))
         try Data("not json".utf8).write(to: url)
+        XCTAssertNil(store.load())
+    }
+
+    /// A cache written before it held band segments reads as absent, so the rebuild works them out
+    /// for every stored pose.
+    func testACacheFromBeforeBandSegmentsReadsAsAbsent() {
+        var cache = PersonalCache(modelVersion: "v1")
+        cache.schemaVersion = 1
+        store.save(cache)
         XCTAssertNil(store.load())
     }
 

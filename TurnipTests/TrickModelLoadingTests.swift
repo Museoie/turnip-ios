@@ -257,7 +257,7 @@ final class TrickModelLoadingTests: XCTestCase {
 
         let detection = pipeline.detect(
             in: frames(reference), people: .one, renderedPixelSize: CGSize(width: 1920, height: 1080),
-            duration: 6.4, trickModel: model)
+            duration: 6.4, proposer: TrickProposer(model: model, keepLayer: nil))
 
         XCTAssertEqual(detection.clips.map(\.window), reference.segments.map {
             TrickWindow(startTime: Double($0.startFrame) / 10, endTime: Double($0.endFrame) / 10)
@@ -294,7 +294,7 @@ final class TrickModelLoadingTests: XCTestCase {
 
         let detection = pipeline.detect(
             in: frames, people: .everyone, renderedPixelSize: CGSize(width: 1920, height: 1080),
-            duration: 6.4, trickModel: model)
+            duration: 6.4, proposer: TrickProposer(model: model, keepLayer: nil))
 
         let athlete = try XCTUnwrap(detection.people.first { track in
             track.frames.contains { $0.keypoints.contains { abs($0.x - 0.9) > 0.01 } }
@@ -314,11 +314,62 @@ final class TrickModelLoadingTests: XCTestCase {
 
         let detection = pipeline.detect(
             in: frames(reference), people: .one, renderedPixelSize: CGSize(width: 1920, height: 1080),
-            trickModel: model)
+            proposer: TrickProposer(model: model, keepLayer: nil))
 
         XCTAssertEqual(detection.clips.count, reference.segments.count)
         XCTAssertTrue(detection.clips.allSatisfy { $0.proposal?.suggestionsWithheld == true })
         XCTAssertTrue(detection.clips.allSatisfy { $0.proposal?.prefilledNames == [] })
+    }
+
+    /// The reference with every keypoint moved only 18% of the way from where the first frame has
+    /// it: a pose the smoke model is unsure of, which it reads as a sure corkscrew and a gainer
+    /// scoring about 0.58, inside the keep layer's band.
+    private func borderlineFrames(_ reference: Reference) -> [MultiPoseFrame] {
+        let base = frames(reference)
+        let still = base[0].primary.keypoints
+        return base.map { frame in
+            let keypoints = zip(frame.primary.keypoints, still).map { moving, rest in
+                PoseKeypoint(
+                    name: moving.name, y: rest.y + 0.18 * (moving.y - rest.y), x: rest.x + 0.18 * (moving.x - rest.x),
+                    confidence: moving.confidence)
+            }
+            let person = DetectedPerson(
+                score: 0.9, box: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1), keypoints: keypoints)
+            return MultiPoseFrame(frameIndex: frame.frameIndex, timestamp: frame.timestamp, people: [person])
+        }
+    }
+
+    /// Detection hands the keep layer the model's band, following one person and following
+    /// everyone: a layer that hides the band drops the borderline gainer the central rule proposes
+    /// and keeps the sure corkscrew, and a layer fit under another version changes nothing.
+    func testDetectionHandsTheKeepLayerTheBand() async throws {
+        let model = try await smokeModel()
+        let frames = borderlineFrames(try reference())
+        let input = try XCTUnwrap(TrickModelInput(frames: frames.map(\.primary), duration: 6.4))
+        let output = try XCTUnwrap(try model.run(input))
+        let borderline = try XCTUnwrap(output.segments.first { $0.trickNames == ["gainer"] })
+        XCTAssertTrue(TrickProposalRules.personalBand.contains(borderline.score), "\(borderline.score)")
+        XCTAssertGreaterThanOrEqual(borderline.score, 0.5)
+        let hidesTheBand = KeepLayerParameters(
+            scale: 1, offset: -10,
+            weights: Array(repeating: 0, count: try XCTUnwrap(output.embeddings?.first?.count)))
+        let pipeline = ProcessingPipeline(proposalRules: TrickProposalRules(blindSampleRate: 0))
+
+        for mode in [PersonMode.one, .everyone] {
+            func proposed(_ layer: PersonalKeepLayer?) -> [Range<Int>?] {
+                pipeline.detect(
+                    in: frames, people: mode, renderedPixelSize: CGSize(width: 1920, height: 1080), duration: 6.4,
+                    proposer: TrickProposer(model: model, keepLayer: layer)
+                ).clips.map(\.proposedFrames)
+            }
+            XCTAssertEqual(proposed(nil), [36..<48, 48..<56], "\(mode)")
+            XCTAssertEqual(
+                proposed(PersonalKeepLayer(modelVersion: model.version, parameters: hidesTheBand)), [36..<48],
+                "\(mode)")
+            XCTAssertEqual(
+                proposed(PersonalKeepLayer(modelVersion: "trick-v9.9", parameters: hidesTheBand)), [36..<48, 48..<56],
+                "\(mode)")
+        }
     }
 
     /// Without a model the heuristic proposes, and its clips carry no model provenance.

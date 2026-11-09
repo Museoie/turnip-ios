@@ -1,7 +1,7 @@
 # Turnip iOS — On-Device Personalization Design
 
-*Draft · 2026-10-21 · Revised 2026-11-05: name ranking is built, on the
-pose the library now keeps.*
+*Draft · 2026-10-21 · Revised 2026-11-09: the keep layer and dismissed
+windows are built, beside name ranking.*
 
 **Scope.** A companion to `docs/DESIGN.md`. The trick-detection model
 the app downloads (the central model, turnip-ml's champion, trained on
@@ -25,11 +25,11 @@ trick-model loader. Nothing here crosses the network, so neither the
 farm nor the master plan changes. Where this doc makes a call none of
 those cover, it says so as *(judgment call)*.
 
-**Status.** Name ranking is built (`Turnip/Personalization/`): §4.1,
-§4.2, its gate in §5, §6, the cache in §7 and the toggle in §8. The keep
-layer (§4.3) and dismissed windows (§3) are not. What it stands on is
-in the app: the trick-model loader, with pre-fill and the blind sample
-(`CONTRIBUTION_DESIGN.md` §7.2), and the clip library
+**Status.** Both parts are built (`Turnip/Personalization/`): §4.1,
+name ranking (§4.2) and the keep layer (§4.3) with dismissed windows
+(§3), both gates in §5, §6, the cache in §7 and the toggle in §8. What
+it stands on is in the app: the trick-model loader, with pre-fill and
+the blind sample (`CONTRIBUTION_DESIGN.md` §7.2), and the clip library
 (`PROFILE_DESIGN.md` §2), which keeps each saved clip's pose (§2.2). One
 thing is still missing: no model has been published, so no device has
 embeddings to read and the layer stays off (§10). How the build differs
@@ -37,8 +37,6 @@ from this doc:
 
 - Tier 3 of §4.2, the model's below-bar names, is not built. The
   suggestions go from tier 2 to the vocabulary.
-- The cache holds each clip's embedding and how far the rebuild has come,
-  not prototypes or gate results (§7).
 
 This work is iOS-only.
 
@@ -129,17 +127,19 @@ Almost everything is already in the clip library (`PROFILE_DESIGN.md`
   everyone.
 - **Dismissed windows (new).** For each source a save writes to the
   library, one record per trick-model proposal shown on Name Clips and
-  trashed there: the source, the proposed `start_frame` and
-  `end_frame` in canonical 10 Hz frames, and nothing else. Kept
-  proposals and "+" clips need no new record, because they are saved
-  clips already.
+  trashed there: the source, the pose it was proposed on (the
+  library's ID for that person's stored track), the proposed
+  `start_frame` and `end_frame` in canonical 10 Hz frames, and nothing
+  else. Kept proposals and "+" clips need no new record, because they
+  are saved clips already.
   *(Judgment call, and a carve-out from `PROFILE_DESIGN.md` §2.3's
-  "Trashed clips are not stored": a trashed tile leaves two frame
-  indices behind, not a clip, an export or a name. It does so only on
-  a source whose pose the library already keeps. A source with nothing
-  saved stores nothing, and backing out of Name Clips stores nothing, as
-  today.)* A source's dismissed windows are deleted with its pose,
-  when its last clip leaves the library (`PROFILE_DESIGN.md` §2.2).
+  "Trashed clips are not stored": a trashed tile leaves its source, its
+  pose and two frame indices behind, not a clip, an export or a name.
+  It does so only on a pose the library already keeps. A source with
+  nothing saved stores nothing, and backing out of Name Clips stores
+  nothing, as today.)* A dismissed window is deleted with its pose,
+  when the pose's last clip leaves the library (`PROFILE_DESIGN.md`
+  §2.2).
 - **Name weights by origin:** `typed` and `vocabulary` names count 1,
   `model` names (a pre-fill the user kept) count 0.5. The rubber-stamp
   measure exists because kept pre-fills are the weakest evidence
@@ -152,7 +152,8 @@ Almost everything is already in the clip library (`PROFILE_DESIGN.md`
   trick model then runs on each person's stored track, and a clip's
   embedding comes from its own person's track. A dismissed window
   belongs to its person's track too, and is kept only while the library
-  stores that track. Following one person, there is one pose per take,
+  stores that track, which is why the record names the pose and not
+  only the source. Following one person, there is one pose per take,
   as above.
 
 ---
@@ -230,10 +231,19 @@ A segment's embedding is the same rule over the segment's frames.
   labeled 1 if it matches a saved clip's window, which covers both
   kept proposals and "+" clips, and 0 if it matches a dismissed window
   (§3). A segment that matches neither has no label and is left out.
-- **Fit.** Newton's method on the weighted log loss plus the penalty.
-  Each step solves one `(D + 2) × (D + 2)` system with Accelerate's
-  LAPACK. That takes milliseconds on a few thousand examples, with no
-  new dependency.
+  One that matches both is labeled 1. *(Judgment call: a "+" clip over
+  a trashed tile says a trick is there.)* Following everyone, a
+  segment is matched only against its own person's clips and dismissed
+  windows.
+- **Fit.** Newton's method on the log loss plus the penalty, with
+  `λ = 1`: moving any parameter by one costs as much as one example
+  the layer gives `p ≈ 0.37` for its own label. Every labeled segment
+  counts once. *(Judgment call on λ, and on unit weights: §5's gate
+  measures plain log loss, so the fit minimizes the same thing.)* Each
+  step solves one `(D + 2) × (D + 2)` system with Accelerate's LAPACK,
+  and a step that would raise the loss is halved until it doesn't.
+  That takes milliseconds on a few thousand examples, with no new
+  dependency.
 - **Minimum data:** 20 labeled band segments, at least five of each
   label. *(Judgment call.)*
 - **The feedback loop.** A segment the layer hides gets no outcome
@@ -285,8 +295,8 @@ re-runs after every save and every rebuild.
   of its names. The baseline gives a segment one class, so its names
   would leave the central side one or two names, and none for a "+"
   clip, which would flatter the layer. This is the stricter test.)*
-- **Keep layer.** Hold out the newest 20% of labeled band segments, at
-  least five, and fit on the rest. The layer passes when its log loss
+- **Keep layer.** Hold out the newest 20% of labeled band segments,
+  rounded up and at least five, and fit on the rest. The layer passes when its log loss
   on the held-out segments is lower than the central prior's (`p = s`).
   Once it passes, it is refit on every example. *(Judgment call on the
   metric and the split.)*
@@ -299,8 +309,8 @@ re-runs after every save and every rebuild.
 
 ### 6.1 After each save
 
-The saved clips' embeddings, and the band segments of the source just
-saved, come from the analysis that just ran (§4.1). They join the
+The saved clips' embeddings, and the band segments of each pose the
+save stored, come from the analysis that just ran (§4.1). They join the
 cache (§7), which already holds every earlier source's band segments.
 Prototypes update, the keep layer refits on the cache, and the gate
 re-runs, with no model run over earlier sources.
@@ -347,19 +357,21 @@ on the main thread.
 
 | Data | Where | Backed up | Lifetime |
 | --- | --- | --- | --- |
-| Dismissed windows (§3) | the clip library, `Application Support/` | yes, with the library | deleted with its source's pose, or when the toggle is turned off |
-| Personal cache: clip embeddings with their central names, how far the rebuild has come, and with the keep layer each source's band segments (frames, score, embedding, label) and its parameters, keyed by model version | `Caches/` | no | rebuilt on a model update, or after iOS evicts it |
+| Dismissed windows (§3) | the clip library, `Application Support/` | yes, with the library | deleted with its pose, or when the toggle is turned off |
+| Personal cache: clip embeddings with their central names, each stored pose's band segments (frames, score, embedding), and how far the rebuild has come, keyed by model version | `Caches/` | no | rebuilt on a model update, or after iOS evicts it |
 
 - The dismissed windows are the only copy of what they record, so they
   live with the library. The cache is derived and rebuildable, so it
   stays out of backups. A restore to a new device brings the library
   back, and the first rebuild there remakes the cache.
-- Prototypes and gate results aren't stored. They read the clips'
-  current names, which change after a save, and take milliseconds to
-  work out again.
+- Prototypes, the band segments' labels, the keep layer's parameters
+  and both gates' results aren't stored. They read the library's
+  current names, clips and dismissed windows, which change after a save
+  or a delete, and take milliseconds to work out again.
 - **Size:** an embedding is 512 bytes at `D = 128`, kept per clip and
   per band segment. 200 clips with a few band segments per source come
-  to a few hundred KB. A dismissed window is two integers.
+  to a few hundred KB. A dismissed window is two integers and the IDs
+  of its source and pose.
 - **Never** uploaded, never in a contribution, never in an exported
   clip's metadata item, and never logged beyond counts.
 - **Per device.** A second device has its own library and so its own

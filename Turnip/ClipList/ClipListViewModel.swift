@@ -181,6 +181,9 @@ final class ClipListViewModel: ObservableObject {
     /// The Photos asset each saved clip landed as, by item id: what the clip library records, and
     /// replaced when an edited clip is saved again.
     private var exportAssetIDs: [UUID: String] = [:]
+    /// The trick-model proposals trashed on this screen, by item id: whose run proposed each, and
+    /// the frames it proposed.
+    private var trashedProposals: [UUID: (personID: Int?, frames: Range<Int>)] = [:]
     private let makeDirectory: @Sendable () -> URL
     /// Read once per `save()` run for the album destination — injected (like
     /// `CameraCaptureViewModel`'s own `settingsProvider`) so a test can drive the album-on
@@ -339,7 +342,8 @@ final class ClipListViewModel: ObservableObject {
             names: item.names,
             isMe: item.isMe,
             isAutoDetected: item.isAutoDetected && isSameWindow(result.window, as: item.window),
-            proposal: item.proposal)
+            proposal: item.proposal,
+            proposedFrames: item.proposedFrames)
     }
 
     /// Whether `result` would export the same video as `item`. The editor commits on every
@@ -363,7 +367,15 @@ final class ClipListViewModel: ObservableObject {
     /// Removes the clip with the given id entirely, with no restore: Name Clips' "Remove this
     /// clip". The original item is never removed, since `items[0]` always stands for the
     /// source video. A no-op for unknown ids.
+    ///
+    /// A trick-model proposal not yet in Photos is remembered as trashed, for the save to keep as
+    /// a dismissed window (`docs/PERSONALIZATION_DESIGN.md` §3). One already saved stays a saved
+    /// clip in the library, whatever the list does with it.
     func delete(_ id: UUID) {
+        if let item = items.first(where: { $0.id == id && !$0.isOriginal }), let frames = item.proposedFrames,
+           exportAssetIDs[id] == nil {
+            trashedProposals[id] = (item.personID, frames)
+        }
         items.removeAll { $0.id == id && !$0.isOriginal }
         // The id is gone from `items` for good, so nothing will ever look these up
         // again — drop them rather than leaking one entry per deleted clip for the
@@ -623,8 +635,29 @@ final class ClipListViewModel: ObservableObject {
                 poseID: storedPoseIDs[item.personID], embedding: embedding(of: item))
         }
         guard !saved.isEmpty else { return [] }
+        var runs: [String: WindowEmbeddings] = [:]
+        for (owner, poseID) in storedPoseIDs {
+            runs[poseID] = windowEmbeddings.first { $0.personID == owner }
+        }
         return recordSaved(LibrarySave(
-            sourceAssetID: assetIdentifier, sourceDuration: sourceDuration, clips: saved))
+            sourceAssetID: assetIdentifier, sourceDuration: sourceDuration, clips: saved,
+            dismissedWindows: dismissedWindows(), runs: runs))
+    }
+
+    /// The trashed proposals the library keeps: each on a person whose pose it stores, and none
+    /// while Settings' Learn from my clips is off (`docs/PERSONALIZATION_DESIGN.md` §3, §8).
+    /// Backing out of the screen saves nothing, so it keeps nothing either.
+    private func dismissedWindows() -> [DismissedWindow] {
+        guard settingsProvider().learnsFromClips else { return [] }
+        return trashedProposals.values
+            .compactMap { trashed in
+                storedPoseIDs[trashed.personID].map {
+                    DismissedWindow(
+                        sourceAssetID: assetIdentifier, poseID: $0, startFrame: trashed.frames.lowerBound,
+                        endFrame: trashed.frames.upperBound)
+                }
+            }
+            .sorted { ($0.poseID, $0.startFrame, $0.endFrame) < ($1.poseID, $1.startFrame, $1.endFrame) }
     }
 
     /// Records that one clip's video is now in Photos. Resolved by id rather than
