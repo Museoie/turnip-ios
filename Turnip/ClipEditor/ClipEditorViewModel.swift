@@ -13,6 +13,8 @@ enum CropAdjustmentStep {
     /// A twentieth of the video's own width or height, so a press moves the same fraction of
     /// the picture whatever size the preview is drawn at.
     static let offsetFraction: CGFloat = 0.05
+    /// How far one Make crop wider or Make crop taller stretches the marker's side.
+    static let reshapeFactor: CGFloat = 1.25
 }
 
 /// The crop area's framing at the playhead in words, its accessibility value: what a VoiceOver
@@ -226,11 +228,12 @@ final class ClipEditorViewModel: ObservableObject {
         return 0...duration
     }
 
-    /// The crop marker's aspect ratio (width over height): the calculator's own target, which
-    /// every rect it produces has in pixels — so the fixed marker is exactly the crop rect's
-    /// shape and the video maps onto it by one uniform scale (`ClipEditorStage`).
+    /// The crop marker's aspect ratio (width over height): the follow crop's own shape
+    /// (`FollowCrop.aspectRatio`), which the corner handles reshape, or the calculator's target —
+    /// the shape every rect it produces has in pixels — before the clip has a follow crop. The
+    /// video maps onto the marker by one uniform scale either way (`ClipEditorStage`).
     var targetAspectRatio: CGFloat {
-        CGFloat(calculator.targetAspectRatio)
+        followCrop?.aspectRatio ?? CGFloat(calculator.targetAspectRatio)
     }
 
     /// The crop area's accessibility value (`CropAdjustmentDescription`): the follow crop's zoom
@@ -243,7 +246,7 @@ final class ClipEditorViewModel: ObservableObject {
 
     /// The stage geometry in one value: the displayed (upright) frame size plus the crop
     /// rect mapped into that space. Nil until media info loads; the view lays the video out
-    /// under the fixed marker from it.
+    /// under the marker from it.
     var previewOverlay: (videoSize: CGSize, cropRect: CGRect)? {
         guard let trackGeometry, let crop = trackGeometry.displayedCropRect(cropRect) else { return nil }
         return (videoSize: trackGeometry.displayedSize, cropRect: crop)
@@ -602,7 +605,7 @@ final class ClipEditorViewModel: ObservableObject {
     func autoFollow() {
         guard supportsAutoFollow, let overlay = previewOverlay else { return }
         let rotation = followRotationAtPlayhead
-        guard let fit = autoFollower.fit(
+        guard let fit = autoFollower.shaped(targetAspectRatio).fit(
             frames: framesInWindow, cropRect: overlay.cropRect, videoSize: overlay.videoSize,
             rotationRadians: rotation)
         else {
@@ -791,6 +794,56 @@ final class ClipEditorViewModel: ObservableObject {
         }
     }
 
+    /// Reshapes the crop by hand: the marker, `marker` on screen at `previewScale` points per
+    /// displayed pixel, was dragged by a corner to `drawn`. The clip takes `drawn`'s shape, kept
+    /// within `ClipEditorStage.aspectRatioRange`, and every keyframe and the resting framing are
+    /// zoomed and moved so that what `drawn` held is what the marker holds at its new shape,
+    /// wherever the marker then settles: the picture under the corners doesn't jump on release.
+    /// Exact at each keyframe; between them the position and the zoom ease on their own curves as
+    /// they always do. A framing's zoom stays within `scaleRange`, which only a reshape that
+    /// pushes far past it gives up the match for. The user's change, like a pinch: diamonds fill,
+    /// Auto follow is offered again for the new shape, and the picture eases over `fitAnimation`.
+    func resizeCrop(from marker: CGRect, to drawn: CGRect, previewScale: CGFloat) {
+        guard var crop = followCrop, let overlay = previewOverlay,
+              previewScale.isFinite, previewScale > 0,
+              marker.width > 0, marker.height > 0, drawn.width > 0, drawn.height > 0,
+              drawn.width.isFinite, drawn.height.isFinite
+        else { return }
+        // Past the shapes allowed, the drawn rectangle gives up its longer side about its center.
+        let drawn = ClipEditorStage.clampedShape(drawn)
+        let ratio = drawn.width / drawn.height
+        let box = Self.markerBox(around: overlay.cropRect, aspectRatio: crop.aspectRatio)
+        let reshaped = Self.markerBox(around: overlay.cropRect, aspectRatio: ratio)
+        guard box.width > 0, reshaped.width > 0 else { return }
+        // On screen, `drawn` showed `drawn.width / (previewScale · s)` displayed pixels across at
+        // a zoom of `s`; the settled marker shows `reshaped.width / s'` across, the whole box at
+        // the new shape. `previewScale` is the old marker's width over the old box's.
+        let zoom = marker.width / drawn.width * reshaped.width / box.width
+        let shift = CGPoint(
+            x: (drawn.midX - marker.midX) / previewScale, y: (drawn.midY - marker.midY) / previewScale)
+        func reframed(_ framing: FollowFraming) -> FollowFraming {
+            // The source point under `drawn`'s center moves to the marker's: `shift` on screen,
+            // in displayed pixels, undone by the framing's turn and zoom.
+            let unturned = shift.applying(CGAffineTransform(rotationAngle: -framing.rotationRadians))
+            return FollowFraming(
+                center: CGPoint(
+                    x: framing.center.x + unturned.x / framing.scale,
+                    y: framing.center.y + unturned.y / framing.scale),
+                scale: Self.clampedScale(framing.scale * zoom),
+                rotationRadians: framing.rotationRadians)
+        }
+        for index in crop.keyframes.indices {
+            crop.keyframes[index].framing = reframed(crop.keyframes[index].framing)
+        }
+        crop.resting = reframed(crop.resting)
+        crop.aspectRatio = ratio
+        guard crop != followCrop else { return }
+        crop.isAutoFollow = false
+        withAnimation(Self.fitAnimation) {
+            easePan { followCrop = crop }
+        }
+    }
+
     /// The lane's trailing button: adds a keyframe at the playhead where the curves already are
     /// — the picture doesn't move — or, with one within `keyframeReach`, removes that one.
     func toggleKeyframeAtPlayhead() {
@@ -944,7 +997,7 @@ final class ClipEditorViewModel: ObservableObject {
         guard supportsAutoFollow, let followCrop, followCrop.isUntouchedAutoFollow,
               let overlay = previewOverlay
         else { return }
-        guard let fit = autoFollower.fit(
+        guard let fit = autoFollower.shaped(followCrop.aspectRatio).fit(
             frames: framesInWindow, cropRect: overlay.cropRect, videoSize: overlay.videoSize,
             rotationRadians: followRotationAtPlayhead)
         else { return }

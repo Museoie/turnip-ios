@@ -1062,6 +1062,28 @@ final class ClipListTests: XCTestCase {
         XCTAssertFalse(viewModel.items[1].isSaved, "moving the saved clip's follow crop changes its video")
     }
 
+    /// A reshape alone, every framing as it was, is still an edit: the clip keeps the new shape and
+    /// is no longer the one in Photos.
+    @MainActor
+    func testAnEditorCommitOfANewShapeAloneIsAnEdit() async throws {
+        let url = try await writeFollowVideo()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let followCrop = FollowCrop.uniform(
+            scale: 2, rotationRadians: 0,
+            keyframes: [FollowKeyframe(time: 1, center: CGPoint(x: 20, y: 18), autoCenter: nil)],
+            restingCenter: CGPoint(x: 32, y: 18), isAutoFollow: false)
+        let item = ClipListItem(window: followedWindow, cropRect: fullFrame, followCrop: followCrop, isSaved: true)
+        let viewModel = followViewModel(items: [item], poseFrames: crossingAthlete(), url: url)
+        var square = followCrop
+        square.aspectRatio = 1
+
+        viewModel.applyEditorResult(
+            ClipEditorResult(window: item.window, cropRect: item.cropRect, followCrop: square), to: item.id)
+
+        XCTAssertEqual(viewModel.items[1].followCrop?.aspectRatio, 1)
+        XCTAssertFalse(viewModel.items[1].isSaved, "a new shape is a new video")
+    }
+
     @MainActor
     func testSaveExportsAFollowedClipWithTheCropItsTileDraws() async throws {
         actor Recorder {

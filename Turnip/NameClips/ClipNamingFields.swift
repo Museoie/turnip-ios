@@ -13,9 +13,6 @@ struct ClipNamingActions {
 /// mean", the trick-name field, suggestions, and who is in the clip. The same controls on Name
 /// Clips, on the Profile's "Needs a name" and on its Clip view.
 struct ClipNamingFields: View {
-    /// The suggestions' scroll target, so a page can keep them above the keyboard.
-    static let suggestionsID = "suggestions"
-
     let names: [ClipName]
     let isMe: Bool
     /// What the suggestions lead with: the names already given on this clip's video, and the
@@ -34,7 +31,7 @@ struct ClipNamingFields: View {
             nameChips
             correction
             nameField
-            suggestionChips.id(Self.suggestionsID)
+            suggestionChips
             whoIsIn
         }
     }
@@ -86,9 +83,11 @@ struct ClipNamingFields: View {
             .focused(isFieldFocused)
             .disabled(!isEnabled)
             .onSubmit {
+                // Return adds the name and keeps the keyboard up for the next one in a combo; on
+                // an empty field it puts the keyboard away.
+                let addsName = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 commitDraft()
-                // Return adds the name and keeps the keyboard up for the next one in a combo.
-                if isEnabled { isFieldFocused.wrappedValue = true }
+                if isEnabled, addsName { isFieldFocused.wrappedValue = true }
             }
             .accessibilityIdentifier("name-clips-field")
     }

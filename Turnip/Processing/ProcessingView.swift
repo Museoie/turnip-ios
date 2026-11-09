@@ -89,9 +89,6 @@ struct ProcessingView<Destination: View>: View {
     }
 
     @StateObject private var viewModel: ProcessingViewModel
-    /// Holds the person mode the picker above "Analyze clips" shows and a run starts in, the
-    /// same remembered choice the camera's control sets.
-    @ObservedObject private var settings = TurnipSettingsStore.shared
     @State private var player: AVPlayer?
     /// The frame size as the player shows it (display orientation), loaded once in
     /// `.task` alongside the player — this view owns the player, so it owns the geometry
@@ -123,7 +120,8 @@ struct ProcessingView<Destination: View>: View {
     /// the instant the finger lifts, which can reach this gesture's `onEnded` before it runs —
     /// reading the live flag there would let a scrub that just ended fall through to a browse
     /// commit on the same lift. This instead stays true for that whole gesture, and only resets
-    /// once this gesture's own `onEnded` has run.
+    /// once this gesture's own `onEnded` has run, or the system has cancelled the drag.
+    /// Whatever the swipe did before the latch is undone when it latches (`abandonSwipe()`).
     @State private var dragWasScrub = false
     /// Which axis a drag committed to on its first recognized movement — set once per gesture
     /// and read instead of re-deriving from the live translation on every update, so a drag
@@ -157,6 +155,10 @@ struct ProcessingView<Destination: View>: View {
     /// Computed, since a generic type can't hold a stored static.
     private static var slideDuration: TimeInterval { 0.25 }
     private static var browsingOverlayDelay: TimeInterval { 0.4 }
+    /// Whose tricks a run here cuts clips for: everyone the pose model finds, each with clips of
+    /// their own. The screen offers no choice; the camera's own person control still decides a
+    /// take that live inference fully covered, which never passes through here.
+    private static var people: PersonMode { .everyone }
 
     init(
         video: SelectedVideo,
@@ -274,7 +276,7 @@ struct ProcessingView<Destination: View>: View {
                     naturalSize: naturalSize, preferredTransform: preferredTransform).displayedSize
             }
             if autostart {
-                viewModel.start(video: video, people: settings.personMode)
+                viewModel.start(video: video, people: Self.people)
             }
         }
         // Posters are sized to the window, so they wait for `swipeBackdrop`'s first measurement.
@@ -300,14 +302,24 @@ struct ProcessingView<Destination: View>: View {
             guard settled, committedDirection != nil else { return }
             springBack()
         }
+        .onChange(of: isScrubbingVideo) { scrubbing in
+            // The track's gesture can report after this screen's swipe has already moved the
+            // page: the scrub takes the drag over, so the swipe lets go of it now rather than
+            // leaving the page parked mid-swipe until the lift.
+            guard scrubbing, dragAxis != nil, !dragWasScrub else { return }
+            dragWasScrub = true
+            abandonSwipe()
+        }
         .onChange(of: isDragTouchActive) { isActive in
-            // The system cancelled a vertical drag (incoming call, Control Center) before
-            // `onEnded` could run `dismissGestureHooks.onEnded` — without this, a presenter
-            // driving a live close flight off this screen's reports would stay stuck mid-close
-            // forever. `ClipExpansionContainer` guards its own drag against the same cancellation.
-            guard !isActive, isTrackingDismissDrag, let hooks = dismissGestureHooks else { return }
-            isTrackingDismissDrag = false
-            hooks.onCancelled()
+            // A drag whose `onEnded` ran has already reset all of this. One the system cancelled
+            // (an incoming call, Control Center) never reaches `onEnded`: without this the page
+            // would stay parked mid-swipe, the next drag would inherit this one's axis and scrub
+            // latch, and a presenter driving a live close flight off this screen's reports would
+            // stay stuck mid-close. `ClipExpansionContainer` guards its own drag the same way.
+            guard !isActive else { return }
+            dragWasScrub = false
+            dragAxis = nil
+            abandonSwipe()
         }
         .onDisappear {
             // Pause the player before this screen leaves the hierarchy:
@@ -444,13 +456,17 @@ struct ProcessingView<Destination: View>: View {
     /// `VideoScrubBar`'s own track gesture instead of competing with it for the same touch.
     /// Two guards keep this gesture from acting on a touch the track already owns:
     /// `dragWasScrub` latches for the whole drag once `isScrubbingVideo` (`VideoScrubBar`'s
-    /// `onScrubbingChanged` callback, which reaches this ahead of this gesture's own 20pt
-    /// `minimumDistance` since the track's is 0pt) has read true even once, so this gesture's
-    /// own `onEnded` can't act on a lift whose `isScrubbingVideo` already flipped back to
-    /// false. What neither this nor gesture priority needs to handle is the page `TabView` this
-    /// screen sits inside (`RootTabView`): its pager is a UIKit scroll view that takes a
-    /// horizontal drag before SwiftUI's gesture system sees it, so `PageSwipeLock` switches the
-    /// pager off while any screen is pushed over Home.
+    /// `onScrubbingChanged` callback, which usually reaches this ahead of this gesture's own
+    /// 20pt `minimumDistance` since the track's is 0pt) has read true even once, so this
+    /// gesture's own `onEnded` can't act on a lift whose `isScrubbingVideo` already flipped back
+    /// to false. When the track's report arrives after this gesture has already moved the page
+    /// or started a dismiss, the latch also undoes that at once (`abandonSwipe()`): the scrub
+    /// wins the drag, and the page returns to rest under it.
+    ///
+    /// What neither this nor gesture priority needs to handle is the page `TabView` this screen
+    /// sits inside (`RootTabView`): its pager is a UIKit scroll view that takes a horizontal drag
+    /// before SwiftUI's gesture system sees it, so `PageSwipeLock` switches the pager off while
+    /// any screen is pushed over Home.
     ///
     /// `dragAxis` locks in which of the two this drag is, from its first recognized movement,
     /// rather than re-deriving it from the live translation on every update — a drag that
@@ -459,7 +475,10 @@ struct ProcessingView<Destination: View>: View {
         DragGesture(minimumDistance: 20)
             .updating($isDragTouchActive) { _, state, _ in state = true }
             .onChanged { value in
-                if isScrubbingVideo { dragWasScrub = true }
+                if isScrubbingVideo, !dragWasScrub {
+                    dragWasScrub = true
+                    abandonSwipe()
+                }
                 guard !dragWasScrub else { return }
                 if dragAxis == nil {
                     dragAxis = isDownwardTranslation(value.translation) ? .vertical : .horizontal
@@ -480,7 +499,10 @@ struct ProcessingView<Destination: View>: View {
                     dragWasScrub = false
                     dragAxis = nil
                 }
-                guard !dragWasScrub else { return }
+                guard !dragWasScrub else {
+                    abandonSwipe()
+                    return
+                }
                 if dragAxis == .vertical {
                     defer { isTrackingDismissDrag = false }
                     guard canBrowse else { return }
@@ -509,6 +531,20 @@ struct ProcessingView<Destination: View>: View {
                 }
                 commit(direction)
             }
+    }
+
+    /// Undoes whatever a drag has done so far without acting on it: the page springs back to
+    /// rest, and a dismiss the presenter is flying live is handed its cancellation. For a scrub
+    /// that takes over a drag the swipe had already started on, and a drag the system cancelled.
+    /// A no-op for a drag the swipe never moved, and for a swipe already committed to a browse.
+    private func abandonSwipe() {
+        if isTrackingDismissDrag {
+            isTrackingDismissDrag = false
+            dismissGestureHooks?.onCancelled()
+        }
+        if committedDirection == nil, dragTranslation != 0 {
+            springBack()
+        }
     }
 
     /// Whether `translation` reads as the start of a downward swipe rather than a horizontal
@@ -737,7 +773,6 @@ struct ProcessingView<Destination: View>: View {
             // keep playing behind the progress UI and the clip list. The skip
             // leaves the hierarchy the same way (the clip list pushes over this
             // screen), so it pauses first for the same reason.
-            personModePicker
             PrimaryActionBar(
                 "Analyze clips",
                 secondary: .init("Clip manually") {
@@ -746,25 +781,10 @@ struct ProcessingView<Destination: View>: View {
                 }
             ) {
                 player?.pause()
-                viewModel.start(video: video, people: settings.personMode)
+                viewModel.start(video: video, people: Self.people)
             }
             .accessibilityIdentifier("start-analysis")
         }
-    }
-
-    /// Whose tricks the analysis cuts clips for (`PersonMode`): the person the model is surest of
-    /// in each frame, or everyone, each with clips of their own. Dark like the rest of the stage,
-    /// which stays black whatever the system appearance.
-    private var personModePicker: some View {
-        Picker("Clips for", selection: $settings.personMode) {
-            ForEach(PersonMode.allCases) { mode in
-                Text(mode.label).tag(mode)
-            }
-        }
-        .pickerStyle(.segmented)
-        .environment(\.colorScheme, .dark)
-        .padding(.horizontal)
-        .accessibilityIdentifier("person-mode-picker")
     }
 
     /// The progress panel drawn over the bottom of the still-visible, paused video —
@@ -810,7 +830,7 @@ struct ProcessingView<Destination: View>: View {
             message: "\(message)"
         ) {
             VStack(spacing: 12) {
-                Button("Retry") { viewModel.retry(video: video, people: settings.personMode) }
+                Button("Retry") { viewModel.retry(video: video, people: Self.people) }
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("processing-retry")
                 Button("Back to Home", role: .cancel) { close() }

@@ -126,7 +126,7 @@ struct ClipExportTransform {
     ) -> ClipExportTransform? {
         guard crop.width > 0, crop.height > 0 else { return nil }
         // Maps upright displayed-space points into the crop's render space, anchored on
-        // the crop rect's own center so the preview's fixed marker rectangle and this
+        // the crop rect's own center so the preview's marker rectangle and this
         // export transform agree: un-anchor, apply the adjustment's scale/rotation about the
         // origin (they commute — both are uniform/linear), then re-anchor and land the
         // crop's top-left at the render origin. At identity (scale 1, no rotation, no
@@ -157,7 +157,8 @@ struct ClipExportTransform {
     /// time zero sits at the start of — the trimmed clip's range for an export, `0...duration`
     /// for a player over the untrimmed source.
     ///
-    /// At every moment the crop is a box of the marker's size (`cropRect`'s marker box)
+    /// At every moment the crop is a box of the marker's size (`cropRect`'s marker box at the
+    /// follow crop's own shape, `FollowCrop.aspectRatio`)
     /// centered on the follow crop's center then, zoomed and turned about that center by the
     /// zoom and turn then — the order the editor's preview draws. Wherever the crop moves, it is
     /// sampled on every frame of the composition's grid, `frameDuration` apart from composition
@@ -179,8 +180,7 @@ struct ClipExportTransform {
         // swiftlint:enable function_parameter_count
         let geometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
         guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
-        let box = ClipEditorViewModel.markerBox(
-            around: crop, aspectRatio: CGFloat(CropRectCalculator().targetAspectRatio)).size
+        let box = ClipEditorViewModel.markerBox(around: crop, aspectRatio: followCrop.aspectRatio).size
         let path = followCrop.path
         var stops: [(time: CMTime, transform: ClipExportTransform)] = []
         for time in sampleTimes(over: span, moving: path.movingSpan, frameDuration: frameDuration) {

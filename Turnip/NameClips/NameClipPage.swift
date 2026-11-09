@@ -24,6 +24,10 @@ enum NameClipsLayout {
 /// The page scrolls, so the keyboard moves the controls into view instead of squeezing the
 /// card — but not while a swipe is paging, which holds it still.
 struct NameClipPage: View {
+    /// The naming controls' scroll target, from the names given down to who's in it: the page
+    /// keeps all of them above the keyboard.
+    static let namingFieldsID = "naming-fields"
+
     let item: ClipListItem
     let cardSide: CGFloat
     @ObservedObject var viewModel: ClipListViewModel
@@ -56,6 +60,9 @@ struct NameClipPage: View {
                             isEnabled: isCurrent, commitDraft: commitDraft, actions: namingActions)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // A little room between who's in it and the keyboard it is scrolled above.
+                    .padding(.bottom, 8)
+                    .id(Self.namingFieldsID)
                 }
                 .padding(.horizontal, NameClipsLayout.horizontalInset)
                 .padding(.top, 8)
@@ -68,15 +75,15 @@ struct NameClipPage: View {
                 // After the keyboard's own animation has moved the page's bottom edge up.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     withAnimation(.easeOut(duration: 0.25)) {
-                        scroller.scrollTo(ClipNamingFields.suggestionsID, anchor: .bottom)
+                        scroller.scrollTo(Self.namingFieldsID, anchor: .bottom)
                     }
                 }
             }
-            // A name added while typing grows the chips above the field; the suggestions stay in view.
+            // A name added while typing grows the chips above the field; who's in it stays in view.
             .onChange(of: item.names.count) { _ in
                 guard isFieldFocused.wrappedValue, isCurrent else { return }
                 withAnimation(.easeOut(duration: 0.25)) {
-                    scroller.scrollTo(ClipNamingFields.suggestionsID, anchor: .bottom)
+                    scroller.scrollTo(Self.namingFieldsID, anchor: .bottom)
                 }
             }
         }

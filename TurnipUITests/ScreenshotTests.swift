@@ -152,6 +152,43 @@ final class ScreenshotTests: XCTestCase {
         }
     }
 
+    /// The keyboard sets "Save Clips" aside and the page keeps every naming control above it, who's
+    /// in it included; Return adds a name and keeps the keyboard, and Return on an empty field
+    /// puts it away and brings "Save Clips" back.
+    func testTheKeyboardSetsSaveClipsAsideAndKeepsTheNamingControlsInView() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipListMedia"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        let primary = app.buttons["name-clips-primary"].firstMatch
+        XCTAssertTrue(primary.waitForExistence(timeout: 5))
+        let field = try XCTUnwrap(
+            app.textFields.matching(identifier: "name-clips-field").allElementsBoundByIndex.first { $0.isHittable })
+
+        field.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil { !primary.exists }, "Save Clips stayed over the keyboard")
+        func whoIsIn() -> XCUIElement? {
+            app.segmentedControls.matching(identifier: "name-clips-who").allElementsBoundByIndex
+                .first { $0.frame.minX >= 0 && $0.frame.maxX <= app.frame.maxX }
+        }
+        XCTAssertTrue(
+            waitUntil { (whoIsIn()?.frame.maxY ?? .infinity) <= keyboard.frame.minY },
+            "who's in it is under the keyboard")
+        addScreenshot(named: "name-clips-keyboard")
+
+        field.typeText("cork\n")
+        XCTAssertTrue(app.descendants(matching: .any)["name-clips-names"].waitForExistence(timeout: 5))
+        XCTAssertTrue(keyboard.exists, "Return on a name put the keyboard away")
+        XCTAssertFalse(primary.exists)
+        XCTAssertTrue(waitUntil { (whoIsIn()?.frame.maxY ?? .infinity) <= keyboard.frame.minY })
+
+        field.typeText("\n")
+        XCTAssertTrue(waitUntil { !keyboard.exists }, "Return on an empty field kept the keyboard")
+        XCTAssertTrue(primary.waitForExistence(timeout: 5), "Save Clips didn't come back")
+    }
+
     /// Auto follow and Auto rotate are toggles: each tap puts its fit on screen and the same
     /// button then offers to put back what the fit replaced, independently of the other. The
     /// clip opens on Auto follow's crop. Auto rotate levels the harness clip by the roll track
@@ -307,6 +344,8 @@ final class ScreenshotTests: XCTestCase {
         app.launchArguments = ["-screenshotProcessingIdle"]
         app.launch()
         XCTAssertTrue(app.buttons["Analyze clips"].waitForExistence(timeout: 15))
+        XCTAssertFalse(
+            app.segmentedControls["person-mode-picker"].exists, "an analysis here always follows everyone")
         addScreenshot(named: "processing-idle")
     }
 

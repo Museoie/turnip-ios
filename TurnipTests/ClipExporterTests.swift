@@ -270,6 +270,66 @@ final class ClipExporterTests: XCTestCase {
         try assertTransform(transform.ramps[29].end, equals: boxTransform(crop, at: 3.5), "at the end")
     }
 
+    /// A follow crop reshaped in the editor renders at the clip's crop rect grown to its own
+    /// shape, even on both sides, with the moving center in the middle of the output.
+    func testAFollowCropRendersAtItsOwnShape() throws {
+        let fullFrame = NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
+        let expected: [(ratio: CGFloat, size: CGSize)] = [
+            (ClipEditorStage.aspectRatioRange.lowerBound, CGSize(width: 1920, height: 3840)),
+            (1, CGSize(width: 1920, height: 1920)),
+            (ClipEditorStage.aspectRatioRange.upperBound, CGSize(width: 2160, height: 1080))
+        ]
+        for (ratio, size) in expected {
+            var crop = followCrop(scale: 2.5)
+            crop.aspectRatio = ratio
+            let transform = try XCTUnwrap(ClipExportTransform.make(
+                followCrop: crop, cropRect: fullFrame, over: 1...5, frameDuration: thirtieth,
+                naturalSize: landscape, preferredTransform: .identity))
+
+            XCTAssertEqual(transform.renderSize, size, "\(ratio)")
+            XCTAssertEqual(Int(transform.renderSize.width) % 2, 0)
+            XCTAssertEqual(Int(transform.renderSize.height) % 2, 0)
+            for ramp in transform.ramps {
+                let time = ramp.timeRange.start.seconds + 1
+                assertPoint(
+                    crop.path.center(at: time), mapsTo: CGPoint(x: size.width / 2, y: size.height / 2), by: ramp.start)
+            }
+        }
+    }
+
+    /// A real export of a full-frame clip at each end of the shapes the editor allows writes a
+    /// movie of that shape.
+    func testAnExportAtEitherExtremeShapeWritesThatShape() async throws {
+        let url = try await TestVideoWriter.writeTestVideo(frameCount: 30, width: 64, height: 36, fps: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let expected: [(ratio: CGFloat, size: CGSize)] = [
+            (ClipEditorStage.aspectRatioRange.lowerBound, CGSize(width: 64, height: 128)),
+            (ClipEditorStage.aspectRatioRange.upperBound, CGSize(width: 72, height: 36))
+        ]
+        for (index, (ratio, size)) in expected.enumerated() {
+            let crop = FollowCrop(
+                keyframes: [
+                    FollowKeyframe(time: 0.1, center: CGPoint(x: 24, y: 18), scale: 1.5),
+                    FollowKeyframe(time: 0.8, center: CGPoint(x: 40, y: 18), scale: 1.5)
+                ],
+                resting: FollowFraming(center: CGPoint(x: 32, y: 18), scale: 1, rotationRadians: 0),
+                isAutoFollow: false, aspectRatio: ratio)
+            let spec = ClipSpec(
+                window: TrickWindow(startTime: 0, endTime: 1),
+                cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1), followCrop: crop)
+
+            let exported = try await ClipExporter().export(
+                spec, from: AVURLAsset(url: url), to: directory, fileName: "shape-\(index).mov")
+
+            let track = try await AVURLAsset(url: exported.fileURL).loadTracks(withMediaType: .video)[0]
+            let written = try await track.load(.naturalSize)
+            XCTAssertEqual(written, size, "\(ratio)")
+        }
+    }
+
     func testAFollowCropIsNilForAnUnknownSourceSize() {
         XCTAssertNil(ClipExportTransform.make(
             followCrop: followCrop(), cropRect: followCropRect, over: 1...5, frameDuration: thirtieth,

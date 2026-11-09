@@ -65,6 +65,32 @@ final class FollowModeTests: XCTestCase {
         XCTAssertEqual(frame.width / frame.height, 9.0 / 16.0, accuracy: 0.01)
     }
 
+    /// A drag on the marker's bottom-trailing corner reshapes it: the marker settles at the drawn
+    /// shape, the clip pauses, and the reshape is the user's change, so the button offers Auto
+    /// follow again.
+    func testACornerDragReshapesTheMarker() throws {
+        let app = launchEditor()
+        let follow = app.buttons["auto-follow-button"]
+        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        let marker = element("crop-marker", in: app)
+        XCTAssertTrue(marker.waitForExistence(timeout: 5))
+        let before = settledFrame(of: marker)
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        let corner = origin.withOffset(CGVector(dx: before.maxX - 2, dy: before.maxY - 2))
+
+        corner.press(
+            forDuration: 0.1, thenDragTo: corner.withOffset(CGVector(dx: 0, dy: -before.height / 2)),
+            withVelocity: XCUIGestureVelocity(300), thenHoldForDuration: 0.1)
+
+        let drawnRatio = before.width / (before.height / 2)
+        XCTAssertTrue(waitUntil {
+            let frame = marker.frame
+            return abs(frame.width / frame.height - drawnRatio) < 0.05
+        }, "the marker settled at \(marker.frame), not at the drawn shape")
+        XCTAssertTrue(waitUntil { follow.label == "Auto follow" }, "the reshape wasn't the user's change")
+        XCTAssertEqual(app.buttons["playback-play-pause"].label, "Play", "touch-down on a handle didn't pause")
+    }
+
     /// Auto follow and Reset follow toggle, and a pinch hands the button back to Auto follow.
     func testFollowsButtonTogglesAndAPinchHandsItBack() throws {
         let app = launchEditor()

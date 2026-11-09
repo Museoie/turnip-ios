@@ -99,7 +99,11 @@ struct NameClipsView: View {
         .navigationBarBackButtonHidden(true)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbar }
-        .safeAreaInset(edge: .bottom) { actionBar }
+        // The keyboard is up while the name field has focus: the bar gives its room to the
+        // naming controls, and comes back once the keyboard goes.
+        .safeAreaInset(edge: .bottom) {
+            if !isFieldFocused { actionBar }
+        }
         .overlay { if viewModel.isSaving { SavingOverlay() } }
         .errorAlert("Couldn't save clips", message: $viewModel.saveFailureMessage)
         .fullScreenCover(item: $expandTarget, onDismiss: { hiddenItemID = nil }, content: editor(for:))

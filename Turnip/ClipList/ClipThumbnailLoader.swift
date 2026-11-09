@@ -91,7 +91,8 @@ actor ClipThumbnailLoader {
     /// How far from the window's midpoint a poster may come when the exact frame won't decode.
     static let fallbackSeekTolerance = CMTime(seconds: 0.1, preferredTimescale: 600)
 
-    /// A follow crop's box at `time`, normalized: the marker's size around `cropRect`, centered
+    /// A follow crop's box at `time`, normalized: the marker's size around `cropRect` at the crop's
+    /// own shape, centered
     /// where the crop's center is then — the rect `ClipExportTransform.make(followCrop:…)`
     /// renders that frame through.
     static func followRect(
@@ -101,8 +102,7 @@ actor ClipThumbnailLoader {
         let geometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
         guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
         let size = geometry.displayedSize
-        let box = ClipEditorViewModel.markerBox(
-            around: crop, aspectRatio: CGFloat(CropRectCalculator().targetAspectRatio)).size
+        let box = ClipEditorViewModel.markerBox(around: crop, aspectRatio: followCrop.aspectRatio).size
         let center = followCrop.path.center(at: time)
         return NormalizedRect(
             minX: Float((center.x - box.width / 2) / size.width),
