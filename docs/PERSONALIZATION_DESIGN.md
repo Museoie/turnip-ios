@@ -127,17 +127,19 @@ Almost everything is already in the clip library (`PROFILE_DESIGN.md`
   everyone.
 - **Dismissed windows (new).** For each source a save writes to the
   library, one record per trick-model proposal shown on Name Clips and
-  trashed there: the source, the proposed `start_frame` and
-  `end_frame` in canonical 10 Hz frames, and nothing else. Kept
-  proposals and "+" clips need no new record, because they are saved
-  clips already.
+  trashed there: the source, the pose it was proposed on (the
+  library's ID for that person's stored track), the proposed
+  `start_frame` and `end_frame` in canonical 10 Hz frames, and nothing
+  else. Kept proposals and "+" clips need no new record, because they
+  are saved clips already.
   *(Judgment call, and a carve-out from `PROFILE_DESIGN.md` §2.3's
-  "Trashed clips are not stored": a trashed tile leaves two frame
-  indices behind, not a clip, an export or a name. It does so only on
-  a source whose pose the library already keeps. A source with nothing
-  saved stores nothing, and backing out of Name Clips stores nothing, as
-  today.)* A source's dismissed windows are deleted with its pose,
-  when its last clip leaves the library (`PROFILE_DESIGN.md` §2.2).
+  "Trashed clips are not stored": a trashed tile leaves its source, its
+  pose and two frame indices behind, not a clip, an export or a name.
+  It does so only on a pose the library already keeps. A source with
+  nothing saved stores nothing, and backing out of Name Clips stores
+  nothing, as today.)* A dismissed window is deleted with its pose,
+  when the pose's last clip leaves the library (`PROFILE_DESIGN.md`
+  §2.2).
 - **Name weights by origin:** `typed` and `vocabulary` names count 1,
   `model` names (a pre-fill the user kept) count 0.5. The rubber-stamp
   measure exists because kept pre-fills are the weakest evidence
@@ -150,7 +152,8 @@ Almost everything is already in the clip library (`PROFILE_DESIGN.md`
   trick model then runs on each person's stored track, and a clip's
   embedding comes from its own person's track. A dismissed window
   belongs to its person's track too, and is kept only while the library
-  stores that track. Following one person, there is one pose per take,
+  stores that track, which is why the record names the pose and not
+  only the source. Following one person, there is one pose per take,
   as above.
 
 ---
@@ -354,7 +357,7 @@ on the main thread.
 
 | Data | Where | Backed up | Lifetime |
 | --- | --- | --- | --- |
-| Dismissed windows (§3) | the clip library, `Application Support/` | yes, with the library | deleted with its source's pose, or when the toggle is turned off |
+| Dismissed windows (§3) | the clip library, `Application Support/` | yes, with the library | deleted with its pose, or when the toggle is turned off |
 | Personal cache: clip embeddings with their central names, each stored pose's band segments (frames, score, embedding), and how far the rebuild has come, keyed by model version | `Caches/` | no | rebuilt on a model update, or after iOS evicts it |
 
 - The dismissed windows are the only copy of what they record, so they
@@ -367,7 +370,8 @@ on the main thread.
   or a delete, and take milliseconds to work out again.
 - **Size:** an embedding is 512 bytes at `D = 128`, kept per clip and
   per band segment. 200 clips with a few band segments per source come
-  to a few hundred KB. A dismissed window is two integers.
+  to a few hundred KB. A dismissed window is two integers and the IDs
+  of its source and pose.
 - **Never** uploaded, never in a contribution, never in an exported
   clip's metadata item, and never logged beyond counts.
 - **Per device.** A second device has its own library and so its own
