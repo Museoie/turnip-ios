@@ -3,6 +3,9 @@
 *Rev 27 · 2026-11-09 · Learn from my clips (§1a) also decides borderline proposals,
 from the proposals the user keeps and trashes on Name Clips.*
 
+*Rev 26 · 2026-11-06 · Settings (§1a) gains Learn from my clips, which keeps a
+personal layer over the trick model on the device.*
+
 *Rev 25 · 2026-11-05 · Contributing asks once. The confirmation sheet opens
 after a save only until the account agrees; from then on a save (§3a) returns
 to Home at once and its named clips upload in the background, resuming by
