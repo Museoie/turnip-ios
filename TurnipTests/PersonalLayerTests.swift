@@ -264,12 +264,29 @@ final class PersonalLayerTests: XCTestCase {
         await layer.start()
         saveFlashKicks(10, layer: layer)
         await layer.refresh().value
-        let blind = ModelProposal(modelVersion: "v1", suggestedNames: [], suggestionsWithheld: true)
+        let blind = ModelProposal(
+            modelVersion: "v1", suggestedNames: [], belowBarNames: ["gainer"],
+            suggestionsWithheld: true)
 
         let suggestions = layer.suggestions(
             for: embedding(), proposal: blind, used: ["hook", "flash kick"], given: [])
 
         XCTAssertEqual(suggestions, PersonalSuggestions(used: ["hook", "flash kick"]))
+    }
+
+    /// Tier 3 rides on the proposal, not the ranking: it shows with no embedding and no ranking.
+    func testABelowBarNameShowsWithoutAnEmbedding() async {
+        let layer = makeLayer()
+        await layer.start()
+        saveFlashKicks(10, layer: layer)
+        await layer.refresh().value
+        let proposal = ModelProposal(
+            modelVersion: "v1", suggestedNames: [], belowBarNames: ["gainer"],
+            suggestionsWithheld: false)
+
+        let suggestions = layer.suggestions(for: nil, proposal: proposal, used: ["hook"], given: [])
+
+        XCTAssertEqual(suggestions, PersonalSuggestions(used: ["hook"], belowBar: ["gainer"]))
     }
 
     func testAModelProposedClipThatIsntBlindGetsRanking() async {
@@ -282,6 +299,22 @@ final class PersonalLayerTests: XCTestCase {
         let suggestions = layer.suggestions(for: embedding(), proposal: proposal, used: [], given: [])
 
         XCTAssertEqual(suggestions.nearest, ["flash kick"])
+    }
+
+    /// Tier 3 shows alongside the ranking, after tier 2.
+    func testABelowBarNameShowsAlongsideRanking() async {
+        let layer = makeLayer()
+        await layer.start()
+        saveFlashKicks(10, layer: layer)
+        await layer.refresh().value
+        let proposal = ModelProposal(
+            modelVersion: "v1", suggestedNames: [], belowBarNames: ["gainer"],
+            suggestionsWithheld: false)
+
+        let suggestions = layer.suggestions(for: embedding(), proposal: proposal, used: ["hook"], given: [])
+
+        XCTAssertEqual(suggestions.nearest, ["flash kick"])
+        XCTAssertEqual(suggestions.belowBar, ["gainer"])
     }
 
     func testAClipWithoutAnEmbeddingGetsNoRanking() async {
@@ -324,7 +357,9 @@ final class PersonalLayerTests: XCTestCase {
         await layer.refresh().value
         var clip = try XCTUnwrap(library.clips.first)
         clip.names = []
-        clip.proposal = ModelProposal(modelVersion: "v1", suggestedNames: [], suggestionsWithheld: true)
+        clip.proposal = ModelProposal(
+            modelVersion: "v1", suggestedNames: [], belowBarNames: ["gainer"],
+            suggestionsWithheld: true)
         XCTAssertEqual(layer.suggestions(forSaved: clip, used: ["hook"]), PersonalSuggestions(used: ["hook"]))
     }
 

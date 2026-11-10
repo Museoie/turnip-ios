@@ -15,8 +15,8 @@ struct ClipNamingActions {
 struct ClipNamingFields: View {
     let names: [ClipName]
     let isMe: Bool
-    /// What the suggestions lead with: the names already given on this clip's video, and the
-    /// user's own names closest to it.
+    /// What the suggestions lead with: the names already given on this clip's video, the user's
+    /// own names closest to it, and the model's below-bar names for it.
     let suggested: PersonalSuggestions
     let vocabulary: TrickVocabulary
     @Binding var draft: String
@@ -125,13 +125,13 @@ enum NamingSuggestions {
     private static let limit = 8
 
     /// Names used on this video first, then the user's own names closest to the clip, then the
-    /// vocabulary's matches for what is typed, led by a near-miss correction; none the clip already
-    /// has.
+    /// model's below-bar names, then the vocabulary's matches for what is typed, led by a
+    /// near-miss correction; none the clip already has.
     static func ordered(
         draft: String, given: [ClipName], suggested: PersonalSuggestions, vocabulary: TrickVocabulary
     ) -> [String] {
         let query = TrickVocabulary.normalized(draft)
-        let personal = (suggested.used + suggested.nearest).filter {
+        let personal = (suggested.used + suggested.nearest + suggested.belowBar).filter {
             query.isEmpty || TrickVocabulary.normalized($0).contains(query)
         }
         let corrected = vocabulary.suggestedCorrection(for: draft).map { [$0] } ?? []
