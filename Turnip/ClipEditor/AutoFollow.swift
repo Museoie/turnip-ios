@@ -13,19 +13,46 @@ import Foundation
 /// show beyond the frame, keep every joint each sample's own crop kept, stray from no sample's
 /// center by more than `driftTolerance` of the crop's width, and from no sample's zoom by more
 /// than the envelope's `zoomTolerance`. Showing beyond the frame comes first, then a cut limb,
-/// since both are worse than a lagging crop.
+/// since both are worse than a lagging crop. No two keyframes sit closer than
+/// `keyframeSpacing`, so a sample that would need one nearer than that goes without: where the
+/// curve then cuts a joint that sample's own crop kept, the keyframes either side zoom out until
+/// it doesn't (`widenedToHold`), and where it shows beyond the frame, they move in
+/// (`heldInsideFrame`).
 struct AutoFollow {
     /// How far the curve may stray from a sample's own center, as a fraction of the crop's
     /// width, before a keyframe goes in at that sample.
     static let driftTolerance: CGFloat = 0.1
+    /// The least time between two of Auto follow's keyframes: a few diamonds far apart on the
+    /// follow lane, each one a moment worth adjusting by hand, rather than a cluster. The two that
+    /// start and stop the crop's movement are spread into the holds either side to sit this far
+    /// apart, or as far apart as the window's samples reach when it is shorter. Keyframes the
+    /// user adds aren't bound by it.
+    var keyframeSpacing: TimeInterval = 3
     var pathCalculator = CropPathCalculator()
     /// The tightest crop Auto follow chooses, as the longer side of the source region it shows,
     /// in displayed pixels: export renders a follow clip at its crop rect's size, so a tighter
     /// region is enlarged into it and goes soft. A pinch isn't bound by it.
     var tightestLongerSide: CGFloat = 768
-    /// The marker's width over height, which the follow crop's box keeps.
-    var aspectRatio = CGFloat(CropRectCalculator().targetAspectRatio)
+    /// The marker's width over height, which the follow crop's box keeps. Set it through
+    /// `shaped(_:)`, which fits the athlete's own rects at the same ratio.
+    var aspectRatio = FollowCrop.defaultAspectRatio
     var zoom = ZoomEnvelope()
+
+    /// This fit for a crop of `aspectRatio`: the follow crop's box, and the athlete's own rects
+    /// the zoom's room and a still crop's framing are measured from, both take that shape.
+    func shaped(_ aspectRatio: CGFloat) -> AutoFollow {
+        guard aspectRatio != self.aspectRatio, aspectRatio > 0 else { return self }
+        var shaped = self
+        let rects = pathCalculator.rectCalculator
+        shaped.pathCalculator = CropPathCalculator(
+            rectCalculator: CropRectCalculator(
+                targetAspectRatio: Float(aspectRatio), paddingFraction: rects.paddingFraction,
+                minimumExtentFraction: rects.minimumExtentFraction),
+            smoothingSeconds: pathCalculator.smoothingSeconds, stillnessFraction: pathCalculator.stillnessFraction,
+            despikeSamples: pathCalculator.despikeSamples)
+        shaped.aspectRatio = aspectRatio
+        return shaped
+    }
 
     /// Auto follow's crop and whether it moves at all.
     struct Fit: Equatable {
@@ -64,16 +91,23 @@ struct AutoFollow {
                 moves: false)
         }
         let kept = reduced(samples, moving: moving, marker: marker, rotationRadians: rotationRadians, in: videoSize)
-        let keyframes = kept.map {
-            FollowKeyframe(
-                time: samples[$0].time,
-                framing: FollowFraming(
-                    center: samples[$0].center, scale: samples[$0].scale, rotationRadians: rotationRadians),
-                isAuto: true)
-        }
+        let widened = Self.widenedToHold(
+            kept.map {
+                FollowKeyframe(
+                    time: samples[$0].time, center: samples[$0].center, scale: samples[$0].scale,
+                    rotationRadians: rotationRadians)
+            },
+            samples: samples, marker: marker,
+            widestScale: ClipEditorViewModel.clampedScale(marker.width / widest),
+            rotationRadians: rotationRadians, in: videoSize)
+        let keyframes = Self.heldInsideFrame(widened, marker: marker, rotationRadians: rotationRadians, in: videoSize)
+            .map { FollowKeyframe(time: $0.time, framing: $0.framing, isAuto: true) }
         let restingFraming = FollowFraming(
             center: resting, scale: samples[kept[0]].scale, rotationRadians: rotationRadians)
-        return Fit(crop: FollowCrop(keyframes: keyframes, resting: restingFraming, isAutoFollow: true), moves: true)
+        return Fit(
+            crop: FollowCrop(
+                keyframes: keyframes, resting: restingFraming, isAutoFollow: true, aspectRatio: aspectRatio),
+            moves: true)
     }
 
     // swiftlint:disable function_parameter_count
@@ -176,7 +210,8 @@ struct AutoFollow {
                 framing: FollowFraming(center: center, scale: scale, rotationRadians: rotationRadians),
                 isAuto: true)],
             resting: FollowFraming(center: resting, scale: scale, rotationRadians: rotationRadians),
-            isAutoFollow: true)
+            isAutoFollow: true,
+            aspectRatio: aspectRatio)
     }
 
     private func reduced(
@@ -185,7 +220,11 @@ struct AutoFollow {
         func box(_ scale: CGFloat) -> CGSize {
             CGSize(width: marker.width / scale, height: marker.height / scale)
         }
-        var kept = [moving.lowerBound, moving.upperBound]
+        let span = spread(moving, in: samples)
+        var kept = [span.lowerBound, span.upperBound]
+        func isSpaced(_ index: Int) -> Bool {
+            kept.allSatisfy { abs(samples[$0].time - samples[index].time) >= keyframeSpacing - 1e-6 }
+        }
         let held = samples.map {
             Self.overflow(
                 of: $0.joints, around: $0.center, box: box($0.scale), rotationRadians: rotationRadians) <= 1e-6
@@ -198,12 +237,12 @@ struct AutoFollow {
                         time: samples[$0].time, center: samples[$0].center, scale: samples[$0].scale,
                         rotationRadians: rotationRadians)
                 },
-                resting: FollowFraming(center: samples[moving.lowerBound].center, scale: 1, rotationRadians: 0))
+                resting: FollowFraming(center: samples[span.lowerBound].center, scale: 1, rotationRadians: 0))
             var worst: [(index: Int, amount: CGFloat)?] = [nil, nil, nil, nil]
             func note(_ rank: Int, _ index: Int, _ amount: CGFloat) {
                 if amount > worst[rank]?.amount ?? 0 { worst[rank] = (index, amount) }
             }
-            for index in moving where !kept.contains(index) {
+            for index in span where isSpaced(index) {
                 let sample = samples[index]
                 let framing = path.framing(at: sample.time)
                 let size = box(framing.scale)
@@ -223,6 +262,126 @@ struct AutoFollow {
             guard let next = worst.compactMap({ $0 }).first else { return kept }
             kept.append(next.index)
             kept.sort()
+        }
+    }
+
+    /// `moving`, spread into the holds either side until its two ends are `keyframeSpacing` apart,
+    /// evenly where the samples allow; every sample when they span less than that. The samples
+    /// outside `moving` hold its ends' framings, so the keyframes there frame the same and the
+    /// crop only takes longer over the move.
+    private func spread(_ moving: ClosedRange<Int>, in samples: [Sample]) -> ClosedRange<Int> {
+        let start = samples[moving.lowerBound].time, end = samples[moving.upperBound].time
+        let shortfall = keyframeSpacing - (end - start)
+        guard shortfall > 0 else { return moving }
+        let first = samples[0].time, last = samples[samples.count - 1].time
+        guard last - first > keyframeSpacing else { return 0...(samples.count - 1) }
+        var lower = start - shortfall / 2, upper = end + shortfall / 2
+        if lower < first {
+            upper += first - lower
+            lower = first
+        }
+        if upper > last {
+            lower -= upper - last
+            upper = last
+        }
+        let lowerIndex = samples.lastIndex { $0.time <= lower + 1e-9 } ?? 0
+        let upperIndex = samples.firstIndex { $0.time >= upper - 1e-9 } ?? samples.count - 1
+        return min(lowerIndex, moving.lowerBound)...max(upperIndex, moving.upperBound)
+    }
+
+    // swiftlint:disable function_parameter_count
+    /// `keyframes` zoomed out, a stretch at a time, until the curves through them keep every joint
+    /// each sample's own crop kept. With keyframes `keyframeSpacing` apart the curve between two
+    /// can't bend to follow an athlete who moves away and back, so where a sample's joints fall
+    /// outside the curve's crop, the keyframes either side widen by as much as that crop would
+    /// have to, and slide back inside the frame. Two keyframes that widen together widen every
+    /// crop between them by that much, exactly when they are the only two and close to it
+    /// otherwise, so the check repeats until nothing is cut, or the keyframes are as wide as the
+    /// frame allows (`widestScale`, the smallest zoom) and the athlete outruns even that.
+    private static func widenedToHold(
+        _ keyframes: [FollowKeyframe], samples: [Sample], marker: CGRect, widestScale: CGFloat,
+        rotationRadians: Double, in frame: CGSize
+    ) -> [FollowKeyframe] {
+        // swiftlint:enable function_parameter_count
+        func box(_ scale: CGFloat) -> CGSize {
+            CGSize(width: marker.width / scale, height: marker.height / scale)
+        }
+        let held = samples.filter { sample in
+            let own = overflow(
+                of: sample.joints, around: sample.center, box: box(sample.scale), rotationRadians: rotationRadians)
+            return !sample.joints.isEmpty && own <= 1e-6
+        }
+        var keyframes = keyframes
+        for _ in 0..<8 {
+            let path = FollowPath(keyframes: keyframes, resting: keyframes[0].framing)
+            var growth = Array(repeating: CGFloat(1), count: keyframes.count)
+            for sample in held {
+                let framing = path.framing(at: sample.time)
+                let needed = reach(
+                    of: sample.joints, around: framing.center, box: box(framing.scale),
+                    rotationRadians: rotationRadians)
+                guard needed > 1 + 1e-6 else { continue }
+                let after = keyframes.firstIndex { $0.time >= sample.time } ?? keyframes.count - 1
+                for index in Set([max(after - 1, 0), after]) {
+                    growth[index] = max(growth[index], needed)
+                }
+            }
+            var widened = false
+            for index in keyframes.indices where growth[index] > 1 + 1e-6 {
+                let scale = max(keyframes[index].scale / growth[index], widestScale)
+                guard scale < keyframes[index].scale - 1e-9 else { continue }
+                widened = true
+                keyframes[index].scale = scale
+                keyframes[index].center = slidIntoFrame(
+                    keyframes[index].center, box: box(scale), rotationRadians: rotationRadians, in: frame)
+            }
+            guard widened else { break }
+        }
+        return keyframes
+    }
+
+    /// How many times larger a crop of `box` centered on `center` and turned by the rotation
+    /// would have to be, about the same center, to hold every one of `joints`; at most 1 when it
+    /// already does.
+    private static func reach(
+        of joints: [CGPoint], around center: CGPoint, box: CGSize, rotationRadians: Double
+    ) -> CGFloat {
+        let turn = CGAffineTransform(rotationAngle: rotationRadians)
+        var reach: CGFloat = 0
+        for joint in joints {
+            let onScreen = CGPoint(x: joint.x - center.x, y: joint.y - center.y).applying(turn)
+            reach = max(reach, abs(onScreen.x) / (box.width / 2), abs(onScreen.y) / (box.height / 2))
+        }
+        return reach
+    }
+
+    /// `keyframes` with the curves through them kept from showing beyond the frame where too few
+    /// keyframes are allowed to hold them there: each center slid inside the frame for the widest
+    /// crop among its keyframe and the two beside it. Between two keyframes the center and the
+    /// zoom each stay between their values at the two (`MonotoneCubic` never overshoots), and a
+    /// wider crop only narrows where its center can sit, so a center that holds the wider of the
+    /// two crops inside the frame holds every crop between them. Unchanged where the curves stay
+    /// inside already.
+    private static func heldInsideFrame(
+        _ keyframes: [FollowKeyframe], marker: CGRect, rotationRadians: Double, in frame: CGSize
+    ) -> [FollowKeyframe] {
+        func box(_ scale: CGFloat) -> CGSize {
+            CGSize(width: marker.width / scale, height: marker.height / scale)
+        }
+        guard let first = keyframes.first, let last = keyframes.last else { return keyframes }
+        let path = FollowPath(keyframes: keyframes, resting: first.framing)
+        let showsBeyond = stride(from: first.time, through: last.time, by: 1.0 / 60).contains { time in
+            let framing = path.framing(at: time)
+            return outsideFrame(
+                center: framing.center, box: box(framing.scale), rotationRadians: rotationRadians, in: frame) > 0.5
+        }
+        guard showsBeyond else { return keyframes }
+        return keyframes.indices.map { index in
+            let widest = keyframes[max(index - 1, 0)...min(index + 1, keyframes.count - 1)].map(\.scale).min()
+            var keyframe = keyframes[index]
+            keyframe.center = slidIntoFrame(
+                keyframe.center, box: box(widest ?? keyframe.scale), rotationRadians: rotationRadians, in: frame)
+            return keyframe
         }
     }
 
@@ -336,6 +495,7 @@ extension FollowCrop {
             resting: FollowFraming(
                 center: CGPoint(x: videoSize.width / 2, y: videoSize.height / 2), scale: scale,
                 rotationRadians: rotationRadians),
-            isAutoFollow: false)
+            isAutoFollow: false,
+            aspectRatio: aspectRatio)
     }
 }

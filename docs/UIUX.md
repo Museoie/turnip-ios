@@ -1,5 +1,13 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 28 · 2026-11-09 · Processing (§2) loses the "One person | Everyone"
+picker: every analysis started there follows everyone, and a drag the scrub
+bar takes over after the page started to swipe puts the page back. Name Clips
+(§3a) hides "Save Clips" while the keyboard is up and keeps every naming
+control above it. The Clip Detail / Editor (§4) gives the crop marker corner
+handles that reshape it per clip, and Auto follow's keyframes sit at least 3 s
+apart.*
+
 *Rev 27 · 2026-11-09 · Learn from my clips (§1a) also decides borderline proposals,
 from the proposals the user keeps and trashes on Name Clips.*
 
@@ -96,7 +104,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -202,6 +210,7 @@ Where it applies today:
 |---|---|---|---|
 | Clip Editor leveling (§4) | Two-finger rotate | "Auto rotate", "Reset rotate" | The follow crop's turn at every keyframe, eased over 0.4 s |
 | Clip Editor follow fit (§4) | Drag, pinch or turn the video at a few moments | "Auto follow", "Apply zoom and turn to all keyframes", removing a keyframe, and an untouched Auto follow re-tracking a trimmed window | The video's position, zoom and turn eased over 0.4 s to the curves at the playhead, then the curves play |
+| Clip Editor crop shape (§4) | Drag a marker corner | VoiceOver's Make crop wider / Make crop taller | The marker settling at its new shape, the video's zoom and position easing with it over 0.4 s |
 
 This is the companion of the principle above: that one says a button plays
 the gesture's *transition*; this one says an automatic change plays the
@@ -388,8 +397,8 @@ default empty state, so it never reads as "your library is empty."
     proposal as personal.
 - A fifth preference lives in the same store but not on this screen: **person mode** (One
   person / Everyone, default One person), whose tricks a take or an analysis is cut into clips
-  for. It is chosen where it takes effect, on the camera before recording (§1b) and on
-  Processing before "Analyze clips" (§2), and remembered between them.
+  for. It is chosen where it takes effect, on the camera before recording (§1b), and kept for
+  the next take. An analysis started on Processing always follows everyone (§2).
 - Under the preferences, when the build points at a farm (`TURNIP_FARM_ENDPOINT`), a
   **Contribution** section. It leads with a sixth preference, **Contribute named clips**
   (switch, off by default): with it on, Name Clips' save (§3a) contributes the saved clips that
@@ -449,10 +458,8 @@ default empty state, so it never reads as "your library is empty."
 - The pipeline does not auto-start, but the picked video does: it fills the
   screen (fit to the screen, no native playback chrome) and starts playing
   automatically on arrival, Photos-app style — no tap needed to see it. A thin
-  scrub bar (play/pause, seek, mute) draws over the bottom, then a segmented
-  picker, "One person | Everyone", for whose tricks the analysis cuts clips
-  for (the same remembered setting as the camera's person control, §1b), with
-  a large, full-width "Analyze clips" button below it and a quieter "Clip
+  scrub bar (play/pause, seek, mute) draws over the bottom, with a large,
+  full-width "Analyze clips" button below it and a quieter "Clip
   manually" text button under that, in the same bar — black background, no title,
   no caption text, back chevron to Home. The user watches the autoplaying
   video, pausing/scrubbing it via the scrub bar if they want, and starts
@@ -462,6 +469,11 @@ default empty state, so it never reads as "your library is empty."
   screen back into Home's tile rather than popping or dismissing outright —
   [`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md) covers the mechanics
   this screen's own swipe-to-dismiss gesture drives.
+- An analysis started here, and a retry, cuts clips for everyone the pose
+  model finds, each with clips of their own (Rev 28; until then a picker above
+  "Analyze clips" chose between one person and everyone). The camera's person
+  control (§1b) still decides a take that live inference fully covered, which
+  never reaches this screen.
 - Once started, the video stays on screen (paused) rather than being replaced
   by a separate page: a progress panel — spinner or determinate bar, plus
   "Analyzing frame 400 of 1,200" — overlays the bottom of the still-visible video,
@@ -486,7 +498,10 @@ default empty state, so it never reads as "your library is empty."
   drag starts makes no difference — the leading edge, the top band, the
   bottom strip, the video itself — with one carve-out: the scrub bar's own
   track (`VideoScrubBar`), which claims a horizontal drag for
-  scrubbing. A drag's direction is fixed by its first movement: one that
+  scrubbing. When the track's claim arrives after the page has already begun
+  to follow the finger, the scrub wins: the page springs back to rest at
+  once, and a swipe down already shrinking the screen springs back the same
+  way, while the scrub carries on. A drag's direction is fixed by its first movement: one that
   starts mostly downward drives the expansion transition's own interactive
   dismiss instead (shrinking live with the finger, landing back on Home's
   tile), from anywhere on the page, video included, and is likewise disabled
@@ -602,9 +617,13 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
   nothing, and the next save asks again. Once it has agreed, the save goes
   straight to Home and the clips upload in the background, with nothing on
   screen and nothing waiting on them.
-- When the name field has focus, the page scrolls the field and the
-  suggestions above the keyboard, and keeps them there as names are added;
-  the card scrolls up with the page rather than shrinking.
+- When the name field has focus, "Save Clips" steps aside for the keyboard,
+  and the page scrolls every naming control above it — the names given, the
+  field, the suggestions and who's in it — and keeps them there as names are
+  added; the card scrolls up with the page rather than shrinking. Return adds
+  what is typed and keeps the keyboard up for the next name; on an empty field
+  it puts the keyboard away, and "Save Clips" comes back (as it does when a
+  drag down the page dismisses the keyboard).
 - Opened from the Profile's "Needs a name", the clips are already in Photos,
   so naming them is a screen of its own (`LibraryNamingView`) with this
   screen's naming controls and paging but no editor, triage or save: each
@@ -619,21 +638,51 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
   detail entry point, not a separate pencil icon. Full-screen, one clip at a
   time:
   - Video player showing the trimmed clip looping under the crop marker: one
-    rectangle of the export's aspect ratio, the same size at the same place on screen
-    for every clip, centered in the band between the header row and the controls, above
-    the follow lane (see "The crop follows the athlete" below).
+    rectangle of the clip's shape, the largest that fits centered in the band
+    between the header row and the controls, above the follow lane (see "The
+    crop follows the athlete" below), so every clip of one shape has its marker
+    at the same size and place. A clip starts at 9:16.
     The video is laid out so the clip's crop rect fills the marker exactly — a
     different clip, or an adjustment to the framing, moves and scales the video,
-    never the marker — and the rest of the frame shows around it through frosted
+    never the marker, which only its corner handles reshape (below) — and the rest
+    of the frame shows around it through frosted
     glass (the same material as Processing's and Name Clips' bottom bars), edge to
     edge, running under the header and the controls rather than clipped to a box:
     only the picture inside the marker is sharp, and the controls sit on the glass.
     The marker is what export cuts to. No default AVKit playback chrome; the only
     controls this screen shows are the custom play/pause and mute buttons and the
     scrub bar below.
+  - The marker's shape is the clip's own (Rev 28). A handle at each of its
+    corners reshapes it: dragging one moves that corner with the one across
+    from it held still, from twice as tall as wide to twice as wide as tall,
+    never past the band's edges or under 64 pt a side. While the finger is
+    down only the outline and the frost move; the video stays still under
+    them, so the drawn rectangle shows exactly what it will hold. On release
+    the clip takes the shape, and the marker settles centered at the largest
+    size of that shape, the video zooming and moving with it so what the drawn
+    rectangle held fills it, eased over 0.4 s (Photos' crop does the same).
+    Every keyframe and the resting framing take the same zoom and move, so the
+    whole clip keeps what the user framed, and the export, the card and the
+    poster all cut to the new shape. A reshape is a hand change like a pinch:
+    every diamond fills and keeps none of Auto follow's framing, which was fit
+    to the old shape, so removing one deletes it; the button offers Auto follow
+    again, and Auto follow, Reset follow and a trim's re-track keep the shape.
+    The shapes stop at 1:2 and 2:1, past the 9:16 and 16:9 a clip is usually
+    shared at. Export renders at the crop rect grown to the shape, scaled down
+    whole only where that is larger than a 4K frame held the same way (a
+    full-frame 4K portrait clip at 2:1 writes 3840 × 1920, not 7680 × 3840).
+    It isn't held to the source frame: a framing zoomed out to
+    the whole frame, as Reset follow's is, needs the full box to draw the
+    source at its own size. Each handle's touch target is
+    44 pt square over its corner, slid inside the stage band where the marker
+    sits at the band's insets, so a downward drag above the band closes the
+    editor right up to its edge, beside the top corners too. A touch on a
+    handle never reaches the video's own drag, pinch and turn. VoiceOver
+    reaches the same through the crop area's Make crop wider and Make crop
+    taller actions, a quarter longer side each, about the marker's center.
   - The crop area is directly editable: pinch to zoom, rotate with two fingers, and
-    drag with one finger to reposition the video underneath the fixed marker
-    rectangle — the video zooms/rotates/moves, the marker never does, and whatever
+    drag with one finger to reposition the video underneath the marker
+    rectangle — the video zooms/rotates/moves, the marker doesn't, and whatever
     the adjustment pushes outside the frame's own rect stays visible instead of
     being cut off. Each gesture sets the crop at the playhead's moment ("The crop
     follows the athlete" below). Two buttons fit the video under the marker for
@@ -720,8 +769,8 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
       Auto rotate. The follow lane sits between the buttons and the trim
       timeline, which spans the whole video and works as above. The lane takes
       about 44 pt from the stage, and the marker is centered in what is left:
-      the same size at the same place for every clip, and the expansion flight
-      lands on it.
+      the same size at the same place for every clip of one shape, and the
+      expansion flight lands on it.
     - **The follow lane.** It spans the trim window, not the video, so a
       4-second clip from a 3-minute take still gets the lane's whole width. A
       drag anywhere on it scrubs, with the trim timeline's vertical
@@ -753,6 +802,25 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
       keyframe" below). It keeps the turn, replaces the zoom and the
       positions, and discards keyframes the user set. The video moves to the
       path at the playhead over the same 0.4 s ease and then follows it.
+      Its keyframes sit at least 3 s apart (Rev 28), so the lane shows a few
+      diamonds worth adjusting by hand rather than a cluster: a moment that
+      would want a keyframe nearer than that to another goes without. A
+      detected clip is 4 to 6 s long more often than not, which leaves room for
+      only two keyframes, at or near its ends. The two that start and stop the
+      crop's move are spread into the still stretches either side until they
+      are 3 s apart, or sit at the window's two ends when it is shorter than
+      that. Between two keyframes the crop can only travel from one framing to
+      the other, so where the athlete moves away and back in between — out to
+      the side and back, or up into a jump and down — the curve would cut them;
+      instead the keyframes either side zoom out until the athlete stays
+      inside at every moment, no wider than the frame. Such a clip frames
+      looser than it did with keyframes placed freely: an athlete crossing
+      40% of a portrait frame and back within 5 s gets a crop about 830 source
+      pixels wide where the zoom floor alone would give 432 (`DESIGN.md` step
+      6). Where the fewer keyframes would let a crop that zooms and moves at
+      once show past the frame between them, their positions are pulled in
+      until it can't. Keyframes added by hand go anywhere, so a tighter follow
+      is a few keyframes by hand.
       A clip that opens with no follow crop of its own opens on Auto follow's,
       so the button reads "Reset follow". Any manual pinch, rotate, drag or
       keyframe change returns it and Auto rotate to offering their fits; a
@@ -767,7 +835,7 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
       keyframe has moved it (a turn alone doesn't count — that is Reset
       rotate's); the follow crop is entirely manual there.
     - **Nothing to follow.** When the crop Auto follow finds neither moves
-      nor zooms, because the athlete stays put or a portrait take leaves a 9:16
+      nor zooms, because the athlete stays put or a portrait take leaves a tall
       crop no room, it frames the athlete with one keyframe and says "Nothing
       to follow" in a notice where "No horizon found" appears. The keyframe
       frames every body part the pose model located in the window, at the
@@ -856,10 +924,10 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
   trick, highlights, the Clip view — live in
   [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5–§8; this doc carries only the
   changes to the v1 flow, the ones not built yet marked *Planned*.
-- Further Settings options beyond the six §1a covers — aspect ratio, buffer
-  duration, and whatever else a future issue asks for stay out of scope until
-  one does; the per-clip crop/trim adjustment in Clip Detail's drag handles
-  already covers per-clip framing without a setting.
+- Further Settings options beyond the six §1a covers — a default aspect ratio,
+  buffer duration, and whatever else a future issue asks for stay out of scope
+  until one does; the per-clip shape, crop and trim in Clip Detail's handles
+  already cover per-clip framing without a setting.
 - Visual design (colors, typography, exact layout) — this doc fixes screens
   and transitions, not pixels.
 

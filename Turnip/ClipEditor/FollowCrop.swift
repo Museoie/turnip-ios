@@ -73,7 +73,7 @@ struct FollowKeyframe: Hashable, Sendable {
 
 /// A crop that moves with the athlete (`docs/DESIGN.md` step 6, "Follow crop in the editor"):
 /// a few keyframes, each the crop's center, zoom and turn at one moment. Every frame is a crop
-/// of the marker's ratio, zoomed and turned about its moving center.
+/// of the marker's ratio (`aspectRatio`), zoomed and turned about its moving center.
 ///
 /// Between keyframes the center's two axes, the zoom (in proportion) and the turn each move on
 /// a monotone cubic through all of them (`MonotoneCubic`), which eases out of the first keyframe
@@ -86,8 +86,16 @@ struct FollowCrop: Hashable, Sendable {
     /// center at the zoom that shows all of it.
     var resting: FollowFraming
     /// True while this is exactly what Auto follow wrote, so its button offers Reset follow.
-    /// Any pinch, turn, drag or keyframe change clears it; a trim and Auto rotate don't.
+    /// Any pinch, turn, drag, keyframe change or reshape clears it; a trim and Auto rotate don't.
     var isAutoFollow: Bool
+    /// The crop's shape, width over height: the editor's marker and the exported clip. A box of
+    /// this ratio around the clip's crop rect (`ClipEditorViewModel.markerBox`) is what every
+    /// framing's `scale` is measured against, so reshaping a crop rewrites its framings too
+    /// (`ClipEditorViewModel.resizeCrop`).
+    var aspectRatio: CGFloat = Self.defaultAspectRatio
+
+    /// The shape every crop starts in: detection's own, 9:16.
+    static let defaultAspectRatio = CGFloat(CropRectCalculator().targetAspectRatio)
 
     /// The crop's framing over time.
     var path: FollowPath {

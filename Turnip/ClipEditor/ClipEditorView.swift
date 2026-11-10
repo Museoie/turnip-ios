@@ -2,12 +2,13 @@ import AVFoundation
 import SwiftUI
 
 /// The per-clip editor (`docs/UIUX.md` § "Clip Detail / Editor"): full-screen,
-/// one clip at a time — the trimmed clip looping under a crop marker that is one fixed
-/// rectangle on screen, with the video laid out so the clip's crop rect fills it and the
+/// one clip at a time — the trimmed clip looping under a crop marker that is one rectangle of
+/// the clip's shape on screen, with the video laid out so the clip's crop rect fills it and the
 /// rest of the frame showing frosted around it, edge to edge, and the crop following the
 /// athlete (pinch to zoom, rotate with two fingers, drag to reposition the video at the
-/// playhead's moment), the Auto follow and Auto rotate buttons that fit the video under the
-/// marker for the user, the follow lane, plus a scrub bar with start/end drag handles.
+/// playhead's moment), corner handles that reshape the marker, the Auto follow and Auto rotate
+/// buttons that fit the video under the marker for the user, the follow lane, plus a scrub bar
+/// with start/end drag handles.
 ///
 /// Back-navigation closes the editor via the top row's own action — `onCommit` fires
 /// synchronously from that tap, before the enclosing presentation dismisses, rather than
@@ -43,6 +44,13 @@ struct ClipEditorView: View {
     /// row and the bottom controls, where the crop gestures are taken. Fixed per device — it
     /// never depends on the clip.
     @State private var stageFrame: CGRect = .zero
+    /// The marker as a corner handle is dragging it (global space), drawn in place of the settled
+    /// marker until the drag ends and the clip takes its shape (`reshapeGesture`). `nil` while
+    /// no handle is held.
+    @State private var reshapedMarker: CGRect?
+    /// True while a corner handle is held. `@GestureState`, so a drag the system takes still
+    /// resets it although its `onEnded` never runs, which drops the drawn shape uncommitted.
+    @GestureState private var isReshaping = false
 
     init(
         source: ClipEditorSource,
@@ -97,11 +105,17 @@ struct ClipEditorView: View {
         }
     }
 
-    /// The crop marker's frame, in global space: one fixed rectangle of the crop rect's
-    /// aspect ratio centered in the stage, the same for every clip. Reported to a presenting
-    /// `ClipExpansionContainer` as the part of the screen its flying card's window starts on.
+    /// The crop marker's frame, in global space: the largest rectangle of the clip's shape
+    /// (`ClipEditorViewModel.targetAspectRatio`) centered in the stage, the same for every clip of
+    /// that shape. Reported to a presenting `ClipExpansionContainer` as the part of the screen its
+    /// flying card's window starts on — the settled marker, never one a handle is mid-drag on.
     private var markerFrame: CGRect {
         ClipEditorStage.markerRect(in: stageFrame, aspectRatio: viewModel.targetAspectRatio)
+    }
+
+    /// The marker as drawn: a handle's drag while one is held, the settled marker otherwise.
+    private var shownMarker: CGRect {
+        reshapedMarker ?? markerFrame
     }
 
     var body: some View {
@@ -125,6 +139,12 @@ struct ClipEditorView: View {
         .navigationBarBackButtonHidden(true)
         .task {
             await viewModel.prepare()
+        }
+        .onChange(of: isReshaping) { reshaping in
+            // A drag whose `onEnded` ran has already committed; one the system took never did,
+            // and leaves nothing behind.
+            guard !reshaping, reshapedMarker != nil else { return }
+            withAnimation(ClipEditorViewModel.fitAnimation) { reshapedMarker = nil }
         }
         .onDisappear {
             viewModel.teardown()
@@ -188,15 +208,16 @@ struct ClipEditorView: View {
     }
 
     /// The crop stage, edge to edge under the chrome: the video laid out so its crop rect
-    /// fills the fixed marker (`ClipEditorStage`), the frosted surround marking what export
-    /// cuts away, the marker's outline, and — over the stage's own band only — the pinch/
-    /// rotate/drag gesture. The video and the overlays take no touches themselves: the
-    /// header band and the bottom controls' margins stay with the dismiss gesture behind
-    /// this view, and the playback pill sits on top of the gesture surface.
+    /// fills the marker (`ClipEditorStage`), the frosted surround marking what export cuts
+    /// away, the marker's outline and corner handles, and — over the stage's own band only —
+    /// the pinch/rotate/drag gesture. The video and the overlays take no touches themselves:
+    /// the header band and the bottom controls' margins stay with the dismiss gesture behind
+    /// this view, and the handles and the playback pill sit on top of the gesture surface.
     private var stage: some View {
         GeometryReader { proxy in
             let origin = proxy.frame(in: .global).origin
             let marker = markerFrame.offsetBy(dx: -origin.x, dy: -origin.y)
+            let shown = shownMarker.offsetBy(dx: -origin.x, dy: -origin.y)
             let band = stageFrame.offsetBy(dx: -origin.x, dy: -origin.y)
             let placement = viewModel.previewOverlay.flatMap {
                 ClipEditorStage.videoPlacement(videoSize: $0.videoSize, cropRect: $0.cropRect, marker: marker)
@@ -222,7 +243,7 @@ struct ClipEditorView: View {
                     // under partial opacity, where a material can't blur and would render the
                     // frame behind it sharp: the flying card shows the crop alone, and the
                     // frosted frame around it appears with the landing.
-                    CropOverlayShape(hole: marker)
+                    CropOverlayShape(hole: shown)
                         .fill(.thinMaterial, style: FillStyle(eoFill: true))
                         .allowsHitTesting(false)
                     // The marker's outline comes and goes with the frost, in the same frame,
@@ -230,8 +251,8 @@ struct ClipEditorView: View {
                     // outline would otherwise outlive the frost around the bare crop.
                     Rectangle()
                         .stroke(.white, lineWidth: 2)
-                        .frame(width: marker.width, height: marker.height)
-                        .position(x: marker.midX, y: marker.midY)
+                        .frame(width: shown.width, height: shown.height)
+                        .position(x: shown.midX, y: shown.midY)
                         .allowsHitTesting(false)
                         // Lets a UI test read the marker's frame, to check a presenting
                         // container's card lands its picture exactly here. Not a control:
@@ -242,19 +263,75 @@ struct ClipEditorView: View {
                 cropGestureSurface(previewScale: placement?.pointsPerDisplayedPixel ?? 0)
                     .frame(width: band.width, height: band.height)
                     .position(x: band.midX, y: band.midY)
+                    // A reshape and a drag, pinch or turn of the video never run at once: the
+                    // surface lets go of its touches while a handle is held.
+                    .allowsHitTesting(reshapedMarker == nil)
                     .accessibilityElement()
                     .accessibilityLabel("Clip preview with crop area")
                     .accessibilityValue(viewModel.cropAdjustmentDescription)
                     .accessibilityHint("Pinch to zoom, rotate with two fingers, or drag to reposition")
                     .accessibilityIdentifier("clip-editor-crop-surface")
                     .modifier(CropAdjustmentActions(
-                        viewModel: viewModel, videoSize: viewModel.previewOverlay?.videoSize ?? .zero))
+                        viewModel: viewModel, videoSize: viewModel.previewOverlay?.videoSize ?? .zero,
+                        marker: markerFrame, previewScale: placement?.pointsPerDisplayedPixel ?? 0))
+                if expansionHasLanded, let placement {
+                    markerHandles(around: shown, in: band, previewScale: placement.pointsPerDisplayedPixel)
+                }
                 playbackControls
-                    .frame(width: marker.width, height: marker.height, alignment: .bottom)
-                    .position(x: marker.midX, y: marker.midY)
+                    .frame(width: shown.width, height: shown.height, alignment: .bottom)
+                    .position(x: shown.midX, y: shown.midY)
             }
         }
         .ignoresSafeArea()
+    }
+
+    /// The marker's four corner handles. Dragging one reshapes the marker with the corner across
+    /// from it held still (`ClipEditorStage.resizedMarker`), drawn live as the marker's outline
+    /// and frost while the video stays put; letting go gives the clip that shape, and the video
+    /// eases so what the drawn rectangle held fills the marker as it settles centered at its new
+    /// shape (`ClipEditorViewModel.resizeCrop`). VoiceOver reaches the same through the crop
+    /// area's Make crop wider and Make crop taller actions. Each handle's touch target stays
+    /// inside the stage `band` (`ClipEditorStage.handleTarget`), so a downward drag above the
+    /// band still closes the editor right up to the band's edge, beside the top corners too.
+    private func markerHandles(around shown: CGRect, in band: CGRect, previewScale: CGFloat) -> some View {
+        ForEach(ClipEditorStage.Corner.allCases, id: \.self) { corner in
+            let point = corner.point(of: shown)
+            let target = ClipEditorStage.handleTarget(at: point, side: Self.handleTarget, in: band)
+            CropCornerHandle(
+                corner: corner, vertex: CGPoint(x: point.x - target.minX, y: point.y - target.minY))
+                .stroke(.white, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+                .frame(width: target.width, height: target.height)
+                .contentShape(Rectangle())
+                .position(x: target.midX, y: target.midY)
+                .gesture(reshapeGesture(corner, previewScale: previewScale))
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// Each handle's touch target, a square over its corner.
+    private static let handleTarget: CGFloat = 44
+
+    /// One corner handle's drag: touch-down pauses as the crop's own gestures do, the marker
+    /// follows the finger, and the shape is the clip's once the finger lifts. Ignored while a
+    /// finger is already on the video.
+    private func reshapeGesture(_ corner: ClipEditorStage.Corner, previewScale: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .updating($isReshaping) { _, reshaping, _ in reshaping = true }
+            .onChanged { value in
+                if reshapedMarker == nil {
+                    guard !followGesture.fingersDown else { return }
+                    viewModel.beginFollowTouch()
+                }
+                reshapedMarker = ClipEditorStage.resizedMarker(
+                    markerFrame, corner: corner, translation: value.translation, in: stageFrame)
+            }
+            .onEnded { _ in
+                guard let drawn = reshapedMarker else { return }
+                withAnimation(ClipEditorViewModel.fitAnimation) {
+                    viewModel.resizeCrop(from: markerFrame, to: drawn, previewScale: previewScale)
+                    reshapedMarker = nil
+                }
+            }
     }
 
     /// What the marker holds before the video can: a spinner while media info loads, or
@@ -540,14 +617,41 @@ private struct ClipEditorStageFramePreferenceKey: NonZeroFramePreferenceKey {}
 /// the frame this view first mounts, a stale zero default can still be in flight.
 struct ClipEditorCropMarkerFramePreferenceKey: NonZeroFramePreferenceKey {}
 
-/// The surround with a hole at the crop marker, for the editor's stage.
+/// The surround with a hole at the crop marker, for the editor's stage. The hole animates, so it
+/// moves with the marker as a reshape settles.
 private struct CropOverlayShape: Shape {
     var hole: CGRect
+
+    var animatableData: CGRect.AnimatableData {
+        get { hole.animatableData }
+        set { hole.animatableData = newValue }
+    }
 
     func path(in rect: CGRect) -> Path {
         var path = Path()
         path.addRect(rect)
         path.addRect(hole)
+        return path
+    }
+}
+
+/// One corner handle's bracket: two arms along the marker's edges from the corner, pointing
+/// into the marker.
+private struct CropCornerHandle: Shape {
+    let corner: ClipEditorStage.Corner
+    /// Where the corner is, in the handle's own frame: its touch target is slid inside the
+    /// stage, so the corner isn't always the frame's center.
+    let vertex: CGPoint
+    private static let armLength: CGFloat = 18
+
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.minX + vertex.x, y: rect.minY + vertex.y)
+        let across: CGFloat = corner == .topLeading || corner == .bottomLeading ? 1 : -1
+        let down: CGFloat = corner == .topLeading || corner == .topTrailing ? 1 : -1
+        var path = Path()
+        path.move(to: CGPoint(x: center.x + across * Self.armLength, y: center.y))
+        path.addLine(to: center)
+        path.addLine(to: CGPoint(x: center.x, y: center.y + down * Self.armLength))
         return path
     }
 }
@@ -566,17 +670,32 @@ private struct CropOverlayShape: Shape {
 /// purpose unreachable without sight. The zooms, turns and moves set the keyframe at the
 /// playhead, as the gestures do; the keyframe actions step the playhead between keyframes and
 /// add or remove the one at it, "Apply zoom and turn to all keyframes" gives every keyframe the
-/// zoom and turn at the playhead, and Reset follow returns to the whole frame.
+/// zoom and turn at the playhead, and Reset follow returns to the whole frame. Make crop wider and
+/// Make crop taller reshape the marker about its center, as the corner handles do by touch.
 private struct CropAdjustmentActions: ViewModifier {
     let viewModel: ClipEditorViewModel
     let videoSize: CGSize
+    /// The settled marker on screen, and on-screen points per displayed pixel under it: what a
+    /// reshape is measured from (`ClipEditorViewModel.resizeCrop`).
+    let marker: CGRect
+    let previewScale: CGFloat
+
+    /// The marker stretched about its center by `factor` across or down.
+    private func reshape(widthBy widthFactor: CGFloat, heightBy heightFactor: CGFloat) {
+        let size = CGSize(width: marker.width * widthFactor, height: marker.height * heightFactor)
+        let drawn = CGRect(
+            x: marker.midX - size.width / 2, y: marker.midY - size.height / 2,
+            width: size.width, height: size.height)
+        viewModel.resizeCrop(from: marker, to: drawn, previewScale: previewScale)
+    }
 
     func body(content: Content) -> some View {
         let step = CGSize(
             width: videoSize.width * CropAdjustmentStep.offsetFraction,
             height: videoSize.height * CropAdjustmentStep.offsetFraction)
         let move: (CGSize) -> Void = { viewModel.moveFollow(byDisplayedPixels: $0) }
-        return content
+        // Two expressions rather than one chain, which the type checker gives up on.
+        let framing = content
             .accessibilityAction(named: "Zoom in") {
                 viewModel.applyCropScale(CropAdjustmentStep.zoomFactor)
             }
@@ -605,5 +724,12 @@ private struct CropAdjustmentActions: ViewModifier {
                 viewModel.applyZoomAndTurnAtPlayheadToAllKeyframes()
             }
             .accessibilityAction(named: "Reset follow") { viewModel.resetFollow() }
+        return framing
+            .accessibilityAction(named: "Make crop wider") {
+                reshape(widthBy: CropAdjustmentStep.reshapeFactor, heightBy: 1)
+            }
+            .accessibilityAction(named: "Make crop taller") {
+                reshape(widthBy: 1, heightBy: CropAdjustmentStep.reshapeFactor)
+            }
     }
 }
