@@ -21,10 +21,18 @@ actor MockModelUpdateClient: ModelUpdateClient {
     /// and then parks on a continuation instead of completing, until the test
     /// calls `releaseDownloadSuspension()`. This holds the service's
     /// in-flight window open so a test can make a second check provably
-    /// overlap the first — structural overlap, not scheduling luck. See
+    /// overlap the first — structural overlap, not scheduling luck. The test
+    /// learns that the download has parked from `downloadParked()`, however
+    /// long the check takes to get there. See
     /// `testOverlappingChecksAreSuppressed`.
     var suspendNextDownload = false
     private var suspendedDownload: CheckedContinuation<Void, Never>?
+
+    /// The answer `downloadParked()` gives: `true` once the gated download
+    /// has parked, `false` once `checkReturned()` reported the check over
+    /// first, `nil` until one of them happens. The first one settles it.
+    private var parkSignal: Bool?
+    private var parkWaiter: CheckedContinuation<Bool, Never>?
 
     func fetchManifest(from endpoint: URL) async throws -> Data? {
         fetchedEndpoints.append(endpoint)
@@ -40,6 +48,8 @@ actor MockModelUpdateClient: ModelUpdateClient {
             suspendNextDownload = false
             await withCheckedContinuation { continuation in
                 suspendedDownload = continuation
+                // Settled after the store, so a release that follows the signal finds it.
+                settleParkSignal(true)
             }
         }
         if let downloadError = downloadError {
@@ -50,6 +60,13 @@ actor MockModelUpdateClient: ModelUpdateClient {
             .appendingPathComponent(UUID().uuidString)
         try bytes.write(to: url, options: .atomic)
         return url
+    }
+
+    private func settleParkSignal(_ parked: Bool) {
+        guard parkSignal == nil else { return }
+        parkSignal = parked
+        parkWaiter?.resume(returning: parked)
+        parkWaiter = nil
     }
 }
 
@@ -585,18 +602,13 @@ final class ModelUpdateTests: XCTestCase {
         await client.armDownloadSuspension()
         let service = makeService(client: client, store: store)
 
-        let first = Task.detached { await service.checkForUpdates() }
-        // Wait for the first check to reach the gate: the request is recorded
-        // immediately before the park point, so from here on the check cannot
-        // finish before the test resumes it. (The spin is a one-way latch,
-        // not a race — reaching the gate means parked.)
-        var spins = 0
-        while await client.downloadRequests.isEmpty, spins < 100_000 {
-            spins += 1
-            await Task.yield()
+        let first = Task.detached {
+            await service.checkForUpdates()
+            await client.checkReturned()
         }
-        let downloadRequests = await client.downloadRequests
-        XCTAssertFalse(downloadRequests.isEmpty)
+        guard await client.downloadParked() else {
+            return XCTFail("the first check returned without reaching its download")
+        }
 
         await service.checkForUpdates() // must be suppressed, not queued
         await client.releaseDownloadSuspension()
@@ -785,5 +797,22 @@ private extension MockModelUpdateClient {
     func releaseDownloadSuspension() {
         suspendedDownload?.resume()
         suspendedDownload = nil
+    }
+
+    /// Waits, with no time limit, for the gated download to park, and returns
+    /// `true`: from then on its check stays in flight until
+    /// `releaseDownloadSuspension()`. Returns `false` if `checkReturned()`
+    /// came first, so a check that never reaches its download fails the test
+    /// instead of hanging it. Returns at once if either has already happened.
+    func downloadParked() async -> Bool {
+        if let parkSignal { return parkSignal }
+        return await withCheckedContinuation { parkWaiter = $0 }
+    }
+
+    /// Reports that the gated check has returned, which ends a
+    /// `downloadParked()` wait its download never parked for. Has no effect
+    /// once the download has parked.
+    func checkReturned() {
+        settleParkSignal(false)
     }
 }
