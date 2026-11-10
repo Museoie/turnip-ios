@@ -275,7 +275,7 @@ struct ClipEditorView: View {
                         viewModel: viewModel, videoSize: viewModel.previewOverlay?.videoSize ?? .zero,
                         marker: markerFrame, previewScale: placement?.pointsPerDisplayedPixel ?? 0))
                 if expansionHasLanded, let placement {
-                    markerHandles(around: shown, previewScale: placement.pointsPerDisplayedPixel)
+                    markerHandles(around: shown, in: band, previewScale: placement.pointsPerDisplayedPixel)
                 }
                 playbackControls
                     .frame(width: shown.width, height: shown.height, alignment: .bottom)
@@ -290,20 +290,25 @@ struct ClipEditorView: View {
     /// and frost while the video stays put; letting go gives the clip that shape, and the video
     /// eases so what the drawn rectangle held fills the marker as it settles centered at its new
     /// shape (`ClipEditorViewModel.resizeCrop`). VoiceOver reaches the same through the crop
-    /// area's Make crop wider and Make crop taller actions.
-    private func markerHandles(around shown: CGRect, previewScale: CGFloat) -> some View {
+    /// area's Make crop wider and Make crop taller actions. Each handle's touch target stays
+    /// inside the stage `band` (`ClipEditorStage.handleTarget`), so a downward drag above the
+    /// band still closes the editor right up to the band's edge, beside the top corners too.
+    private func markerHandles(around shown: CGRect, in band: CGRect, previewScale: CGFloat) -> some View {
         ForEach(ClipEditorStage.Corner.allCases, id: \.self) { corner in
-            CropCornerHandle(corner: corner)
+            let point = corner.point(of: shown)
+            let target = ClipEditorStage.handleTarget(at: point, side: Self.handleTarget, in: band)
+            CropCornerHandle(
+                corner: corner, vertex: CGPoint(x: point.x - target.minX, y: point.y - target.minY))
                 .stroke(.white, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
-                .frame(width: Self.handleTarget, height: Self.handleTarget)
+                .frame(width: target.width, height: target.height)
                 .contentShape(Rectangle())
-                .position(corner.point(of: shown))
+                .position(x: target.midX, y: target.midY)
                 .gesture(reshapeGesture(corner, previewScale: previewScale))
                 .accessibilityHidden(true)
         }
     }
 
-    /// Each handle's touch target, centered on its corner.
+    /// Each handle's touch target, a square over its corner.
     private static let handleTarget: CGFloat = 44
 
     /// One corner handle's drag: touch-down pauses as the crop's own gestures do, the marker
@@ -630,14 +635,17 @@ private struct CropOverlayShape: Shape {
     }
 }
 
-/// One corner handle's bracket: two arms along the marker's edges from the corner at its frame's
-/// center, pointing into the marker.
+/// One corner handle's bracket: two arms along the marker's edges from the corner, pointing
+/// into the marker.
 private struct CropCornerHandle: Shape {
     let corner: ClipEditorStage.Corner
+    /// Where the corner is, in the handle's own frame: its touch target is slid inside the
+    /// stage, so the corner isn't always the frame's center.
+    let vertex: CGPoint
     private static let armLength: CGFloat = 18
 
     func path(in rect: CGRect) -> Path {
-        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let center = CGPoint(x: rect.minX + vertex.x, y: rect.minY + vertex.y)
         let across: CGFloat = corner == .topLeading || corner == .bottomLeading ? 1 : -1
         let down: CGFloat = corner == .topLeading || corner == .topTrailing ? 1 : -1
         var path = Path()

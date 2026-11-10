@@ -98,9 +98,9 @@ final class ClipEditorReshapeTests: XCTestCase {
         }
     }
 
-    /// A reshape is the user's change: Auto follow is offered again for the new shape, and a
-    /// keyframe Auto follow wrote fills; removing it puts back Auto follow's framing, at the new
-    /// shape's box.
+    /// A reshape is the user's change: Auto follow is offered again for the new shape, and every
+    /// keyframe becomes the user's own, keeping none of Auto follow's values fitted to the old
+    /// shape, so removing one deletes it rather than restoring a framing for another box.
     @MainActor
     func testAReshapeIsTheUsersChange() throws {
         let viewModel = makeViewModel()
@@ -118,11 +118,41 @@ final class ClipEditorReshapeTests: XCTestCase {
         XCTAssertFalse(viewModel.isAutoFollowApplied)
         XCTAssertFalse(reshaped.isUntouchedAutoFollow)
         XCTAssertTrue(reshaped.keyframes.allSatisfy { !$0.isAutoFollows })
+        XCTAssertTrue(reshaped.keyframes.allSatisfy { $0.autoFraming == nil })
+        XCTAssertEqual(reshaped.keyframes.map(\.time), auto.keyframes.map(\.time))
         let first = reshaped.keyframes[0]
         viewModel.removeKeyframe(first)
-        let restored = try XCTUnwrap(viewModel.followCrop?.keyframes.first)
-        XCTAssertEqual(restored.framing, auto.keyframes[0].framing)
-        XCTAssertTrue(restored.isAutoFollows)
+        let remaining = try XCTUnwrap(viewModel.followCrop?.keyframes)
+        XCTAssertEqual(remaining.map(\.time), Array(auto.keyframes.dropFirst()).map(\.time))
+        XCTAssertEqual(remaining, Array(reshaped.keyframes.dropFirst()))
+    }
+
+    /// A handle's touch target stays inside the stage: a marker at the stage's insets has its
+    /// top and bottom targets slid inward, square and over their corners still, leaving the band
+    /// above to the drag that closes the editor; one well inside keeps its target centered.
+    func testAHandleTargetStaysInsideTheStage() {
+        let side: CGFloat = 44
+        let marker = ClipEditorStage.markerRect(in: stage, aspectRatio: 9.0 / 16)
+        XCTAssertEqual(marker.minY, stage.minY + ClipEditorStage.verticalInset, accuracy: 1e-9)
+        for corner in ClipEditorStage.Corner.allCases {
+            let point = corner.point(of: marker)
+            let target = ClipEditorStage.handleTarget(at: point, side: side, in: stage)
+            XCTAssertEqual(target.size, CGSize(width: side, height: side), "\(corner)")
+            XCTAssertTrue(stage.contains(target), "\(corner)")
+            XCTAssertTrue(target.contains(point), "\(corner)")
+            XCTAssertEqual(target.midX, point.x, accuracy: 1e-9, "\(corner)")
+        }
+        let topLeading = ClipEditorStage.handleTarget(
+            at: ClipEditorStage.Corner.topLeading.point(of: marker), side: side, in: stage)
+        XCTAssertEqual(topLeading.minY, stage.minY, accuracy: 1e-9)
+        let bottomTrailing = ClipEditorStage.handleTarget(
+            at: ClipEditorStage.Corner.bottomTrailing.point(of: marker), side: side, in: stage)
+        XCTAssertEqual(bottomTrailing.maxY, stage.maxY, accuracy: 1e-9)
+
+        let inside = CGPoint(x: stage.midX, y: stage.midY)
+        let centered = ClipEditorStage.handleTarget(at: inside, side: side, in: stage)
+        XCTAssertEqual(centered.midX, inside.x, accuracy: 1e-9)
+        XCTAssertEqual(centered.midY, inside.y, accuracy: 1e-9)
     }
 
     /// The shape is the clip's: Auto follow, Reset follow and a trim's re-track all keep it, and

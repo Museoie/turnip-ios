@@ -160,7 +160,10 @@ struct ClipExportTransform {
     /// At every moment the crop is a box of the marker's size (`cropRect`'s marker box at the
     /// follow crop's own shape, `FollowCrop.aspectRatio`)
     /// centered on the follow crop's center then, zoomed and turned about that center by the
-    /// zoom and turn then — the order the editor's preview draws. Wherever the crop moves, it is
+    /// zoom and turn then — the order the editor's preview draws. The output is that box,
+    /// scaled down whole to the largest size of its shape the displayed frame holds when it is
+    /// wider or taller than the frame (`outputScale`): a box grown past the frame shows no more
+    /// of the source than the frame has, so the extra pixels would only be upscaled. Wherever the crop moves, it is
     /// sampled on every frame of the composition's grid, `frameDuration` apart from composition
     /// time zero, one ramp per frame. The composition interpolates a ramp's matrix linearly
     /// between its two ends, which shears the picture partway through a ramp whose turn or zoom
@@ -181,8 +184,14 @@ struct ClipExportTransform {
         let geometry = VideoTrackGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
         guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
         let box = ClipEditorViewModel.markerBox(around: crop, aspectRatio: followCrop.aspectRatio).size
+        guard box.width > 0, box.height > 0 else { return nil }
+        let fit = outputScale(for: box, in: geometry.displayedSize)
+        let toOutput = CGAffineTransform(scaleX: fit, y: fit)
+        let renderSize = CGSize(
+            width: (box.width * fit).roundedToEvenDimensions,
+            height: (box.height * fit).roundedToEvenDimensions)
         let path = followCrop.path
-        var stops: [(time: CMTime, transform: ClipExportTransform)] = []
+        var stops: [(time: CMTime, layerTransform: CGAffineTransform)] = []
         for time in sampleTimes(over: span, moving: path.movingSpan, frameDuration: frameDuration) {
             let framing = path.framing(at: span.lowerBound + time.seconds)
             let rect = CGRect(
@@ -192,18 +201,24 @@ struct ClipExportTransform {
                 scale: framing.scale, rotationRadians: framing.rotationRadians, offset: .zero)
             guard let transform = make(displayedCrop: rect, geometry: geometry, cropAdjustment: adjustment)
             else { return nil }
-            stops.append((time, transform))
+            stops.append((time, transform.layerTransform.concatenating(toOutput)))
         }
         guard let first = stops.first else { return nil }
         let ramps = zip(stops, stops.dropFirst()).map { earlier, later in
             ClipTransformRamp(
                 timeRange: CMTimeRange(start: earlier.time, end: later.time),
-                start: earlier.transform.layerTransform,
-                end: later.transform.layerTransform)
+                start: earlier.layerTransform,
+                end: later.layerTransform)
         }
-        return ClipExportTransform(
-            renderSize: first.transform.renderSize, layerTransform: first.transform.layerTransform,
-            ramps: ramps)
+        return ClipExportTransform(renderSize: renderSize, layerTransform: first.layerTransform, ramps: ramps)
+    }
+
+    /// How much a follow crop's `box` is scaled down to render: 1 when it fits inside the
+    /// displayed `frame`, else the largest scale that fits it, so no output is wider or taller
+    /// than its source.
+    static func outputScale(for box: CGSize, in frame: CGSize) -> CGFloat {
+        guard box.width > 0, box.height > 0, frame.width > 0, frame.height > 0 else { return 1 }
+        return min(1, frame.width / box.width, frame.height / box.height)
     }
 
     /// Where a follow crop is sampled, in composition time: zero, the span's end, and every frame

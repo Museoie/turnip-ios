@@ -664,13 +664,20 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
     Every keyframe and the resting framing take the same zoom and move, so the
     whole clip keeps what the user framed, and the export, the card and the
     poster all cut to the new shape. A reshape is a hand change like a pinch:
-    Auto follow's diamonds fill, the button offers Auto follow again, and Auto
-    follow, Reset follow and a trim's re-track keep the shape. Export renders
-    at the crop rect grown to the shape, so it only ever grows the crop rect,
-    which is why the shapes stop at 1:2 and 2:1. A touch on a handle never
-    reaches the video's own drag, pinch and turn. VoiceOver reaches the same
-    through the crop area's Make crop wider and Make crop taller actions, a
-    quarter longer side each, about the marker's center.
+    every diamond fills and keeps none of Auto follow's framing, which was fit
+    to the old shape, so removing one deletes it; the button offers Auto follow
+    again, and Auto follow, Reset follow and a trim's re-track keep the shape.
+    The shapes stop at 1:2 and 2:1, past the 9:16 and 16:9 a clip is usually
+    shared at. Export renders at the crop rect grown to the shape, scaled down
+    whole wherever that is wider or taller than the source frame, so no shape
+    writes a movie larger than its source in either direction (a full-frame
+    1920 × 1080 clip at 1:2 writes 540 × 1080). Each handle's touch target is
+    44 pt square over its corner, slid inside the stage band where the marker
+    sits at the band's insets, so a downward drag above the band closes the
+    editor right up to its edge, beside the top corners too. A touch on a
+    handle never reaches the video's own drag, pinch and turn. VoiceOver
+    reaches the same through the crop area's Make crop wider and Make crop
+    taller actions, a quarter longer side each, about the marker's center.
   - The crop area is directly editable: pinch to zoom, rotate with two fingers, and
     drag with one finger to reposition the video underneath the marker
     rectangle — the video zooms/rotates/moves, the marker doesn't, and whatever

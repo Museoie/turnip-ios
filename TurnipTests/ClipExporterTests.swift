@@ -270,14 +270,15 @@ final class ClipExporterTests: XCTestCase {
         try assertTransform(transform.ramps[29].end, equals: boxTransform(crop, at: 3.5), "at the end")
     }
 
-    /// A follow crop reshaped in the editor renders at the clip's crop rect grown to its own
-    /// shape, even on both sides, with the moving center in the middle of the output.
+    /// A follow crop reshaped in the editor renders at its own shape, even on both sides, with
+    /// the moving center in the middle of the output: a full-frame clip's crop rect grown to
+    /// the shape runs past the frame, so the output is the largest of that shape the frame holds.
     func testAFollowCropRendersAtItsOwnShape() throws {
         let fullFrame = NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
         let expected: [(ratio: CGFloat, size: CGSize)] = [
-            (ClipEditorStage.aspectRatioRange.lowerBound, CGSize(width: 1920, height: 3840)),
-            (1, CGSize(width: 1920, height: 1920)),
-            (ClipEditorStage.aspectRatioRange.upperBound, CGSize(width: 2160, height: 1080))
+            (ClipEditorStage.aspectRatioRange.lowerBound, CGSize(width: 540, height: 1080)),
+            (1, CGSize(width: 1080, height: 1080)),
+            (ClipEditorStage.aspectRatioRange.upperBound, CGSize(width: 1920, height: 960))
         ]
         for (ratio, size) in expected {
             var crop = followCrop(scale: 2.5)
@@ -306,8 +307,8 @@ final class ClipExporterTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let expected: [(ratio: CGFloat, size: CGSize)] = [
-            (ClipEditorStage.aspectRatioRange.lowerBound, CGSize(width: 64, height: 128)),
-            (ClipEditorStage.aspectRatioRange.upperBound, CGSize(width: 72, height: 36))
+            (ClipEditorStage.aspectRatioRange.lowerBound, CGSize(width: 18, height: 36)),
+            (ClipEditorStage.aspectRatioRange.upperBound, CGSize(width: 64, height: 32))
         ]
         for (index, (ratio, size)) in expected.enumerated() {
             let crop = FollowCrop(
@@ -327,6 +328,45 @@ final class ClipExporterTests: XCTestCase {
             let track = try await AVURLAsset(url: exported.fileURL).loadTracks(withMediaType: .video)[0]
             let written = try await track.load(.naturalSize)
             XCTAssertEqual(written, size, "\(ratio)")
+        }
+    }
+
+    /// On a 4K portrait take, recorded on its side as an iPhone writes it, no shape renders
+    /// wider or taller than the upright 2160 × 3840 frame, whether the clip's crop rect is the
+    /// whole frame or a detected 9:16 rect, 1215 × 2160.
+    func testAFollowCropNeverRendersPastItsSourceFrame() throws {
+        let encoded = CGSize(width: 3840, height: 2160)
+        let sideways = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 2160, ty: 0)
+        let fullFrame = NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
+        let detected = NormalizedRect(minX: 0.21875, maxX: 0.78125, minY: 0.21875, maxY: 0.78125)
+        struct Case {
+            let rect: NormalizedRect
+            let ratio: CGFloat
+            let size: CGSize
+        }
+        let expected = [
+            Case(rect: fullFrame, ratio: 9.0 / 16, size: CGSize(width: 2160, height: 3840)),
+            Case(
+                rect: fullFrame, ratio: ClipEditorStage.aspectRatioRange.lowerBound,
+                size: CGSize(width: 1920, height: 3840)),
+            Case(
+                rect: fullFrame, ratio: ClipEditorStage.aspectRatioRange.upperBound,
+                size: CGSize(width: 2160, height: 1080)),
+            Case(
+                rect: detected, ratio: ClipEditorStage.aspectRatioRange.upperBound,
+                size: CGSize(width: 2160, height: 1080)),
+            Case(rect: detected, ratio: 1, size: CGSize(width: 2160, height: 2160))
+        ]
+        for expectation in expected {
+            var crop = followCrop(scale: 2.5)
+            crop.aspectRatio = expectation.ratio
+            let transform = try XCTUnwrap(ClipExportTransform.make(
+                followCrop: crop, cropRect: expectation.rect, over: 1...5, frameDuration: thirtieth,
+                naturalSize: encoded, preferredTransform: sideways))
+
+            XCTAssertEqual(transform.renderSize, expectation.size, "\(expectation.ratio) of \(expectation.rect)")
+            XCTAssertLessThanOrEqual(transform.renderSize.width, 2160)
+            XCTAssertLessThanOrEqual(transform.renderSize.height, 3840)
         }
     }
 

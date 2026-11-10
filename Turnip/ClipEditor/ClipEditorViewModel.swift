@@ -803,6 +803,9 @@ final class ClipEditorViewModel: ObservableObject {
     /// they always do. A framing's zoom stays within `scaleRange`, which only a reshape that
     /// pushes far past it gives up the match for. The user's change, like a pinch: diamonds fill,
     /// Auto follow is offered again for the new shape, and the picture eases over `fitAnimation`.
+    /// Every keyframe becomes the user's own: Auto follow's values beside it were fitted to the
+    /// old shape's box, so restoring them could reach past the frame, and removing a keyframe
+    /// after a reshape deletes it.
     func resizeCrop(from marker: CGRect, to drawn: CGRect, previewScale: CGFloat) {
         guard var crop = followCrop, let overlay = previewOverlay,
               previewScale.isFinite, previewScale > 0,
@@ -834,6 +837,9 @@ final class ClipEditorViewModel: ObservableObject {
         }
         for index in crop.keyframes.indices {
             crop.keyframes[index].framing = reframed(crop.keyframes[index].framing)
+            crop.keyframes[index].autoCenter = nil
+            crop.keyframes[index].autoScale = nil
+            crop.keyframes[index].autoRotationRadians = nil
         }
         crop.resting = reframed(crop.resting)
         crop.aspectRatio = ratio

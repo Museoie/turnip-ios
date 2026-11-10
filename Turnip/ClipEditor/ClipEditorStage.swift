@@ -13,9 +13,9 @@ enum ClipEditorStage {
     /// How far the marker stays in from the stage's top and bottom edges.
     static let verticalInset: CGFloat = 12
     /// The shapes the marker's corner handles reach, width over height: from twice as tall as
-    /// wide to twice as wide as tall. Export renders at the crop rect's box at this shape
-    /// (`ClipEditorViewModel.markerBox`), which only ever grows the crop rect, so a narrower
-    /// bound keeps a full-frame clip's output from running to several times the frame.
+    /// wide to twice as wide as tall: past 9:16 and 16:9, the shapes a clip is usually shared
+    /// at, and short of a sliver. The output's size doesn't depend on it: export renders at no
+    /// more than the source frame's own size whatever the shape (`ClipExportTransform.outputScale`).
     static let aspectRatioRange: ClosedRange<CGFloat> = 0.5...2
     /// The smallest a corner drag can draw the marker, on either side, in points.
     static let minimumMarkerSide: CGFloat = 64
@@ -76,6 +76,22 @@ enum ClipEditorStage {
             x: towardX > 0 ? anchor.x : anchor.x - width,
             y: towardY > 0 ? anchor.y : anchor.y - height,
             width: width, height: height)
+    }
+
+    /// A corner handle's touch target: a square of `side` centered on `point`, slid back inside
+    /// `stage` where it would reach past an edge. Above the stage is the band a downward drag
+    /// closes the editor from, and below it the controls, so a handle never takes a touch from
+    /// either: a marker set at the stage's insets has its top or bottom handles' targets moved
+    /// inward by the overlap, still `side` square and still over the corner.
+    static func handleTarget(at point: CGPoint, side: CGFloat, in stage: CGRect) -> CGRect {
+        var target = CGRect(x: point.x - side / 2, y: point.y - side / 2, width: side, height: side)
+        if stage.width >= side {
+            target.origin.x = min(max(target.minX, stage.minX), stage.maxX - side)
+        }
+        if stage.height >= side {
+            target.origin.y = min(max(target.minY, stage.minY), stage.maxY - side)
+        }
+        return target
     }
 
     /// Where the video is laid out on the stage, and how its displayed pixels map to points.
