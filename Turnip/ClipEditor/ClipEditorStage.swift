@@ -15,7 +15,7 @@ enum ClipEditorStage {
     /// The shapes the marker's corner handles reach, width over height: from twice as tall as
     /// wide to twice as wide as tall: past 9:16 and 16:9, the shapes a clip is usually shared
     /// at, and short of a sliver. The output's size doesn't depend on it: export renders at no
-    /// more than the source frame's own size whatever the shape (`ClipExportTransform.outputScale`).
+    /// more than a 4K frame whatever the shape (`ClipExportTransform.outputScale`).
     static let aspectRatioRange: ClosedRange<CGFloat> = 0.5...2
     /// The smallest a corner drag can draw the marker, on either side, in points.
     static let minimumMarkerSide: CGFloat = 64

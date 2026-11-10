@@ -160,10 +160,11 @@ struct ClipExportTransform {
     /// At every moment the crop is a box of the marker's size (`cropRect`'s marker box at the
     /// follow crop's own shape, `FollowCrop.aspectRatio`)
     /// centered on the follow crop's center then, zoomed and turned about that center by the
-    /// zoom and turn then — the order the editor's preview draws. The output is that box,
-    /// scaled down whole to the largest size of its shape the displayed frame holds when it is
-    /// wider or taller than the frame (`outputScale`): a box grown past the frame shows no more
-    /// of the source than the frame has, so the extra pixels would only be upscaled. Wherever the crop moves, it is
+    /// zoom and turn then — the order the editor's preview draws. The output is that box, scaled
+    /// down whole only where it is larger than a 4K frame of its orientation (`outputScale`). The
+    /// box is not capped at the source frame: a framing zoomed out past the box's own size, as
+    /// Reset follow's whole frame on a reshaped or hand-added clip is, draws the source at
+    /// its native size only in a box that large. Wherever the crop moves, it is
     /// sampled on every frame of the composition's grid, `frameDuration` apart from composition
     /// time zero, one ramp per frame. The composition interpolates a ramp's matrix linearly
     /// between its two ends, which shears the picture partway through a ramp whose turn or zoom
@@ -185,11 +186,10 @@ struct ClipExportTransform {
         guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
         let box = ClipEditorViewModel.markerBox(around: crop, aspectRatio: followCrop.aspectRatio).size
         guard box.width > 0, box.height > 0 else { return nil }
-        let fit = outputScale(for: box, in: geometry.displayedSize)
+        let fit = outputScale(for: box)
         let toOutput = CGAffineTransform(scaleX: fit, y: fit)
         let renderSize = CGSize(
-            width: (box.width * fit).roundedToEvenDimensions,
-            height: (box.height * fit).roundedToEvenDimensions)
+            width: evenDimension(box.width * fit), height: evenDimension(box.height * fit))
         let path = followCrop.path
         var stops: [(time: CMTime, layerTransform: CGAffineTransform)] = []
         for time in sampleTimes(over: span, moving: path.movingSpan, frameDuration: frameDuration) {
@@ -213,12 +213,28 @@ struct ClipExportTransform {
         return ClipExportTransform(renderSize: renderSize, layerTransform: first.layerTransform, ramps: ramps)
     }
 
-    /// How much a follow crop's `box` is scaled down to render: 1 when it fits inside the
-    /// displayed `frame`, else the largest scale that fits it, so no output is wider or taller
-    /// than its source.
-    static func outputScale(for box: CGSize, in frame: CGSize) -> CGFloat {
-        guard box.width > 0, box.height > 0, frame.width > 0, frame.height > 0 else { return 1 }
-        return min(1, frame.width / box.width, frame.height / box.height)
+    /// The largest frame a follow crop renders at: 4K, which the camera itself records, held
+    /// landscape for a box at least as wide as tall and portrait otherwise.
+    static let largestOutput = CGSize(width: 3840, height: 2160)
+
+    /// How much a follow crop's `box` is scaled down to render: 1 when it fits inside
+    /// `largestOutput` in its own orientation, else the largest scale that fits it there. The
+    /// box grows around the crop rect to the clip's shape, so a reshaped clip, or one added by
+    /// hand on the whole of a landscape take, can run past the source frame, and on a 4K take
+    /// past what the encoder takes.
+    static func outputScale(for box: CGSize) -> CGFloat {
+        guard box.width > 0, box.height > 0 else { return 1 }
+        let ceiling = box.width >= box.height
+            ? largestOutput : CGSize(width: largestOutput.height, height: largestOutput.width)
+        return min(1, ceiling.width / box.width, ceiling.height / box.height)
+    }
+
+    /// `value` rounded up to an even pixel count, read as the whole number it is within
+    /// floating-point error of: a side scaled to exactly `largestOutput`'s can come out a hair
+    /// over it, which rounding up would turn into two pixels past the ceiling.
+    private static func evenDimension(_ value: CGFloat) -> CGFloat {
+        let whole = value.rounded()
+        return (abs(value - whole) < 1e-6 ? whole : value).roundedToEvenDimensions
     }
 
     /// Where a follow crop is sampled, in composition time: zero, the span's end, and every frame

@@ -669,9 +669,11 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
     again, and Auto follow, Reset follow and a trim's re-track keep the shape.
     The shapes stop at 1:2 and 2:1, past the 9:16 and 16:9 a clip is usually
     shared at. Export renders at the crop rect grown to the shape, scaled down
-    whole wherever that is wider or taller than the source frame, so no shape
-    writes a movie larger than its source in either direction (a full-frame
-    1920 × 1080 clip at 1:2 writes 540 × 1080). Each handle's touch target is
+    whole only where that is larger than a 4K frame held the same way (a
+    full-frame 4K portrait clip at 2:1 writes 3840 × 1920, not 7680 × 3840).
+    It isn't held to the source frame: a framing zoomed out to
+    the whole frame, as Reset follow's is, needs the full box to draw the
+    source at its own size. Each handle's touch target is
     44 pt square over its corner, slid inside the stage band where the marker
     sits at the band's insets, so a downward drag above the band closes the
     editor right up to its edge, beside the top corners too. A touch on a
