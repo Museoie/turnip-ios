@@ -145,11 +145,15 @@ extension Array where Element == NamePrototype {
 }
 
 /// What the personal layer adds to a clip's suggestions: the names used on its video, in the order
-/// they should show, and the names to show after them
-/// (`docs/PERSONALIZATION_DESIGN.md` §4.2's tiers 1 and 2).
+/// they should show, the names to show after them, and the model's below-bar names after those
+/// (`docs/PERSONALIZATION_DESIGN.md` §4.2's tiers 1–3).
 struct PersonalSuggestions: Equatable, Sendable {
     var used: [String]
     var nearest: [String] = []
+    /// Tier 3: the model's below-bar names for the clip, surest first. `[]` on a blind clip or
+    /// one the model proposed nothing below the bar for; clips saved before this was recorded
+    /// carry none.
+    var belowBar: [String] = []
 }
 
 /// Name ranking as it stands: the user's prototypes under one model, built only once the gate has

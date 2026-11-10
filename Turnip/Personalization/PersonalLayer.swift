@@ -109,14 +109,19 @@ final class PersonalLayer {
 
     /// What ranking adds for a clip with `embedding`, or the names as they came when it adds
     /// nothing. Withheld on a blind clip, where even their order stays plain
-    /// (`MODEL_CONTRACT.md` §3.3 step 5).
+    /// (`MODEL_CONTRACT.md` §3.3 step 5). Tier 3 rides on the proposal, not the ranking: the
+    /// model's below-bar names show whether or not the layer is on or has passed its gate —
+    /// dropped on a blind clip along with tier 2.
     func suggestions(
         for embedding: ClipEmbedding?, proposal: ModelProposal?, used: [String], given: [ClipName]
     ) -> PersonalSuggestions {
+        let belowBar = proposal?.suggestionsWithheld == true ? [] : (proposal?.belowBarNames ?? [])
         guard proposal?.suggestionsWithheld != true, let embedding, let ranking,
               ranking.modelVersion == embedding.modelVersion
-        else { return PersonalSuggestions(used: used) }
-        return ranking.suggestions(for: embedding.vector, used: used, given: given)
+        else { return PersonalSuggestions(used: used, belowBar: belowBar) }
+        var suggestions = ranking.suggestions(for: embedding.vector, used: used, given: given)
+        suggestions.belowBar = belowBar
+        return suggestions
     }
 
     /// The same for a saved clip, whose embedding the cache holds.

@@ -134,7 +134,10 @@ final class TrickModelTests: XCTestCase {
             for: segment(0, 16, 0.9, ["cork", "gainer"], nameScores: [0.5, 0.49]),
             modelVersion: "trick-v1.3", using: &generator)
         XCTAssertEqual(
-            proposal, ModelProposal(modelVersion: "trick-v1.3", suggestedNames: ["cork"], suggestionsWithheld: false))
+            proposal,
+            ModelProposal(
+                modelVersion: "trick-v1.3", suggestedNames: ["cork"], belowBarNames: ["gainer"],
+                suggestionsWithheld: false))
         XCTAssertEqual(proposal.prefilledNames, [ClipName(name: "cork", origin: .model)])
     }
 
@@ -145,6 +148,31 @@ final class TrickModelTests: XCTestCase {
         let proposal = rules.proposal(
             for: segment(0, 16, 0.6, ["cork"], nameScores: [0.3]), modelVersion: "v", using: &generator)
         XCTAssertEqual(proposal.suggestedNames, [])
+        XCTAssertEqual(proposal.belowBarNames, ["cork"])
+        XCTAssertEqual(proposal.prefilledNames, [])
+    }
+
+    /// Below-bar names keep their score order.
+    func testBelowBarNamesAreKeptInScoreOrder() {
+        let rules = TrickProposalRules(blindSampleRate: 0)
+        var generator = SplitMix64(seed: 1)
+        let proposal = rules.proposal(
+            for: segment(0, 16, 0.9, ["cork", "gainer", "hook"], nameScores: [0.1, 0.49, 0.3]),
+            modelVersion: "v", using: &generator)
+        XCTAssertEqual(proposal.suggestedNames, [])
+        XCTAssertEqual(proposal.belowBarNames, ["gainer", "hook", "cork"])
+        XCTAssertEqual(proposal.prefilledNames, [])
+    }
+
+    /// A blind clip records its below-bar names like its confident ones; the chips drop them.
+    func testABlindClipRecordsItsBelowBarNames() {
+        let rules = TrickProposalRules(blindSampleRate: 1)
+        var generator = SplitMix64(seed: 1)
+        let proposal = rules.proposal(
+            for: segment(0, 16, 0.6, ["cork"], nameScores: [0.3]),
+            modelVersion: "v", using: &generator)
+        XCTAssertTrue(proposal.suggestionsWithheld)
+        XCTAssertEqual(proposal.belowBarNames, ["cork"])
         XCTAssertEqual(proposal.prefilledNames, [])
     }
 

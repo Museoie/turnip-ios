@@ -326,10 +326,12 @@ final class PersonalSuggestionsTests: XCTestCase {
     // MARK: - On screen
 
     private func ordered(
-        draft: String = "", given: [ClipName] = [], used: [String] = [], nearest: [String] = []
+        draft: String = "", given: [ClipName] = [], used: [String] = [], nearest: [String] = [],
+        belowBar: [String] = []
     ) -> [String] {
         NamingSuggestions.ordered(
-            draft: draft, given: given, suggested: PersonalSuggestions(used: used, nearest: nearest),
+            draft: draft, given: given,
+            suggested: PersonalSuggestions(used: used, nearest: nearest, belowBar: belowBar),
             vocabulary: vocabulary)
     }
 
@@ -337,6 +339,28 @@ final class PersonalSuggestionsTests: XCTestCase {
         XCTAssertEqual(
             ordered(used: ["hook"], nearest: ["Flash Kick", "scoot"]),
             ["hook", "Flash Kick", "scoot", "cork", "gainer"])
+    }
+
+    /// Tier 3 sits after tier 2 and before the rest of the vocabulary.
+    func testBelowBarNamesFollowTheNearestAndLeadTheVocabulary() {
+        XCTAssertEqual(
+            ordered(used: ["hook"], nearest: ["scoot"], belowBar: ["gainer"]),
+            ["hook", "scoot", "gainer", "cork"])
+    }
+
+    /// A below-bar name a higher tier already lists, or the clip already has, isn't repeated.
+    func testABelowBarNameIsSuggestedOnce() {
+        XCTAssertEqual(
+            ordered(used: ["gainer"], nearest: ["hook"], belowBar: ["gainer", "cork"]),
+            ["gainer", "hook", "cork", "scoot"])
+        XCTAssertEqual(
+            ordered(given: [PersonalFixture.typed("gainer")], belowBar: ["gainer", "cork"]),
+            ["cork", "hook", "scoot"])
+    }
+
+    /// Tier 3 follows the draft like the other personal tiers.
+    func testBelowBarNamesFollowTheDraft() {
+        XCTAssertEqual(ordered(draft: "gai", belowBar: ["gainer", "cork"]), ["gainer"])
     }
 
     func testWithNoPersonalNamesTheOrderIsTheVideosThenTheVocabulary() {

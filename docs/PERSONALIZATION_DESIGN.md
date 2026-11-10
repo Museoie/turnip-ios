@@ -32,11 +32,7 @@ it stands on is in the app: the trick-model loader, with pre-fill and
 the blind sample (`CONTRIBUTION_DESIGN.md` §7.2), and the clip library
 (`PROFILE_DESIGN.md` §2), which keeps each saved clip's pose (§2.2). One
 thing is still missing: no model has been published, so no device has
-embeddings to read and the layer stays off (§10). How the build differs
-from this doc:
-
-- Tier 3 of §4.2, the model's below-bar names, is not built. The
-  suggestions go from tier 2 to the vocabulary.
+embeddings to read and the layer stays off (§10).
 
 This work is iOS-only.
 

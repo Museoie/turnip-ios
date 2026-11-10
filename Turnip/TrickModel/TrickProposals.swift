@@ -2,12 +2,17 @@ import Foundation
 import os
 
 /// How the trick model proposed a clip (`MODEL_CONTRACT.md` §3.3 steps 5–6): the model, the names
-/// it pre-filled, or on a blind clip would have, and whether the clip is in the blind sample. The
-/// clip keeps it whatever the user does with the names or the window, and sends it with the clip
-/// if it is contributed, so training can tell which names were kept from the model.
+/// it pre-filled, or on a blind clip would have, the names that scored below the pre-fill bar, and
+/// whether the clip is in the blind sample. The clip keeps it whatever the user does with the
+/// names or the window, and sends it with the clip if it is contributed, so training can tell
+/// which names were kept from the model.
 struct ModelProposal: Codable, Hashable, Sendable {
     let modelVersion: String
     let suggestedNames: [String]
+    /// The model's names for the clip that scored below the pre-fill bar, surest first
+    /// (`docs/PERSONALIZATION_DESIGN.md` §4.2 tier 3): never pre-filled, shown as suggestions
+    /// instead. `[]` for clips saved before this was recorded.
+    let belowBarNames: [String] = []
     let suggestionsWithheld: Bool
 
     /// The names a clip starts with on Name Clips, as chips the user can keep or remove: none on
@@ -74,13 +79,17 @@ struct TrickProposalRules: Sendable {
     }
 
     /// Steps 4–6 for one surviving segment, made once, when its clip is created: the names that
-    /// clear the pre-fill bar, and the blind draw.
+    /// clear the pre-fill bar, the names below it kept in score order for tier 3, and the blind
+    /// draw.
     func proposal<Generator: RandomNumberGenerator>(
         for segment: TrickSegment, modelVersion: String, using generator: inout Generator
     ) -> ModelProposal {
-        let confident = zip(segment.trickNames, segment.nameScores).filter { $0.1 >= prefillThreshold }.map(\.0)
+        let scored = zip(segment.trickNames, segment.nameScores)
+        let confident = scored.filter { $0.1 >= prefillThreshold }.map(\.0)
+        let belowBar = scored.filter { $0.1 < prefillThreshold }
+            .sorted { $0.1 > $1.1 }.map(\.0)
         return ModelProposal(
-            modelVersion: modelVersion, suggestedNames: confident,
+            modelVersion: modelVersion, suggestedNames: confident, belowBarNames: belowBar,
             suggestionsWithheld: Double.random(in: 0..<1, using: &generator) < blindSampleRate)
     }
 
