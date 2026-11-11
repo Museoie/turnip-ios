@@ -205,7 +205,7 @@ struct ProcessingView<Destination: View>: View {
         ZStack(alignment: .topLeading) {
             // A three-page strip with this video's page in the middle: the neighbors wait one
             // window-width to either side and move with the same drag, so the one being swiped
-            // toward enters as this one leaves, the way the Camera page arrives over Home.
+            // toward enters as this one leaves, the way the root pager's pages slide.
             ZStack {
                 if previous != nil {
                     neighborPage(.previous)
@@ -361,7 +361,7 @@ struct ProcessingView<Destination: View>: View {
     }
 
     /// Back to Home, or — while a run is in flight — cancel it, which also leaves. The same
-    /// scrim-circle button the Camera page floats over its preview, since with no navigation
+    /// scrim-circle button the camera floats over its preview, since with no navigation
     /// bar this screen's chrome sits over its media the same way, placed where a bar's own
     /// leading item would sit so every screen's header lines up. A sibling of the draggable
     /// strip in `body`, so neither a horizontal browse-swipe nor a vertical dismiss-swipe

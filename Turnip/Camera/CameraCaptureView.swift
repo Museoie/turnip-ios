@@ -1,14 +1,14 @@
 import AVFoundation
 import SwiftUI
 
-/// The camera-recording screen, one of the two pages `RootTabView` swipes between:
-/// full-screen preview, a cancel chevron, manual controls (lens/zoom, front/rear flip,
+/// The camera-recording screen, which `RootTabView` slides up over everything from the gallery's
+/// camera tile: full-screen preview, a cancel chevron, manual controls (lens/zoom, front/rear flip,
 /// resolution/fps, torch, exposure bias), and one record button. While recording, the pose
 /// scored live on the camera frames is drawn over the preview. On a successful recording,
 /// `onFinished` hands the caller the temp file and any clips detected live, so it can save
 /// the file to Photos and feed the resulting `PHAsset` into the picked-video flow — this
-/// screen knows nothing about Photos or navigation. `onCancel` backs out to the gallery
-/// tab; a no-op default since not every caller (e.g. a preview) needs one.
+/// screen knows nothing about Photos or navigation. `onCancel` slides it back down over the
+/// gallery; a no-op default since not every caller (e.g. a preview) needs one.
 struct CameraCaptureView: View {
     let onFinished: (CameraRecording) -> Void
     var onCancel: () -> Void = {}
@@ -18,14 +18,12 @@ struct CameraCaptureView: View {
     /// remembered choice Processing's picker sets.
     @ObservedObject private var settings = TurnipSettingsStore.shared
     @State private var showExposureSlider = false
-    /// Whether this page has started the session and not yet stopped it — see
+    /// Whether this screen has started the session and not yet stopped it — see
     /// `CameraPreviewView.isLive`.
     @State private var isPreviewLive = false
     /// Whether the preview was live when the app backgrounded. The scene-phase
-    /// handler only restarts the session on return if the camera page was front:
-    /// the page stays in the `TabView` hierarchy, so its `.onChange` fires on
-    /// every tab — restarting unconditionally would start the camera under
-    /// whatever tab the user is on.
+    /// handler only restarts the session on return if it was: a session this screen
+    /// had already stopped stays stopped.
     @State private var wasLiveBeforeBackground = false
     @Environment(\.scenePhase) private var scenePhase
 
@@ -128,7 +126,7 @@ struct CameraCaptureView: View {
     }
 
     /// Placed where a navigation bar's leading item would sit (`screenHeaderItemPlacement`),
-    /// level with Home's own bar controls across the pager swipe.
+    /// level with Home's own bar controls under it.
     private var cancelButton: some View {
         ScrimIconButton(
             systemImage: "xmark", accessibilityLabel: "Cancel", style: .scrim, action: onCancel)
@@ -146,9 +144,6 @@ struct CameraCaptureView: View {
             }
             recordButton
         }
-        // The floating tab bar (`RootTabView`) stays visible over this page too, so
-        // without this the record button and lens row would sit directly underneath it.
-        .padding(.bottom, FloatingTabBarMetrics.clearance)
     }
 
     private var recordButton: some View {

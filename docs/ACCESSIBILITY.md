@@ -55,6 +55,9 @@ control:
   under), and the system camera keeps them available for the same reason.
 - The active lens pill carries `.isSelected`. The yellow fill is otherwise the only thing
   that marks it, which a listener never sees.
+- Reached by the gallery's camera tile: one element and a button, "Camera", hinted "Records a
+  new video." (`gallery-camera-tile`). While the camera is up, the pager and tab bar under it are
+  hidden from VoiceOver, so focus can't wander behind the preview.
 - Identifiers: `camera-cancel`, `camera-record`, `camera-lens-<label>`, `camera-flip`,
   `camera-flash`, `camera-exposure-toggle`, `camera-exposure-slider`, `camera-format-menu`,
   `camera-open-settings`.
@@ -67,6 +70,10 @@ control:
   grid announces its count ("1 video" / "N videos") on entry.
 - Duration badge: white text on a black-60% capsule scrim (4.5:1 against any frame), not a
   shadow that assumes dark footage.
+- The grid's first tile opens the camera (`gallery-camera-tile`, see Camera above). It isn't a
+  video, so the count the grid announces leaves it out.
+- On iPhone Duo the tab bar's icons and Home's filter and settings controls move into the
+  vertical bar's column, keeping their labels, values, traits and identifiers.
 - Stable `accessibilityIdentifier`s: `video-grid`, `video-tile-<localIdentifier>`,
   `limited-access-banner`, `select-more-videos`, `resolution-banner`,
   `cancel-video-resolution`, `photos-access-denied`, `open-settings`, `settings-button`,
@@ -243,6 +250,8 @@ Built:
 
 - Reached by the floating bar's profile icon ("Profile", `tab-profile`) as well as the page
   swipe, so it never depends on a gesture.
+- Headed by Home's "Turnip" wordmark, one header element labeled "Turnip", the same on both
+  pages; the selected tab ("Profile", selected) is what names the page.
 - "Your Profile stays on this iPhone." is on the page itself, as text.
 - "Needs a name" is one element and a button: "Needs a name, 3 clips". Its screen keeps Name
   Clips' rules: the title is the count ("2 of 5"), the back chevron is labeled "Back to

@@ -1,5 +1,14 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 29 · 2026-11-11 · Root navigation loses its Camera page and leads with
+the Profile, then Home, and the app opens on the Profile once a clip is
+saved. The gallery's first tile opens the camera (§1b), which slides up over
+everything; the grid (§1) lays out three columns across an iPhone and up to
+six across a wider screen; and the Profile heads its page with Home's
+wordmark. On iPhone Duo the pager keeps to the safe area beside the system's
+vertical bar, and the tab bar and Home's filter and settings controls move
+into that column.*
+
 *Rev 28 · 2026-11-09 · Processing (§2) loses the "One person | Everyone"
 picker: every analysis started there follows everyone, and a drag the scrub
 bar takes over after the page started to swipe puts the page back. Name Clips
@@ -104,7 +113,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart. Rev 29 swaps the Camera page for a camera tile, leads the pager with the Profile and opens on it once a clip is saved, widens the grid to six columns on wide screens, and moves the root controls into iPhone Duo's vertical bar.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -117,7 +126,7 @@ recording" to "clips are in my Photos library," and is scoped to v1
 labeling, following/feed) — those get their own flow notes once the v1 screens
 exist and v2 work starts. The first of them is the Profile tab, whose screens
 live in [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5–§8; this doc carries only
-what it changes in the v1 flow — the root pager's third page, the Name Clips
+what it changes in the v1 flow — the root pager's Profile page, the Name Clips
 screen an analysis lands on (§3a), and saving into the clip library — the
 parts not built yet marked *Planned*. OTA model updates were scoped here as v2 and have
 since been built ahead of that; see "Built ahead of this doc" below.
@@ -160,22 +169,23 @@ Where it applies today:
 
 | Transition | Gesture | Control | Shared motion |
 |---|---|---|---|
-| Home ↔ Camera (Root navigation) | Horizontal page swipe | Floating bar's camera / gallery icons; Camera's cancel chevron | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Tile ↔ Processing (§1, §2) | Swipe down anywhere on the page | Back chevron | The tile's expansion card shrinking back into the tile ([`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) |
 | Name Clips card ↔ Clip Editor (§3a, §4) | Swipe down above the crop marker | Back chevron | Same, with the card showing the editor's own player |
-| Home ↔ Profile (Root navigation) | Horizontal page swipe | Floating bar's gallery / profile icons | The pager's horizontal slide (`RootTabView.slide(to:)`) |
+| Profile ↔ Home (Root navigation) | Horizontal page swipe | The tab bar's profile / gallery icons | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Name Clips, one clip ↔ the next (§3a) | Horizontal swipe | The card's VoiceOver actions, Previous clip / Next clip (no button on screen) | The page slide between clips (`NameClipsView.go(to:)`) |
 | Profile ↔ its pushed screens — a trick's clips, the Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe from the left edge | Back button | The navigation push and pop |
 | Needs a name, one clip ↔ the next ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4.1) | Horizontal swipe | "Next" / "Skip" | The page slide between clips (`LibraryNamingView.go(to:)`) |
 | *Planned:* Profile clip tile ↔ Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §7) | Swipe down | Back chevron | The tile's expansion card, showing the clip's own player, in place of the push |
 
 Not every state change has a gesture counterpart that it owes an animation.
-A recording that finishes on Camera switches to Home *instantly*, because the
-same update opens the expansion cover over Home, and a page still sliding
-underneath would hand the cover's flight a moving source frame. The user
-sees the expansion, not the page change. That switch is the result of an
-operation finishing, not a navigation the user chose, so there is no gesture
-whose motion it would contradict.
+A recording that finishes drops the camera *instantly*, rather than sliding
+it back down the way its cancel chevron does, because the same update opens
+the expansion cover over Home, and a camera still sliding away underneath
+would hand the cover's flight a moving backdrop. The user sees the
+expansion, not the camera leaving. That is the result of an operation
+finishing, not a navigation the user chose, so there is no gesture whose
+motion it would contradict. The camera itself has no gesture: its tile opens
+it and its cancel chevron closes it, both with the same slide.
 
 New screens follow the same rule: if a screen can be reached both ways,
 build the gesture's transition first and route the button through it.
@@ -222,10 +232,10 @@ the user learns what the screen did.
 ```mermaid
 flowchart TD
     A[Home / Video Gallery] -->|tap a video tile| B[Processing]
-    A -->|tap camera icon / swipe right| G[Camera]
-    G -->|tap gallery icon / swipe left| A
-    A -->|tap profile icon / swipe left| P[Profile]
-    P -->|tap gallery icon / swipe right| A
+    A -->|tap the camera tile| G[Camera]
+    G -->|cancel| A
+    A -->|tap profile icon / swipe right| P[Profile]
+    P -->|tap gallery icon / swipe left| A
     G -->|recording saved, analyzed live| N
     G -->|recording saved, live analysis incomplete| B
     B -->|clips found, or none| N[Name Clips]
@@ -250,43 +260,51 @@ a v1 product decision (see "Decisions" below), not a per-screen choice.
 
 The system launch screen (`UILaunchScreen` in `Turnip/Resources/Info.plist`:
 the `LaunchLogo` image on the `LaunchBackground` color) covers app start.
-There is no SwiftUI splash: `ContentView` mounts the root tab view directly.
+There is no SwiftUI splash: `ContentView` mounts the root tab view directly,
+on the Profile once the clip library holds a saved clip and on Home before
+that (`MainTab.landing`): a returning user's training log is what they come
+back to, and a new user's first step is a video.
 
 ### Root navigation
 
-`Turnip/App/RootTabView.swift` hosts the app's three pages — Camera, Home
-and Profile — in a swipeable `TabView` (`.page` style, native page dots
-hidden), with a custom floating pill bar overlaid at the bottom rather than
-the system tab bar: camera icon on the left, gallery-grid icon in the
-middle, profile icon on the right, gallery selected by default. Tapping an
-icon or swiping the page (right reveals Camera, since it's the page before
-Home; left reveals Profile, the page after it) both drive the same
-selection state *and the same motion*: a tap (or Camera's cancel chevron)
-pages through `slide(to:)`, which changes the selection inside an animated
-transaction. A page-style `TabView` only scrolls to a selection that
-changes that way, and cuts to it otherwise. So Camera slides in from the
-left, and Profile from the right, on a tap exactly as under the finger (see "A gesture and its button play
-one animation" above). It also owns the one `VideoLibraryViewModel` shared by both pages —
-a finished recording needs to hand its asset into the same
-`select(_:)` a tapped gallery tile calls, then switch back to the gallery
-tab so the pick lands the way tapping a tile always has.
+`Turnip/App/RootTabView.swift` hosts the app's two pages — Profile and
+Home — in a swipeable `TabView` (`.page` style, native page dots hidden),
+with a custom floating pill bar overlaid at the bottom rather than the
+system tab bar: profile icon on the left, gallery-grid icon on the right.
+The app opens on the Profile once a clip is saved and on Home before that
+(§0). Tapping an icon or swiping the page (right reveals the Profile, since
+it's the page before Home; left reveals Home, the page after it) both drive
+the same selection state *and the same motion*: a tap pages through
+`slide(to:)`, which changes the selection inside an animated transaction. A
+page-style `TabView` only scrolls to a selection that changes that way, and
+cuts to it otherwise. So the Profile slides in from the left, and Home from
+the right, on a tap exactly as under the finger (see "A gesture and its
+button play one animation" above).
 
-The pill is a true overlay, not a safe-area inset — the gallery grid (and
-Camera's record button/lens row) scroll or sit underneath it rather than
-stopping short, so it reads as floating over the content instead of a docked
-bar. It renders in Liquid Glass on iOS 26+ (`.ultraThinMaterial` below that),
-with a sliding selection pill behind whichever icon is active — visible on
-both pages, so the pill has something to slide between on a tap or a page
-swipe alike. Camera keeps its own cancel chevron too; the bar there is an
-additional way back, not a replacement. It's hidden once Home opens
-Processing/Name Clips/the editor — a tap flies the tile into the full-screen
-destination rather than pushing it (see "Tapping a tile" below and
+The camera is not a page: Home's first tile opens it (§1b), sliding up over
+everything, pager and bar alike. `RootTabView` presents it, and owns the one
+`VideoLibraryViewModel` it shares with Home — a finished recording needs to
+hand its asset into the same `select(_:)` a tapped gallery tile calls, so the
+pick lands the way tapping a tile always has. It presents Settings (§1a)
+too, since on iPhone Duo the gear sits outside Home (below).
+
+The pill is a true overlay, not a safe-area inset — the gallery grid and the
+Profile scroll underneath it rather than stopping short, so it reads as
+floating over the content instead of a docked bar. It renders in Liquid Glass
+on iOS 26+ (`.ultraThinMaterial` below that), with a sliding selection pill
+behind whichever icon is active — visible on both pages, so the pill has
+something to slide between on a tap or a page swipe alike. It's hidden while
+the camera is up, and once Home opens Processing/Name Clips/the editor — a
+tap flies the tile into the full-screen destination rather than pushing it
+(see "Tapping a tile" below and
 [`EXPANSION_TRANSITIONS.md`](EXPANSION_TRANSITIONS.md)) — each of which owns
 the full screen and its own back chevron, reappearing once back at the grid.
 
-Profile ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5) is the page after
-Home: one scrolling page titled "Profile", saying "Your Profile stays on this
-iPhone.", with "Needs a name" while any saved clip has no name, the
+Profile ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5) is the page before
+Home: one scrolling page headed by the same "Turnip" wordmark Home leads
+with (`HomeHeader`, under the same transparent bar, `WordmarkNavigationBar`;
+§1), so the two headers line up across the swipe, saying "Your Profile stays
+on this iPhone.", with "Needs a name" while any saved clip has no name, the
 achievement cards, and the gallery's rows by trick under a Me / Everyone
 filter. Screens pushed from it — Needs a name, a trick's clips, the Clip
 view — hide the pill and own the full screen like Processing/Name
@@ -296,13 +314,36 @@ every horizontal drag first, among them Needs a name's paging and the edge
 swipe that pops a pushed screen. Every page's lock writes the same value, so
 one page can't switch the swipe back on under another's pushed screen.
 
+**iPhone Duo.** On the outer display, and on the inner display in
+landscape, the system's vertical bar runs down one side of the screen: a
+column holding the status bar and, in apps built from the system's own
+bars, their toolbar items and tab bar. It reaches the app as a safe-area
+inset on that side alone — 84 pt, against none on the other. The system
+doesn't move custom bars into it, and Turnip's are custom, so `RootTabView`
+lays the column out itself the way Apple's guidance stacks it
+(`VerticalBar`): the page's own controls under the status bar — Home's
+filter and gear, nothing for the Profile — and the tab bar at its foot, the
+same pill turned on end. The floating bar and Home's bar controls are left
+off the page meanwhile, and the pager keeps to the safe area beside the
+column. Laid across the inset, a page `TabView` scrolls each page to its
+center inside it, half the bar's width short, which opened the app stuck
+partway into a swipe. Screens past the root — the camera, Processing, Name
+Clips, the editor, the Profile's pushed screens — keep their controls in the
+safe area.
+
 ### 1. Home / Video Gallery
 
 Entry point *is* the picker — every video in the device's Photos library, not
 a button that opens a picker sheet. No account, no settings required for v1
 — nothing in `DESIGN.md`'s v1 scope needs either. An ordinary full-screen
 scrollable grid (`Turnip/Home/HomeView.swift`, `VideoGalleryView`), newest
-videos first, top-to-bottom, three columns. The "Turnip" wordmark (one image of
+videos first, top-to-bottom: three columns across every iPhone held upright,
+and on a wider screen as many tiles at least 128 pt wide as fit, up to six
+(`VideoGalleryView.columnCount`). The first tile is the camera — a camera
+glyph on a plain square, edge to edge like the video tiles — which slides
+the camera up over everything (§1b). It leads the grid even with no videos,
+the empty state's message under it, so recording one is always a tap away.
+The "Turnip" wordmark (one image of
 the app mark and the title, 36 pt tall) heads the grid as
 scroll content, leading-aligned, so it scrolls away with the tiles rather
 than floating over them, and the tiles run under the status bar. The filter
@@ -375,8 +416,10 @@ default empty state, so it never reads as "your library is empty."
   (touch-target size, accessibility identifier, screenshot coverage) passes, since none of them
   exercises real hit-testing against a system nav bar. Before iOS 26 the bar is hidden outright
   and the gear is a `ScrimIconButton` (`HomeSettingsButton`) in a corner overlay row, level with
-  the wordmark. Presented as a sheet, not pushed onto the flow's `NavigationStack`: it has nothing
-  to hand back to Home and isn't part of "pick a video, get clips."
+  the wordmark. On iPhone Duo the same `HomeSettingsButton` sits in the vertical bar's column
+  instead, under the filter ("Root navigation"). Presented as a sheet, by `RootTabView`, not pushed
+  onto the flow's `NavigationStack`: it has nothing to hand back to Home and isn't part of "pick a
+  video, get clips."
 - Four preferences on this screen, `UserDefaults`-backed (`Turnip/Settings/TurnipSettingsStore.swift`),
   each taking effect at its own integration point rather than needing a restart:
   - **Analysis mode** (segmented Real-time / Offline) — whether the camera scores pose live while
@@ -414,13 +457,15 @@ default empty state, so it never reads as "your library is empty."
 
 ### 1b. Camera
 
-- One of the root tab view's two pages (see "Root navigation" above), not a
-  modal — reached by tapping the floating bar's camera icon or swiping the
-  page right from Home. Full-screen back-camera preview, a cancel chevron
-  (slides back to the gallery tab, the same slide a left swipe plays), one
-  record button (tap to start, tap again to stop), and the manual controls:
-  lens/zoom (pill row + pinch), front/rear flip, torch, resolution/fps, and
-  exposure bias (`Turnip/Camera/`).
+- Opened by Home's first tile, the camera tile (§1), and slides up over
+  everything — the pager and the tab bar alike — rather than being a page of
+  the pager (see "Root navigation" above). Full-screen back-camera preview, a
+  cancel chevron (slides it back down over the gallery), one record button
+  (tap to start, tap again to stop), and the manual controls: lens/zoom (pill
+  row + pinch), front/rear flip, torch, resolution/fps, and exposure bias
+  (`Turnip/Camera/`). The session starts as it opens and stops as it closes.
+  A finished take drops it at once and opens over Home the way a tapped tile
+  does (see "A gesture and its button play one animation" for why at once).
 - Needs `NSCameraUsageDescription` and `NSMicrophoneUsageDescription`
   (Info.plist); denied/restricted access shows a message pointing at
   Settings, matching Home's own denied state.
@@ -491,7 +536,7 @@ default empty state, so it never reads as "your library is empty."
   to Home in one step) — disabled while an analysis is running. The whole
   page — video and bottom controls — follows the finger while the back
   chevron stays put over it, and the neighbor's page slides in alongside it showing that video's poster
-  frame, the way the Camera page arrives over Home; once it has landed, its
+  frame, the way the root pager's pages slide; once it has landed, its
   player takes over from the poster in place. A drag that falls short springs
   back, a quick flick commits even when short, and at either end of the grid
   the page gives only a little, since there is no video that way. Where the
@@ -508,7 +553,7 @@ default empty state, so it never reads as "your library is empty."
   while an analysis is running.
   This screen draws no navigation bar and its own back chevron, because the
   stack's bar would sit over the page without moving with it or passing a
-  drag to it. And the Camera/Home pager (§1) is switched off while this
+  drag to it. And the Profile/Home pager ("Root navigation") is switched off while this
   screen (or Name Clips/Editor) is open over Home, because its swipe would
   otherwise take every horizontal drag before this screen saw it.
 
@@ -986,9 +1031,9 @@ Resolved 2026-09-04.
    existing `PHAsset` pipeline unchanged. Home also gained the
    collapsed/expanded two-state layout (§1) and the app forces dark
    appearance everywhere, dropping light-mode support. *Superseded in part:
-   the swipe-up affordance and the two-state layout are gone. Camera is the
-   root pager's other page (§1b, "Root navigation") and Home is a plain
-   grid (§1). The dark-only theme stands.*
+   the swipe-up affordance and the two-state layout are gone. Camera is
+   opened by the grid's first tile (§1b, "Root navigation") and Home is a
+   plain grid (§1). The dark-only theme stands.*
 6. **Export Confirmation retired; Clip List saves inline → Changed.** Recorded
    2026-09-22: the separate Export Confirmation screen (formerly §5) is gone.
    Clip List's "Save Clips" action now exports and saves every non-trashed derived

@@ -365,12 +365,12 @@ final class ScreenshotTests: XCTestCase {
     }
 
     /// A swipe on Processing browses to the neighboring video — the whole page follows the
-    /// finger and the neighbor lands — rather than paging the app's Camera/Home container
+    /// finger and the neighbor lands — rather than paging the app's Profile/Home container
     /// or doing nothing. Driven with real synthesized drags against the harness's page
     /// `TabView`, because that pager's UIKit recognizer is exactly what no gesture priority
     /// in SwiftUI can beat, and only a real touch exercises it. The harness's stand-in
     /// videos carry solid red/green/blue posters, so the screen's center color says which
-    /// one is showing; the stand-in Camera page is gray, so a swipe that reached the pager
+    /// one is showing; the stand-in Profile page is gray, so a swipe that reached the pager
     /// reads as neither.
     func testProcessingSwipeBrowsesNeighborsInsteadOfPaging() throws {
         let app = XCUIApplication()
@@ -394,7 +394,7 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(waitForCenterColor(.red), "right swipe from the top band did not land on the previous video")
 
         // Right again at the newest end of the grid: nothing that way, and in particular
-        // not the Camera page.
+        // not the Profile page.
         drag(app, fromX: 0.3, toX: 0.95, y: 0.5)
         sleep(1)
         XCTAssertTrue(waitForCenterColor(.red), "right swipe at the end of the grid left the video")

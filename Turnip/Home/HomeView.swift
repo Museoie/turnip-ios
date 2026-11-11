@@ -2,19 +2,23 @@ import AVFoundation
 import Photos
 import SwiftUI
 
-/// Home / Video Gallery per docs/UIUX.md: the entry screen *is* the video picker — a 3-column
-/// grid of every video in the Photos library, newest first. Tapping a tile is the "pick" action.
-/// The view model is owned by `RootTabView` (shared with the Camera tab, whose finished
-/// recordings feed into the same `select(_:)` a tapped tile calls) rather than by this view.
+/// Home / Video Gallery per docs/UIUX.md: the gallery page *is* the video picker — a grid of every
+/// video in the Photos library, newest first, three columns across an iPhone and up to six across a
+/// wider screen, after a first tile that opens the camera. Tapping a video tile is the "pick"
+/// action. The view model is owned by `RootTabView` (shared with the camera, whose finished
+/// recordings feed into the same `select(_:)` a tapped tile calls) rather than by this view, and so
+/// are the camera and the Settings sheet, which iPhone Duo's vertical bar opens from outside Home.
 struct HomeView: View {
     @ObservedObject var viewModel: VideoLibraryViewModel
+    /// Slides the camera up over the gallery (`RootTabView`), from the grid's first tile.
+    let openCamera: () -> Void
+    /// Opens the Settings sheet (`RootTabView`), from the gear in Home's bar.
+    let openSettings: () -> Void
     /// Plain reference, not `@ObservedObject`: this view never displays a setting's value,
-    /// it only reads `analysisGranularity` at navigation time and hands the store to the
-    /// sheet, which observes it directly. `@ObservedObject` here would re-run this view's
-    /// whole body — including the video grid's `ForEach` — on every keystroke in the
-    /// Settings sheet's album-name field, for a value this view never shows.
+    /// it only reads `analysisGranularity` at navigation time. `@ObservedObject` here would
+    /// re-run this view's whole body — including the video grid's `ForEach` — on every
+    /// keystroke in the Settings sheet's album-name field, for a value this view never shows.
     private let settings = TurnipSettingsStore.shared
-    @State private var showSettings = false
     /// Stable for the life of one tap-to-close cycle — its own `id` never changes even though
     /// the video showing inside it can (`VideoLibraryViewModel.browse(to:)` replacing `path`'s top
     /// element while this cover is up). See docs/EXPANSION_TRANSITIONS.md, "Stable presentation
@@ -40,18 +44,15 @@ struct HomeView: View {
                 // declare their own bars. `HomeNavigationBar` also places the filter and
                 // settings controls — see its doc comment for why that placement differs
                 // between iOS 26 and earlier.
-                .modifier(HomeNavigationBar(viewModel: viewModel, showSettings: { showSettings = true }))
+                .modifier(HomeNavigationBar(viewModel: viewModel, showSettings: openSettings))
         }
         .onPreferenceChange(VideoTileFramePreferenceKey.self) { tileFrames = $0 }
         .task { await viewModel.start() }
         .errorAlert("Couldn't open video", message: $viewModel.errorMessage)
-        .sheet(isPresented: $showSettings) {
-            SettingsView(settings: settings)
-        }
         .fullScreenCover(item: $presentationSlot) { slot in
             expansion(for: slot)
         }
-        // `select(_:)`/`browse(to:)` both land here, including the camera tab's own finished
+        // `select(_:)`/`browse(to:)` both land here, including the camera's own finished
         // recordings — which never went through a tile tap here, so nothing has created a
         // slot yet. Creates one lazily in that case, with no tile frame to fly from (the
         // container's own fallback centers a small square instead).
@@ -272,6 +273,7 @@ struct HomeView: View {
                 viewModel: viewModel,
                 hiddenAssetIdentifier: hidesSourceTile ? presentationSlot.flatMap(currentIdentifier) : nil,
                 isCovered: presentationSlot != nil,
+                onCameraTapped: openCamera,
                 onTileTapped: { asset, thumbnail in
                     // A second tap before the cover is up (it takes a few frames to appear)
                     // must not replace the slot that's already presenting.
@@ -376,7 +378,9 @@ private struct ResolvingDestination: View {
 /// this instead floats in a manually-styled corner overlay row, which supplies the row's
 /// padding. On iOS 26 the settings button is a real `ToolbarItem` in `HomeNavigationBar`'s
 /// toolbar instead — living inside the bar's own hit-testing hierarchy rather than layered
-/// over it, and picking up the system's native Liquid Glass bar-button styling for free.
+/// over it, and picking up the system's native Liquid Glass bar-button styling for free. On
+/// iPhone Duo this draws the gear in the vertical bar's column on every OS (`RootTabView`), as a
+/// Liquid Glass circle on iOS 26.
 struct HomeSettingsButton: View {
     let action: () -> Void
 
@@ -395,14 +399,18 @@ struct HomeSettingsButton: View {
 /// which picks the `Placement` for the OS: a real `ToolbarItem` on iOS 26 (in the bar's own
 /// hit-testing hierarchy, native Liquid Glass styling applied automatically) or a
 /// manually-styled corner overlay pre-26 (no system glass to anchor to, same reasoning as
-/// `HomeSettingsButton`; the overlay row supplies the padding). Not `ScrimIconButton` for the
-/// overlay glyph: `Menu`'s `label` closure needs a bare glyph rather than a nested `Button`,
+/// `HomeSettingsButton`; the overlay row supplies the padding). On iPhone Duo it sits above the
+/// gear in the vertical bar's column instead (`RootTabView`). Not `ScrimIconButton` for the
+/// drawn glyph: `Menu`'s `label` closure needs a bare glyph rather than a nested `Button`,
 /// the same reason `formatMenu` doesn't use it either — mirrors `ScrimIconButton`'s look so it
 /// still reads as the same control family.
 struct GalleryFilterButton: View {
     enum Placement {
         case toolbar
         case overlay
+        /// In iPhone Duo's vertical bar, beside the gear `HomeSettingsButton` draws there: glass on
+        /// iOS 26, the overlay's scrim before, the same as `ScrimIconButton`'s default style.
+        case verticalBar
     }
 
     @ObservedObject var viewModel: VideoLibraryViewModel
@@ -458,6 +466,15 @@ struct GalleryFilterButton: View {
                 .foregroundStyle(.white)
                 .frame(width: 44, height: 44)
                 .background(.black.opacity(0.4), in: Circle())
+        case .verticalBar:
+            let circle = image
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+            if #available(iOS 26.0, *) {
+                circle.glassEffect(in: Circle())
+            } else {
+                circle.background(.black.opacity(0.4), in: Circle())
+            }
         }
     }
 
@@ -488,11 +505,12 @@ struct GalleryFilterButton: View {
     }
 }
 
-/// Home's title row: the "Turnip" wordmark image (mark + text baked into one asset), leading
-/// in a nav-bar-height band whose trailing end `HomeNavigationBar` fills with the filter and
-/// settings controls. Scroll content (not a nav bar title) so it scrolls away with the tiles
-/// like the rest of Home's header (docs/UIUX.md). Internal so the DEBUG screenshot harness can
-/// render the denied state exactly as Home does.
+/// A root page's title row: the "Turnip" wordmark image (mark + text baked into one asset), leading
+/// in a nav-bar-height band — on Home, one whose trailing end `HomeNavigationBar` fills with the
+/// filter and settings controls. Scroll content (not a nav bar title) so it scrolls away with the
+/// page under it (docs/UIUX.md), on Home and on the Profile alike, so the two pages' headers line
+/// up across the swipe between them. Internal so the Profile and the DEBUG screenshot harness can
+/// render it exactly as Home does.
 struct HomeHeader: View {
     private static let logoHeight: CGFloat = 36
     private static let rowHeight: CGFloat = 44
@@ -511,7 +529,8 @@ struct HomeHeader: View {
 
 /// The grid plus its decorations: a "select more" banner under limited access, and a bottom
 /// banner with a cancel button while a tapped video is being fetched. An ordinary full-screen
-/// scrollable grid, newest videos first — no landing/reveal state.
+/// scrollable grid, newest videos first — no landing/reveal state — led by a camera tile, which
+/// stays when there's no video to show, so recording one is always a tap away.
 struct VideoGalleryView: View {
     @ObservedObject var viewModel: VideoLibraryViewModel
     /// The identifier of the video currently expanded (`HomeView.currentIdentifier(for:)`) —
@@ -527,6 +546,8 @@ struct VideoGalleryView: View {
     /// shows the same progress). The
     /// cover already blocks input, so neither guard is needed while it's up.
     var isCovered = false
+    /// Opens the camera, from the grid's first tile.
+    let onCameraTapped: () -> Void
     /// Opens the expansion on this asset, passing its already-decoded thumbnail (nil if the
     /// tile hasn't finished its own first decode yet) so the presenter can fly open from
     /// exactly here without a second image request.
@@ -542,7 +563,24 @@ struct VideoGalleryView: View {
     @State private var lastScrolledIdentifier: String?
 
     private static let spacing: CGFloat = 2
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: spacing), count: 3)
+    /// The narrowest a tile gets before the grid drops a column. A fourth column fits from
+    /// 518 pt across, wider than any iPhone held upright (the widest is 440 pt), so every one of
+    /// them keeps the three columns it has always shown.
+    static let minimumTileWidth: CGFloat = 128
+    static let columnRange = 3...6
+
+    /// How many columns fit across `width`: as many tiles of at least `minimumTileWidth` as fit,
+    /// never fewer than three — the grid every iPhone has always shown, even where the tiles come
+    /// out a little narrower — and never more than six, so a wide screen shows bigger tiles rather
+    /// than ever-smaller ones.
+    static func columnCount(forWidth width: CGFloat) -> Int {
+        let fitting = Int(((width + spacing) / (minimumTileWidth + spacing)).rounded(.down))
+        return min(max(fitting, columnRange.lowerBound), columnRange.upperBound)
+    }
+
+    private static func columns(forWidth width: CGFloat) -> [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: spacing), count: columnCount(forWidth: width))
+    }
 
     var body: some View {
         content
@@ -567,23 +605,26 @@ struct VideoGalleryView: View {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        } else if viewModel.videos.isEmpty {
-            VStack(spacing: 0) {
-                HomeHeader()
-                emptyState
-            }
         } else {
-            grid
+            // Even with no videos: the camera tile leads the grid, and the empty state explains
+            // under it.
+            GeometryReader { geometry in
+                grid(columns: Self.columns(forWidth: geometry.size.width))
+            }
         }
     }
 
-    private var grid: some View {
+    private func grid(columns: [GridItem]) -> some View {
         ScrollViewReader { scrollProxy in
             ScrollView {
                 // The header is scroll content, not chrome: it leads the grid and leaves the
                 // screen with the first row.
                 HomeHeader()
                 LazyVGrid(columns: columns, spacing: Self.spacing) {
+                    // Disabled while a tapped video resolves, like the video tiles: the cover
+                    // that resolve opens would land over the camera.
+                    GalleryCameraTile(action: onCameraTapped)
+                        .disabled(viewModel.resolution != nil && !isCovered)
                     ForEach(
                         Array(viewModel.videos.enumerated()), id: \.element.localIdentifier
                     ) { index, asset in
@@ -592,8 +633,12 @@ struct VideoGalleryView: View {
                 }
                 // The floating tab bar overlays this screen rather than reserving its own
                 // safe-area space, so without this the bottom row would end up permanently
-                // stuck underneath it.
-                .padding(.bottom, FloatingTabBarMetrics.clearance)
+                // stuck underneath it. The empty state keeps it clear instead, when it's there.
+                .floatingTabBarClearance(!viewModel.videos.isEmpty)
+                if viewModel.videos.isEmpty {
+                    emptyState
+                        .floatingTabBarClearance()
+                }
             }
             // The grid announces its count when VoiceOver enters it — a VoiceOver user
             // otherwise has no sense of how many videos they're swiping through. The
@@ -682,16 +727,16 @@ struct VideoGalleryView: View {
                     .padding(.top, 8)
                     .accessibilityIdentifier("clear-gallery-filter")
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity)
         } else {
             StatusStateView(
                 systemImage: "video.slash",
                 title: viewModel.authorization == .limited ? "No videos selected" : "No videos",
                 message: viewModel.authorization == .limited
-                    ? "Turnip can only see the videos you choose. Select some to get started."
-                    : "Record a tricking session, and it'll show up here."
+                    ? "Turnip can only see the videos you choose. Select some, or record one, to get started."
+                    : "Record a tricking session with the camera, and it'll show up here."
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity)
         }
     }
 }
@@ -765,10 +810,10 @@ struct PhotosAccessDeniedView: View {
     }
 }
 
-/// Home's nav bar: present, transparent, visually empty, and taking no space. On iOS 26 a
-/// scroll view's top scroll-edge glass — the soft blur that keeps the status bar legible
-/// over tiles scrolling beneath it — is only drawn by a navigation bar that has content,
-/// and only blurs (rather than merely dimming) when that content is text. A hidden bar,
+/// A root page's nav bar — Home's and the Profile's: present, transparent, visually empty, and
+/// taking no space. On iOS 26 a scroll view's top scroll-edge glass — the soft blur that keeps the
+/// status bar legible over tiles scrolling beneath it — is only drawn by a navigation bar that has
+/// content, and only blurs (rather than merely dimming) when that content is text. A hidden bar,
 /// an empty title, `scrollEdgeEffectStyle` on the scroll view, and a `safeAreaBar`
 /// standing in for the bar all leave the status bar dead sharp; a clear color or a
 /// `hidden()` text as the principal item gets a dim gradient with no blur; a
@@ -776,27 +821,14 @@ struct PhotosAccessDeniedView: View {
 /// "content" that makes UIKit draw the real blur, with the bar's own background hidden
 /// so nothing else shows. The bar still reserves its band
 /// in the safe area, so the content gets that band back: it ignores the top safe area
-/// and re-adds only the status bar's share as an inset. The wordmark header then sits
-/// directly under the status bar at rest — in the grid and in the non-scrolling states
+/// and re-adds only the status bar's share as an inset. The wordmark header (`HomeHeader`) then
+/// sits directly under the status bar at rest — in the grid and in the non-scrolling states
 /// alike, so it doesn't jump when the grid replaces the loading state — and the glass
-/// fades in over the band only once tiles scroll under it.
+/// fades in over the band only once content scrolls under it. Pre-26 the bar is hidden outright.
 ///
-/// Also places the filter and settings controls — both at the trailing end of the band the
-/// wordmark leads, filter then gear — since where they can live depends on the same OS split
-/// as the glass itself: on iOS 26 they're real `ToolbarItem`s in this same bar — at the
-/// title's level at rest, riding the bar's own scroll-edge glass once scrolled, and reachable
-/// because they're part of the bar's hit-testing hierarchy rather than layered over it. Pre-26
-/// the bar is hidden outright (no glass to anchor a toolbar item to), so they fall back to a
-/// manually-styled corner overlay instead. Internal so the DEBUG screenshot harness and
-/// previews match.
-struct HomeNavigationBar: ViewModifier {
-    /// The gap between the two pre-26 overlay controls — the same spacing Camera's own
-    /// corner-control row uses.
-    private static let overlaySpacing: CGFloat = 12
-
-    @ObservedObject var viewModel: VideoLibraryViewModel
-    let showSettings: () -> Void
-
+/// The Profile's root uses it as it is; Home's adds its own controls (`HomeNavigationBar`).
+/// Internal so the DEBUG screenshot harness and previews match.
+struct WordmarkNavigationBar: ViewModifier {
     /// Whether the scroll content has moved up past its rest position. With the header
     /// sitting inside the bar's band at rest, UIKit considers the content "under the
     /// bar" from the start and would draw the glass over the wordmark before any scroll;
@@ -834,6 +866,39 @@ struct HomeNavigationBar: ViewModifier {
                             .opacity(0)
                             .accessibilityHidden(true)
                     }
+                }
+        } else {
+            content
+                .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+}
+
+/// Home's nav bar: the root pages' wordmark bar (`WordmarkNavigationBar`), plus the filter and
+/// settings controls — both at the trailing end of the band the wordmark leads, filter then gear —
+/// since where they can live depends on the same OS split as the glass itself: on iOS 26 they're
+/// real `ToolbarItem`s in this same bar — at the title's level at rest, riding the bar's own
+/// scroll-edge glass once scrolled, and reachable because they're part of the bar's hit-testing
+/// hierarchy rather than layered over it. Pre-26 the bar is hidden outright (no glass to anchor a
+/// toolbar item to), so they fall back to a manually-styled corner overlay instead. On iPhone Duo
+/// neither: they sit in the vertical bar's column beside the page (`RootTabView`), so the bar
+/// leaves them out. Internal so the DEBUG screenshot harness and previews match.
+struct HomeNavigationBar: ViewModifier {
+    /// The gap between the two pre-26 overlay controls — the same spacing Camera's own
+    /// corner-control row uses.
+    private static let overlaySpacing: CGFloat = 12
+
+    @ObservedObject var viewModel: VideoLibraryViewModel
+    let showSettings: () -> Void
+    @Environment(\.rootControlsInVerticalBar) private var controlsInVerticalBar
+
+    /// Only the controls come and go with the vertical bar — folding or unfolding the phone moves
+    /// it — never the branch the page itself sits in, so the grid keeps its scroll position.
+    func body(content: Content) -> some View {
+        let bar = content.modifier(WordmarkNavigationBar())
+        if #available(iOS 26.0, *) {
+            bar.toolbar {
+                if !controlsInVerticalBar {
                     // Filter first, then the gear, as two separate items: adjacent trailing
                     // items share one glass capsule by default on iOS 26, and the fixed
                     // spacer between them is what splits that into two circles — the same
@@ -850,10 +915,10 @@ struct HomeNavigationBar: ViewModifier {
                         .accessibilityIdentifier("settings-button")
                     }
                 }
+            }
         } else {
-            content
-                .toolbar(.hidden, for: .navigationBar)
-                .overlay(alignment: .topTrailing) {
+            bar.overlay(alignment: .topTrailing) {
+                if !controlsInVerticalBar {
                     HStack(spacing: Self.overlaySpacing) {
                         GalleryFilterButton(viewModel: viewModel, placement: .overlay)
                         HomeSettingsButton(action: showSettings)
@@ -863,6 +928,7 @@ struct HomeNavigationBar: ViewModifier {
                     // top as content) rather than where a bar's items would hang.
                     .screenHeaderItemPlacement(hangsFromStatusBar: false)
                 }
+            }
         }
     }
 }

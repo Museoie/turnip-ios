@@ -53,8 +53,8 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     @Published private(set) var isFinishingRecording = false
     @Published var errorMessage: String?
     /// Receives each finished take. Called from here rather than observed on the view: the
-    /// hand-off happens after Stop's drain wait, and the user can have swiped away from the
-    /// camera page by then. A file that finished writing is always handed on, whatever the
+    /// hand-off happens after Stop's drain wait, and the user can have closed the camera by
+    /// then. A file that finished writing is always handed on, whatever the
     /// view is doing.
     var onFinished: ((CameraRecording) -> Void)?
 
@@ -135,7 +135,7 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// if the mode changes before it finishes. The control is disabled while recording.
     private var armedPersonMode = PersonMode.one
     /// Reads the current settings snapshot at the point a setting takes effect (Record tap),
-    /// rather than once at init — a change made while the camera tab is already open is picked
+    /// rather than once at init — a change made while the camera is already open is picked
     /// up by the next recording. `@MainActor`-typed (not plain, and not `@Sendable`/`async`) so
     /// the default value below — a closure literal that reads the `@MainActor`-isolated
     /// `TurnipSettingsStore.shared` — type-checks: a default argument's closure literal is

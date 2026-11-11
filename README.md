@@ -55,7 +55,8 @@ a confirmation sheet asks once, then each save's named clips go to
 released).
 
 The save also writes each clip into an on-device clip library, which the
-Profile — the page after Home, a left swipe away — is built from
+Profile — the page before Home, a right swipe away, and the one the app
+opens on once a clip is saved — is built from
 ([`docs/PROFILE_DESIGN.md`](docs/PROFILE_DESIGN.md), Phase 2a's core):
 "Needs a name" for clips saved without names, a level (days practiced) and
 rep milestones per trick, and a gallery grouped by trick that opens each

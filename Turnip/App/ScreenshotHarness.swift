@@ -608,7 +608,7 @@ private struct ScreenshotProcessingRunner: ProcessingRunning {
 // MARK: - Processing swipe-to-browse
 
 /// Processing inside the same page container the app runs it in (`-screenshotProcessingBrowse`):
-/// a stand-in Camera page, then a `NavigationStack` with a Processing screen pushed over a
+/// a stand-in Profile page, then a `NavigationStack` with a Processing screen pushed over a
 /// stand-in Home, wired to three stand-in videos with solid-color posters and the same
 /// `PageSwipeLock` `RootTabView` applies. The UI test swipes and reads the screen's center
 /// color to tell which video landed — and whether the swipe reached the pager instead. The
@@ -622,8 +622,8 @@ struct ScreenshotProcessingBrowseHarness: View {
         TabView(selection: $selectedTab) {
             Color.gray
                 .ignoresSafeArea()
-                .accessibilityIdentifier("camera-stand-in")
-                .tag(MainTab.camera)
+                .accessibilityIdentifier("profile-stand-in")
+                .tag(MainTab.profile)
             NavigationStack(path: $path) {
                 Text("Home stand-in")
                     .navigationDestination(for: Int.self) { index in

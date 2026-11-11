@@ -16,8 +16,8 @@ import SwiftUI
 ///
 /// The preview stays fully transparent — showing the black behind it — until the layer is
 /// actually rendering frames, then fades in once. Left to itself the layer shows its last
-/// frame from the previous visit while the page slides in, blanks to black when the session
-/// restarts, and only then shows live video: a flicker on every visit to the camera page.
+/// frame from the previous visit while the camera slides in, blanks to black when the session
+/// restarts, and only then shows live video: a flicker on every visit to the camera.
 struct CameraPreviewView: UIViewRepresentable {
     let session: AVCaptureSession
     /// False while the session is stopped or stopping. Hides the preview at once so a stale

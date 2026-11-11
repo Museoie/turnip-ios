@@ -414,9 +414,14 @@ counts once under each distinct canonical trick.
 
 ### 5.1 Layout
 
-- The root pager's third page, after Home: Camera | Home | Profile
-  (UIUX "Root navigation"). Reached by swiping left from Home or by the
-  floating bar's third icon, which plays the same slide.
+- The root pager's first page, before Home: Profile | Home (UIUX "Root
+  navigation"), and the page the app opens on once the library holds a
+  saved clip. Reached by swiping right from Home or by the tab bar's first
+  icon, which plays the same slide.
+- Headed by the same "Turnip" wordmark Home leads with, as scroll content
+  under the same transparent bar, so the two pages' headers line up across
+  the swipe. The bar's title, "Profile", is never drawn, but still names the
+  page on a pushed screen's back button.
 - One scrolling page, top to bottom:
   - **Needs a name** — a row with the count of unnamed saved clips,
     shown only when it is above zero; opens them in Name Clips
