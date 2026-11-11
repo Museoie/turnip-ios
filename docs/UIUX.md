@@ -152,7 +152,7 @@ start to finish. It never cuts, cross-fades or pushes when the gesture
 slides, grows or shrinks.
 
 The motion is how the user learns where a screen lives. A swipe teaches
-"Camera is to the left of Home." A tile that grows into Processing teaches
+"the Profile is to the left of Home." A tile that grows into Processing teaches
 "this screen *is* that video, enlarged." If the button for the same move
 then cuts straight to the destination, the button teaches nothing and
 contradicts what the gesture taught. The user ends up with two mental models
@@ -463,7 +463,11 @@ default empty state, so it never reads as "your library is empty."
   cancel chevron (slides it back down over the gallery), one record button
   (tap to start, tap again to stop), and the manual controls: lens/zoom (pill
   row + pinch), front/rear flip, torch, resolution/fps, and exposure bias
-  (`Turnip/Camera/`). The session starts as it opens and stops as it closes.
+  (`Turnip/Camera/`). The session starts as it opens and stops as it closes;
+  its configuration, the pose model and the lens, format and zoom the user
+  picked stay for the launch, so reopening resumes rather than rebuilds. With
+  Photos access denied or not yet given there is no grid, and so no camera
+  tile: a take couldn't reach the app without that access anyway.
   A finished take drops it at once and opens over Home the way a tapped tile
   does (see "A gesture and its button play one animation" for why at once).
 - Needs `NSCameraUsageDescription` and `NSMicrophoneUsageDescription`

@@ -10,10 +10,15 @@ import SwiftUI
 /// screen knows nothing about Photos or navigation. `onCancel` slides it back down over the
 /// gallery; a no-op default since not every caller (e.g. a preview) needs one.
 struct CameraCaptureView: View {
+    /// Owned by `RootTabView` for the whole launch, not by this screen, which exists only while
+    /// the camera is up: the configured session, the loaded pose model and the lens, format and
+    /// zoom the user picked outlive a close and reopen (`start()` only resumes a configured
+    /// session), and a take still finishing when the camera closes is handed on by a model that
+    /// is still there to hand it.
+    @ObservedObject var viewModel: CameraCaptureViewModel
     let onFinished: (CameraRecording) -> Void
     var onCancel: () -> Void = {}
 
-    @StateObject private var viewModel = CameraCaptureViewModel()
     /// The person mode the top-right control shows and the next take is recorded in, the same
     /// remembered choice Processing's picker sets.
     @ObservedObject private var settings = TurnipSettingsStore.shared

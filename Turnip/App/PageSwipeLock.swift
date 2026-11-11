@@ -8,8 +8,8 @@ import UIKit
 /// page can win one: the pages are cells of a paging `UICollectionView`, whose pan recognizer
 /// claims any horizontal drag ahead of SwiftUI's own gesture system, whatever priority the
 /// gesture declares. A screen pushed inside a page whose own horizontal swipe means
-/// something else — Processing, where it browses videos — would otherwise page to Camera on
-/// every right swipe and have its left swipes swallowed by the pager's end-of-content bounce.
+/// something else — Processing, where it browses videos — would otherwise page to the Profile
+/// on every right swipe and have its left swipes swallowed by the pager's end-of-content bounce.
 /// Disabling scrolling on that collection view is the lever UIKit offers: its recognizer
 /// stands down and the drag reaches the page's content. Paging driven by the `TabView`'s
 /// `selection` in code is unaffected.

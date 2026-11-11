@@ -70,6 +70,11 @@ private struct FloatingTabBarClearance: ViewModifier {
 /// Settings sheet, since the vertical bar's settings button opens it from outside Home.
 struct RootTabView: View {
     @StateObject private var viewModel = VideoLibraryViewModel()
+    /// The camera's session, pose model and picked lens and format, kept for the launch while the
+    /// camera screen itself comes and goes (`CameraCaptureView.viewModel`). Held, not observed: it
+    /// publishes the live pose many times a second while recording, which only the camera screen
+    /// draws, and observing it here would re-run this whole body, pages included, at that rate.
+    @State private var camera = CameraCaptureViewModel()
     @State private var selectedTab: MainTab
     @State private var profilePath: [ProfileRoute] = []
     @State private var showsCamera = false
@@ -138,7 +143,7 @@ struct RootTabView: View {
             .accessibilityHidden(showsCamera)
             .overlay {
                 if showsCamera {
-                    CameraCaptureView(onFinished: handleRecorded, onCancel: closeCamera)
+                    CameraCaptureView(viewModel: camera, onFinished: handleRecorded, onCancel: closeCamera)
                         // The whole window's height, not this overlay's: the camera's black
                         // reaches under the status bar and the home indicator, and a move by the
                         // safe area's height alone would leave that strip showing.
