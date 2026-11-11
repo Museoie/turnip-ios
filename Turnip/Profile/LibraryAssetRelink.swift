@@ -88,8 +88,8 @@ struct LibraryDevice: Equatable, Sendable {
 /// records, then applied only where a record still holds what the pass read.
 struct LibraryAssetRelink: Equatable, Sendable {
     struct Change: Equatable, Sendable {
-        let from: String
-        let to: String
+        let before: String
+        let after: String
     }
 
     /// Per clip, its video's local identifier on this device, where the one it held names nothing.
@@ -134,7 +134,7 @@ struct LibraryAssetRelink: Equatable, Sendable {
             }
             let matcher = LegacyMatcher(
                 lookup: lookup,
-                claimed: present.union(relink.exports.values.map(\.to)).union(relink.sources.values),
+                claimed: present.union(relink.exports.values.map(\.after)).union(relink.sources.values),
                 sourceDurations: Dictionary(
                     sources.map { ($0.assetID, $0.duration) }, uniquingKeysWith: { first, _ in first }))
             relink.relinkLegacy(
@@ -167,7 +167,7 @@ struct LibraryAssetRelink: Equatable, Sendable {
         for clip in clips {
             guard let localID = clip.exportCloudID.flatMap({ found[$0] }), localID != clip.exportAssetID
             else { continue }
-            exports[clip.id] = Change(from: clip.exportAssetID, to: localID)
+            exports[clip.id] = Change(before: clip.exportAssetID, after: localID)
         }
         for source in sources {
             guard let localID = source.cloudID.flatMap({ found[$0] }), localID != source.assetID else { continue }
@@ -194,7 +194,7 @@ struct LibraryAssetRelink: Equatable, Sendable {
                 self.sources[assetID] = localID
             case .clip(let id):
                 guard let held = heldExports[id] else { continue }
-                exports[id] = Change(from: held, to: localID)
+                exports[id] = Change(before: held, after: localID)
             }
         }
     }
@@ -206,7 +206,7 @@ struct LibraryAssetRelink: Equatable, Sendable {
             relinked ?? (present.contains(held) ? held : nil)
         }
         let clipsAsking = clips.filter { $0.exportCloudID == nil }.compactMap { clip -> (UUID, String)? in
-            here(clip.exportAssetID, relinked: exports[clip.id]?.to).map { (clip.id, $0) }
+            here(clip.exportAssetID, relinked: exports[clip.id]?.after).map { (clip.id, $0) }
         }
         let sourcesAsking = sources.filter { $0.cloudID == nil }.compactMap { source -> (String, String)? in
             here(source.assetID, relinked: self.sources[source.assetID]).map { (source.assetID, $0) }
@@ -215,7 +215,7 @@ struct LibraryAssetRelink: Equatable, Sendable {
         guard !asked.isEmpty else { return }
         let cloudIDs = lookup.cloudIDs(Array(asked))
         for (clipID, localID) in clipsAsking {
-            if let cloudID = cloudIDs[localID] { exportCloudIDs[clipID] = Change(from: localID, to: cloudID) }
+            if let cloudID = cloudIDs[localID] { exportCloudIDs[clipID] = Change(before: localID, after: cloudID) }
         }
         for (heldID, localID) in sourcesAsking {
             if let cloudID = cloudIDs[localID] { sourceCloudIDs[heldID] = cloudID }
@@ -238,12 +238,6 @@ struct LegacyMatcher {
     /// Every video a record holds or has been relinked to by iCloud identifier.
     let claimed: Set<String>
     let sourceDurations: [String: TimeInterval]
-
-    init(lookup: LibraryAssetLookup, claimed: Set<String>, sourceDurations: [String: TimeInterval]) {
-        self.lookup = lookup
-        self.claimed = claimed
-        self.sourceDurations = sourceDurations
-    }
 
     /// How far a source's video's creation date may sit from the one the library read from it.
     static let sourceDateTolerance: TimeInterval = 1

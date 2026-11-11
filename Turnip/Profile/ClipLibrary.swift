@@ -360,9 +360,9 @@ final class ClipLibrary: ObservableObject {
     private func apply(_ relink: LibraryAssetRelink) -> Bool {
         var changed = false
         for (id, change) in relink.exports {
-            guard let index = clips.firstIndex(where: { $0.id == id }), clips[index].exportAssetID == change.from
+            guard let index = clips.firstIndex(where: { $0.id == id }), clips[index].exportAssetID == change.before
             else { continue }
-            clips[index].exportAssetID = change.to
+            clips[index].exportAssetID = change.after
             changed = true
         }
         changed = applyCloudIDs(relink) || changed
@@ -375,9 +375,9 @@ final class ClipLibrary: ObservableObject {
     private func applyCloudIDs(_ relink: LibraryAssetRelink) -> Bool {
         var changed = false
         for (id, change) in relink.exportCloudIDs {
-            guard let index = clips.firstIndex(where: { $0.id == id }), clips[index].exportAssetID == change.from,
+            guard let index = clips.firstIndex(where: { $0.id == id }), clips[index].exportAssetID == change.before,
                 clips[index].exportCloudID == nil else { continue }
-            clips[index].exportCloudID = change.to
+            clips[index].exportCloudID = change.after
             changed = true
         }
         for (heldID, cloudID) in relink.sourceCloudIDs {
