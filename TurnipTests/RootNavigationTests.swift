@@ -9,12 +9,23 @@ import XCTest
 final class RootNavigationTests: XCTestCase {
     // MARK: - Landing page
 
+    /// An in-memory library: nothing read from or written to disk.
+    private func makeLibrary() -> ClipLibrary {
+        ClipLibrary(fileURL: nil, vocabulary: { .seed }, announce: { _ in })
+    }
+
     func testOpensOnTheGalleryBeforeAnyClipIsSaved() {
-        XCTAssertEqual(MainTab.landing(hasSavedClips: false), .home)
+        XCTAssertEqual(MainTab.landing(for: makeLibrary()), .home)
     }
 
     func testOpensOnTheProfileOnceAClipIsSaved() {
-        XCTAssertEqual(MainTab.landing(hasSavedClips: true), .profile)
+        let library = makeLibrary()
+        let clip = LibrarySave.Clip(
+            id: UUID(), window: TrickWindow(startTime: 4, endTime: 5.5), exportAssetID: "export-1",
+            names: [], isMe: true, isAutoDetected: true, proposal: nil)
+        library.record(
+            LibrarySave(sourceAssetID: "source-1", sourceDuration: 30, clips: [clip]), sourceRecordedAt: Date())
+        XCTAssertEqual(MainTab.landing(for: library), .profile)
     }
 
     // MARK: - Vertical bar

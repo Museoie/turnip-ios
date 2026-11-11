@@ -117,16 +117,15 @@ require a manifest/signature. If a dependency is added, check both.
   language. `NSPhotoLibraryAddUsageDescription` ships alongside it
   because both save paths into `ClipPhotosSaver` call
   `requestAuthorization(for: .addOnly)`, and iOS terminates the app on
-  that call when the string is absent. On the clip-save path —
-  reachable from Home through Processing and Name Clips — the user
-  does not normally see the string: reaching a save means the
-  read/write grant from Home is already in place, which determines
-  add-only as authorized, so the call returns without presenting a
-  second prompt. On the camera path, the string is user-facing: the
-  camera is a tab sibling of Home, not a page behind it, so a
-  camera-first user reaches `RootTabView.handleRecorded` having
-  granted nothing from Home, and the add-only prompt is the first and
-  only Photos prompt they see.
+  that call when the string is absent. On neither path does the user
+  normally see the string: the clip-save path is reached from Home
+  through Processing and Name Clips, and the camera opens from a tile in
+  Home's grid (UIUX §1b), which only exists once Home has its Photos
+  access. Reaching either save means the read/write grant from Home is
+  already in place, which determines add-only as authorized, so the call
+  returns without presenting a second prompt. (Until UIUX Rev 29 the
+  camera was a page beside Home, reachable with nothing granted, and
+  this string was the first Photos prompt a camera-first user saw.)
 - `PHPhotoLibraryPreventAutomaticLimitedAccessAlert` is set: with
   limited access the app shows its own "select more" affordance instead
   of iOS re-prompting on its own schedule.

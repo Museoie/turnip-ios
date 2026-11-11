@@ -14,7 +14,8 @@ struct CameraCaptureView: View {
     /// the camera is up: the configured session, the loaded pose model and the lens, format and
     /// zoom the user picked outlive a close and reopen (`start()` only resumes a configured
     /// session), and a take still finishing when the camera closes is handed on by a model that
-    /// is still there to hand it.
+    /// is still there to hand it. This screen starts the session as it appears; the owner stops it
+    /// as the camera closes.
     @ObservedObject var viewModel: CameraCaptureViewModel
     let onFinished: (CameraRecording) -> Void
     var onCancel: () -> Void = {}
@@ -82,9 +83,11 @@ struct CameraCaptureView: View {
             isPreviewLive = true
             await viewModel.start()
         }
+        // The preview only. The session is the owner's to stop (`viewModel`): this fires once the
+        // screen has finished sliding away, after a camera opened again meanwhile — a new screen
+        // on the same session — has already started it.
         .onDisappear {
             isPreviewLive = false
-            viewModel.stop()
         }
         // `.task` / `.onDisappear` fire on navigation; neither fires when the
         // app is backgrounded or the session is interrupted, so without this

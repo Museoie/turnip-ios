@@ -4,10 +4,11 @@ import UIKit
 /// The system's vertical bar on iPhone Duo: the column along one side of the screen that holds the
 /// status bar and, in apps built from the system's own bars, their toolbar items and tab bar
 /// (Apple's "Prepare your app for iPhone Duo" and "Raise the bar with iPhone Duo" tech talks). It
-/// shows on the outer display, and on the inner display in landscape, and reaches the app as a
-/// safe-area inset on that one side only — 84 pt in the iOS 27.1 simulator, against none on the
-/// other side — where every earlier iPhone held upright, the only way Turnip runs, has no side
-/// inset at all.
+/// shows on the outer display, and on the inner display in landscape, and reaches an app built with
+/// the iOS 27.1 SDK as a safe-area inset on that one side only — 84 pt in the iOS 27.1 simulator,
+/// against none on the other side — where every earlier iPhone held upright, the only way Turnip
+/// runs, has no side inset at all. A build with an older SDK runs beside the column instead and
+/// never sees it, so nothing here changes anything there.
 ///
 /// Turnip's tab bar and Home's filter and settings controls are its own views, not the system's
 /// bars, and the system only moves the bars of its own navigation containers into the column. So
@@ -48,8 +49,8 @@ struct VerticalBar: Equatable {
 
     /// How far down the column its controls start: under the status bar at the top of it, as the
     /// system lays its own bar items out. Read from the scene, since SwiftUI reports no status bar
-    /// frame, and never above `statusBarFloor`, since a build that predates the vertical bar may be
-    /// told the status bar is still the strip across the top. `statusBarFloor` until a window exists.
+    /// frame, and never above `statusBarFloor`, since what the scene reports for a status bar standing
+    /// in the column isn't documented. `statusBarFloor` until a window exists.
     @MainActor static var controlsTop: CGFloat {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first

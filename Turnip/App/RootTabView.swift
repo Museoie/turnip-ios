@@ -9,11 +9,12 @@ enum MainTab: Hashable {
     case profile
     case home
 
-    /// The page the app opens on: the Profile once the library holds a saved clip, since a
+    /// The page the app opens on: the Profile once `library` holds a saved clip, since a
     /// returning user's training log is what they come back to, and the gallery before that, since
     /// a new user's first step is a video and the Profile has nothing to show yet.
-    static func landing(hasSavedClips: Bool) -> MainTab {
-        hasSavedClips ? .profile : .home
+    @MainActor
+    static func landing(for library: ClipLibrary) -> MainTab {
+        library.clips.isEmpty ? .home : .profile
     }
 
     /// The tab bar's accessibility identifier for this tab. The home tab's is "tab-videos": it
@@ -74,6 +75,7 @@ struct RootTabView: View {
     /// camera screen itself comes and goes (`CameraCaptureView.viewModel`). Held, not observed: it
     /// publishes the live pose many times a second while recording, which only the camera screen
     /// draws, and observing it here would re-run this whole body, pages included, at that rate.
+    /// The screen starts the session as it appears, and this view stops it as the camera closes.
     @State private var camera = CameraCaptureViewModel()
     @State private var selectedTab: MainTab
     @State private var profilePath: [ProfileRoute] = []
@@ -82,7 +84,7 @@ struct RootTabView: View {
     @State private var recordingSaveError: String?
 
     init() {
-        _selectedTab = State(initialValue: MainTab.landing(hasSavedClips: !ClipLibrary.shared.clips.isEmpty))
+        _selectedTab = State(initialValue: MainTab.landing(for: .shared))
     }
 
     /// The page swipe belongs to the pages' roots alone. While Home presents a destination
@@ -149,6 +151,14 @@ struct RootTabView: View {
                         // safe area's height alone would leave that strip showing.
                         .transition(.offset(y: proxy.size.height + insets.top + insets.bottom))
                 }
+            }
+        }
+        // Stopped here as the camera closes, not by the closing screen's `onDisappear`: that fires
+        // once its slide-down ends, and a camera opened again meanwhile is a new screen on the same
+        // session, which the old one's late stop would freeze under it.
+        .onChange(of: showsCamera) { isShown in
+            if !isShown {
+                camera.stop()
             }
         }
         .sheet(isPresented: $showsSettings) {
