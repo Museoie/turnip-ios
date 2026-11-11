@@ -16,9 +16,10 @@ struct LibraryAssetCandidate: Equatable, Sendable {
 /// to the same iCloud Photos library, so the library keeps one beside each local identifier and
 /// maps it back to this device's local identifier when the local one no longer resolves.
 struct LibraryAssetLookup: Sendable {
-    /// Whether the app can read the whole library. Relinking a record whose video wasn't found
-    /// waits for it: under limited access a video outside the selection looks just as gone, and
-    /// the legacy match could pick the wrong one among the few the selection holds.
+    /// Whether the app can read the whole library. The match by date and duration waits for it:
+    /// under limited access a video outside the selection looks gone, and the match could pick the
+    /// wrong one among the few the selection holds. The map by iCloud identifier is exact, so it
+    /// runs under any access and finds what the selection holds.
     var canReadWholeLibrary: @Sendable () -> Bool
     /// Which of these local identifiers name an asset in this device's Photos library.
     var existing: @Sendable (_ localIDs: [String]) -> Set<String>
@@ -28,8 +29,8 @@ struct LibraryAssetLookup: Sendable {
     /// Each iCloud identifier's local identifier on this device, for those Photos can find. A video
     /// iCloud Photos hasn't brought down to a new device yet isn't found until it has.
     var localIDs: @Sendable (_ cloudIDs: [String]) -> [String: String]
-    /// The library's videos created within `range`, for records saved before the library kept
-    /// iCloud identifiers.
+    /// The library's videos created within `range`, for records with no iCloud identifier that
+    /// were saved on another device.
     var videos: @Sendable (_ createdIn: ClosedRange<Date>) -> [LibraryAssetCandidate]
 }
 
@@ -74,6 +75,15 @@ extension LibraryAssetLookup {
         })
 }
 
+/// This device, as the relink pass tells the device that saved a record from one the library was
+/// restored onto (`DeviceMark`).
+struct LibraryDevice: Equatable, Sendable {
+    let mark: String
+    /// Whether the records saved before the library stamped them were saved on this device, once a
+    /// pass on this device has decided it; `nil` until then.
+    var legacySavedHere: Bool?
+}
+
 /// What one relink pass changes in the library: worked out off the main actor from a copy of its
 /// records, then applied only where a record still holds what the pass read.
 struct LibraryAssetRelink: Equatable, Sendable {
@@ -90,37 +100,62 @@ struct LibraryAssetRelink: Equatable, Sendable {
     var sources: [String: String] = [:]
     /// Per source, keyed by the local identifier the library holds: its video's iCloud identifier.
     var sourceCloudIDs: [String: String] = [:]
+    /// This pass's decision on whether the unstamped records were saved on this device, when the
+    /// device had none yet.
+    var legacySavedHere: Bool?
 
     var isEmpty: Bool {
         exports.isEmpty && exportCloudIDs.isEmpty && sources.isEmpty && sourceCloudIDs.isEmpty
+            && legacySavedHere == nil
     }
 
     /// Works out the pass. In order:
     /// 1. A record whose local identifier names nothing here, and which holds an iCloud identifier,
     ///    takes the local identifier Photos maps that iCloud identifier to.
-    /// 2. A record saved before the library kept iCloud identifiers takes the one video, among
-    ///    those no other record holds, that matches it (`LegacyMatcher`).
+    /// 2. With full access, a record with no iCloud identifier that was saved on another device
+    ///    takes the one video that fits it and no other such record (`LegacyMatcher`). A record
+    ///    saved on this device whose video names nothing was deleted in Photos, and stays so.
     /// 3. Every record that now names a video here and holds no iCloud identifier gets one.
     static func make(
-        clips: [LibraryClip], sources: [LibrarySource], lookup: LibraryAssetLookup
+        clips: [LibraryClip], sources: [LibrarySource], device: LibraryDevice?, lookup: LibraryAssetLookup
     ) -> LibraryAssetRelink {
         var relink = LibraryAssetRelink()
         let held = Array(Set(clips.map(\.exportAssetID) + sources.map(\.assetID)))
         guard !held.isEmpty else { return relink }
         let present = lookup.existing(held)
-        if lookup.canReadWholeLibrary() {
-            let missingClips = clips.filter { !present.contains($0.exportAssetID) }
-            let missingSources = sources.filter { !present.contains($0.assetID) }
-            relink.relinkByCloudID(missingClips, missingSources, lookup: lookup)
-            var matcher = LegacyMatcher(
+        let missingClips = clips.filter { !present.contains($0.exportAssetID) }
+        let missingSources = sources.filter { !present.contains($0.assetID) }
+        relink.relinkByCloudID(missingClips, missingSources, lookup: lookup)
+        if let device, lookup.canReadWholeLibrary() {
+            let legacySavedHere = device.legacySavedHere ?? decideLegacySavedHere(clips, sources, present: present)
+            if device.legacySavedHere == nil { relink.legacySavedHere = legacySavedHere }
+            func savedElsewhere(_ savedOn: String?) -> Bool {
+                savedOn.map { $0 != device.mark } ?? (legacySavedHere == false)
+            }
+            let matcher = LegacyMatcher(
                 lookup: lookup,
                 claimed: present.union(relink.exports.values.map(\.to)).union(relink.sources.values),
                 sourceDurations: Dictionary(
                     sources.map { ($0.assetID, $0.duration) }, uniquingKeysWith: { first, _ in first }))
-            relink.relinkLegacy(missingClips, missingSources, matcher: &matcher)
+            relink.relinkLegacy(
+                missingClips.filter { $0.exportCloudID == nil && savedElsewhere($0.savedOn) },
+                missingSources.filter { $0.cloudID == nil && savedElsewhere($0.savedOn) },
+                matcher: matcher)
         }
         relink.addCloudIDs(clips, sources, present: present, lookup: lookup)
         return relink
+    }
+
+    /// Whether the records saved before the library stamped them were saved on this device: true
+    /// when any of their videos is found here by its local identifier, which no other device mints.
+    /// `nil` when there are none to decide for.
+    private static func decideLegacySavedHere(
+        _ clips: [LibraryClip], _ sources: [LibrarySource], present: Set<String>
+    ) -> Bool? {
+        let unstamped = clips.filter { $0.savedOn == nil }.map(\.exportAssetID)
+            + sources.filter { $0.savedOn == nil }.map(\.assetID)
+        guard !unstamped.isEmpty else { return nil }
+        return !present.isDisjoint(with: unstamped)
     }
 
     private mutating func relinkByCloudID(
@@ -140,24 +175,26 @@ struct LibraryAssetRelink: Equatable, Sendable {
         }
     }
 
-    /// Matches every record with no iCloud identifier that the first step left unlinked. A match
-    /// another record takes can leave a record that had two with one, so this repeats while it
-    /// relinks anything.
+    /// Pairs each record with the one video that fits it and no other record still unlinked, sources
+    /// and clips alike: a record whose own video hasn't arrived yet still fits the videos it could
+    /// be mistaken for, so it keeps another record from taking one. A record left with two fits, or
+    /// with one another record shares, stays unlinked: a clip shown with another clip's video is
+    /// worse than one shown as missing. Taking a video that fits no other record changes no other
+    /// record's fits, so one round is all there is.
     private mutating func relinkLegacy(
-        _ clips: [LibraryClip], _ sources: [LibrarySource], matcher: inout LegacyMatcher
+        _ clips: [LibraryClip], _ sources: [LibrarySource], matcher: LegacyMatcher
     ) {
-        var relinkedAny = true
-        while relinkedAny {
-            relinkedAny = false
-            for source in sources where source.cloudID == nil && self.sources[source.assetID] == nil {
-                guard let localID = matcher.match(source) else { continue }
-                self.sources[source.assetID] = localID
-                relinkedAny = true
-            }
-            for clip in clips where clip.exportCloudID == nil && exports[clip.id] == nil {
-                guard let localID = matcher.match(clip) else { continue }
-                exports[clip.id] = Change(from: clip.exportAssetID, to: localID)
-                relinkedAny = true
+        var fits: [(LegacyMatcher.Record, [String])] = []
+        for source in sources { fits.append((.source(source.assetID), matcher.fits(source))) }
+        for clip in clips { fits.append((.clip(clip.id), matcher.fits(clip))) }
+        let heldExports = Dictionary(clips.map { ($0.id, $0.exportAssetID) }, uniquingKeysWith: { first, _ in first })
+        for (record, localID) in LegacyMatcher.uniquePairs(fits) {
+            switch record {
+            case .source(let assetID):
+                self.sources[assetID] = localID
+            case .clip(let id):
+                guard let held = heldExports[id] else { continue }
+                exports[id] = Change(from: held, to: localID)
             }
         }
     }
@@ -186,18 +223,21 @@ struct LibraryAssetRelink: Equatable, Sendable {
     }
 }
 
-/// Finds the video a record saved before the library kept iCloud identifiers names on this device:
-/// the one video, among those no record holds, that matches it. A source matches by the creation
-/// date and duration the library read from its video, which iCloud Photos keeps. A clip matches by
-/// its window's duration and a creation date during its save: the exporter writes no date of its
-/// own, so Photos dates the clip by when it was saved. Two or more matches leave the record alone,
-/// since a clip shown with another clip's video is worse than one shown as missing.
+/// The videos that could be a record's, for a record with no iCloud identifier saved on another
+/// device. A source fits by the creation date and duration the library read from its video, which
+/// iCloud Photos keeps. A clip fits by its window's duration and a creation date during its save:
+/// the exporter writes no date of its own, so Photos dates the clip by when it was saved. A video
+/// another record holds or has taken fits nothing.
 struct LegacyMatcher {
+    enum Record: Hashable {
+        case source(String)
+        case clip(UUID)
+    }
+
     let lookup: LibraryAssetLookup
-    /// Every video a record holds or has been relinked to.
-    var claimed: Set<String>
+    /// Every video a record holds or has been relinked to by iCloud identifier.
+    let claimed: Set<String>
     let sourceDurations: [String: TimeInterval]
-    private var candidates: [String: [LibraryAssetCandidate]] = [:]
 
     init(lookup: LibraryAssetLookup, claimed: Set<String>, sourceDurations: [String: TimeInterval]) {
         self.lookup = lookup
@@ -214,25 +254,41 @@ struct LegacyMatcher {
     /// clock corrected meanwhile.
     static let exportLead: TimeInterval = 60 * 60
     static let exportLag: TimeInterval = 5 * 60
-    /// How far an exported clip's duration may sit from its window's: frame and audio rounding.
-    static let exportDurationTolerance: TimeInterval = 0.25
+    /// How far an exported clip's duration may sit from its window's: about a frame of video and
+    /// one of audio. Wide enough that a clip's own video fits it, since a video that fits only a
+    /// neighbor could be given to that neighbor; clips of one save closer than twice this can fit
+    /// each other's videos, and are then left alone.
+    static let exportDurationTolerance: TimeInterval = 0.1
 
-    mutating func match(_ source: LibrarySource) -> String? {
-        guard let recordedAt = source.recordedAt else { return nil }
+    func fits(_ source: LibrarySource) -> [String] {
+        guard let recordedAt = source.recordedAt else { return [] }
         let range = recordedAt.addingTimeInterval(-Self.sourceDateTolerance)
             ... recordedAt.addingTimeInterval(Self.sourceDateTolerance)
-        return claimOnly(
-            unclaimed("source:" + source.assetID, range)
-                .filter { abs($0.duration - source.duration) <= Self.sourceDurationTolerance })
+        return unclaimed(range)
+            .filter { abs($0.duration - source.duration) <= Self.sourceDurationTolerance }
+            .map(\.localID)
     }
 
-    mutating func match(_ clip: LibraryClip) -> String? {
+    func fits(_ clip: LibraryClip) -> [String] {
         let range = clip.savedAt.addingTimeInterval(-Self.exportLead)
             ... clip.savedAt.addingTimeInterval(Self.exportLag)
         let expected = exportedDuration(of: clip)
-        return claimOnly(
-            unclaimed("clip:" + clip.id.uuidString, range)
-                .filter { abs($0.duration - expected) <= Self.exportDurationTolerance })
+        return unclaimed(range)
+            .filter { abs($0.duration - expected) <= Self.exportDurationTolerance }
+            .map(\.localID)
+    }
+
+    /// Each record that fits exactly one video which fits no other record, with that video.
+    static func uniquePairs(_ fits: [(Record, [String])]) -> [(Record, String)] {
+        var fitting: [String: Int] = [:]
+        for (_, localIDs) in fits {
+            for localID in Set(localIDs) { fitting[localID, default: 0] += 1 }
+        }
+        return fits.compactMap { entry -> (Record, String)? in
+            let (record, localIDs) = entry
+            guard localIDs.count == 1, let localID = localIDs.first, fitting[localID] == 1 else { return nil }
+            return (record, localID)
+        }
     }
 
     /// The duration the exporter gave a clip: its window, trimmed to its source.
@@ -241,16 +297,23 @@ struct LegacyMatcher {
         return max(0, end - max(0, clip.startTime))
     }
 
-    /// The videos created within `range` no record holds, fetched once per record per pass.
-    private mutating func unclaimed(_ key: String, _ range: ClosedRange<Date>) -> [LibraryAssetCandidate] {
-        let fetched = candidates[key] ?? lookup.videos(range)
-        candidates[key] = fetched
-        return fetched.filter { !claimed.contains($0.localID) }
+    /// The videos created within `range` no record holds.
+    private func unclaimed(_ range: ClosedRange<Date>) -> [LibraryAssetCandidate] {
+        lookup.videos(range).filter { !claimed.contains($0.localID) }
     }
+}
 
-    private mutating func claimOnly(_ matches: [LibraryAssetCandidate]) -> String? {
-        guard matches.count == 1, let match = matches.first else { return nil }
-        claimed.insert(match.localID)
-        return match.localID
+/// A random mark minted once per device and kept in the Keychain as never migrating to another
+/// device, so the clip library can tell a record saved on this device from one restored onto it
+/// from a backup of another. `nil` when the Keychain can't be read or written.
+enum DeviceMark {
+    private static let name = "device-mark"
+
+    static func current(
+        store: SecretStore = KeychainSecretStore(service: "com.hoiekim.turnip.device")
+    ) -> String? {
+        if let mark = store.value(for: name) { return mark }
+        store.setValue(UUID().uuidString, for: name)
+        return store.value(for: name)
     }
 }

@@ -227,35 +227,53 @@ clips are there at all. Recovery comes from the device, in two layers:
    even with iCloud Photos bringing every video along (seen on a real
    transfer: every saved clip lost its video). So each record also keeps
    its asset's `PHCloudIdentifier`, the same on every device signed in to
-   the user's iCloud Photos library, and `ClipLibrary.relinkAssets` runs
-   whenever the Profile appears or the app becomes active
+   the user's iCloud Photos library, and the `DeviceMark` of the device
+   that saved it: a random value in the Keychain that never migrates to
+   another device. `ClipLibrary.relinkAssets` runs when the Profile
+   appears or the app becomes active, at most once every five minutes
    (`LibraryAssetRelink`):
    - A record whose `localIdentifier` resolves and has no cloud ID yet
      gets one. A clip just saved has none until iCloud Photos uploads
      it, so a later pass asks again; a re-saved clip's new video drops
      the old video's cloud ID.
-   - With full Photos access, a record whose `localIdentifier` resolves
-     to nothing takes the one `PHPhotoLibrary.localIdentifierMappings`
-     gives its cloud ID. A video iCloud Photos hasn't brought down yet
-     is found on a later pass. A source that moves carries its clips and
-     trashed proposals with it, and joins a record the same video got
+   - A record whose `localIdentifier` resolves to nothing takes the one
+     `PHPhotoLibrary.localIdentifierMappings` gives its cloud ID, under
+     full or limited access. A video iCloud Photos hasn't brought down
+     yet is found on a later pass. A source that moves carries its clips
+     and trashed proposals with it, and joins a record the same video got
      from a save on the new device.
-   - A record saved before the library kept cloud IDs is matched among
-     the videos no other record holds: a source by the creation date
-     (±1 s) and duration (±0.5 s) the library read from it, an exported
-     clip by its window's duration (±0.25 s) and a creation date from an
-     hour before its save to five minutes after. Exactly one match
-     relinks it and the pass repeats while anything relinks; two or more
-     leave it alone. *(Judgment call: a clip shown with another clip's
-     video is worse than one shown as missing. A clip saved again keeps
-     its first save's date, so its newer video is outside the window.)*
-   - **Unverified; probe on a device:** that an exported clip's Photos
-     creation date is its save's (the exporter writes no date of its
-     own) and survives iCloud Photos.
-   - Under limited access a video outside the selection looks gone, so
-     relinking waits for full access; found records still get cloud IDs.
-   - Without iCloud Photos there is no cloud ID and a new device has none
-     of the old videos to find; layer 2 is the fallback there.
+   - A record with no cloud ID — saved before the library kept them, or
+     with iCloud Photos off — is matched by date and duration only when
+     it was saved on another device, and only with full access. A record
+     saved here whose video resolves to nothing was deleted in Photos,
+     and keeps its "video deleted" state (§2.3). For records saved before
+     the library stamped them, each device decides once, on its first
+     pass with full access, that they were saved there if any of their
+     `localIdentifier`s resolves, since no other device mints the same.
+     *(Judgment call: a device that saved them and has since lost every
+     one of their videos decides wrongly, and matches them.)*
+   - The match: a source fits a video by the creation date (±1 s) and
+     duration (±0.5 s) the library read from it, an exported clip by its
+     window's duration (±0.1 s) and a creation date from an hour before
+     its save to five minutes after. A video another record holds fits
+     nothing. A record is relinked only to a video that is its one fit
+     and fits no other unlinked record, so a record whose own video
+     hasn't arrived yet keeps another from taking a video meant for it.
+     *(Judgment call: a clip shown with another clip's video is worse
+     than one shown as missing. Clips of one save within about 0.2 s of
+     each other in length can fit each other's videos and stay
+     unlinked.)*
+   - A clip saved again keeps its first save's date. Its newer video can
+     fall outside the window, and the pre-edit video, which Photos keeps,
+     can then be its one fit: such a clip is relinked to its earlier cut.
+   - **Unverified; probe on a device:** how far an exported clip's
+     duration in Photos sits from its window's, against the 0.1 s
+     tolerance; and that its Photos creation date is its save's (the
+     exporter writes no date of its own) and survives iCloud Photos.
+   - With iCloud Photos off, an iCloud or Finder backup carries the
+     photo library itself, so the videos do arrive, under new
+     `localIdentifier`s and without cloud IDs: the match by date and
+     duration is what relinks them.
 2. **A Turnip record in each exported clip file.** At export the clip's
    movie gets one movie-level QuickTime metadata item,
    `mdta/com.hoiekim.turnip.clip` — the key space the camera's roll

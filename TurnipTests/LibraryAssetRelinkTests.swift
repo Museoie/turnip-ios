@@ -1,6 +1,35 @@
 import XCTest
 @testable import Turnip
 
+/// Holds a relink pass inside its first Photos lookup until the test lets it go.
+private final class PassGate: @unchecked Sendable {
+    let entered = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+
+    func pass() {
+        entered.signal()
+        release.wait()
+    }
+}
+
+/// Counts relink passes by their first Photos lookup.
+private final class PassCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func increment() {
+        lock.lock()
+        value += 1
+        lock.unlock()
+    }
+}
+
 /// A stand-in Photos library: each asset's local identifier on this device, its iCloud identifier,
 /// and its creation date and duration.
 private struct FakePhotos {
@@ -13,14 +42,20 @@ private struct FakePhotos {
 
     var assets: [Asset]
     var wholeLibrary = true
+    var gate: PassGate?
+    var counter: PassCounter?
 
     var lookup: LibraryAssetLookup {
         let assets = assets
         let wholeLibrary = wholeLibrary
+        let gate = gate
+        let counter = counter
         return LibraryAssetLookup(
             canReadWholeLibrary: { wholeLibrary },
             existing: { localIDs in
-                Set(assets.map(\.localID)).intersection(localIDs)
+                counter?.increment()
+                gate?.pass()
+                return Set(assets.map(\.localID)).intersection(localIDs)
             },
             cloudIDs: { localIDs in
                 var found: [String: String] = [:]
@@ -43,14 +78,14 @@ private struct FakePhotos {
 }
 
 /// A clip library restored onto a new iPhone holds the old iPhone's Photos identifiers, which name
-/// nothing there: its records find their videos again by iCloud identifier, or, for records saved
-/// before the library kept those, by date and duration.
+/// nothing there: its records find their videos again by iCloud identifier, or, for records with
+/// none that were saved on another device, by date and duration.
 @MainActor
 final class LibraryAssetRelinkTests: XCTestCase {
     private var directory: URL!
     private var fileURL: URL { directory.appendingPathComponent("library.json") }
     private let recorded = Date(timeIntervalSince1970: 1_790_000_000)
-    private let clock = Date(timeIntervalSince1970: 1_800_000_000)
+    private var clock = Date(timeIntervalSince1970: 1_800_000_000)
 
     override func setUp() {
         super.setUp()
@@ -63,9 +98,12 @@ final class LibraryAssetRelinkTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeLibrary() -> ClipLibrary {
+    /// The library file as the app on `device` opens it; a `nil` device is a build from before the
+    /// library stamped its records.
+    private func makeLibrary(on device: String?) -> ClipLibrary {
         ClipLibrary(
-            fileURL: fileURL, vocabulary: { .seed }, now: { [clock] in clock }, announce: { _ in })
+            fileURL: fileURL, vocabulary: { .seed }, now: { [unowned self] in clock }, announce: { _ in },
+            deviceMark: { device })
     }
 
     private func savedClip(
@@ -76,11 +114,11 @@ final class LibraryAssetRelinkTests: XCTestCase {
             names: [], isMe: true, isAutoDetected: true, proposal: nil, poseID: poseID)
     }
 
-    /// A library on the device that saved it, with one clip of one video.
+    /// A library with one clip of one video, saved on `device`.
     private func savedLibrary(
-        clip: UUID = UUID(), export: String = "old-export", source: String = "old-source"
+        on device: String?, clip: UUID = UUID(), export: String = "old-export", source: String = "old-source"
     ) -> ClipLibrary {
-        let library = makeLibrary()
+        let library = makeLibrary(on: device)
         library.record(
             LibrarySave(
                 sourceAssetID: source, sourceDuration: 30,
@@ -97,24 +135,31 @@ final class LibraryAssetRelinkTests: XCTestCase {
         .init(localID: "old-source", cloudID: "cloud-source")
     ])
 
+    /// A library saved on the old phone, which has kept its videos' iCloud identifiers, as the new
+    /// phone opens it.
+    private func restoredLibrary(clip: UUID = UUID()) async -> ClipLibrary {
+        await savedLibrary(on: "old-phone", clip: clip).relinkAssets(using: oldPhotos.lookup)
+        return makeLibrary(on: "new-phone")
+    }
+
     // MARK: - By iCloud identifier
 
     func testTheDeviceThatSavedAClipKeepsItsVideosICloudIdentifiers() async {
-        let library = savedLibrary()
+        let library = savedLibrary(on: "old-phone")
         await library.relinkAssets(using: oldPhotos.lookup)
 
         XCTAssertEqual(library.clips.first?.exportAssetID, "old-export")
         XCTAssertEqual(library.clips.first?.exportCloudID, "cloud-export")
+        XCTAssertEqual(library.clips.first?.savedOn, "old-phone")
         XCTAssertEqual(library.sources.first?.cloudID, "cloud-source")
-        XCTAssertEqual(makeLibrary().clips, library.clips)
-        XCTAssertEqual(makeLibrary().sources, library.sources)
+        XCTAssertEqual(library.sources.first?.savedOn, "old-phone")
+        XCTAssertEqual(makeLibrary(on: "old-phone").clips, library.clips)
+        XCTAssertEqual(makeLibrary(on: "old-phone").sources, library.sources)
     }
 
     func testARestoredLibraryFindsItsVideosByTheirICloudIdentifiers() async {
         let clipID = UUID()
-        await savedLibrary(clip: clipID).relinkAssets(using: oldPhotos.lookup)
-
-        let restored = makeLibrary()
+        let restored = await restoredLibrary(clip: clipID)
         let newPhotos = FakePhotos(assets: [
             .init(localID: "new-export", cloudID: "cloud-export"),
             .init(localID: "new-source", cloudID: "cloud-source")
@@ -127,10 +172,12 @@ final class LibraryAssetRelinkTests: XCTestCase {
         XCTAssertEqual(clip?.sourceAssetID, "new-source")
         XCTAssertEqual(
             restored.sources,
-            [LibrarySource(assetID: "new-source", cloudID: "cloud-source", recordedAt: recorded, duration: 30)])
+            [LibrarySource(
+                assetID: "new-source", cloudID: "cloud-source", savedOn: "old-phone", recordedAt: recorded,
+                duration: 30)])
         XCTAssertEqual(restored.dismissedWindows.map(\.sourceAssetID), ["new-source"])
 
-        let relaunched = makeLibrary()
+        let relaunched = makeLibrary(on: "new-phone")
         XCTAssertEqual(relaunched.clips, restored.clips)
         XCTAssertEqual(relaunched.sources, restored.sources)
         XCTAssertEqual(relaunched.dismissedWindows, restored.dismissedWindows)
@@ -139,8 +186,7 @@ final class LibraryAssetRelinkTests: XCTestCase {
     /// iCloud Photos brings a restored device's videos down over time: a video not there yet keeps
     /// its record as it was, and a later pass finds it.
     func testAVideoICloudHasntBroughtDownYetIsFoundOnALaterPass() async {
-        await savedLibrary().relinkAssets(using: oldPhotos.lookup)
-        let restored = makeLibrary()
+        let restored = await restoredLibrary()
 
         await restored.relinkAssets(using: FakePhotos(assets: []).lookup)
         XCTAssertEqual(restored.clips.first?.exportAssetID, "old-export")
@@ -151,33 +197,10 @@ final class LibraryAssetRelinkTests: XCTestCase {
         XCTAssertEqual(restored.clips.first?.exportAssetID, "new-export")
     }
 
-    /// Under limited access a video outside the selection looks gone: its record waits for full
-    /// access rather than being relinked, while the videos the app can see still get their iCloud
-    /// identifiers.
-    func testUnderLimitedAccessAMissingVideoWaitsAndAFoundOneGetsItsICloudIdentifier() async {
-        await savedLibrary().relinkAssets(using: oldPhotos.lookup)
-        let restored = makeLibrary()
-        restored.record(
-            LibrarySave(
-                sourceAssetID: "other-source", sourceDuration: 30, clips: [savedClip(2, export: "other-export")]),
-            sourceRecordedAt: recorded)
-
-        var photos = FakePhotos(assets: [
-            .init(localID: "new-export", cloudID: "cloud-export"),
-            .init(localID: "other-export", cloudID: "cloud-other")
-        ])
-        photos.wholeLibrary = false
-        await restored.relinkAssets(using: photos.lookup)
-
-        XCTAssertEqual(restored.clips.map(\.exportAssetID), ["old-export", "other-export"])
-        XCTAssertEqual(restored.clips.map(\.exportCloudID), ["cloud-export", "cloud-other"])
-    }
-
     /// The same video saved again on the new device before the pass ran has a record of its own:
     /// the restored one joins it.
     func testAVideoSavedAgainOnTheNewDeviceJoinsItsRestoredRecord() async {
-        await savedLibrary().relinkAssets(using: oldPhotos.lookup)
-        let restored = makeLibrary()
+        let restored = await restoredLibrary()
         restored.record(
             LibrarySave(
                 sourceAssetID: "new-source", sourceDuration: 30, clips: [savedClip(12, export: "export-b")]),
@@ -192,14 +215,16 @@ final class LibraryAssetRelinkTests: XCTestCase {
 
         XCTAssertEqual(
             restored.sources,
-            [LibrarySource(assetID: "new-source", cloudID: "cloud-source", recordedAt: recorded, duration: 30)])
+            [LibrarySource(
+                assetID: "new-source", cloudID: "cloud-source", savedOn: "new-phone", recordedAt: recorded,
+                duration: 30)])
         XCTAssertEqual(restored.clips.map(\.sourceAssetID), ["new-source", "new-source"])
     }
 
     /// A clip saved again gets a new video; the iCloud identifier of the one it replaced goes with it.
     func testSavingAClipAgainWithANewVideoDropsTheOldICloudIdentifier() async {
         let clipID = UUID()
-        let library = savedLibrary(clip: clipID)
+        let library = savedLibrary(on: "old-phone", clip: clipID)
         await library.relinkAssets(using: oldPhotos.lookup)
         XCTAssertEqual(library.clip(clipID)?.exportCloudID, "cloud-export")
 
@@ -213,13 +238,64 @@ final class LibraryAssetRelinkTests: XCTestCase {
         XCTAssertEqual(library.sources.first?.cloudID, "cloud-source")
     }
 
-    // MARK: - Saved before the library kept iCloud identifiers
+    /// A save made while a pass waits on Photos keeps its video: the pass only changes a record that
+    /// still holds what it read.
+    func testAClipSavedAgainDuringAPassKeepsItsNewVideo() async {
+        let clipID = UUID()
+        let restored = await restoredLibrary(clip: clipID)
+        var newPhotos = FakePhotos(assets: [.init(localID: "new-export", cloudID: "cloud-export")])
+        let gate = PassGate()
+        newPhotos.gate = gate
 
-    /// A source matches by the creation date and duration the library read from it, an exported
-    /// clip by its window's duration and a creation date during its save. The iCloud identifiers
-    /// are kept as they're found.
-    func testALibrarySavedBeforeICloudIdentifiersFindsItsVideosByDateAndDuration() async {
-        let restored = savedLibrary()
+        let lookup = newPhotos.lookup
+        let pass = Task { await restored.relinkAssets(using: lookup) }
+        var entered = false
+        let deadline = Date().addingTimeInterval(5)
+        while !entered, Date() < deadline {
+            entered = gate.entered.wait(timeout: .now()) == .success
+            if !entered { await Task.yield() }
+        }
+        XCTAssertTrue(entered, "the pass never reached Photos")
+
+        restored.record(
+            LibrarySave(
+                sourceAssetID: "old-source", sourceDuration: 30,
+                clips: [savedClip(4, export: "re-export", id: clipID)]),
+            sourceRecordedAt: recorded)
+        gate.release.signal()
+        await pass.value
+
+        XCTAssertEqual(restored.clip(clipID)?.exportAssetID, "re-export")
+        XCTAssertNil(restored.clip(clipID)?.exportCloudID)
+    }
+
+    /// The Profile starts a pass whenever it appears and the app becomes active, but asks Photos at
+    /// most once per interval.
+    func testTheProfilesPassesComeAtMostOncePerInterval() async {
+        let library = savedLibrary(on: "old-phone")
+        var photos = oldPhotos
+        let counter = PassCounter()
+        photos.counter = counter
+
+        await library.relinkAssetsIfDue(using: photos.lookup)
+        clock = clock.addingTimeInterval(60)
+        await library.relinkAssetsIfDue(using: photos.lookup)
+        XCTAssertEqual(counter.count, 1)
+
+        clock = clock.addingTimeInterval(ClipLibrary.relinkInterval)
+        await library.relinkAssetsIfDue(using: photos.lookup)
+        XCTAssertEqual(counter.count, 2)
+    }
+
+    // MARK: - By date and duration
+
+    /// A library saved before the library kept iCloud identifiers, opened on a new phone: a source
+    /// matches by the creation date and duration the library read from it, an exported clip by its
+    /// window's duration and a creation date during its save. The iCloud identifiers are kept as
+    /// they're found.
+    func testALibrarySavedBeforeICloudIdentifiersFindsItsVideosOnANewPhone() async {
+        _ = savedLibrary(on: nil)
+        let restored = makeLibrary(on: "new-phone")
         let newPhotos = FakePhotos(assets: [
             .init(localID: "new-source", cloudID: "cloud-source", createdAt: recorded, duration: 30.1),
             .init(
@@ -235,10 +311,78 @@ final class LibraryAssetRelinkTests: XCTestCase {
         XCTAssertEqual(restored.sources.first?.cloudID, "cloud-source")
     }
 
-    /// Two videos that could be the clip's leave it alone: a clip shown with another clip's video
-    /// is worse than one shown as missing.
-    func testALegacyClipWithTwoMatchingVideosIsLeftAlone() async {
-        let restored = savedLibrary()
+    /// Under limited access a video outside the selection looks gone, so the match by date and
+    /// duration waits for full access; the map by iCloud identifier is exact and doesn't.
+    func testUnderLimitedAccessOnlyTheICloudMatchRuns() async {
+        let library = savedLibrary(on: nil)
+        await library.relinkAssets(using: oldPhotos.lookup)
+        library.record(
+            LibrarySave(sourceAssetID: "source-b", sourceDuration: 30, clips: [savedClip(2, export: "old-b")]),
+            sourceRecordedAt: nil)
+        let restored = makeLibrary(on: "new-phone")
+        var newPhotos = FakePhotos(assets: [
+            .init(localID: "new-export", cloudID: "cloud-export"),
+            .init(localID: "new-b", createdAt: clock.addingTimeInterval(-20), duration: 1.5)
+        ])
+        newPhotos.wholeLibrary = false
+
+        await restored.relinkAssets(using: newPhotos.lookup)
+        XCTAssertEqual(restored.clips.map(\.exportAssetID), ["new-export", "old-b"])
+
+        newPhotos.wholeLibrary = true
+        await restored.relinkAssets(using: newPhotos.lookup)
+        XCTAssertEqual(restored.clips.map(\.exportAssetID), ["new-export", "new-b"])
+    }
+
+    /// A clip whose video was deleted in Photos on the phone that saved it stays without one, even
+    /// with a video there that would fit it: whether it was saved before or after the library
+    /// stamped its records.
+    func testOnThePhoneThatSavedItAClipDeletedInPhotosIsNotMatched() async {
+        let library = makeLibrary(on: nil)
+        library.record(
+            LibrarySave(
+                sourceAssetID: "source", sourceDuration: 30,
+                clips: [savedClip(2, export: "kept"), savedClip(8, length: 2.5, export: "deleted-before")]),
+            sourceRecordedAt: recorded)
+        let updated = makeLibrary(on: "old-phone")
+        updated.record(
+            LibrarySave(
+                sourceAssetID: "source", sourceDuration: 30,
+                clips: [savedClip(14, length: 3.5, export: "deleted-after")]),
+            sourceRecordedAt: recorded)
+        let photos = FakePhotos(assets: [
+            .init(localID: "kept", createdAt: clock.addingTimeInterval(-40), duration: 1.5),
+            .init(localID: "camera-a", createdAt: clock.addingTimeInterval(-30), duration: 2.5),
+            .init(localID: "camera-b", createdAt: clock.addingTimeInterval(-20), duration: 3.5)
+        ])
+
+        await updated.relinkAssets(using: photos.lookup)
+        XCTAssertEqual(updated.clips.map(\.exportAssetID), ["kept", "deleted-before", "deleted-after"])
+        await makeLibrary(on: "old-phone").relinkAssets(using: photos.lookup)
+        XCTAssertEqual(
+            makeLibrary(on: "old-phone").clips.map(\.exportAssetID), ["kept", "deleted-before", "deleted-after"])
+    }
+
+    /// Two clips of one save so close in length that each fits the other's video: the one video
+    /// that has arrived goes to neither, rather than to whichever clip comes first.
+    func testAVideoTwoClipsCouldBeIsGivenToNeither() async {
+        let library = makeLibrary(on: nil)
+        library.record(
+            LibrarySave(
+                sourceAssetID: "source", sourceDuration: 30,
+                clips: [savedClip(2, length: 1.6, export: "old-a"), savedClip(8, length: 1.65, export: "old-b")]),
+            sourceRecordedAt: recorded)
+        let restored = makeLibrary(on: "new-phone")
+        await restored.relinkAssets(using: FakePhotos(assets: [
+            .init(localID: "new-b", createdAt: clock.addingTimeInterval(-10), duration: 1.65)
+        ]).lookup)
+        XCTAssertEqual(restored.clips.map(\.exportAssetID), ["old-a", "old-b"])
+    }
+
+    /// Two videos that could be the clip's leave it alone.
+    func testAClipTwoVideosCouldBeIsLeftAlone() async {
+        _ = savedLibrary(on: nil)
+        let restored = makeLibrary(on: "new-phone")
         await restored.relinkAssets(using: FakePhotos(assets: [
             .init(localID: "first", createdAt: clock.addingTimeInterval(-20), duration: 1.5),
             .init(localID: "second", createdAt: clock.addingTimeInterval(-10), duration: 1.5)
@@ -246,38 +390,30 @@ final class LibraryAssetRelinkTests: XCTestCase {
         XCTAssertEqual(restored.clips.first?.exportAssetID, "old-export")
     }
 
-    /// A video another record already holds is never taken for a second one.
-    func testALegacyClipIsNotGivenAVideoAnotherClipHolds() async {
-        let restored = makeLibrary()
-        restored.record(
+    /// Clips saved with iCloud Photos off have no iCloud identifier and match on a new phone by date
+    /// and duration, but never to a video another record holds.
+    func testAClipWithoutAnICloudIdentifierIsNotGivenAVideoAnotherClipHolds() async {
+        let library = makeLibrary(on: "old-phone")
+        library.record(
             LibrarySave(
                 sourceAssetID: "source", sourceDuration: 30,
-                clips: [savedClip(2, export: "held"), savedClip(8, export: "old-export")]),
+                clips: [
+                    savedClip(2, export: "held"), savedClip(8, export: "old-b"),
+                    savedClip(14, length: 2.5, export: "old-c")
+                ]),
             sourceRecordedAt: recorded)
+        let restored = makeLibrary(on: "new-phone")
         await restored.relinkAssets(using: FakePhotos(assets: [
-            .init(localID: "held", createdAt: clock.addingTimeInterval(-20), duration: 1.5)
+            .init(localID: "held", createdAt: clock.addingTimeInterval(-30), duration: 1.5),
+            .init(localID: "new-c", createdAt: clock.addingTimeInterval(-20), duration: 2.5)
         ]).lookup)
-        XCTAssertEqual(restored.clips.map(\.exportAssetID), ["held", "old-export"])
-    }
-
-    /// One clip matching two videos becomes unique once another clip takes one of them.
-    func testAMatchAnotherClipTakesLeavesTheFirstWithOne() async {
-        let restored = makeLibrary()
-        restored.record(
-            LibrarySave(
-                sourceAssetID: "source", sourceDuration: 30,
-                clips: [savedClip(2, length: 1.5, export: "old-a"), savedClip(8, length: 1.9, export: "old-b")]),
-            sourceRecordedAt: recorded)
-        await restored.relinkAssets(using: FakePhotos(assets: [
-            .init(localID: "new-a", createdAt: clock.addingTimeInterval(-20), duration: 1.5),
-            .init(localID: "new-b", createdAt: clock.addingTimeInterval(-10), duration: 1.7)
-        ]).lookup)
-        XCTAssertEqual(restored.clips.map(\.exportAssetID), ["new-a", "new-b"])
+        XCTAssertEqual(restored.clips.map(\.exportAssetID), ["held", "old-b", "new-c"])
     }
 
     /// A video created long before the save can't be the clip it exported.
-    func testALegacyClipIsNotMatchedOutsideItsSave() async {
-        let restored = savedLibrary()
+    func testAClipIsNotMatchedOutsideItsSave() async {
+        _ = savedLibrary(on: nil)
+        let restored = makeLibrary(on: "new-phone")
         await restored.relinkAssets(using: FakePhotos(assets: [
             .init(localID: "earlier", createdAt: clock.addingTimeInterval(-2 * 60 * 60), duration: 1.5)
         ]).lookup)

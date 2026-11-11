@@ -35,10 +35,10 @@ struct ProfileView: View {
         .onChange(of: vocabulary.current) { _ in library.refreshEarned() }
         // Points saved clips at their videos on this device: after a restore onto a new iPhone the
         // videos arrive from iCloud Photos over time, so it runs again whenever the app comes back.
-        .task { await library.relinkAssets() }
+        .task { await library.relinkAssetsIfDue() }
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }
-            Task { await library.relinkAssets() }
+            Task { await library.relinkAssetsIfDue() }
         }
     }
 

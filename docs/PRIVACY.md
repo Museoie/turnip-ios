@@ -233,7 +233,8 @@ What a build with `TURNIP_FARM_ENDPOINT` set sends to the farm
 On the device: the session token, the Apple user ID it belongs to (for the
 credential-state check), the Apple user ID that agreed to contribute and one
 random key per contributed source live in the Keychain, readable after first
-unlock and never migrated off the device.
+unlock and never migrated off the device. So does the clip library's device
+mark (below), a random value that names no account and is never sent.
 The fetched vocabulary is cached in `Application Support/turnip-vocabulary.json`.
 A contribution waiting to send is kept in `Application Support/ContributionOutbox/`,
 with its pose keypoints, until the farm holds it. The folder is excluded from
@@ -292,9 +293,13 @@ Built (`Turnip/Profile/`):
   came from, under the existing Photos grant, to date its clips. The
   Profile reads each saved video's iCloud Photos identifier
   (`PHPhotoLibrary.cloudIdentifierMappings`) and maps it back to this
-  device's (`localIdentifierMappings`); with full access, a record saved
-  before it kept those is matched by creation date and duration among the
-  library's videos. All of it stays on the device. The Profile
+  device's (`localIdentifierMappings`); with full access, a record with no
+  iCloud identifier that was saved on another device is matched by creation
+  date and duration among the library's videos. To tell which device saved
+  a record, each record keeps a random device mark, minted once and kept in
+  the Keychain as never leaving the device
+  (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`). All of it stays on
+  the device. The Profile
   also shows each saved clip's thumbnail and plays it from Photos by its
   identifier, and the Clip view can delete a clip's video through
   `PHAssetChangeRequest.deleteAssets`, behind the system's own confirmation
