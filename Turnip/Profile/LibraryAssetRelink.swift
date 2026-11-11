@@ -126,36 +126,61 @@ struct LibraryAssetRelink: Equatable, Sendable {
         let missingClips = clips.filter { !present.contains($0.exportAssetID) }
         let missingSources = sources.filter { !present.contains($0.assetID) }
         relink.relinkByCloudID(missingClips, missingSources, lookup: lookup)
-        if let device, lookup.canReadWholeLibrary() {
-            let legacySavedHere = device.legacySavedHere ?? decideLegacySavedHere(clips, sources, present: present)
+        if let device {
+            let wholeLibrary = lookup.canReadWholeLibrary()
+            let legacySavedHere = device.legacySavedHere
+                ?? relink.decideLegacySavedHere(clips, sources, present: present, wholeLibrary: wholeLibrary)
             if device.legacySavedHere == nil { relink.legacySavedHere = legacySavedHere }
-            func savedElsewhere(_ savedOn: String?) -> Bool {
-                savedOn.map { $0 != device.mark } ?? (legacySavedHere == false)
+            if wholeLibrary {
+                let matcher = LegacyMatcher(
+                    lookup: lookup,
+                    claimed: present.union(relink.exports.values.map(\.after)).union(relink.sources.values),
+                    sourceDurations: Dictionary(
+                        sources.map { ($0.assetID, $0.duration) }, uniquingKeysWith: { first, _ in first }))
+                relink.relinkSavedElsewhere(
+                    missingClips, missingSources, device: device, legacySavedHere: legacySavedHere, matcher: matcher)
             }
-            let matcher = LegacyMatcher(
-                lookup: lookup,
-                claimed: present.union(relink.exports.values.map(\.after)).union(relink.sources.values),
-                sourceDurations: Dictionary(
-                    sources.map { ($0.assetID, $0.duration) }, uniquingKeysWith: { first, _ in first }))
-            relink.relinkLegacy(
-                missingClips.filter { $0.exportCloudID == nil && savedElsewhere($0.savedOn) },
-                missingSources.filter { $0.cloudID == nil && savedElsewhere($0.savedOn) },
-                matcher: matcher)
         }
         relink.addCloudIDs(clips, sources, present: present, lookup: lookup)
         return relink
     }
 
-    /// Whether the records saved before the library stamped them were saved on this device: true
-    /// when any of their videos is found here by its local identifier, which no other device mints.
-    /// `nil` when there are none to decide for.
-    private static func decideLegacySavedHere(
-        _ clips: [LibraryClip], _ sources: [LibrarySource], present: Set<String>
+    /// Whether the records saved before the library stamped them were saved on this device; `nil`
+    /// when there are none, or when this pass can't tell yet.
+    /// - One of them relinked by iCloud identifier in this pass held a local identifier this device
+    ///   doesn't know, though Photos knows its video: it was saved elsewhere, under any access.
+    /// - Otherwise, with full access, they were saved here if any of their videos is found by the
+    ///   local identifier it holds, which no other device mints. Under limited access a video
+    ///   outside the selection looks gone, so the decision waits.
+    /// Decided before any relink of theirs makes their identifiers this device's own.
+    private func decideLegacySavedHere(
+        _ clips: [LibraryClip], _ sources: [LibrarySource], present: Set<String>, wholeLibrary: Bool
     ) -> Bool? {
-        let unstamped = clips.filter { $0.savedOn == nil }.map(\.exportAssetID)
-            + sources.filter { $0.savedOn == nil }.map(\.assetID)
-        guard !unstamped.isEmpty else { return nil }
-        return !present.isDisjoint(with: unstamped)
+        let unstampedClips = clips.filter { $0.savedOn == nil }
+        let unstampedSources = sources.filter { $0.savedOn == nil }
+        guard !unstampedClips.isEmpty || !unstampedSources.isEmpty else { return nil }
+        if unstampedClips.contains(where: { exports[$0.id] != nil })
+            || unstampedSources.contains(where: { self.sources[$0.assetID] != nil }) {
+            return false
+        }
+        guard wholeLibrary else { return nil }
+        let held = unstampedClips.map(\.exportAssetID) + unstampedSources.map(\.assetID)
+        return !present.isDisjoint(with: held)
+    }
+
+    /// Step 2 of `make`, over the records with no iCloud identifier that were saved on another
+    /// device.
+    private mutating func relinkSavedElsewhere(
+        _ clips: [LibraryClip], _ sources: [LibrarySource], device: LibraryDevice, legacySavedHere: Bool?,
+        matcher: LegacyMatcher
+    ) {
+        func savedElsewhere(_ savedOn: String?) -> Bool {
+            savedOn.map { $0 != device.mark } ?? (legacySavedHere == false)
+        }
+        relinkLegacy(
+            clips.filter { $0.exportCloudID == nil && savedElsewhere($0.savedOn) },
+            sources.filter { $0.cloudID == nil && savedElsewhere($0.savedOn) },
+            matcher: matcher)
     }
 
     private mutating func relinkByCloudID(

@@ -247,9 +247,13 @@ clips are there at all. Recovery comes from the device, in two layers:
      it was saved on another device, and only with full access. A record
      saved here whose video resolves to nothing was deleted in Photos,
      and keeps its "video deleted" state (§2.3). For records saved before
-     the library stamped them, each device decides once, on its first
-     pass with full access, that they were saved there if any of their
-     `localIdentifier`s resolves, since no other device mints the same.
+     the library stamped them, each device decides once whether they were
+     saved there. One of them relinked by its cloud ID settles it as
+     elsewhere, under any access. Otherwise, on the first pass with full
+     access, they were saved there if any of their `localIdentifier`s
+     resolves, since no other device mints the same. Either way the
+     decision comes before a relink makes their identifiers the device's
+     own.
      *(Judgment call: a device that saved them and has since lost every
      one of their videos decides wrongly, and matches them.)*
    - The match: a source fits a video by the creation date (±1 s) and
