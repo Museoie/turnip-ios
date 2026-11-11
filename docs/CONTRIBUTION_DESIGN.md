@@ -101,8 +101,8 @@ The OTA trick model (§7) is built, in `Turnip/ModelUpdates/` and
 the one in use, a staged model loads once per launch and replaces the
 one in use only once it has loaded, analysis runs it once per pose, and
 its clips reach Name Clips with their confident names pre-filled and
-their provenance kept through to the upload. The poll is off until
-`TURNIP_MODEL_UPDATE_ENDPOINT` is set, and the farm has promoted no
+their provenance kept through to the upload. The poll is on —
+`TURNIP_MODEL_UPDATE_ENDPOINT` names the farm — and the farm has promoted no
 model yet.
 
 ---
@@ -572,9 +572,9 @@ contribution ships, since changing it later orphans every source.
 
 ### 7.1 Delivery (extends the existing OTA path)
 
-**Built** (`Turnip/ModelUpdates/`), and inert until
-`TURNIP_MODEL_UPDATE_ENDPOINT` names the farm: it is blank in the
-committed Info.plist, so the app makes no model request.
+**Built** (`Turnip/ModelUpdates/`) and live: `TURNIP_MODEL_UPDATE_ENDPOINT`
+names the farm, so the app polls `GET /api/models/current` and gets 404
+NO_MODEL until the first promotion.
 
 On launch and on every foreground the app polls
 `GET /api/models/current`, which is public, so signed in or not. The

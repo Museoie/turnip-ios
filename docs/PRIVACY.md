@@ -30,13 +30,16 @@ in the store.
   decision #7.
 - No calls to any Turnip-controlled server in the v1 path. A `URLSession` client
   for OTA model updates does exist — `Turnip/ModelUpdates/ModelUpdateClient.swift`,
-  the only networking code in `Turnip/` — and it is inert: it refuses any scheme
+  the only networking code in `Turnip/` — and it refuses any scheme
   but `https`, it takes its endpoint as a parameter rather than holding one, and
   `ModelUpdateService.checkForUpdates` returns on a `nil` base URL before it
   reaches the client. The app runs that check on launch and on every
-  foreground, but the URL comes from the `TURNIP_MODEL_UPDATE_ENDPOINT`
-  Info.plist key, which is empty in the committed plist — so the base URL is
-  `nil` and no request is ever made. The client's own test exercises the
+  foreground, and the URL comes from the `TURNIP_MODEL_UPDATE_ENDPOINT`
+  Info.plist key, which now names the farm (`https://turnip.hoie.kim`) — so the
+  app polls the public `GET /api/models/current` manifest on launch and on
+  every foreground. That request carries no identifier, no account, and no
+  sign-in, and before the farm promotes its first model it answers 404
+  NO_MODEL and nothing further happens. The client's own test exercises the
   `https` guard without issuing a request.
   Bytes do cross the network when PhotoKit downloads an iCloud-only video
   (`isNetworkAccessAllowed` in `PhotoVideoResolver`/`ThumbnailLoader`) — from

@@ -2,10 +2,10 @@ import Foundation
 
 /// Wires the OTA model-update service into the app lifecycle.
 ///
-/// The whole flow is inert until `TURNIP_MODEL_UPDATE_ENDPOINT` is configured:
-/// with no endpoint `ModelUpdateConfiguration.endpoint` is nil and
-/// `checkForUpdates` becomes a no-op with zero network traffic, so the v1
-/// "nothing leaves the device" promise holds until the endpoint is set.
+/// The endpoint is configured (`TURNIP_MODEL_UPDATE_ENDPOINT` names the farm),
+/// so the poll runs on launch and on every foreground. When the key is absent,
+/// blank, or not https, `ModelUpdateConfiguration.endpoint` is nil and
+/// `checkForUpdates` becomes a no-op with zero network traffic.
 enum ModelUpdateLifecycle {
     /// One service for the process lifetime. `ModelUpdateService` suppresses
     /// overlapping checks with an in-flight guard, which only works when every

@@ -77,7 +77,7 @@ struct TurnipApp: App {
             // OTA model-update poll: didBecomeActive fires on launch and on
             // every foreground transition. checkForUpdates dispatches itself to
             // a detached utility-QoS task, so the manifest fetch, hashing, and
-            // atomic stage stay off the main actor. Inert until
+            // atomic stage stay off the main actor. The poll runs because
             // TURNIP_MODEL_UPDATE_ENDPOINT is set — see ModelUpdateLifecycle.
             .onReceive(
                 NotificationCenter.default.publisher(
