@@ -12,8 +12,32 @@ struct ModelProposal: Codable, Hashable, Sendable {
     /// The model's names for the clip that scored below the pre-fill bar, surest first
     /// (`docs/PERSONALIZATION_DESIGN.md` §4.2 tier 3): never pre-filled, shown as suggestions
     /// instead. `[]` for clips saved before this was recorded.
-    let belowBarNames: [String] = []
+    let belowBarNames: [String]
     let suggestionsWithheld: Bool
+
+    init(
+        modelVersion: String, suggestedNames: [String], belowBarNames: [String] = [],
+        suggestionsWithheld: Bool
+    ) {
+        self.modelVersion = modelVersion
+        self.suggestedNames = suggestedNames
+        self.belowBarNames = belowBarNames
+        self.suggestionsWithheld = suggestionsWithheld
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case modelVersion, suggestedNames, belowBarNames, suggestionsWithheld
+    }
+
+    /// Clips saved before tier 3 was recorded carry no `belowBarNames` key; they decode to `[]`
+    /// instead of failing the whole library load.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        modelVersion = try container.decode(String.self, forKey: .modelVersion)
+        suggestedNames = try container.decode([String].self, forKey: .suggestedNames)
+        belowBarNames = try container.decodeIfPresent([String].self, forKey: .belowBarNames) ?? []
+        suggestionsWithheld = try container.decode(Bool.self, forKey: .suggestionsWithheld)
+    }
 
     /// The names a clip starts with on Name Clips, as chips the user can keep or remove: none on
     /// a blind clip.
