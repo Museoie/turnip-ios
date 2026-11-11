@@ -110,7 +110,8 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
 
 - **Source** — one per video that produced at least one saved clip:
   - `source_asset_id`: the original's `PHAsset.localIdentifier` (never
-    leaves the device);
+    leaves the device), and `source_cloud_id`, its `PHCloudIdentifier`
+    once Photos has one (§3.2);
   - `recorded_at` (`PHAsset.creationDate`), duration, analysis rate;
   - the pose sequence (§2.2);
   - `location`, copied from `PHAsset.location` when the asset has one,
@@ -124,7 +125,8 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
   - the window, in source seconds and in canonical 10 Hz frames;
   - the crop and rotation export used;
   - `export_asset_id`: the saved clip's `localIdentifier`, as
-    `ClipPhotosSaver.saveVideo` returns it;
+    `ClipPhotosSaver.saveVideo` returns it, and `export_cloud_id`, its
+    `PHCloudIdentifier` once Photos has one (§3.2);
   - `names`: an ordered list of `{name, origin}`, `origin` one of
     `typed | vocabulary | model` (`BACKEND_DESIGN.md` §1.2.18);
   - `is_me` (§4.3);
@@ -203,9 +205,11 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
 | `clip_id` | UUIDv4 | by the app, at clip creation | only when the clip is contributed |
 | `export_asset_id` | the saved clip's `localIdentifier` | by Photos, at save | never |
 | `source_asset_id` | the original's `localIdentifier` | by Photos | never |
+| `export_cloud_id`, `source_cloud_id` | the same assets' `PHCloudIdentifier` | by iCloud Photos, read after save | never |
 | `source_id` | SHA-256 per `CONTRIBUTION_DESIGN.md` §1 | by the app, on first contribution | when contributed |
 
-The Profile needs only the first two; `source_id` is contribution's.
+The Profile needs `clip_id`, `export_asset_id` and the cloud IDs that
+relink it (§3.2); `source_id` is contribution's.
 Whether `source_id` (the farm's `video_id`) should derive from an
 identifier shared across a user's devices has to be settled before the
 first contribution ships (master plan §9 Q2).
@@ -218,9 +222,40 @@ clips are there at all. Recovery comes from the device, in two layers:
 
 1. **Device backup.** The library is in `Application Support/`, so an
    iCloud or Finder backup and restore brings it back whole, IDs
-   included. Whether `localIdentifier`s still resolve after a restore
-   to a *new* device is unverified; when one does not, layer 2's match
-   relinks the clip.
+   included. A `localIdentifier` is minted per device, though: restored
+   onto a *new* iPhone, the library's identifiers name nothing there,
+   even with iCloud Photos bringing every video along (seen on a real
+   transfer: every saved clip lost its video). So each record also keeps
+   its asset's `PHCloudIdentifier`, the same on every device signed in to
+   the user's iCloud Photos library, and `ClipLibrary.relinkAssets` runs
+   whenever the Profile appears or the app becomes active
+   (`LibraryAssetRelink`):
+   - A record whose `localIdentifier` resolves and has no cloud ID yet
+     gets one. A clip just saved has none until iCloud Photos uploads
+     it, so a later pass asks again; a re-saved clip's new video drops
+     the old video's cloud ID.
+   - With full Photos access, a record whose `localIdentifier` resolves
+     to nothing takes the one `PHPhotoLibrary.localIdentifierMappings`
+     gives its cloud ID. A video iCloud Photos hasn't brought down yet
+     is found on a later pass. A source that moves carries its clips and
+     trashed proposals with it, and joins a record the same video got
+     from a save on the new device.
+   - A record saved before the library kept cloud IDs is matched among
+     the videos no other record holds: a source by the creation date
+     (±1 s) and duration (±0.5 s) the library read from it, an exported
+     clip by its window's duration (±0.25 s) and a creation date from an
+     hour before its save to five minutes after. Exactly one match
+     relinks it and the pass repeats while anything relinks; two or more
+     leave it alone. *(Judgment call: a clip shown with another clip's
+     video is worse than one shown as missing. A clip saved again keeps
+     its first save's date, so its newer video is outside the window.)*
+   - **Unverified; probe on a device:** that an exported clip's Photos
+     creation date is its save's (the exporter writes no date of its
+     own) and survives iCloud Photos.
+   - Under limited access a video outside the selection looks gone, so
+     relinking waits for full access; found records still get cloud IDs.
+   - Without iCloud Photos there is no cloud ID and a new device has none
+     of the old videos to find; layer 2 is the fallback there.
 2. **A Turnip record in each exported clip file.** At export the clip's
    movie gets one movie-level QuickTime metadata item,
    `mdta/com.hoiekim.turnip.clip` — the key space the camera's roll

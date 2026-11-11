@@ -265,8 +265,10 @@ Built (`Turnip/Profile/`):
 - **The first persistent user data.** `ClipLibrary` keeps one JSON file,
   `Application Support/ClipLibrary/library.json`, written by Name Clips' save
   and by naming on the Profile: for each video that produced a saved clip,
-  its Photos identifier, recording date and duration; for each saved clip,
-  its clip ID, window in seconds, its own Photos identifier, trick names,
+  its Photos identifiers (this device's and iCloud Photos', which finds the
+  video again after a restore onto a new device), recording date and
+  duration; for each saved clip, its clip ID, window in seconds, its own
+  Photos identifiers, trick names,
   whether it shows the user, whether detection found it, how the trick model
   proposed it, which stored pose it was cut from, and its date; the levels
   and rep milestones earned; and, for the personal layer, the trick-model
@@ -287,7 +289,12 @@ Built (`Turnip/Profile/`):
   it leaves the library, and deleting the app deletes them all. Only the
   personal layer's rebuild reads them (below).
 - **New read, no new prompt.** `PHAsset.creationDate` of the video a save
-  came from, under the existing Photos grant, to date its clips. The Profile
+  came from, under the existing Photos grant, to date its clips. The
+  Profile reads each saved video's iCloud Photos identifier
+  (`PHPhotoLibrary.cloudIdentifierMappings`) and maps it back to this
+  device's (`localIdentifierMappings`); with full access, a record saved
+  before it kept those is matched by creation date and duration among the
+  library's videos. All of it stays on the device. The Profile
   also shows each saved clip's thumbnail and plays it from Photos by its
   identifier, and the Clip view can delete a clip's video through
   `PHAssetChangeRequest.deleteAssets`, behind the system's own confirmation

@@ -20,6 +20,7 @@ struct ProfileView: View {
     @Binding var path: [ProfileRoute]
 
     @State private var filter: TrickGallery.Filter = .mine
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -32,6 +33,13 @@ struct ProfileView: View {
         // A newer vocabulary can merge two names' counts without the library changing.
         .onAppear { library.refreshEarned() }
         .onChange(of: vocabulary.current) { _ in library.refreshEarned() }
+        // Points saved clips at their videos on this device: after a restore onto a new iPhone the
+        // videos arrive from iCloud Photos over time, so it runs again whenever the app comes back.
+        .task { await library.relinkAssets() }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active else { return }
+            Task { await library.relinkAssets() }
+        }
     }
 
     private var progress: [TrickProgress] {

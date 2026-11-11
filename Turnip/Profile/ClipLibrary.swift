@@ -4,8 +4,13 @@ import Photos
 
 /// One video that produced at least one saved clip (`docs/PROFILE_DESIGN.md` §2.1).
 struct LibrarySource: Codable, Hashable, Sendable {
-    /// The original's `PHAsset.localIdentifier`. Never leaves the device.
-    let assetID: String
+    /// The original's `PHAsset.localIdentifier` on this device. Never leaves the device. A library
+    /// restored onto another device holds the old device's, which `cloudID` relinks.
+    var assetID: String
+    /// The original's `PHCloudIdentifier`, which names it on every device sharing the user's iCloud
+    /// Photos library. `nil` until Photos has one for it, and for records written before the
+    /// library kept it. Never leaves the device.
+    var cloudID: String?
     /// When the original was recorded (`PHAsset.creationDate`); `nil` when Photos had no date.
     var recordedAt: Date?
     var duration: TimeInterval
@@ -16,12 +21,15 @@ struct LibraryClip: Codable, Hashable, Identifiable, Sendable {
     /// The clip's `clip_id`, minted when the clip was created on Name Clips: the ID a contribution
     /// sends.
     let id: UUID
-    let sourceAssetID: String
+    var sourceAssetID: String
     /// The window, in source seconds.
     var startTime: TimeInterval
     var endTime: TimeInterval
-    /// The saved clip's `PHAsset.localIdentifier`. Never leaves the device.
+    /// The saved clip's `PHAsset.localIdentifier` on this device. Never leaves the device. A library
+    /// restored onto another device holds the old device's, which `exportCloudID` relinks.
     var exportAssetID: String
+    /// The saved clip's `PHCloudIdentifier`, as `LibrarySource.cloudID`. Never leaves the device.
+    var exportCloudID: String?
     var names: [ClipName]
     var isMe: Bool
     var isAutoDetected: Bool
@@ -46,7 +54,7 @@ struct LibraryClip: Codable, Hashable, Identifiable, Sendable {
 /// and the canonical 10 Hz frames it was proposed over, end exclusive. Nothing else: not a clip,
 /// an export or a name. The personal keep layer reads it as a segment the user didn't keep.
 struct DismissedWindow: Codable, Hashable, Sendable {
-    let sourceAssetID: String
+    var sourceAssetID: String
     let poseID: String
     let startFrame: Int
     let endFrame: Int
@@ -84,6 +92,10 @@ struct LibrarySave: Sendable {
 /// computed from it on the device. All that ever leaves is what a contribution sends: a saved
 /// clip's id and names, read here so a waiting upload sends the clip as it stands.
 ///
+/// Records point at their videos by `PHAsset.localIdentifier`, which is minted per device, and keep
+/// each video's iCloud identifier beside it, so a library restored onto a new device finds its
+/// videos again (`relinkAssets`).
+///
 /// Kept as one JSON file in `Application Support/`, which is in the user's device backups and is
 /// never evicted, rewritten whole and atomically on every change. The file carries a schema
 /// version: a file this build can't read — corrupt, or written by a newer build — is moved aside
@@ -102,6 +114,8 @@ final class ClipLibrary: ObservableObject {
     /// Trashed proposals on the poses the library keeps, for the personal layer. Each goes with
     /// its pose, and all of them when Learn from my clips is turned off.
     @Published private(set) var dismissedWindows: [DismissedWindow] = []
+    /// Whether a relink pass is under way, so the Profile appearing again doesn't start another.
+    private var isRelinking = false
 
     private let fileURL: URL?
     let poseStore: SourcePoseStore
@@ -205,6 +219,7 @@ final class ClipLibrary: ObservableObject {
                 startTime: saved.window.startTime,
                 endTime: saved.window.endTime,
                 exportAssetID: saved.exportAssetID,
+                exportCloudID: existing?.exportAssetID == saved.exportAssetID ? existing?.exportCloudID : nil,
                 names: saved.names,
                 isMe: saved.isMe,
                 isAutoDetected: saved.isAutoDetected,
@@ -274,6 +289,73 @@ final class ClipLibrary: ObservableObject {
         if let releasedPose {
             poseStore.remove(releasedPose)
         }
+    }
+
+    /// Points every record at its video on this device, and keeps each video's iCloud identifier
+    /// (`LibraryAssetRelink`). The Profile runs it whenever it appears: a library restored onto a
+    /// new device finds its videos as iCloud Photos brings them down, and one still on the device
+    /// that saved it gathers the iCloud identifiers a later restore needs. The lookups run off the
+    /// main actor; a record changed meanwhile keeps its change.
+    func relinkAssets(using lookup: LibraryAssetLookup = .photos) async {
+        guard !isRelinking, !clips.isEmpty || !sources.isEmpty else { return }
+        isRelinking = true
+        defer { isRelinking = false }
+        let clips = self.clips
+        let sources = self.sources
+        let relink = await Task.detached(priority: .utility) {
+            LibraryAssetRelink.make(clips: clips, sources: sources, lookup: lookup)
+        }.value
+        guard !relink.isEmpty else { return }
+        apply(relink)
+    }
+
+    private func apply(_ relink: LibraryAssetRelink) {
+        var changed = false
+        for (id, change) in relink.exports {
+            guard let index = clips.firstIndex(where: { $0.id == id }), clips[index].exportAssetID == change.from
+            else { continue }
+            clips[index].exportAssetID = change.to
+            changed = true
+        }
+        for (id, change) in relink.exportCloudIDs {
+            guard let index = clips.firstIndex(where: { $0.id == id }), clips[index].exportAssetID == change.from,
+                clips[index].exportCloudID == nil else { continue }
+            clips[index].exportCloudID = change.to
+            changed = true
+        }
+        for (heldID, cloudID) in relink.sourceCloudIDs {
+            guard let index = sources.firstIndex(where: { $0.assetID == heldID }), sources[index].cloudID == nil
+            else { continue }
+            sources[index].cloudID = cloudID
+            changed = true
+        }
+        for (heldID, localID) in relink.sources {
+            changed = moveSource(heldID, to: localID) || changed
+        }
+        if changed { persist() }
+    }
+
+    /// Moves a source, its clips and the proposals trashed on it to the identifier its video has on
+    /// this device. A save of the same video made here meanwhile already has a record under that
+    /// identifier: the two become one.
+    private func moveSource(_ heldID: String, to localID: String) -> Bool {
+        guard let index = sources.firstIndex(where: { $0.assetID == heldID }) else { return false }
+        if let existing = sources.firstIndex(where: { $0.assetID == localID }) {
+            sources[existing].recordedAt = sources[existing].recordedAt ?? sources[index].recordedAt
+            sources[existing].cloudID = sources[existing].cloudID ?? sources[index].cloudID
+            sources.remove(at: index)
+        } else {
+            sources[index].assetID = localID
+        }
+        for index in clips.indices where clips[index].sourceAssetID == heldID {
+            clips[index].sourceAssetID = localID
+        }
+        for index in dismissedWindows.indices where dismissedWindows[index].sourceAssetID == heldID {
+            dismissedWindows[index].sourceAssetID = localID
+        }
+        var seen = Set<DismissedWindow>()
+        dismissedWindows = dismissedWindows.filter { seen.insert($0).inserted }
+        return true
     }
 
     /// Forgets every trashed proposal: Learn from my clips turned off
