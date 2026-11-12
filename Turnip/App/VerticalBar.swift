@@ -47,16 +47,31 @@ struct VerticalBar: Equatable {
         }
     }
 
+    /// The deepest a reported status bar may reach, as a share of the window's height, and still be
+    /// read as the top of the column rather than the whole of it.
+    static let statusBarMaximumShare: CGFloat = 1.0 / 3.0
+
     /// How far down the column its controls start: under the status bar at the top of it, as the
     /// system lays its own bar items out. Read from the scene, since SwiftUI reports no status bar
-    /// frame, and never above `statusBarFloor`, since what the scene reports for a status bar standing
-    /// in the column isn't documented. `statusBarFloor` until a window exists.
+    /// frame. `statusBarFloor` until a window exists.
     @MainActor static var controlsTop: CGFloat {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
-        guard let statusBar = scene?.statusBarManager?.statusBarFrame, !statusBar.isEmpty else {
-            return statusBarFloor
-        }
+        let window = scene?.windows.first(where: \.isKeyWindow) ?? scene?.windows.first
+        return controlsTop(
+            statusBar: scene?.statusBarManager?.statusBarFrame, windowHeight: window?.bounds.height ?? 0)
+    }
+
+    /// Where the column's controls start, given the status bar frame the scene reports and the
+    /// window's height. What the scene reports for a status bar standing in the column isn't
+    /// documented, so the frame is trusted only where it reads as the top of the column: it can push
+    /// the controls below `statusBarFloor`, and never further than `statusBarMaximumShare` of the
+    /// window down. A frame reaching deeper — one spanning the whole column — would put them off
+    /// the bottom of the screen, so it's ignored and the floor stands.
+    static func controlsTop(statusBar: CGRect?, windowHeight: CGFloat) -> CGFloat {
+        guard let statusBar, !statusBar.isEmpty,
+              statusBar.maxY <= windowHeight * statusBarMaximumShare
+        else { return statusBarFloor }
         return max(statusBar.maxY, statusBarFloor)
     }
 }

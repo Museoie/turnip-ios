@@ -42,6 +42,14 @@ final class RootNavigationTests: XCTestCase {
         XCTAssertNil(VerticalBar(safeAreaInsets: EdgeInsets(top: 20, leading: 0, bottom: 20, trailing: 20)))
     }
 
+    /// `VerticalBar.minimumWidth` is the line: an inset that much wider than the other side's is a bar,
+    /// and one a point narrower isn't.
+    func testAnInsetExactlyTheMinimumWidthWiderIsAVerticalBar() {
+        let bar = VerticalBar(safeAreaInsets: EdgeInsets(top: 20, leading: 0, bottom: 20, trailing: 44))
+        XCTAssertEqual(bar, VerticalBar(edge: .trailing, width: 44))
+        XCTAssertNil(VerticalBar(safeAreaInsets: EdgeInsets(top: 20, leading: 0, bottom: 20, trailing: 43)))
+    }
+
     func testAWideTrailingInsetIsATrailingVerticalBar() {
         let bar = VerticalBar(safeAreaInsets: EdgeInsets(top: 20, leading: 0, bottom: 20, trailing: 84))
         XCTAssertEqual(bar, VerticalBar(edge: .trailing, width: 84))
@@ -56,6 +64,31 @@ final class RootNavigationTests: XCTestCase {
     func testTheBarIsAsWideAsItsWholeInset() {
         let bar = VerticalBar(safeAreaInsets: EdgeInsets(top: 20, leading: 20, bottom: 20, trailing: 84))
         XCTAssertEqual(bar, VerticalBar(edge: .trailing, width: 84))
+    }
+
+    // MARK: - Where the column's controls start
+
+    func testNoStatusBarFrameKeepsTheFloor() {
+        XCTAssertEqual(VerticalBar.controlsTop(statusBar: nil, windowHeight: 667), VerticalBar.statusBarFloor)
+        XCTAssertEqual(VerticalBar.controlsTop(statusBar: .zero, windowHeight: 667), VerticalBar.statusBarFloor)
+    }
+
+    /// The strip across the top that a status bar has always been ends above the floor.
+    func testAStatusBarStripKeepsTheFloor() {
+        let strip = CGRect(x: 0, y: 0, width: 458, height: 54)
+        XCTAssertEqual(VerticalBar.controlsTop(statusBar: strip, windowHeight: 667), VerticalBar.statusBarFloor)
+    }
+
+    func testAStatusBarReachingPastTheFloorMovesTheControlsUnderIt() {
+        let column = CGRect(x: 374, y: 0, width: 84, height: 200)
+        XCTAssertEqual(VerticalBar.controlsTop(statusBar: column, windowHeight: 667), 200)
+    }
+
+    /// A frame spanning the whole column would put the controls off the bottom of the screen.
+    func testAStatusBarSpanningTheColumnIsIgnored() {
+        let wholeColumn = CGRect(x: 374, y: 0, width: 84, height: 667)
+        XCTAssertEqual(
+            VerticalBar.controlsTop(statusBar: wholeColumn, windowHeight: 667), VerticalBar.statusBarFloor)
     }
 
     // MARK: - Gallery columns
