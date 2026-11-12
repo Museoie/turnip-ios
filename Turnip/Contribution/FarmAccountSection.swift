@@ -108,8 +108,9 @@ enum ContributionDisclosure {
         then are kept without any link to it.
         """)
     static let deletionReach = String(localized: """
-        Deleting your account removes every contribution this app can still find. The rest \
-        can't be traced back to you and stay in the training data.
+        Deleting your account removes every contribution this app can still find. The rest stay \
+        in the training data with no link to your account, though someone with a video of the same \
+        clip could still match them to it.
         """)
     static let consent = String(localized: """
         Contribute only clips of yourself, or of people who agreed.

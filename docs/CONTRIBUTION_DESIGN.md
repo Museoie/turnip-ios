@@ -317,8 +317,11 @@ video can never be confirmed.
   - contributions stay linked to the user's account for 30 days after
     their last edit, then are kept without any link to it;
   - deleting the account removes every contribution this app can still
-    find, and the rest can't be traced back to the user and remain in
-    the training data;
+    find, and the rest remain in the training data with no link to the
+    account, though someone with a video of the same clip could still
+    match them to it (`BACKEND_DESIGN.md` §9 Q9). The farm's §7.1 wording
+    ("can't be traced back to the user") overstates this and needs the
+    same change;
   - contribute only clips of yourself, or of people who agreed: the
     person in a clip may not be the account holder. A clip marked as
     someone else (`PROFILE_DESIGN.md` §4.3) is flagged next to this
