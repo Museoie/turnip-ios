@@ -43,11 +43,15 @@ final class RootNavigationTests: XCTestCase {
     }
 
     /// `VerticalBar.minimumWidth` is the line: an inset that much wider than the other side's is a bar,
-    /// and one a point narrower isn't.
+    /// and one a point narrower isn't — on either side.
     func testAnInsetExactlyTheMinimumWidthWiderIsAVerticalBar() {
-        let bar = VerticalBar(safeAreaInsets: EdgeInsets(top: 20, leading: 0, bottom: 20, trailing: 44))
-        XCTAssertEqual(bar, VerticalBar(edge: .trailing, width: 44))
+        let trailing = VerticalBar(safeAreaInsets: EdgeInsets(top: 20, leading: 0, bottom: 20, trailing: 44))
+        XCTAssertEqual(trailing, VerticalBar(edge: .trailing, width: 44))
         XCTAssertNil(VerticalBar(safeAreaInsets: EdgeInsets(top: 20, leading: 0, bottom: 20, trailing: 43)))
+
+        let leading = VerticalBar(safeAreaInsets: EdgeInsets(top: 20, leading: 44, bottom: 20, trailing: 0))
+        XCTAssertEqual(leading, VerticalBar(edge: .leading, width: 44))
+        XCTAssertNil(VerticalBar(safeAreaInsets: EdgeInsets(top: 20, leading: 43, bottom: 20, trailing: 0)))
     }
 
     func testAWideTrailingInsetIsATrailingVerticalBar() {
@@ -82,6 +86,16 @@ final class RootNavigationTests: XCTestCase {
     func testAStatusBarReachingPastTheFloorMovesTheControlsUnderIt() {
         let column = CGRect(x: 374, y: 0, width: 84, height: 200)
         XCTAssertEqual(VerticalBar.controlsTop(statusBar: column, windowHeight: 667), 200)
+    }
+
+    /// `VerticalBar.statusBarMaximumShare` is the line: a frame ending exactly a third of the window
+    /// down still counts, and one a point deeper doesn't.
+    func testAStatusBarEndingExactlyAThirdOfTheWindowDownStillCounts() {
+        let atTheLine = CGRect(x: 374, y: 0, width: 84, height: 200)
+        XCTAssertEqual(VerticalBar.controlsTop(statusBar: atTheLine, windowHeight: 600), 200)
+        let pastTheLine = CGRect(x: 374, y: 0, width: 84, height: 201)
+        XCTAssertEqual(
+            VerticalBar.controlsTop(statusBar: pastTheLine, windowHeight: 600), VerticalBar.statusBarFloor)
     }
 
     /// A frame spanning the whole column would put the controls off the bottom of the screen.
