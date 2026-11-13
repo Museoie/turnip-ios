@@ -277,9 +277,11 @@ The flow rides the existing screens from `UIUX.md`:
 
 ### 3.3 The confirmation step (new)
 
-Confirmation is the farm boundary: **only confirmed clips + labels are
-uploaded; nothing else ever is.** Discarded clips and the original
-video can never be confirmed.
+Confirmation is the farm boundary: **a source is uploaded only once one
+of its clips is confirmed and named, and then as its whole-session pose
+keypoints (§2.2) plus the confirmed clip windows and their labels. The
+video never is.** Discarded clips can never be confirmed, though their
+frames are part of the session pose.
 
 - Name Clips has no toggle of its own: Settings' Contribution section
   leads with one **Contribute named clips** switch (`UIUX.md` §1a,
@@ -328,7 +330,9 @@ video can never be confirmed.
     line. The sheet says that later saves include such clips, so this
     one reminder covers them too. *(Judgment call: the farm asks for
     this at consent, not per contribution, and a save after consent has
-    no sheet to flag anything on.)*
+    no sheet to flag anything on.)* *Planned (§8.1): only clips marked
+    as the user are contributed, and clips of anyone else stay on the
+    device.*
 - A contributed clip needs at least one trick name, given in the core
   flow (`PROFILE_DESIGN.md` §4); a clip with no names is never
   contributed.
@@ -354,6 +358,8 @@ here is what contribution adds:
 
 - **Free text is the contract.** No fixed vocabulary is enforced; the
   farm stores raw strings and its `label_taxonomy` curates later.
+  *Planned (§8.1): only vocabulary names are contributed, and a new name
+  goes to a candidate list instead.*
 - **Origin.** Each name is sent with the `origin` the clip library
   recorded when it was given: `typed`, `vocabulary` (picked from the
   suggestions), or `model` (pre-filled by the trick model and kept)
@@ -499,6 +505,7 @@ record of whose a contribution is.
   sign in again.
 - **Consent.** The confirmation sheet's agreement (§3.3) is kept in the
   Keychain as the Apple user who gave it, with the same accessibility.
+  It is recorded nowhere else. *Planned (§8.1): the farm records it too.*
 - **Source keys.** The first time a source is contributed, generate 32
   random bytes as its key and store it in the Keychain under its
   `video_id`, with the same accessibility as the session token. The key
@@ -512,7 +519,8 @@ record of whose a contribution is.
   key for (`DELETE /api/sources/:id`), call `DELETE /api/account`, then
   delete the local keys and session token. Before confirming, repeat the
   §3.3 disclosure: contributions this app can no longer find stay in
-  the training data, unlinked from the account.
+  the training data, unlinked from the account, though someone with a
+  video of the same clip could still match them to it.
 
 ---
 
@@ -702,9 +710,13 @@ on-device personal layer with everything it learns from
 **Leaves only on explicit opt-in** (Settings' Contribute named clips
 switch, and the confirmation sheet's Confirm once per account, §3.3):
 - `video_id` — opaque deterministic ID (§1)
-- pose-format keypoint sequence — stick figures, no face, no background,
-  no identity (residual honesty per the master plan: gait-from-keypoints
-  re-identification is real research; minimization is the mitigation)
+- the source's whole-session keypoint sequence, in pose format — stick
+  figures, no face, no background. Coordinates are only divided by the
+  frame's width and height, not normalized to a standard body. It is not
+  anonymous: how someone moves can identify them
+  (gait-from-keypoints re-identification is real research), and a
+  sequence can be matched to a video of the same clip. Call what the
+  farm keeps de-linked and hard to re-identify, never anonymous.
 - confirmed clip windows + free-text trick names
 - label provenance — each name's `origin`, and the proposing model
   version, its pre-filled names, and the blind-sample flag per clip:
@@ -731,7 +743,35 @@ new disclosures must cover the Apple `sub` identifier, its 30-day link
 to contributions, and the pose keypoints; the precise App Store label
 taxonomy for pose keypoints
 needs a call at submission time. `ITSAppUsesNonExemptEncryption` stays
-`NO` (HTTPS only, exempt).
+`NO` (HTTPS only, exempt). With §8.1's retention change the label reads
+"linked to you".
+
+### 8.1 Planned changes (privacy plan, 2026-11)
+
+The maintainer's privacy plan changes contribution before it goes live.
+None of this is built yet; until it is, the sections above describe the
+code.
+
+- **Whose clips.** Only clips marked as the user (`PROFILE_DESIGN.md`
+  §4.3) are contributed. Today clips marked as someone else upload too,
+  flagged on the sheet (§3.3).
+- **Consent.** The sheet adds a 16-or-older confirmation. The farm
+  records each agreement (account, time, disclosure version), and
+  accounts that agreed to the 30-day wording are asked again.
+- **Retention.** The account link is kept until the user deletes it, or
+  until 24 months without activity, instead of 30 days after the last
+  edit. This reverses `DESIGN.md` Decision #10.
+- **Deletion.** Settings offers "Delete my account" and an equally
+  prominent "Also delete my contributions".
+- **Labels.** Only vocabulary names are contributed (§4). A new name
+  goes to a candidate list, counted per account by keyed hash, kept
+  briefly and promoted by hand.
+- **Kept training data.** The farm cuts short segments at ingest. Each
+  is centered on the hips, scaled to a standard body, reduced to one
+  head point and lightly noised, with fresh IDs, no timestamps and no
+  adjacent segments kept. The segment-to-source link is deleted with
+  the account.
+- **EU and UK.** Contribution stays switched off there for now.
 
 ---
 

@@ -17,9 +17,10 @@ These answers describe v1. The contribution code is now built and the
 committed Info.plist points it at the farm (`TURNIP_FARM_ENDPOINT`), so a
 build from this tree makes the calls listed under "Contribution" below:
 **before such a build is submitted, the label, the manifest's collected data
-types, `site/privacy.html` and the Photos usage string ("Nothing leaves your
-device") have to change.** Until then, these are the answers for the release
-in the store.
+types and `site/privacy.html` have to change.** The Photos usage string
+already has: it now says Turnip never uploads the videos, not that nothing
+leaves the device. Until then, these are the answers for the release in the
+store.
 
 **Data Not Collected.** The v1 app collects no data, full stop:
 
@@ -221,9 +222,10 @@ What a build with `TURNIP_FARM_ENDPOINT` set sends to the farm
   the user named and saved, and only once the account has agreed on the
   confirmation sheet, which asks the first time and covers every later
   save. It goes in the background, not at a tap: the video's `video_id`
-  (SHA-256 of the Photos identifier, never the identifier), its pose
-  keypoints as a TKP1 blob, each clip's window in pose frames, its trick
-  names with how each was given, the session token and the source's key.
+  (SHA-256 of the Photos identifier, never the identifier), the pose
+  keypoints of the whole session as a TKP1 blob, each clip's window in
+  pose frames, its trick names with how each was given, the session token
+  and the source's key.
   Never the video, a thumbnail, whether a clip shows the user, or a
   location.
 - **Account deletion**, from Settings: `DELETE /api/sources/:id` for every
@@ -245,8 +247,11 @@ and written without file metadata.
 What changes before release, and is not decided here: the nutrition label
 (the Apple `sub` and pose keypoints, linked to the account for 30 days after
 a contribution's last edit), `NSPrivacyCollectedDataTypes` in the manifest,
-`site/privacy.html`, and the Photos usage string. `ITSAppUsesNonExemptEncryption`
-stays `NO`: HTTPS only.
+and `site/privacy.html`. `ITSAppUsesNonExemptEncryption` stays `NO`: HTTPS
+only. The privacy plan in `CONTRIBUTION_DESIGN.md` §8.1 changes several of
+these answers before contribution ships: the account link would last until
+deletion, so the label would read "linked to you", and contribution stays
+off in the EU and UK.
 
 ## The clip library and the Profile (core built; the rest planned)
 
@@ -380,7 +385,9 @@ Planned:
   requests, GDPR/CCPA) — belongs to `turnip-farm`; see `docs/DESIGN.md`
   decision #4 (retention: keep forever, user-deletable). In outline:
   - Contributions are linked to the account only until 30 days after
-    their last edit, then kept with no account link.
+    their last edit, then kept with no account link. That makes them
+    de-linked, not anonymous: someone with a video of the same clip
+    could still match them to it (`BACKEND_DESIGN.md` §9 Q9).
   - The account can be deleted in-app; that removes every contribution
     the app still holds a key for.
   - The contribution sheet discloses both once, when the account first
