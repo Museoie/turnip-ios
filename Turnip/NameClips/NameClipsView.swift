@@ -81,14 +81,18 @@ struct NameClipsView: View {
                 pager
             }
         }
-        // The card's size is worked out from this measurement, which ignores the keyboard: the
-        // keyboard scrolls the page instead of resizing the card.
+        // The card's size is worked out from this measurement of the page above the bottom bar,
+        // which ignores the keyboard and holds still while the name field has focus
+        // (`NameClipsLayout.acceptsMeasurement`): the keyboard scrolls the page instead of
+        // resizing the card.
         .background {
             GeometryReader { proxy in
                 Color.clear
                     .onAppear { screenSize = proxy.size }
                     .onChange(of: proxy.size) { size in
-                        if size.width != screenSize.width || screenSize == .zero { screenSize = size }
+                        if NameClipsLayout.acceptsMeasurement(size, over: screenSize, isFieldFocused: isFieldFocused) {
+                            screenSize = size
+                        }
                     }
             }
             .ignoresSafeArea(.keyboard)

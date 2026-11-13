@@ -10,12 +10,22 @@ enum NameClipsLayout {
     static let controlsReserve: CGFloat = 240
     static let minimumSide: CGFloat = 220
 
-    /// The card's side for a page `size` points large, measured without the keyboard: the
-    /// width less its insets, unless that leaves less than `controlsReserve` below it.
+    /// The card's side for a page `size` points large, measured above the bottom bar and
+    /// without the keyboard: the width less its insets, unless that leaves less than
+    /// `controlsReserve` below it.
     static func cardSide(for size: CGSize) -> CGFloat {
         let byWidth = size.width - 2 * horizontalInset
         let byHeight = size.height - controlsReserve
         return max(min(byWidth, byHeight), min(minimumSide, byWidth))
+    }
+
+    /// Whether a new measurement of the page replaces `current` as the size the card is worked
+    /// out from. The page's first measurements come before it settles (a pushed page is
+    /// measured before its bottom bar arrives), so the card follows every one — except while
+    /// the name field has focus, when the bar steps aside for the keyboard and neither may
+    /// resize the card. A new width always counts.
+    static func acceptsMeasurement(_ size: CGSize, over current: CGSize, isFieldFocused: Bool) -> Bool {
+        !isFieldFocused || current == .zero || size.width != current.width
     }
 }
 
