@@ -705,7 +705,9 @@ edits it, and marking it for deletion, the one thing it offered, is gone too.
   so naming them is a screen of its own (`LibraryNamingView`) with this
   screen's naming controls and paging but no editor, triage or save: each
   card loops the saved clip, names go to the clip library as they are given,
-  and the last button reads "Done". It pages through
+  and the last button reads "Done". As here, its bar steps aside while the
+  name field has focus, the page scrolls the naming controls above the
+  keyboard, and the card keeps its size until the keyboard has gone. It pages through
   the clips that needed a name when it opened, so a clip named there stays
   put rather than leaving the pager under the user's finger.
 

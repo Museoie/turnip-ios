@@ -22,10 +22,52 @@ enum NameClipsLayout {
     /// Whether a new measurement of the page replaces `current` as the size the card is worked
     /// out from. The page's first measurements come before it settles (a pushed page is
     /// measured before its bottom bar arrives), so the card follows every one — except while
-    /// the name field has focus, when nothing the keyboard brings, such as a bar stepping aside
-    /// for it, may resize the card. A new width always counts.
-    static func acceptsMeasurement(_ size: CGSize, over current: CGSize, isFieldFocused: Bool) -> Bool {
-        !isFieldFocused || current == .zero || size.width != current.width
+    /// `isTyping`, when nothing the keyboard brings, such as a bar stepping aside for it, may
+    /// resize the card. A new width always counts.
+    static func acceptsMeasurement(_ size: CGSize, over current: CGSize, isTyping: Bool) -> Bool {
+        !isTyping || current == .zero || size.width != current.width
+    }
+}
+
+/// Keeps a naming page's controls above the keyboard while its name field has focus: the view
+/// marked `namingFieldsScrollTarget()`, from the names given down to who's in it, scrolls up once
+/// the keyboard has moved the page's bottom edge, and again as a name added while typing grows
+/// the chips above the field. Name Clips and Needs a name share it, so the card scrolls up with
+/// the page rather than shrinking on either.
+struct NamingFieldsAboveKeyboard: ViewModifier {
+    static let targetID = "naming-fields"
+
+    let scroller: ScrollViewProxy
+    let isFieldFocused: Bool
+    /// False for a page beside the current one, which never scrolls.
+    let isCurrent: Bool
+    let namesCount: Int
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: isFieldFocused) { focused in
+                guard focused, isCurrent else { return }
+                // After the keyboard's own animation has moved the page's bottom edge up.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { scrollToFields() }
+            }
+            .onChange(of: namesCount) { _ in
+                guard isFieldFocused, isCurrent else { return }
+                scrollToFields()
+            }
+    }
+
+    private func scrollToFields() {
+        withAnimation(.easeOut(duration: 0.25)) {
+            scroller.scrollTo(Self.targetID, anchor: .bottom)
+        }
+    }
+}
+
+extension View {
+    /// Marks a page's naming controls as what `NamingFieldsAboveKeyboard` keeps above the
+    /// keyboard, with a little room between who's in it and the keyboard.
+    func namingFieldsScrollTarget() -> some View {
+        padding(.bottom, 8).id(NamingFieldsAboveKeyboard.targetID)
     }
 }
 
@@ -34,10 +76,6 @@ enum NameClipsLayout {
 /// The page scrolls, so the keyboard moves the controls into view instead of squeezing the
 /// card — but not while a swipe is paging, which holds it still.
 struct NameClipPage: View {
-    /// The naming controls' scroll target, from the names given down to who's in it: the page
-    /// keeps all of them above the keyboard.
-    static let namingFieldsID = "naming-fields"
-
     let item: ClipListItem
     let cardSide: CGFloat
     @ObservedObject var viewModel: ClipListViewModel
@@ -70,9 +108,7 @@ struct NameClipPage: View {
                             isEnabled: isCurrent, commitDraft: commitDraft, actions: namingActions)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    // A little room between who's in it and the keyboard it is scrolled above.
-                    .padding(.bottom, 8)
-                    .id(Self.namingFieldsID)
+                    .namingFieldsScrollTarget()
                 }
                 .padding(.horizontal, NameClipsLayout.horizontalInset)
                 .padding(.top, 8)
@@ -80,22 +116,9 @@ struct NameClipPage: View {
             }
             .scrollDisabled(isPaging)
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: isFieldFocused.wrappedValue) { focused in
-                guard focused, isCurrent else { return }
-                // After the keyboard's own animation has moved the page's bottom edge up.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        scroller.scrollTo(Self.namingFieldsID, anchor: .bottom)
-                    }
-                }
-            }
-            // A name added while typing grows the chips above the field; who's in it stays in view.
-            .onChange(of: item.names.count) { _ in
-                guard isFieldFocused.wrappedValue, isCurrent else { return }
-                withAnimation(.easeOut(duration: 0.25)) {
-                    scroller.scrollTo(Self.namingFieldsID, anchor: .bottom)
-                }
-            }
+            .modifier(NamingFieldsAboveKeyboard(
+                scroller: scroller, isFieldFocused: isFieldFocused.wrappedValue,
+                isCurrent: isCurrent, namesCount: item.names.count))
         }
     }
 

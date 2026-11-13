@@ -127,8 +127,10 @@ struct RootTabView: View {
             // inside the safe area never gives its nested `NavigationStack` a top inset, and its
             // scroll views stop at the status bar instead of running under it; ignoring the safe
             // area here lets each page's own hosting controller get the real insets back from
-            // UIKit, so nav bars and `.safeAreaInset` content stay put.
-            .ignoresSafeArea()
+            // UIKit, so nav bars and `.safeAreaInset` content stay put. The container's insets
+            // only: the pages' hosting controllers get no keyboard inset back, so the keyboard's
+            // room has to come from here, or a screen the Profile pushes types under it.
+            .ignoresSafeArea(.container)
             // An overlay, not a safe-area inset: the grid scrolls underneath it rather than
             // stopping short, so it reads as floating over the content instead of a docked bar.
             // Visible on every page's root so its selection marker actually has something to slide

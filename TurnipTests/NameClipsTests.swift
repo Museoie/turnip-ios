@@ -153,17 +153,20 @@ final class NameClipsTests: XCTestCase {
     }
 
     /// The card follows the page until it settles, bottom bar and all, but not the bar stepping
-    /// aside for the keyboard while the name field has focus. Sizes measured on an iPhone SE.
-    func testCardFollowsThePageUnlessTheNameFieldHasFocus() {
+    /// aside for the keyboard while typing, nor the bar coming back above a keyboard that is
+    /// still leaving (Needs a name). Sizes measured on an iPhone SE.
+    func testCardFollowsThePageUnlessTyping() {
         let barless = CGSize(width: 375, height: 576.5)
         let settled = CGSize(width: 375, height: 502.5)
         let typing = CGSize(width: 375, height: 593)
-        XCTAssertTrue(NameClipsLayout.acceptsMeasurement(barless, over: .zero, isFieldFocused: false))
-        XCTAssertTrue(NameClipsLayout.acceptsMeasurement(settled, over: barless, isFieldFocused: false))
-        XCTAssertFalse(NameClipsLayout.acceptsMeasurement(typing, over: settled, isFieldFocused: true))
-        XCTAssertTrue(NameClipsLayout.acceptsMeasurement(typing, over: .zero, isFieldFocused: true))
+        XCTAssertTrue(NameClipsLayout.acceptsMeasurement(barless, over: .zero, isTyping: false))
+        XCTAssertTrue(NameClipsLayout.acceptsMeasurement(settled, over: barless, isTyping: false))
+        XCTAssertFalse(NameClipsLayout.acceptsMeasurement(typing, over: settled, isTyping: true))
+        XCTAssertFalse(NameClipsLayout.acceptsMeasurement(
+            CGSize(width: 375, height: 242.5), over: settled, isTyping: true))
+        XCTAssertTrue(NameClipsLayout.acceptsMeasurement(typing, over: .zero, isTyping: true))
         XCTAssertTrue(NameClipsLayout.acceptsMeasurement(
-            CGSize(width: 667, height: 300), over: settled, isFieldFocused: true))
+            CGSize(width: 667, height: 300), over: settled, isTyping: true))
     }
 
     // MARK: - Vocabulary

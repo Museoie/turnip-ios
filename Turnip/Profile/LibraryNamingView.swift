@@ -22,6 +22,11 @@ struct LibraryNamingView: View {
     @State private var draft = ""
     @FocusState private var isFieldFocused: Bool
     @State private var screenSize: CGSize = .zero
+    /// From the keyboard's show until its hide has finished. This screen gets the keyboard as a
+    /// smaller page, not as a safe area the card's reader can ignore, and the keyboard leaves
+    /// after focus does: a swipe or return on an empty field drops focus and brings the bar back
+    /// while the keyboard is still up. So the card holds until the keyboard has gone.
+    @State private var isKeyboardShown = false
 
     private static let slide: Animation = .easeInOut(duration: 0.3)
 
@@ -46,19 +51,28 @@ struct LibraryNamingView: View {
                 Color.clear
                     .onAppear { screenSize = proxy.size }
                     .onChange(of: proxy.size) { size in
-                        if NameClipsLayout.acceptsMeasurement(size, over: screenSize, isFieldFocused: isFieldFocused) {
+                        let isTyping = isFieldFocused || isKeyboardShown
+                        if NameClipsLayout.acceptsMeasurement(size, over: screenSize, isTyping: isTyping) {
                             screenSize = size
                         }
                     }
             }
             .ignoresSafeArea(.keyboard)
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            isKeyboardShown = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidHideNotification)) { _ in
+            isKeyboardShown = false
+        }
         .navigationTitle(clips.isEmpty ? "" : String(localized: "\(index + 1) of \(clips.count)"))
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar { toolbar }
+        // As on Name Clips, the bar gives its room to the naming controls while the name field
+        // has focus, and comes back once the keyboard goes.
         .safeAreaInset(edge: .bottom) {
-            if !clips.isEmpty {
+            if !clips.isEmpty && !isFieldFocused {
                 PrimaryActionBar(primaryTitle) {
                     if isLast {
                         commitDraft()
@@ -121,27 +135,33 @@ struct LibraryNamingView: View {
     }
 
     private func page(for clip: LibraryClip, isCurrent: Bool) -> some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 16) {
-                LibraryClipPlayer(clip: clip, videoGravity: .resizeAspectFill, isActive: isCurrent)
-                    .frame(width: cardSide, height: cardSide)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel(String(localized: "Clip \(index + 1) of \(clips.count)"))
-                ClipNamingFields(
-                    names: clip.names, isMe: clip.isMe,
-                    suggested: PersonalLayer.shared.suggestions(
-                        forSaved: clip, used: library.namesUsed(alongside: clip)),
-                    vocabulary: vocabulary.current, draft: isCurrent ? $draft : .constant(""),
-                    isFieldFocused: $isFieldFocused, isEnabled: isCurrent, commitDraft: commitDraft,
-                    actions: actions(for: clip.id))
-                .frame(maxWidth: .infinity, alignment: .leading)
+        ScrollViewReader { scroller in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 16) {
+                    LibraryClipPlayer(clip: clip, videoGravity: .resizeAspectFill, isActive: isCurrent)
+                        .frame(width: cardSide, height: cardSide)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel(String(localized: "Clip \(index + 1) of \(clips.count)"))
+                    ClipNamingFields(
+                        names: clip.names, isMe: clip.isMe,
+                        suggested: PersonalLayer.shared.suggestions(
+                            forSaved: clip, used: library.namesUsed(alongside: clip)),
+                        vocabulary: vocabulary.current, draft: isCurrent ? $draft : .constant(""),
+                        isFieldFocused: $isFieldFocused, isEnabled: isCurrent, commitDraft: commitDraft,
+                        actions: actions(for: clip.id))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .namingFieldsScrollTarget()
+                }
+                .padding(.horizontal, NameClipsLayout.horizontalInset)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
             }
-            .padding(.horizontal, NameClipsLayout.horizontalInset)
-            .padding(.top, 8)
-            .padding(.bottom, 16)
+            .scrollDismissesKeyboard(.interactively)
+            .modifier(NamingFieldsAboveKeyboard(
+                scroller: scroller, isFieldFocused: isFieldFocused,
+                isCurrent: isCurrent, namesCount: clip.names.count))
         }
-        .scrollDismissesKeyboard(.interactively)
     }
 
     private var pagingGesture: some Gesture {

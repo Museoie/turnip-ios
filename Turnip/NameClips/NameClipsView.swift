@@ -99,7 +99,7 @@ struct NameClipsView: View {
                 Color.clear
                     .onAppear { screenSize = proxy.size }
                     .onChange(of: proxy.size) { size in
-                        if NameClipsLayout.acceptsMeasurement(size, over: screenSize, isFieldFocused: isFieldFocused) {
+                        if NameClipsLayout.acceptsMeasurement(size, over: screenSize, isTyping: isFieldFocused) {
                             screenSize = size
                         }
                     }
