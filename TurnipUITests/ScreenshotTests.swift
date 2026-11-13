@@ -137,30 +137,46 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertFalse(app.buttons["Restore clip"].exists)
     }
 
-    /// Every clip, not only the last, offers the one button that saves them all — no Skip, Next
-    /// or Save now beside it.
-    func testEveryClipOffersSaveClips() throws {
+    /// The bottom bar pages: the first clip has Next and no Previous, the last has Previous and
+    /// "Save Clips" in Next's corner, and each button lands on its neighbor.
+    func testNameClipsBarPagesAndSavesOnTheLastClip() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
         XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
-        let primary = app.buttons["name-clips-primary"].firstMatch
-        XCTAssertTrue(primary.waitForExistence(timeout: 5))
-        XCTAssertEqual(primary.label, "Save Clips")
-        for label in ["Skip", "Next", "Save now"] {
-            XCTAssertFalse(app.buttons[label].exists, "\(label) is still on the first clip")
-        }
+        let previous = app.buttons["name-clips-previous"].firstMatch
+        let next = app.buttons["name-clips-next"].firstMatch
+        let save = app.buttons["name-clips-save"].firstMatch
+        XCTAssertTrue(next.waitForExistence(timeout: 5))
+        XCTAssertEqual(next.label, "Next")
+        XCTAssertFalse(previous.exists, "the first clip offers Previous")
+        XCTAssertFalse(save.exists, "the first clip of two offers Save Clips")
+        let nextFrame = next.frame
+
+        next.tap()
+        XCTAssertTrue(app.navigationBars["2 of 2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(save.waitForExistence(timeout: 5))
+        XCTAssertEqual(save.label, "Save Clips")
+        XCTAssertEqual(save.frame.maxX, nextFrame.maxX, accuracy: 1, "Save Clips left Next's corner")
+        XCTAssertTrue(previous.exists)
+        XCTAssertLessThan(previous.frame.midX, app.frame.midX, "Previous isn't on the leading side")
+        XCTAssertTrue(waitUntil { !next.exists }, "the last clip still offers Next")
+        addScreenshot(named: "name-clips-last")
+
+        previous.tap()
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil { !previous.exists }, "Previous stayed on the first clip")
     }
 
-    /// The keyboard sets "Save Clips" aside and the page keeps every naming control above it, who's
-    /// in it included; Return adds a name and keeps the keyboard, and Return on an empty field
-    /// puts it away and brings "Save Clips" back.
-    func testTheKeyboardSetsSaveClipsAsideAndKeepsTheNamingControlsInView() throws {
+    /// The keyboard sets the bottom bar aside and the page keeps every naming control above it,
+    /// who's in it included; Return adds a name and keeps the keyboard, and Return on an empty
+    /// field puts it away and brings the bar back.
+    func testTheKeyboardSetsTheBarAsideAndKeepsTheNamingControlsInView() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
         XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
-        let primary = app.buttons["name-clips-primary"].firstMatch
+        let primary = app.buttons["name-clips-next"].firstMatch
         XCTAssertTrue(primary.waitForExistence(timeout: 5))
         let field = try XCTUnwrap(
             app.textFields.matching(identifier: "name-clips-field").allElementsBoundByIndex.first { $0.isHittable })
@@ -168,7 +184,7 @@ final class ScreenshotTests: XCTestCase {
         field.tap()
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitUntil { !primary.exists }, "Save Clips stayed over the keyboard")
+        XCTAssertTrue(waitUntil { !primary.exists }, "the bar stayed over the keyboard")
         func whoIsIn() -> XCUIElement? {
             app.segmentedControls.matching(identifier: "name-clips-who").allElementsBoundByIndex
                 .first { $0.frame.minX >= 0 && $0.frame.maxX <= app.frame.maxX }
@@ -186,7 +202,7 @@ final class ScreenshotTests: XCTestCase {
 
         field.typeText("\n")
         XCTAssertTrue(waitUntil { !keyboard.exists }, "Return on an empty field kept the keyboard")
-        XCTAssertTrue(primary.waitForExistence(timeout: 5), "Save Clips didn't come back")
+        XCTAssertTrue(primary.waitForExistence(timeout: 5), "the bar didn't come back")
     }
 
     /// Auto follow and Auto rotate are toggles: each tap puts its fit on screen and the same
@@ -337,31 +353,76 @@ final class ScreenshotTests: XCTestCase {
     }
 
     /// Processing's resting state: the picked video full-screen with the custom scrub
-    /// bar and the "Analyze clips" button — no native `VideoPlayer` chrome and no
-    /// caption text.
+    /// bar and "Clip it" in the top-trailing corner — no native `VideoPlayer` chrome, no
+    /// caption text, and no analyze button of its own.
     func testProcessingIdle() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotProcessingIdle"]
         app.launch()
-        XCTAssertTrue(app.buttons["Analyze clips"].waitForExistence(timeout: 15))
+        let clipIt = app.buttons["processing-clip-it"]
+        XCTAssertTrue(clipIt.waitForExistence(timeout: 15))
+        XCTAssertGreaterThan(clipIt.frame.midX, app.frame.midX, "Clip it isn't in the trailing corner")
+        XCTAssertLessThan(clipIt.frame.midY, app.frame.midY, "Clip it isn't at the top")
+        XCTAssertFalse(app.buttons["Analyze clips"].exists)
+        XCTAssertFalse(app.buttons["Clip manually"].exists)
         XCTAssertFalse(
             app.segmentedControls["person-mode-picker"].exists, "an analysis here always follows everyone")
         addScreenshot(named: "processing-idle")
     }
 
-    /// "Clip manually" pushes the clip list destination straight from the idle state, with
-    /// the result marked as skipped — the real `navigationDestination` binding flip, not
-    /// just the view model's state.
-    func testProcessingSkipAnalysisPushesTheClipList() throws {
+    /// "Clip it" pushes Name Clips straight from the idle state with the result marked as
+    /// skipped — the real `navigationDestination` binding flip, not just the view model's
+    /// state — where the empty state offers "Analyze clips" and "Clip manually".
+    func testProcessingClipItPushesTheEmptyClipList() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotProcessingIdle"]
         app.launch()
-        let skip = app.buttons["Clip manually"]
-        XCTAssertTrue(skip.waitForExistence(timeout: 15))
-        skip.tap()
-        let standIn = app.staticTexts["clip-list-stand-in"]
-        XCTAssertTrue(standIn.waitForExistence(timeout: 15), "the skip never pushed the destination")
-        XCTAssertEqual(standIn.label, "Clip list stand-in: skipped")
+        let clipIt = app.buttons["processing-clip-it"]
+        XCTAssertTrue(clipIt.waitForExistence(timeout: 15))
+        clipIt.tap()
+        let notice = app.staticTexts["no-tricks-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15), "Clip it never pushed the clip list")
+        XCTAssertEqual(notice.label, "No clips yet", "a skipped video read as one that found nothing")
+        XCTAssertTrue(app.buttons["Analyze clips"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Clip manually"].exists)
+        addScreenshot(named: "name-clips-empty")
+    }
+
+    /// The empty clip list's "Analyze clips" returns to Processing and runs the analysis there,
+    /// under its progress, rather than leaving for Home.
+    func testNameClipsAnalyzeReturnsToProcessingAndRuns() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotProcessingIdle"]
+        app.launch()
+        let clipIt = app.buttons["processing-clip-it"]
+        XCTAssertTrue(clipIt.waitForExistence(timeout: 15))
+        clipIt.tap()
+        let analyze = app.buttons["Analyze clips"]
+        XCTAssertTrue(analyze.waitForExistence(timeout: 15))
+        analyze.tap()
+        let progress = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == 'Analysis progress'"))
+            .firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 15), "the analysis never showed its progress")
+        XCTAssertTrue(app.buttons["processing-cancel"].exists)
+        XCTAssertFalse(app.buttons["processing-clip-it"].exists, "Clip it stayed up during the run")
+        XCTAssertFalse(
+            app.staticTexts[HarnessIdentifier.poppedToRoot].exists, "leaving the list for the run also left for Home")
+    }
+
+    /// A camera take that lands on Name Clips with nothing found has no Processing screen under
+    /// it to analyze on, so its empty state offers "Clip manually" alone.
+    func testCameraTakeEmptyStateOffersClipManuallyAlone() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotNameClipsCameraEmpty"]
+        app.launch()
+        let notice = app.staticTexts["no-tricks-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15))
+        XCTAssertEqual(notice.label, "No tricks found")
+        let clipManually = app.buttons["name-clips-clip-manually"]
+        XCTAssertTrue(clipManually.waitForExistence(timeout: 5))
+        XCTAssertEqual(clipManually.label, "Clip manually")
+        XCTAssertFalse(app.buttons["Analyze clips"].exists, "a camera take offered an analysis it has no screen for")
     }
 
     /// A swipe on Processing browses to the neighboring video — the whole page follows the
@@ -376,13 +437,14 @@ final class ScreenshotTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotProcessingBrowse"]
         app.launch()
-        XCTAssertTrue(app.buttons["Analyze clips"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["processing-clip-it"].waitForExistence(timeout: 15))
         XCTAssertTrue(waitForCenterColor(.green), "did not start on the middle (green) stand-in video")
 
         // Left, from the middle of the screen: the next (blue) video.
         drag(app, fromX: 0.7, toX: 0.05, y: 0.5)
         XCTAssertTrue(waitForCenterColor(.blue), "left swipe did not land on the next video")
-        XCTAssertTrue(waitUntilHittable(app.buttons["Analyze clips"]), "the landed screen's controls never arrived")
+        XCTAssertTrue(
+            waitUntilHittable(app.buttons["processing-clip-it"]), "the landed screen's controls never arrived")
 
         // Right, starting at the leading edge where the navigation stack's edge-pop would
         // otherwise claim it: back to green.
@@ -398,8 +460,43 @@ final class ScreenshotTests: XCTestCase {
         drag(app, fromX: 0.3, toX: 0.95, y: 0.5)
         sleep(1)
         XCTAssertTrue(waitForCenterColor(.red), "right swipe at the end of the grid left the video")
-        XCTAssertTrue(waitUntilHittable(app.buttons["Analyze clips"]), "the screen's controls did not settle")
+        XCTAssertTrue(waitUntilHittable(app.buttons["processing-clip-it"]), "the screen's controls did not settle")
         addScreenshot(named: "processing-browse")
+
+        // Left, starting on "Clip it": a drag from a corner control swipes like any other. It
+        // lifts well off the button, so it checks the browse only; the tap standing down is
+        // `testProcessingCornerControlsStandDownWhileABrowseIsPending`.
+        let clipIt = app.buttons["processing-clip-it"]
+        clipIt.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.1)),
+            withVelocity: XCUIGestureVelocity(900), thenHoldForDuration: 0.05)
+        XCTAssertTrue(waitForCenterColor(.green), "a swipe starting on Clip it did not browse to the next video")
+        XCTAssertTrue(waitUntilHittable(clipIt), "the landed screen's controls never arrived")
+    }
+
+    /// While a committed browse is still waiting on its neighbor, the corner controls' taps
+    /// stand down: "Clip it" would open the clip list for the video sliding away, and the
+    /// chevron would leave for Home. `-browseHeld` starts the neighbor's browse but never lands
+    /// it, so the swipe stays in flight with the neighbor's poster on screen, and a tap that
+    /// acted would push the black clip list or pop to the stand-in Home, which nothing replaces.
+    func testProcessingCornerControlsStandDownWhileABrowseIsPending() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotProcessingBrowse", "-browseHeld"]
+        app.launch()
+        let clipIt = app.buttons["processing-clip-it"]
+        XCTAssertTrue(clipIt.waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForCenterColor(.green), "did not start on the middle (green) stand-in video")
+
+        drag(app, fromX: 0.7, toX: 0.05, y: 0.5)
+        XCTAssertTrue(waitForCenterColor(.blue), "the left swipe did not carry the next video in")
+
+        clipIt.tap()
+        sleep(1)
+        XCTAssertTrue(waitForCenterColor(.blue), "Clip it acted on the video the swipe was leaving")
+
+        app.buttons["processing-back"].tap()
+        sleep(1)
+        XCTAssertTrue(waitForCenterColor(.blue), "the back chevron acted while the browse was pending")
     }
 
     /// Settings sheet at its defaults: the analysis-mode segmented control, the

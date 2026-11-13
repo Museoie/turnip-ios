@@ -118,7 +118,7 @@ Almost everything is already in the clip library (`PROFILE_DESIGN.md`
   and its provenance (`auto_detected`, `proposal_model_version`,
   `suggested_names`, `suggestions_withheld`). A clip marked "video
   deleted" still counts, since its pose remains. Sources reached by
-  "Clip manually" have no pose and contribute nothing, nor do clips
+  "Clip it" and never analyzed have no pose and contribute nothing, nor do clips
   saved before the library kept pose, or a clip added by hand following
   everyone.
 - **Dismissed windows (new).** For each source a save writes to the

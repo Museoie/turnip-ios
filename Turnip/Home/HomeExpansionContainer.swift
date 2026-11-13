@@ -13,7 +13,8 @@ struct HomeExpansionCloseHandlers {
     let onRequestClose: () -> Void
     let onRequestSlideClose: () -> Void
     let dismissTranslationChanged: (CGFloat) -> Void
-    let dismissEnded: (_ translation: CGFloat, _ predictedTranslation: CGFloat) -> Void
+    /// Returns whether the swipe committed to closing.
+    let dismissEnded: (_ translation: CGFloat, _ predictedTranslation: CGFloat) -> Bool
     let dismissCancelled: () -> Void
 }
 
@@ -235,9 +236,10 @@ struct HomeExpansionContainer<Content: View>: View {
                 if ExpansionFlightGeometry.dismissCommits(
                     translation: translation, predictedTranslation: predictedTranslation) {
                     close()
-                } else {
-                    cancelDrag()
+                    return true
                 }
+                cancelDrag()
+                return false
             },
             dismissCancelled: cancelDrag)
     }

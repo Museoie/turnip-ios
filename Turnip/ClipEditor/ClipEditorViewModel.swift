@@ -568,7 +568,7 @@ final class ClipEditorViewModel: ObservableObject {
     // MARK: - Follow mode
 
     /// Whether Auto follow has anything to fit: the clip came with pose analysis. A clip of a
-    /// video that skipped analysis ("Clip manually") never does, so it gets Reset follow alone —
+    /// video that skipped analysis ("Clip it" on Processing) never does, so it gets Reset follow alone —
     /// an Auto follow whose tap could never change anything reads as broken.
     var supportsAutoFollow: Bool {
         !source.poseFrames.isEmpty

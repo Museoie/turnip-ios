@@ -611,7 +611,7 @@ final class ProcessingViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isShowingClips)
     }
 
-    /// "Clip manually" lands on the clip list with nothing detected and the skip marked, so
+    /// "Clip it" lands on the clip list with nothing detected and the skip marked, so
     /// the list can tell it from a run that looked and found nothing.
     func testSkipAnalysisNavigatesToTheClipsWithoutRunning() async {
         let flag = CancelFlag()
@@ -650,7 +650,7 @@ final class ProcessingViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.isShowingClips)
     }
 
-    /// The skip button is gone once a run is in flight, but the model guards it anyway.
+    /// "Clip it" is gone once a run is in flight, but the model guards it anyway.
     func testSkipWhileRunningIsIgnored() async {
         let flag = CancelFlag()
         let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .reportThenHang(flag)))
@@ -664,6 +664,71 @@ final class ProcessingViewModelTests: XCTestCase {
         }
         XCTAssertNil(viewModel.result)
         XCTAssertFalse(viewModel.isShowingClips)
+        viewModel.cancel()
+        await Self.waitUntil { await flag.observed }
+    }
+
+    /// The clip list's "Analyze clips" after "Clip it": the list pops in the same call that
+    /// leaves `.succeeded` — the screen pops to Home when the list goes while it still reads
+    /// `.succeeded` — and the run starts. The skip's result stays for the list sliding away.
+    func testAnalyzeFromClipsAfterASkipPopsTheListAndRuns() async {
+        let flag = CancelFlag()
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .reportThenHang(flag)))
+        viewModel.skipAnalysis(video: Self.video)
+
+        viewModel.analyzeFromClips(video: Self.video)
+
+        if case .succeeded = viewModel.state {
+            XCTFail("the list popped while the state still read succeeded")
+        }
+        XCTAssertFalse(viewModel.isShowingClips)
+        XCTAssertEqual(viewModel.result?.analysisSkipped, true)
+        await Self.waitUntilProcessing(viewModel)
+        guard case .processing = viewModel.state else {
+            return XCTFail("the analysis never started, got \(viewModel.state)")
+        }
+        viewModel.cancel()
+        await Self.waitUntil { await flag.observed }
+        let cancelled = await flag.observed
+        XCTAssertTrue(cancelled, "the run was not cancelled")
+    }
+
+    /// The run "Analyze clips" started lands back on the list, this time with what it found.
+    func testAnalyzeFromClipsLandsOnTheDetectedClips() async {
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .succeed(clips: [Self.clip])))
+        viewModel.skipAnalysis(video: Self.video)
+
+        viewModel.analyzeFromClips(video: Self.video)
+        await Self.waitUntilNotRunning(viewModel)
+
+        guard case .succeeded = viewModel.state else {
+            return XCTFail("expected the succeeded state, got \(viewModel.state)")
+        }
+        XCTAssertEqual(viewModel.result?.clips, [Self.clip])
+        XCTAssertEqual(viewModel.result?.analysisSkipped, false)
+        XCTAssertTrue(viewModel.isShowingClips)
+    }
+
+    /// Only a pushed list can ask: an idle screen and a run in flight both ignore it.
+    func testAnalyzeFromClipsWithoutTheListIsIgnored() async {
+        let flag = CancelFlag()
+        let viewModel = ProcessingViewModel(runner: ScriptedRunner(behavior: .reportThenHang(flag)))
+
+        viewModel.analyzeFromClips(video: Self.video)
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        guard case .idle = viewModel.state else {
+            return XCTFail("an idle screen started a run, got \(viewModel.state)")
+        }
+
+        viewModel.start(video: Self.video)
+        await Self.waitUntilProcessing(viewModel)
+        viewModel.analyzeFromClips(video: Self.video)
+        guard case .processing = viewModel.state else {
+            return XCTFail("the in-flight run was replaced, got \(viewModel.state)")
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        let cancelledEarly = await flag.observed
+        XCTAssertFalse(cancelledEarly, "the in-flight run was cancelled")
         viewModel.cancel()
         await Self.waitUntil { await flag.observed }
     }

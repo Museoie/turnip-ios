@@ -116,7 +116,7 @@ final class NameClipsTests: XCTestCase {
         XCTAssertEqual(plan.source?.videoID, VideoIdentity.videoID(forAssetIdentifier: "asset-1"))
     }
 
-    /// Contribute named clips off, or a video with no pose analysis ("Clip manually"): nothing to
+    /// Contribute named clips off, or a video with no pose analysis ("Clip it"): nothing to
     /// contribute, so the sheet never opens.
     func testPlanIsEmptyWhileTheSettingIsOffOrTheVideoHasNoPose() async {
         let named = [ClipName(name: "cork", origin: .typed)]

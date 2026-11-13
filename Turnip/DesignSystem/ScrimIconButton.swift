@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// A circular icon button floating directly over media (video/photo content) — Processing's
-/// cancel and back chevron, the editor's and the clip list's back chevrons, Camera's
+/// cancel and back chevron (with `ScrimTextButton`'s "Clip it" across from them), the editor's
+/// and the clip list's back chevrons, Camera's
 /// cancel/exposure/flash/flip buttons (forced to `.scrim`; see `Style`). The one shape every
 /// screen's chevron takes, so the control reads the same across the flow's cross-fades.
 /// Real Liquid Glass on iOS 26 (`.glassEffect`) by default, same as the floating

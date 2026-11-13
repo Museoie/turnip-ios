@@ -156,7 +156,7 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
   default rate, and 200 of them about 120 MB.
 - A pose is deleted when the last clip cut from it leaves the library, so
   a source's pose goes with its last clip, and a person's with theirs.
-- Sources reached by "Clip manually" (UIUX §2) have no pose. Their
+- Sources reached by "Clip it" (UIUX §2) and never analyzed have no pose. Their
   clips are stored and nameable but cannot be contributed, as today
   (`CONTRIBUTION_DESIGN.md` §2.3).
 
@@ -346,9 +346,9 @@ also where an analysis lands: Clip List's triage moved onto it, UIUX
   save. It shows one clip at a time, larger, with a free-text
   field ("What trick is this? e.g. cork"); committing adds a chip;
   chips are removable; a combo is N chips on one clip (no
-  sub-segmentation, matching the model's `trick_names`). "Save Clips",
-  on every clip, saves them all, which is how a user saves without
-  naming.
+  sub-segmentation, matching the model's `trick_names`). "Previous"
+  and "Next" step through the clips, and "Save Clips", on the last
+  clip, saves them all, which is how a user saves without naming.
 - The same screen names clips saved without names, opened from the
   Profile's "Needs a name" (§5.1), ending in "Done" instead of a save.
 - The Clip Editor is unchanged.

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The app's one full-width prominent call-to-action, pinned to the bottom of a
-/// screen via `.safeAreaInset`: "Analyze clips", "Save Clips". Shared because
+/// screen via `.safeAreaInset`: "Analyze clips", "Done". Shared because
 /// `.borderedProminent`'s background ignores a `.frame(maxWidth:)` applied to the
 /// `Button` itself, so a hand-rolled version quietly renders as a small centered pill
 /// instead of the full-width bar it looks like everywhere else; the frame has to go on

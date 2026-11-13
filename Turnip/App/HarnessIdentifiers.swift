@@ -4,4 +4,7 @@
 enum HarnessIdentifier {
     /// The sample movie's encode failure, drawn over a harness so a UI test can report it.
     static let sampleMovieFailure = "harness-sample-movie-failure"
+    /// Drawn by the Processing idle harness once anything calls its `popToRoot`, which in the
+    /// app closes the cover to Home.
+    static let poppedToRoot = "harness-popped-to-root"
 }

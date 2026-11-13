@@ -105,7 +105,8 @@ control:
 - The progress bar carries the frame counter as its `accessibilityValue`, so the count is
   reachable from the bar itself and not only from the `Text` beside it.
 - Cancel is reachable and labeled throughout the run.
-- Identifiers: `processing-cancel`, `processing-back`, `start-analysis`, `analysis-progress`,
+- "Clip it" is a text button, so its label is its title. It is on screen only while idle.
+- Identifiers: `processing-cancel`, `processing-back`, `processing-clip-it`, `analysis-progress`,
   `processing-retry`, `processing-back-home`, `cancel-browsing`.
 
 ### Clip List (#11) — retired
@@ -230,9 +231,13 @@ Built:
   "Remove this clip". Save Clips' value counts what it commits to ("Saves 2 clips to Photos").
 - The save keeps Clip List's announcements: starting, finished, and each failure numbered by
   the clip it belongs to.
-- Paging has no button of its own — "Save Clips" is the one button, on every clip — so the
-  card's Previous clip / Next clip actions are what keep moving between clips from depending
-  on the swipe.
+- The bottom bar pages with "Previous" and "Next", the last clip's "Next" being "Save Clips";
+  the card's Previous clip / Next clip actions stay too, so a listener on the card moves on
+  without leaving it.
+- With no clip, the bar offers "Analyze clips" with "Clip manually" under it ("Clip manually"
+  alone on a camera take with no Processing screen under it).
+- Identifiers: `name-clips-previous`, `name-clips-next`, `name-clips-save`, `start-analysis`
+  (the empty state's bar), `name-clips-clip-manually`, `no-tricks-notice`.
 - Each name chip is a button labeled with the name, hinted "Removes this name".
 - No auto-playing loop under Reduce Motion or with video autoplay off, for the current clip and
   for the one prepared beside it alike; the card shows its poster.

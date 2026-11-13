@@ -12,27 +12,28 @@ private enum DragAxis {
 ///
 /// The root of Home's full-screen cover `NavigationStack` when a video is picked. It does *not*
 /// start the pipeline on appear: the idle state fills the screen with the picked video
-/// (no native playback chrome — a thin scrub bar draws over the bottom) and a manual
-/// "Analyze clips" button — black background, no title, Photos-app look. Once started
-/// it shows real per-frame progress ("Analyzing frame 400 of 1,200"), and on success
-/// navigates to `destination` with the detected clips — including a run that detected
-/// zero tricks, which still navigates there rather than stopping on this screen; the
-/// clip list itself puts up the "no tricks found" notice. A "Clip manually" button under
-/// "Analyze clips" navigates to the same `destination` with an empty, `analysisSkipped`
-/// result instead of running the pipeline at all, for a user who wants to cut clips by
-/// hand. Only the error state stays on this screen, with a way back. It declares no
+/// (no native playback chrome — a thin scrub bar draws over the bottom) and a "Clip it"
+/// button in the top-trailing corner — black background, no title, Photos-app look.
+/// "Clip it" navigates to `destination` with an empty, `analysisSkipped` result, without
+/// running the pipeline; the clip list there offers the choice between analyzing and
+/// clipping by hand, and its "Analyze clips" comes back to this screen to run
+/// (`ProcessingDestinationActions.analyze`). A run shows real per-frame progress ("Analyzing frame 400
+/// of 1,200") over the video, and on success navigates to `destination` with the detected
+/// clips — including a run that detected zero tricks, which still navigates there rather
+/// than stopping on this screen; the clip list itself puts up the "no tricks found" notice.
+/// Only the error state stays on this screen, with a way back. It declares no
 /// `NavigationStack` of its own; Home's cover supplies it.
 ///
 /// The success destination is injected rather than hardcoded to Name Clips, so
 /// `Processing` never depends on its view type (`NameClipsView`): the screen
 /// that presents this one supplies `destination`. The destination also receives
-/// `popToRoot` — the flow's "back to Home" action — so its back button can skip this
-/// screen instead of stepping back through the flow.
+/// `ProcessingDestinationActions`: `popToRoot` — the flow's "back to Home" action — so its back
+/// button can skip this screen instead of stepping back through the flow, and `analyze`.
 struct ProcessingView<Destination: View>: View {
     let video: SelectedVideo
-    let destination: (ProcessingResult, @escaping () -> Void) -> Destination
+    let destination: (ProcessingResult, ProcessingDestinationActions) -> Destination
     /// `false` in previews, which would otherwise kick off a real pipeline run on appear.
-    /// Home passes `false` too: analysis starts from the idle state's button, never
+    /// Home passes `false` too: analysis starts from the clip list's "Analyze clips", never
     /// automatically.
     let autostart: Bool
     /// Returns to Home (Home's cover passes its slide-close). Threaded into the success
@@ -79,8 +80,9 @@ struct ProcessingView<Destination: View>: View {
         /// `translation.height`.
         let onChanged: (CGFloat) -> Void
         /// Called once the drag ends on the vertical axis — the presenter owns the commit/
-        /// cancel decision and the close flight from here.
-        let onEnded: (_ translation: CGFloat, _ predictedTranslation: CGFloat) -> Void
+        /// cancel decision and the close flight from here. Returns whether it committed, so the
+        /// screen knows it is leaving (`isLeaving`).
+        let onEnded: (_ translation: CGFloat, _ predictedTranslation: CGFloat) -> Bool
         /// Called when the system cancels the drag before `onEnded` can run (an incoming call,
         /// Control Center) — the presenter's recovery signal, the same role
         /// `ClipExpansionContainer`'s `didHandleDragEnd`/`onChange` pairing plays: without it, a
@@ -111,6 +113,9 @@ struct ProcessingView<Destination: View>: View {
     /// (the page springs back); further drags are ignored meanwhile, so an impatient second
     /// swipe can't drag the departed video back onto the screen.
     @State private var committedDirection: BrowseSwipe.Direction?
+    /// Set once a swipe down commits to closing this screen, and never cleared: the screen is
+    /// on its way out.
+    @State private var isLeaving = false
     /// Set by `VideoScrubBar` while a horizontal drag on its track is in progress. Guards
     /// `videoSwipeGesture` so a drag that starts on the scrub track only scrubs, never also
     /// carries the page along — see that gesture's own doc comment.
@@ -173,7 +178,7 @@ struct ProcessingView<Destination: View>: View {
         cancelBrowsing: (() -> Void)? = nil,
         onRequestClose: (() -> Void)? = nil,
         dismissGestureHooks: DismissGestureHooks? = nil,
-        destination: @escaping (ProcessingResult, @escaping () -> Void) -> Destination
+        destination: @escaping (ProcessingResult, ProcessingDestinationActions) -> Destination
     ) {
         self.video = video
         self.autostart = autostart
@@ -199,9 +204,10 @@ struct ProcessingView<Destination: View>: View {
     }
 
     var body: some View {
-        // The back/cancel control is a sibling of the draggable strip, not a passenger inside
-        // it: it stays floating in place through every swipe — horizontal browse or vertical
-        // dismiss — rather than sliding with whichever page is currently under the finger.
+        // The back/cancel control and "Clip it" are siblings of the draggable strip, not
+        // passengers inside it: they stay floating in place through every swipe — horizontal
+        // browse or vertical dismiss — rather than sliding with whichever page is currently
+        // under the finger.
         ZStack(alignment: .topLeading) {
             // A three-page strip with this video's page in the middle: the neighbors wait one
             // window-width to either side and move with the same drag, so the one being swiped
@@ -222,23 +228,25 @@ struct ProcessingView<Destination: View>: View {
             // window, which is what a `contentShape` bounded by this view's own frame cannot.
             .contentShape(Rectangle())
             .background(swipeBackdrop)
-            // One attachment, covering every page of the strip plus the safe-area-inset content
-            // `videoStage` adds below its own video area, and — through the backdrop — the strips
-            // outside the safe area as well. `.simultaneousGesture`, not `.highPriorityGesture`:
-            // nesting two `.highPriorityGesture`s (this one and `VideoScrubBar`'s track) does not
-            // reliably let the descendant win on device, so this one runs alongside the track's
-            // instead and defers to it explicitly via `isScrubbingVideo`. See the gesture's own
-            // doc comment.
-            .simultaneousGesture(videoSwipeGesture)
             topLeadingControl
-            // Last in the stack, so it draws over both the strip and the top-leading control —
+            topTrailingControl
+            // Last in the stack, so it draws over both the strip and the corner controls —
             // it belongs to the video arriving, not to anything on the page leaving, and it
-            // must block the control too or a tap during a browse-in-flight would dismiss out
+            // must block the controls too or a tap during a browse-in-flight would leave out
             // from under the resolve it's waiting on.
             if showsBrowsingProgress, let browsingNeighbor {
                 browsingOverlay(browsingNeighbor)
             }
         }
+        // One attachment, covering every page of the strip plus the safe-area-inset content
+        // `videoStage` adds below its own video area, the strips outside the safe area through
+        // the backdrop, and the corner controls: a drag that starts on the chevron or "Clip it"
+        // swipes like one that starts anywhere else, without firing the control
+        // (`isSwipeInFlight`). `.simultaneousGesture`, not `.highPriorityGesture`: nesting two
+        // `.highPriorityGesture`s (this one and `VideoScrubBar`'s track) does not reliably let
+        // the descendant win on device, so this one runs alongside the track's instead and
+        // defers to it explicitly via `isScrubbingVideo`. See the gesture's own doc comment.
+        .simultaneousGesture(videoSwipeGesture)
         // No navigation bar at all, rather than a transparent one: the bar is the navigation
         // stack's own view, laid over this screen's content, so a drag that starts in its
         // band never reaches this screen's gesture. The back button stays hidden as well:
@@ -248,14 +256,16 @@ struct ProcessingView<Destination: View>: View {
         .navigationBarBackButtonHidden(true)
         .navigationDestination(isPresented: $viewModel.isShowingClips) {
             if let result = viewModel.result {
-                destination(result, popToRoot)
+                destination(result, ProcessingDestinationActions(popToRoot: popToRoot, analyze: analyzeFromClips))
             }
         }
         .onChange(of: viewModel.isShowingClips) { showing in
             // A swipe-back from the clip list dismisses the destination without going
             // through its back button (which pops to root): without this, the revealed
-            // `.succeeded` branch would be a blank page. Leaving the list leaves the
-            // flow, so a swipe-back pops to root exactly like the back button does.
+            // `.succeeded` branch would be a blank page, so a swipe-back pops to root
+            // exactly like the back button does. The list's "Analyze clips" leaves it too,
+            // but takes the state out of `.succeeded` first (`analyzeFromClips`), so that
+            // one stays on this screen for the run.
             if !showing, case .succeeded = viewModel.state {
                 popToRoot()
             }
@@ -327,7 +337,7 @@ struct ProcessingView<Destination: View>: View {
             // would keep playing with no UI to stop it. Every dismissal
             // path lands here — swipe-down, back, and programmatic dismiss
             // alike — so the pause is on teardown, not on each exit; the
-            // same reason `commit(_:)` and `idleControls` pause first.
+            // same reason `commit(_:)` and `clipIt()` pause first.
             player?.pause()
             viewModel.cancel()
         }
@@ -370,17 +380,31 @@ struct ProcessingView<Destination: View>: View {
     private var topLeadingControl: some View {
         if isAnalyzing {
             ScrimIconButton(systemImage: "xmark", accessibilityLabel: "Cancel") {
+                guard !isSwipeInFlight else { return }
                 handleBackAction()
             }
             .accessibilityIdentifier("processing-cancel")
             .screenHeaderItemPlacement()
         } else {
             ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home") {
+                guard !isSwipeInFlight else { return }
                 handleBackAction()
             }
             .accessibilityIdentifier("processing-back")
             .screenHeaderItemPlacement()
         }
+    }
+
+    /// Whether a swipe has the page: a drag recognized and not yet ended, a browse that a swipe
+    /// committed to, still carrying the page away or waiting on the neighbor, or a swipe down
+    /// that committed to closing the screen. The corner controls don't slide with the page, and
+    /// a swipe can start on them, so their taps stand down meanwhile rather than act on the video
+    /// the swipe is leaving. A control's action runs after the swipe's own end, so a quick flick
+    /// that lifts on the control relies on the committed state here, not on `dragAxis`. A drag
+    /// that falls short has already ended, and sprung back, by the time its lift reaches the
+    /// control, so it still counts as a tap.
+    private var isSwipeInFlight: Bool {
+        dragAxis != nil || committedDirection != nil || browsingNeighbor != nil || isLeaving
     }
 
     /// What the top-leading control does, and what letting go of a committed swipe-down does
@@ -390,6 +414,34 @@ struct ProcessingView<Destination: View>: View {
             viewModel.cancel()
         }
         close()
+    }
+
+    /// "Clip it", across the header row from the back chevron where a bar's trailing item would
+    /// sit. Idle only: a run in flight leaves Cancel as the one control, and the error state has
+    /// its own buttons. A sibling of the draggable strip in `body`, like `topLeadingControl`.
+    @ViewBuilder
+    private var topTrailingControl: some View {
+        if case .idle = viewModel.state {
+            ScrimTextButton("Clip it", action: clipIt)
+                .accessibilityIdentifier("processing-clip-it")
+                .screenHeaderItemPlacement()
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    /// Pauses first: the clip list pushes over this screen, and nothing would call `pause()`
+    /// on the player once it is covered, so its audio would play on under the list.
+    private func clipIt() {
+        guard !isSwipeInFlight else { return }
+        player?.pause()
+        viewModel.skipAnalysis(video: video)
+    }
+
+    /// The clip list's "Analyze clips": pops back to this screen, which shows the run's
+    /// progress over the video as a run started anywhere does.
+    private func analyzeFromClips() {
+        player?.pause()
+        viewModel.analyzeFromClips(video: video, people: Self.people)
     }
 
     /// The in-flight run's latest progress report, or `nil` outside `.processing` — the
@@ -426,7 +478,7 @@ struct ProcessingView<Destination: View>: View {
     }
 
     /// Back/Cancel track the *processing* state rather than `viewModel.isRunning`: idle is
-    /// this screen's resting state (analysis starts from a button), so it keeps the back
+    /// this screen's resting state (analysis starts from the clip list), so it keeps the back
     /// chevron to Home. `isRunning` still counts idle as running — the pipeline's tests
     /// lean on that — so it can't drive this.
     private var isAnalyzing: Bool {
@@ -506,13 +558,14 @@ struct ProcessingView<Destination: View>: View {
                 if dragAxis == .vertical {
                     defer { isTrackingDismissDrag = false }
                     guard canBrowse else { return }
-                    if let hooks = dismissGestureHooks {
-                        hooks.onEnded(value.translation.height, value.predictedEndTranslation.height)
-                        return
-                    }
                     let translation = value.translation.height
                     let predicted = value.predictedEndTranslation.height
+                    if let hooks = dismissGestureHooks {
+                        if hooks.onEnded(translation, predicted) { isLeaving = true }
+                        return
+                    }
                     if translation >= BrowseSwipe.commitDistance || predicted >= BrowseSwipe.flickDistance {
+                        isLeaving = true
                         handleBackAction()
                     }
                     return
@@ -559,7 +612,7 @@ struct ProcessingView<Destination: View>: View {
     /// then browses. The browse waits for the slide to finish: a local video resolves faster
     /// than the page moves, and landing mid-slide would cut the motion short. Stops the idle
     /// player first — nothing would call `pause()` on it once this screen's identity changes
-    /// underneath it, the same reason `idleControls`' "Analyze clips" button pauses first.
+    /// underneath it, the same reason "Clip it" pauses first.
     private func commit(_ direction: BrowseSwipe.Direction) {
         committedDirection = direction
         player?.pause()
@@ -583,9 +636,8 @@ struct ProcessingView<Destination: View>: View {
 
     /// The full-window surface the swipe is measured and hit-tested against. A `.background`
     /// rather than an `.ignoresSafeArea()` on the screen's own content: that would also move
-    /// what `videoStage`'s `.safeAreaInset` insets from, dropping the scrub bar and the
-    /// "Analyze clips" button under the home indicator. Black, so it reads as the same
-    /// backdrop `videoStage` already draws.
+    /// what `videoStage`'s `.safeAreaInset` insets from, dropping the scrub bar under the home
+    /// indicator. Black, so it reads as the same backdrop `videoStage` already draws.
     private var swipeBackdrop: some View {
         GeometryReader { proxy in
             Color.black
@@ -603,13 +655,13 @@ struct ProcessingView<Destination: View>: View {
     /// state: the poster aspect-fit into the full window exactly as `BareVideoPlayerView` fits
     /// the video itself, under the same resting controls the arriving screen will draw — so
     /// what slides in is the screen about to land, and landing changes nothing but the poster
-    /// giving way to the player. No chevron of its own: `topLeadingControl` is a fixed sibling
-    /// of the whole strip in `body`, already on screen throughout the swipe, so a second one
-    /// here would double up rather than hand off. Inert: nothing here can be tapped, and
-    /// nothing here is an accessibility element — the stand-in controls are replaced wholesale
-    /// by an empty representation rather than merely hidden, since the real controls arrive
-    /// with the real screen and a second "Analyze clips" a screen-width offstage would still
-    /// be found by anything walking the element tree.
+    /// giving way to the player. No chevron or "Clip it" of its own: the corner controls are
+    /// fixed siblings of the whole strip in `body`, already on screen throughout the swipe, so
+    /// a second set here would double up rather than hand off. Inert: nothing here can be
+    /// tapped, and nothing here is an accessibility element — the stand-in scrub bar is
+    /// replaced wholesale by an empty representation rather than merely hidden, since the real
+    /// one arrives with the real screen and a second a screen-width offstage would still be
+    /// found by anything walking the element tree.
     private func neighborPage(_ direction: BrowseSwipe.Direction) -> some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -622,11 +674,8 @@ struct ProcessingView<Destination: View>: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 12) {
-                VideoScrubBar.Placeholder()
-                    .padding(.horizontal)
-                PrimaryActionBar("Analyze clips", secondary: .init("Clip manually") {}) {}
-            }
+            VideoScrubBar.Placeholder()
+                .modifier(IdleScrubBarPlacement())
         }
         .allowsHitTesting(false)
         .accessibilityRepresentation { EmptyView() }
@@ -667,10 +716,9 @@ struct ProcessingView<Destination: View>: View {
 
     /// The video stage: the picked video fills the screen with no native playback
     /// chrome (`BareVideoPlayerView`) — Photos-app look, black background, no title, no
-    /// caption. This backs both `.idle` (scrub bar + "Analyze clips" button over the
-    /// bottom) and `.processing` (progress overlay over the bottom instead) — the video
-    /// stays on screen and paused behind the progress UI rather than the analysis
-    /// replacing it with a separate page.
+    /// caption. This backs both `.idle` (scrub bar over the bottom) and `.processing`
+    /// (progress overlay over the bottom instead) — the video stays on screen and paused
+    /// behind the progress UI rather than the analysis replacing it with a separate page.
     private var videoStage: some View {
         ZStack {
             ZStack {
@@ -726,8 +774,8 @@ struct ProcessingView<Destination: View>: View {
         // comment) covers this whole stage, video area and safe-area inset alike — nothing is
         // attached here directly.
         // `.safeAreaInset`, not `.overlay`: an overlay sizes its content at its own
-        // ideal width and aligns it, so `PrimaryActionBar`'s full-width button has no
-        // wider proposal to expand into and stays text-hugging. A safe-area inset
+        // ideal width and aligns it, so the scrub bar and the progress panel's backing have
+        // no wider proposal to expand into and hug their content. A safe-area inset
         // reserves real full-width space instead.
         .safeAreaInset(edge: .bottom) {
             if case .processing(let progress) = viewModel.state {
@@ -759,31 +807,14 @@ struct ProcessingView<Destination: View>: View {
         .allowsHitTesting(false)
     }
 
+    @ViewBuilder
     private var idleControls: some View {
-        VStack(spacing: 12) {
-            if let player {
-                // `onScrubbingChanged` feeds `isScrubbingVideo`, which `videoSwipeGesture`
-                // checks so a drag on the track never also carries the page — see that
-                // gesture's own doc comment.
-                VideoScrubBar(player: player, onScrubbingChanged: { isScrubbingVideo = $0 })
-                    .padding(.horizontal)
-            }
-            // Pause the idle player before this state leaves the hierarchy:
-            // nothing would call `pause()` on it afterwards, so its audio would
-            // keep playing behind the progress UI and the clip list. The skip
-            // leaves the hierarchy the same way (the clip list pushes over this
-            // screen), so it pauses first for the same reason.
-            PrimaryActionBar(
-                "Analyze clips",
-                secondary: .init("Clip manually") {
-                    player?.pause()
-                    viewModel.skipAnalysis(video: video)
-                }
-            ) {
-                player?.pause()
-                viewModel.start(video: video, people: Self.people)
-            }
-            .accessibilityIdentifier("start-analysis")
+        if let player {
+            // `onScrubbingChanged` feeds `isScrubbingVideo`, which `videoSwipeGesture`
+            // checks so a drag on the track never also carries the page — see that
+            // gesture's own doc comment.
+            VideoScrubBar(player: player, onScrubbingChanged: { isScrubbingVideo = $0 })
+                .modifier(IdleScrubBarPlacement())
         }
     }
 
@@ -838,6 +869,24 @@ struct ProcessingView<Destination: View>: View {
             }
             .padding(.top, 8)
         }
+    }
+}
+
+/// What Processing hands its success destination besides the result.
+struct ProcessingDestinationActions {
+    /// Back to Home, skipping Processing.
+    let popToRoot: () -> Void
+    /// Pops back to Processing and analyzes the video there, under the run's progress.
+    let analyze: () -> Void
+}
+
+/// Where the idle scrub bar sits in the bottom inset, shared by the real bar and a neighbor
+/// page's stand-in so the page that slides in lands with its bar exactly where it was.
+private struct IdleScrubBarPlacement: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal)
+            .padding(.bottom, 8)
     }
 }
 

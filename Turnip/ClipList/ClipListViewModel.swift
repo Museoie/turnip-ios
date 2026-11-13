@@ -690,7 +690,7 @@ extension ClipListViewModel {
     /// The clips Name Clips pages through: every derived clip, in order.
     var clipsToName: [ClipListItem] { items.filter { !$0.isOriginal } }
 
-    /// Whether the video has pose analysis to contribute. A video reached by "Clip manually" has
+    /// Whether the video has pose analysis to contribute. A video reached by "Clip it" has
     /// none, so its clips can be named but are never contributed.
     var hasPose: Bool { !poseFrames.isEmpty }
 

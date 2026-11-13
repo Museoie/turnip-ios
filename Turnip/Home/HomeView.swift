@@ -108,15 +108,17 @@ struct HomeView: View {
     }
 
     /// Where a video lands once it has clips to name: Name Clips, over the detection's clips.
-    /// `analysisSkipped` is Processing's "Clip manually" path: the detection is empty because
+    /// `analysisSkipped` is Processing's "Clip it" path: the detection is empty because
     /// nothing looked, not because nothing was found, so Name Clips doesn't say "No tricks found".
-    /// The camera path never skips; it always has a real detection.
+    /// The camera path never skips; it always has a real detection, and no Processing screen
+    /// under it to `analyze` on.
     private func labeling(
         for video: SelectedVideo,
         detection: DetectedClips,
         asset: AVURLAsset,
         analysisSkipped: Bool = false,
-        popToRoot: @escaping () -> Void
+        popToRoot: @escaping () -> Void,
+        analyze: (() -> Void)? = nil
     ) -> NameClipsView {
         NameClipsView(
             items: detection.clips.map {
@@ -132,7 +134,8 @@ struct HomeView: View {
             assetIdentifier: video.assetIdentifier,
             duration: video.duration,
             showsNoTricksFound: detection.clips.isEmpty && !analysisSkipped,
-            popToRoot: popToRoot
+            popToRoot: popToRoot,
+            analyze: analyze
         )
     }
 
@@ -223,10 +226,11 @@ struct HomeView: View {
                             onChanged: handlers.dismissTranslationChanged,
                             onEnded: handlers.dismissEnded,
                             onCancelled: handlers.dismissCancelled),
-                            destination: { result, popToRoot in
+                            destination: { result, actions in
                                 labeling(
                                     for: video, detection: result.detection, asset: result.asset,
-                                    analysisSkipped: result.analysisSkipped, popToRoot: popToRoot)
+                                    analysisSkipped: result.analysisSkipped,
+                                    popToRoot: actions.popToRoot, analyze: actions.analyze)
                             }
                         )
                         // Ties the screen's identity to the video it's showing: without this,

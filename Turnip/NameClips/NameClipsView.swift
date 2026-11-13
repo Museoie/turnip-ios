@@ -4,24 +4,31 @@ import SwiftUI
 /// Name Clips (`docs/UIUX.md` § "Name Clips", `docs/PROFILE_DESIGN.md` §4): where an analysis
 /// lands. One detected clip at a time, looping with the framing it exports with, and under it the
 /// trick-name field, the names given as chips, suggestions, and who is in the clip. Naming is
-/// never required: "Save Clips", on every clip, saves them all at once.
+/// never required: "Previous" and "Next" step through the clips, and the last clip's "Save Clips"
+/// saves them all at once.
 ///
 /// It is also the triage the clip grid used to be: tapping the card flies it open into the
 /// editor (`ClipExpansionContainer`), the header's "+" adds a clip, and the header's menu
-/// removes the one on screen.
+/// removes the one on screen. With no clip, it offers "Analyze clips" (`analyze`) and "Clip
+/// manually".
 ///
-/// The pager owns every horizontal drag, as Processing's browse swipe does, and holds the page's
-/// own vertical scroll still while it slides. The processing screen pushes this with the
-/// pipeline's output; the back chevron pops to Home. This view declares no `NavigationStack` of
-/// its own.
+/// The pager owns every horizontal drag that starts above the bottom bar (the bar sits outside
+/// it, so a swipe that starts there doesn't page), and holds the page's own vertical scroll
+/// still while it slides. The processing screen pushes this with the
+/// pipeline's output, or with nothing from its "Clip it"; the back chevron pops to Home. This
+/// view declares no `NavigationStack` of its own.
 struct NameClipsView: View {
     @StateObject private var viewModel: ClipListViewModel
     @ObservedObject private var vocabulary: VocabularyStore
     @ObservedObject private var account: FarmAccount
     private let outbox: ContributionOutbox
-    /// A run that found nothing says so; a video that arrived by "Clip manually" wasn't looked at.
+    /// A run that found nothing says so; a video that arrived by "Clip it" wasn't looked at.
     let showsNoTricksFound: Bool
     let popToRoot: () -> Void
+    /// Leaves for Processing to analyze the video: the empty state's "Analyze clips". Nil where
+    /// no Processing screen sits under this one (a camera take live inference fully covered,
+    /// which has been analyzed), and the empty state then offers "Clip manually" alone.
+    let analyze: (() -> Void)?
 
     @State private var index = 0
     @State private var dragOffset: CGFloat = 0
@@ -54,7 +61,8 @@ struct NameClipsView: View {
         vocabulary: VocabularyStore = .shared,
         account: FarmAccount = .shared,
         outbox: ContributionOutbox = .shared,
-        popToRoot: @escaping () -> Void = {}
+        popToRoot: @escaping () -> Void = {},
+        analyze: (() -> Void)? = nil
     ) {
         _viewModel = StateObject(wrappedValue: ClipListViewModel(
             items: items, poseFrames: poseFrames, people: people, windowEmbeddings: windowEmbeddings, asset: asset,
@@ -64,6 +72,7 @@ struct NameClipsView: View {
         self.outbox = outbox
         self.showsNoTricksFound = showsNoTricksFound
         self.popToRoot = popToRoot
+        self.analyze = analyze
     }
 
     private var clips: [ClipListItem] { viewModel.clipsToName }
@@ -203,8 +212,8 @@ struct NameClipsView: View {
         withAnimation(Self.slide) { dragOffset = 0 }
     }
 
-    /// Where a swipe lands, and the card's Previous clip / Next clip: commits what is typed to
-    /// the clip being left, then slides to `target`.
+    /// Where a swipe lands, and the bar's Previous / Next and the card's Previous clip / Next
+    /// clip: commits what is typed to the clip being left, then slides to `target`.
     private func go(to target: Int) {
         guard clips.indices.contains(target) else { return }
         commitDraft()
@@ -335,13 +344,50 @@ struct NameClipsView: View {
     @ViewBuilder
     private var actionBar: some View {
         if clips.isEmpty {
-            PrimaryActionBar("Add Clip", action: addClip)
-                .accessibilityIdentifier("name-clips-primary")
+            if let analyze {
+                PrimaryActionBar("Analyze clips", secondary: .init("Clip manually", action: addClip), action: analyze)
+                    .accessibilityIdentifier("start-analysis")
+            } else {
+                PrimaryActionBar("Clip manually", action: addClip)
+                    .accessibilityIdentifier("name-clips-clip-manually")
+            }
         } else {
-            PrimaryActionBar("Save Clips", isEnabled: !viewModel.isSaving, action: save)
-                .accessibilityValue(saveAccessibilityValue)
-                .accessibilityIdentifier("name-clips-primary")
+            pagingBar
         }
+    }
+
+    /// Previous in the leading corner and Next in the trailing one, playing the swipe's slide.
+    /// The first clip has no Previous; the last clip's trailing button is "Save Clips" instead.
+    /// The trailing button holds its corner whether or not Previous is there.
+    private var pagingBar: some View {
+        HStack(spacing: 12) {
+            if index > 0 {
+                Button { go(to: index - 1) } label: {
+                    Text("Previous").frame(minWidth: 88)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("name-clips-previous")
+            }
+            Spacer(minLength: 0)
+            if isLast {
+                Button(action: save) {
+                    Text("Save Clips").frame(minWidth: 88)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.isSaving)
+                .accessibilityValue(saveAccessibilityValue)
+                .accessibilityIdentifier("name-clips-save")
+            } else {
+                Button { go(to: index + 1) } label: {
+                    Text("Next").frame(minWidth: 88)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("name-clips-next")
+            }
+        }
+        .controlSize(.large)
+        .padding()
+        .background(.thinMaterial)
     }
 
     /// What Save Clips commits to, read after its label: how many clips it writes.
@@ -350,7 +396,7 @@ struct NameClipsView: View {
     }
 
     /// What an analysis that left no clip shows: that it found nothing, or — for a video reached
-    /// by "Clip manually" — that there is nothing yet, and "Add Clip" below.
+    /// by "Clip it" — that there is nothing yet, over the bar's "Analyze clips" and "Clip manually".
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "film.stack")

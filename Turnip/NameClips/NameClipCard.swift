@@ -25,9 +25,9 @@ struct NameClipCard: View {
     /// Opens the editor from the card's on-screen frame (global space), on the poster and the
     /// asset time the loop was showing (`nil` without a loop).
     let onOpen: (CGRect, CGImage?, TimeInterval?) -> Void
-    /// The swipe's way to the clip before and after this one, as VoiceOver actions: Name Clips
-    /// has no paging button. `nil` where there is no clip that way, or on a card that isn't the
-    /// current page.
+    /// The swipe's way to the clip before and after this one, as VoiceOver actions on the card
+    /// itself, beside the bar's Previous and Next. `nil` where there is no clip that way, or on a
+    /// card that isn't the current page.
     let onPrevious: (() -> Void)?
     let onNext: (() -> Void)?
 

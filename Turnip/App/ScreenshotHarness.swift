@@ -571,11 +571,16 @@ struct ScreenshotProcessingPoseRunner: ProcessingRunning {
 }
 
 /// Processing's resting state (`-screenshotProcessingIdle`): the picked video filling
-/// the screen with no native playback chrome, the thin scrub bar, and the manual
-/// "Analyze clips" button. `autostart: false` so the pipeline never actually runs.
-/// The destination is a labeled stand-in rather than `EmptyView`, so the UI test that taps
-/// "Clip manually" can see the push land and read the result it landed with.
+/// the screen with no native playback chrome, the thin scrub bar, and "Clip it" in the
+/// top-trailing corner. `autostart: false`, so nothing runs until the clip list's "Analyze
+/// clips" asks; the scripted runner then reports one frame of progress and holds, like
+/// `-screenshotProcessing`'s. The destination is the real Name Clips, wired the way Home wires
+/// it, so the UI test that taps "Clip it" reads the empty state it lands on and drives its
+/// "Analyze clips" back to this screen. `popToRoot` puts up a marker instead of closing a cover,
+/// so that test can tell "Analyze clips" stayed on Processing rather than leaving for Home.
 struct ScreenshotProcessingIdleHarness: View {
+    @State private var hasPoppedToRoot = false
+
     var body: some View {
         NavigationStack {
             ProcessingView(
@@ -583,11 +588,43 @@ struct ScreenshotProcessingIdleHarness: View {
                     assetIdentifier: "screenshot",
                     asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
                     duration: 60),
+                runner: ScreenshotProcessingRunner(),
                 autostart: false,
-                destination: { result, _ in
-                    Text(result.analysisSkipped ? "Clip list stand-in: skipped" : "Clip list stand-in")
-                        .accessibilityIdentifier("clip-list-stand-in")
+                popToRoot: { hasPoppedToRoot = true },
+                destination: { result, actions in
+                    NameClipsView(
+                        items: [],
+                        asset: result.asset,
+                        assetIdentifier: "screenshot",
+                        duration: 60,
+                        showsNoTricksFound: result.clips.isEmpty && !result.analysisSkipped,
+                        popToRoot: actions.popToRoot,
+                        analyze: actions.analyze)
                 })
+        }
+        .overlay(alignment: .center) {
+            if hasPoppedToRoot {
+                Text("Popped to Home")
+                    .padding()
+                    .background(.red)
+                    .accessibilityIdentifier(HarnessIdentifier.poppedToRoot)
+            }
+        }
+    }
+}
+
+/// Name Clips as a camera take that live inference fully covered lands on it with nothing found
+/// (`-screenshotNameClipsCameraEmpty`): the root of the cover, with no Processing screen under
+/// it, so no `analyze` — the empty state offers "Clip manually" alone.
+struct ScreenshotNameClipsCameraEmptyHarness: View {
+    var body: some View {
+        NavigationStack {
+            NameClipsView(
+                items: [],
+                asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
+                assetIdentifier: "screenshot",
+                duration: 60,
+                showsNoTricksFound: true)
         }
     }
 }
@@ -613,8 +650,14 @@ private struct ScreenshotProcessingRunner: ProcessingRunning {
 /// `PageSwipeLock` `RootTabView` applies. The UI test swipes and reads the screen's center
 /// color to tell which video landed — and whether the swipe reached the pager instead. The
 /// `/dev/null` assets never decode a frame, so the poster under each player is what shows.
+///
+/// With `landsBrowse` off (`-browseHeld`), a neighbor's browse starts but never replaces the
+/// screen, so a committed swipe stays in flight with the neighbor's poster on screen: the state
+/// in which the corner controls' taps must stand down. A tap that didn't would push the
+/// (black) clip list or pop to the stand-in Home, and nothing would replace either.
 struct ScreenshotProcessingBrowseHarness: View {
     static let colors: [UIColor] = [.systemRed, .systemGreen, .systemBlue]
+    var landsBrowse = true
     @State private var selectedTab = MainTab.home
     @State private var path: [Int] = [1]
 
@@ -647,7 +690,7 @@ struct ScreenshotProcessingBrowseHarness: View {
     private func neighbor(_ index: Int) -> BrowseNeighbor? {
         guard Self.colors.indices.contains(index) else { return nil }
         return BrowseNeighbor(poster: Self.poster(index)) {
-            path[path.count - 1] = index
+            if landsBrowse { path[path.count - 1] = index }
             return true
         }
     }
