@@ -417,16 +417,17 @@ struct NameClipsView: View {
 
     // MARK: - Save
 
-    /// The save, then back to Home. When Settings' Contribute named clips is on, a saved clip has
-    /// a name and the farm can take it, the contribution sheet comes first if this account hasn't
-    /// agreed yet; once it has, the clips go to the outbox and Home doesn't wait for their upload.
+    /// The save, then back to Home. When Settings' Contribute named clips is on, a saved clip of the
+    /// user has a name and the farm can take it, the contribution sheet comes first if this account
+    /// hasn't agreed yet; once it has, the clips go to the outbox and Home doesn't wait for their
+    /// upload. A save with only clips of someone else has nothing to send, so it asks nothing.
     private func save() {
         commitDraft()
         isFieldFocused = false
         Task {
             guard await viewModel.save() else { return }
             let plan = viewModel.contributionPlan()
-            guard account.isAvailable, plan.hasClips else {
+            guard account.isAvailable, plan.hasReadyClips else {
                 popToRoot()
                 return
             }

@@ -99,8 +99,8 @@ final class NameClipsTests: XCTestCase {
         }
     }
 
-    /// With Contribute named clips on, only saved, named clips go; the sequence is the first
-    /// clip's person's, and another person's clip stays behind.
+    /// With Contribute named clips on, only saved, named clips go; the sequence is the person's
+    /// of the first clip marked as the user, and another person's clip stays behind.
     func testPlanSendsTheFirstPersonsSavedNamedClips() async {
         let named = [ClipName(name: "cork", origin: .typed)]
         let first = item(1, person: 1, names: named)

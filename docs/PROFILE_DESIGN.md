@@ -391,12 +391,9 @@ also where an analysis lands: Clip List's triage moved onto it, UIUX
   clips, and any clip can change it.
 - `is_me` never leaves the device. Clips marked someone else appear in
   the gallery under its filter (§7) and count toward nothing (§6).
-- The confirmation sheet carries the consent reminder
-  `BACKEND_DESIGN.md` §7.1 requires: contribute only clips of people who
-  agreed. It flags the reminder when such a clip is in the contribution,
-  and says later saves include such clips: after the one agreement they
-  go in the background, with no sheet to remind on
-  (`CONTRIBUTION_DESIGN.md` §3.3).
+- Only clips marked as the user are contributed. A clip marked someone
+  else stays on the device, and the confirmation sheet lists it as
+  staying behind (`CONTRIBUTION_DESIGN.md` §3.3).
 
 ### 4.4 Grouping names by trick
 

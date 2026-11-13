@@ -2,9 +2,9 @@ import SwiftUI
 
 /// The contribution confirmation sheet (`docs/CONTRIBUTION_DESIGN.md` §3.3), shown until the
 /// account has agreed: the saved, named clips Settings' Contribute named clips offers, with their
-/// names; what is sent and what never is; the disclosure the farm requires; sign-in when there is
-/// no session; and Confirm, which covers these clips and every later save. Cancel sends nothing
-/// and agrees to nothing — the clips are already saved.
+/// names; what is sent and what never is; the disclosure the farm requires; the 16-or-older
+/// confirmation; sign-in when there is no session; and Confirm, which covers these clips and every
+/// later save. Cancel sends nothing and agrees to nothing — the clips are already saved.
 struct ContributionSheet: View {
     let plan: ContributionPlan
     @ObservedObject var account: FarmAccount
@@ -12,6 +12,7 @@ struct ContributionSheet: View {
     let confirm: (SourceContribution) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var signInFailure: String?
+    @State private var confirmsAge = false
 
     var body: some View {
         NavigationStack {
@@ -32,12 +33,17 @@ struct ContributionSheet: View {
                     Label {
                         Text(ContributionDisclosure.consent)
                     } icon: {
-                        Image(systemName: plan.includesSomeoneElse ? "exclamationmark.triangle.fill" : "person")
-                            .foregroundStyle(plan.includesSomeoneElse ? Color.yellow : Color.secondary)
+                        Image(systemName: "person").foregroundStyle(.secondary)
                     }
                     .accessibilityIdentifier("contribution-consent")
                 }
                 .font(.footnote)
+                Section {
+                    Toggle(ContributionDisclosure.ageConfirmation, isOn: $confirmsAge)
+                        .accessibilityIdentifier("contribution-age")
+                } footer: {
+                    Text(ContributionDisclosure.ageRequirement)
+                }
                 if !account.isSignedIn {
                     Section {
                         FarmSignInButton(account: account, failureMessage: $signInFailure)
@@ -56,8 +62,11 @@ struct ContributionSheet: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                PrimaryActionBar("Agree and Contribute", isEnabled: account.isSignedIn && plan.source != nil) {
-                    guard let source = plan.source else { return }
+                PrimaryActionBar(
+                    "Agree and Contribute",
+                    isEnabled: Self.canConfirm(isSignedIn: account.isSignedIn, plan: plan, confirmsAge: confirmsAge)
+                ) {
+                    guard confirmsAge, let source = plan.source else { return }
                     confirm(source)
                     dismiss()
                 }
@@ -67,12 +76,20 @@ struct ContributionSheet: View {
         }
     }
 
+    /// Confirm needs a session, something to send, and the 16-or-older confirmation: the farm takes
+    /// contributions only from people who are 16 or older (`docs/CONTRIBUTION_DESIGN.md` §3.3).
+    static func canConfirm(isSignedIn: Bool, plan: ContributionPlan, confirmsAge: Bool) -> Bool {
+        isSignedIn && plan.source != nil && confirmsAge
+    }
+
     @ViewBuilder
     private var qualityNote: some View {
         switch plan.quality {
         case .good: EmptyView()
         case .patchy:
             Text("Pose tracking lost the athlete in parts of these clips. They can still help.")
+        case .unusable where !plan.hasReadyClips:
+            Text("Only clips marked as you are contributed, and none of these is.")
         case .unusable:
             Text("""
                 Pose tracking couldn't follow this video well enough to contribute it. \
@@ -103,10 +120,14 @@ private struct ContributionClipRow: View {
                 Text(item.names.map(\.name).joined(separator: " · "))
                     .font(.body.weight(.semibold))
                 Text(item.durationLabel).font(.caption).foregroundStyle(.secondary)
-                if !item.isMe {
-                    Label("Someone else", systemImage: "person.2").font(.caption).foregroundStyle(.yellow)
-                }
-                if status == .otherPerson {
+                switch status {
+                case .ready:
+                    EmptyView()
+                case .someoneElse:
+                    Label("Someone else. Stays on this iPhone.", systemImage: "person.2")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .otherPerson:
                     Text("Another person in this video. Their clips can't be contributed yet.")
                         .font(.caption)
                         .foregroundStyle(.secondary)

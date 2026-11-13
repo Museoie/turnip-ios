@@ -93,10 +93,10 @@ final class ContributionOutboxTests: XCTestCase {
         return outbox
     }
 
-    private static func saved(_ id: UUID, names: [ClipName]) -> LibraryClip {
+    private static func saved(_ id: UUID, names: [ClipName], isMe: Bool = true) -> LibraryClip {
         LibraryClip(
             id: id, sourceAssetID: "asset", startTime: 1, endTime: 2, exportAssetID: "export", names: names,
-            isMe: true, isAutoDetected: true, recordedAt: .distantPast, savedAt: .distantPast)
+            isMe: isMe, isAutoDetected: true, recordedAt: .distantPast, savedAt: .distantPast)
     }
 
     private nonisolated static func clip(_ id: UUID = clipID) -> ClipContribution {
@@ -637,6 +637,20 @@ final class ContributionOutboxTests: XCTestCase {
         let farm = ScriptedFarm(Self.delivered(Self.videoID, [Self.otherClipID]))
         let outbox = outbox(account(client: farm.client), savedClip: { id in
             id == Self.clipID ? nil : Self.saved(id, names: Self.cork)
+        })
+
+        await outbox.enqueue(Self.source(clips: [Self.clip(), Self.clip(Self.otherClipID)]))
+        await settled(outbox)
+
+        XCTAssertEqual(try sentClips(farm).map { $0["clip_id"] as? String }, [Self.otherClipID.uuidString.lowercased()])
+        XCTAssertTrue(outbox.jobs.isEmpty)
+    }
+
+    /// A clip marked as someone else after it was queued never goes out, though it is still saved.
+    func testAClipMarkedAsSomeoneElseWhileWaitingStaysHere() async throws {
+        let farm = ScriptedFarm(Self.delivered(Self.videoID, [Self.otherClipID]))
+        let outbox = outbox(account(client: farm.client), savedClip: { id in
+            Self.saved(id, names: Self.cork, isMe: id != Self.clipID)
         })
 
         await outbox.enqueue(Self.source(clips: [Self.clip(), Self.clip(Self.otherClipID)]))

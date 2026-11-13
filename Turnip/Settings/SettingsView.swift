@@ -11,6 +11,8 @@ struct SettingsView: View {
     var account: FarmAccount = .shared
     var outbox: ContributionOutbox = .shared
     @Environment(\.dismiss) private var dismiss
+    /// Off until the storefront has been read, so the switch never shows and then vanishes.
+    @State private var isContributingOffered = false
 
     var body: some View {
         NavigationStack {
@@ -72,8 +74,14 @@ struct SettingsView: View {
                 }
 
                 if account.isAvailable {
-                    FarmAccountSection(account: account, outbox: outbox, contributesClips: $settings.contributesClips)
+                    FarmAccountSection(
+                        account: account, outbox: outbox, contributesClips: $settings.contributesClips,
+                        isContributingOffered: isContributingOffered)
                 }
+            }
+            .task {
+                isContributingOffered = await ContributionRegion.isAvailableOnCurrentStorefront()
+                if !isContributingOffered { settings.contributesClips = false }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)

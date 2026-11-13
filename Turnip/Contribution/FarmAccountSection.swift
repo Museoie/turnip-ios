@@ -3,18 +3,23 @@ import SwiftUI
 
 /// Settings' Contribution section (`docs/CONTRIBUTION_DESIGN.md` §3.3, §5.4): the Contribute named
 /// clips switch, what is still waiting to send, then sign in with Apple, sign out, and delete the
-/// farm account. Shown only when the build points at a farm.
+/// farm account. Shown only when the build points at a farm. Where contributing isn't offered
+/// (`ContributionRegion`), the switch and sign-in are hidden, and an account already signed in can
+/// still sign out or be deleted.
 struct FarmAccountSection: View {
     @ObservedObject var account: FarmAccount
     @ObservedObject var outbox: ContributionOutbox
     @Binding var contributesClips: Bool
+    let isContributingOffered: Bool
     @State private var isConfirmingDeletion = false
     @State private var failureMessage: String?
 
     var body: some View {
         Section {
-            Toggle("Contribute named clips", isOn: $contributesClips)
-                .accessibilityIdentifier("settings-contribute-clips")
+            if isContributingOffered {
+                Toggle("Contribute named clips", isOn: $contributesClips)
+                    .accessibilityIdentifier("settings-contribute-clips")
+            }
             if outbox.waitingClipCount > 0 {
                 Label(waitingMessage, systemImage: "arrow.up.circle")
                     .accessibilityElement(children: .ignore)
@@ -34,14 +39,19 @@ struct FarmAccountSection: View {
                 }
                 .disabled(account.isWorking)
                 .accessibilityIdentifier("settings-farm-delete-account")
-            } else {
+            } else if isContributingOffered {
                 FarmSignInButton(account: account, failureMessage: $failureMessage)
                     .accessibilityIdentifier("settings-farm-sign-in")
             }
         } header: {
             Text("Contribution")
         } footer: {
-            Text("\(ContributionDisclosure.contributeSwitch) \(ContributionDisclosure.accountFooter)")
+            if isContributingOffered {
+                Text("\(ContributionDisclosure.contributeSwitch) \(ContributionDisclosure.accountFooter)")
+            } else {
+                Text(ContributionDisclosure.unavailableHere)
+                    .accessibilityIdentifier("settings-contribution-unavailable")
+            }
         }
         .confirmationDialog(
             "Delete your Turnip account?", isPresented: $isConfirmingDeletion, titleVisibility: .visible
@@ -113,12 +123,19 @@ enum ContributionDisclosure {
         clip could still match them to it.
         """)
     static let consent = String(localized: """
-        Contribute only clips of yourself, or of people who agreed.
+        Only clips marked as you are contributed. Clips marked as someone else stay on this iPhone.
         """)
     static let ongoing = String(localized: """
-        You're only asked this once. After you agree, the named clips of each video you save are \
-        sent in the background without asking again, clips marked as someone else included. Turn \
-        off Contribute named clips in Settings to stop.
+        You're only asked this once. After you agree, the named clips of you in each video you save \
+        are sent in the background without asking again. Turn off Contribute named clips in \
+        Settings to stop.
+        """)
+    static let unavailableHere = String(localized: """
+        Contributing clips isn't available in your country or region.
+        """)
+    static let ageConfirmation = String(localized: "I'm 16 or older")
+    static let ageRequirement = String(localized: """
+        You need to be 16 or older to contribute clips.
         """)
     static let contributeSwitch = String(localized: """
         With Contribute named clips on, your first save asks before anything is sent. After you \
@@ -130,4 +147,11 @@ enum ContributionDisclosure {
         Nothing else in the app needs an account.
         """)
     static var accountDeletion: String { "\(linkWindow) \(deletionReach)" }
+
+    /// The version of the words the sheet shows. An agreement counts only for the version it was
+    /// given to (`FarmCredentials.hasConsented`), so bumping this asks every account again on its
+    /// next save. Bump it whenever a line the sheet shows changes what the user agrees to.
+    /// Version 1 was the wording before clips of someone else stayed behind and before the
+    /// 16-or-older confirmation.
+    static let version = 2
 }

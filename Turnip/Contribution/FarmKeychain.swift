@@ -12,16 +12,17 @@ protocol SecretStore: Sendable {
 
 /// The farm's credentials, by what they are rather than by Keychain name
 /// (`docs/CONTRIBUTION_DESIGN.md` §5.4): the farm session token, the Apple user the session was
-/// signed in as (for `getCredentialState(forUserID:)`), the Apple user who agreed to contribute,
-/// and one source key per contributed `video_id`. The source keys are the only record of what this
-/// app contributed — the farm keeps no list of anyone's sources — so they outlive sign-out and go
-/// only with account deletion.
+/// signed in as (for `getCredentialState(forUserID:)`), the Apple user who agreed to contribute
+/// and the disclosure version they agreed to, and one source key per contributed `video_id`. The
+/// source keys are the only record of what this app contributed — the farm keeps no list of
+/// anyone's sources — so they outlive sign-out and go only with account deletion.
 struct FarmCredentials: Sendable {
     let store: SecretStore
 
     private static let sessionName = "session-token"
     private static let appleUserName = "apple-user"
     private static let consentName = "consenting-apple-user"
+    private static let consentVersionName = "consent-disclosure-version"
     private static let sourceKeyPrefix = "source-key."
 
     var sessionToken: String? { store.value(for: Self.sessionName) }
@@ -40,19 +41,29 @@ struct FarmCredentials: Sendable {
     /// Whether the confirmation sheet's disclosure has been agreed to. The farm asks for it once per
     /// account (`BACKEND_DESIGN.md` §7.1), so it belongs to the Apple user who agreed: a different
     /// signed-in account is asked afresh. It outlives sign-out, and with no one signed in there is
-    /// no other account to ask about.
+    /// no other account to ask about. It counts only for the disclosure version it was given to
+    /// (`ContributionDisclosure.version`): an agreement to older words, or one stored before
+    /// versions were, is asked again.
     var hasConsented: Bool {
-        guard let consenting = store.value(for: Self.consentName) else { return false }
+        hasConsented(toVersion: ContributionDisclosure.version)
+    }
+
+    func hasConsented(toVersion version: Int) -> Bool {
+        guard let consenting = store.value(for: Self.consentName),
+              store.value(for: Self.consentVersionName) == String(version)
+        else { return false }
         return appleUserID.map { $0 == consenting } ?? true
     }
 
-    func recordConsent() {
+    func recordConsent(toVersion version: Int = ContributionDisclosure.version) {
         guard let appleUserID else { return }
         store.setValue(appleUserID, for: Self.consentName)
+        store.setValue(String(version), for: Self.consentVersionName)
     }
 
     func withdrawConsent() {
         store.removeValue(for: Self.consentName)
+        store.removeValue(for: Self.consentVersionName)
     }
 
     func sourceKey(for videoID: String) -> String? {

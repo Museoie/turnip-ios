@@ -328,10 +328,11 @@ final class ContributionOutbox: ObservableObject {
     }
 
     /// The job as it stands now: a job can wait for days, and a clip removed from the library
-    /// meanwhile must not go out, nor names the user has since changed. `nil` when no clip is left.
+    /// meanwhile must not go out, nor one since marked as someone else, nor names the user has since
+    /// changed. `nil` when no clip is left.
     private func currentSource(of job: OutboxJob) -> SourceContribution? {
         let clips = job.source.clips.compactMap { clip -> ClipContribution? in
-            guard let saved = savedClip(clip.clipID), !saved.names.isEmpty else { return nil }
+            guard let saved = savedClip(clip.clipID), saved.isMe, !saved.names.isEmpty else { return nil }
             var current = clip
             current.names = saved.names
             return current

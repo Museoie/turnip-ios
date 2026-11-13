@@ -286,8 +286,12 @@ frames are part of the session pose.
 - Name Clips has no toggle of its own: Settings' Contribution section
   leads with one **Contribute named clips** switch (`UIUX.md` §1a,
   default off) that decides for every clip at once. With it on, the
-  clips a Name Clips save writes that have a name, on a video with pose
-  analysis, are contributed. The first time, they go to the confirmation
+  clips a Name Clips save writes that have a name and are marked as the
+  user (`PROFILE_DESIGN.md` §4.3), on a video with pose analysis, are
+  contributed. A clip marked as someone else never leaves the device,
+  and a save with only such clips asks nothing. The switch is hidden on
+  an App Store storefront in the EU, the EEA or the UK, and turned off
+  there if it was on (§8). The first time, they go to the confirmation
   sheet, whose Confirm is the farm's one consent moment
   (`BACKEND_DESIGN.md` §7.1): it covers the clips it lists and every
   later save. After that a save asks nothing: its clips go to the outbox
@@ -307,7 +311,9 @@ frames are part of the session pose.
   yet contributed, each chosen individually. The sheet lists the clips
   with their trick-name chips, the payload summary ("pose keypoints,
   clip windows, labels — video never leaves your device"), what agreeing
-  means for later saves, and a Confirm button ("Agree and Contribute").
+  means for later saves, a required **"I'm 16 or older"** switch, and a
+  Confirm button ("Agree and Contribute") that stays disabled until the
+  switch is on.
   Cancelling sends nothing and agrees to nothing, so the next save asks
   again; the clips stay saved and can be contributed later from the
   Profile. *(Judgment call on
@@ -324,15 +330,16 @@ frames are part of the session pose.
     match them to it (`BACKEND_DESIGN.md` §9 Q9). The farm's §7.1 wording
     ("can't be traced back to the user") overstates this and needs the
     same change;
-  - contribute only clips of yourself, or of people who agreed: the
-    person in a clip may not be the account holder. A clip marked as
-    someone else (`PROFILE_DESIGN.md` §4.3) is flagged next to this
-    line. The sheet says that later saves include such clips, so this
-    one reminder covers them too. *(Judgment call: the farm asks for
-    this at consent, not per contribution, and a save after consent has
-    no sheet to flag anything on.)* *Planned (§8.1): only clips marked
-    as the user are contributed, and clips of anyone else stay on the
-    device.*
+  - only clips marked as the user are contributed, and clips marked as
+    someone else (`PROFILE_DESIGN.md` §4.3) stay on the device. The
+    sheet lists such a clip as staying behind;
+  - the user is 16 or older, confirmed on the sheet.
+
+  The words carry a version (`ContributionDisclosure.version`, now 2;
+  version 1 was the wording before clips of someone else stayed behind
+  and before the age confirmation). The agreement is kept with the
+  version it was given to, and one given to an older version is asked
+  again on the next save.
 - A contributed clip needs at least one trick name, given in the core
   flow (`PROFILE_DESIGN.md` §4); a clip with no names is never
   contributed.
@@ -717,7 +724,8 @@ switch, and the confirmation sheet's Confirm once per account, §3.3):
   (gait-from-keypoints re-identification is real research), and a
   sequence can be matched to a video of the same clip. Call what the
   farm keeps de-linked and hard to re-identify, never anonymous.
-- confirmed clip windows + free-text trick names
+- confirmed clip windows + free-text trick names, for clips marked as
+  the user only
 - label provenance — each name's `origin`, and the proposing model
   version, its pre-filled names, and the blind-sample flag per clip:
   how a label was made, never who made it
@@ -727,6 +735,15 @@ switch, and the confirmation sheet's Confirm once per account, §3.3):
   attribution), then the contribution has no account link.
 - Source key — random per-source secret proving ownership; the farm
   stores only its hash
+
+**Where contribution is offered** — not on an App Store storefront in
+the EU, the EEA or the UK (`ContributionRegion`): Settings hides the
+Contribute named clips switch and sign-in there, and turns the switch
+off, which cancels what is waiting. An account already signed in can
+still sign out or be deleted. With no storefront to read, contribution
+isn't offered either (the maintainer's call), which includes builds
+without an App Store account such as the simulator. The farm's
+backstop (§8.1) refuses by the request's country as well.
 
 **Never leaves the device, even on opt-in** — the Profile: whether a
 clip shows the user, favorites, spots, achievements and progress
@@ -749,15 +766,16 @@ needs a call at submission time. `ITSAppUsesNonExemptEncryption` stays
 ### 8.1 Planned changes (privacy plan, 2026-11)
 
 The maintainer's privacy plan changes contribution before it goes live.
-None of this is built yet; until it is, the sections above describe the
+Built so far, and described in the sections above: only clips marked as
+the user are contributed, the 16-or-older confirmation (§3.3), and
+contribution switched off on EU, EEA and UK storefronts (§8). The rest
+below is not built yet; until it is, the sections above describe the
 code.
 
-- **Whose clips.** Only clips marked as the user (`PROFILE_DESIGN.md`
-  §4.3) are contributed. Today clips marked as someone else upload too,
-  flagged on the sheet (§3.3).
-- **Consent.** The sheet adds a 16-or-older confirmation. The farm
-  records each agreement (account, time, disclosure version), and
-  accounts that agreed to the 30-day wording are asked again.
+- **Consent.** The farm records each agreement (account, time,
+  disclosure version), and accounts that agreed to the 30-day wording
+  are asked again. Today the app keeps the agreement and its version
+  only in the Keychain (§3.3).
 - **Retention.** The account link is kept until the user deletes it, or
   until 24 months without activity, instead of 30 days after the last
   edit. This reverses `DESIGN.md` Decision #10.
@@ -771,7 +789,9 @@ code.
   head point and lightly noised, with fresh IDs, no timestamps and no
   adjacent segments kept. The segment-to-source link is deleted with
   the account.
-- **EU and UK.** Contribution stays switched off there for now.
+- **EU and UK backstop.** The farm refuses consent and uploads from the
+  EU, the EEA and the UK by the request's country, behind the app's
+  storefront check (§8).
 
 ---
 

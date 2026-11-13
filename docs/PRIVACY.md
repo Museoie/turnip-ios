@@ -250,8 +250,9 @@ a contribution's last edit), `NSPrivacyCollectedDataTypes` in the manifest,
 and `site/privacy.html`. `ITSAppUsesNonExemptEncryption` stays `NO`: HTTPS
 only. The privacy plan in `CONTRIBUTION_DESIGN.md` §8.1 changes several of
 these answers before contribution ships: the account link would last until
-deletion, so the label would read "linked to you", and contribution stays
-off in the EU and UK.
+deletion, so the label would read "linked to you". Contribution is already
+off on EU, EEA and UK App Store storefronts, and only clips marked as the
+user are contributed.
 
 ## The clip library and the Profile (core built; the rest planned)
 

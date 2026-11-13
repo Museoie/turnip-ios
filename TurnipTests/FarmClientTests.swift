@@ -253,6 +253,24 @@ final class FarmClientTests: XCTestCase {
         XCTAssertFalse(credentials.hasConsented)
     }
 
+    /// An agreement counts only for the disclosure version it was given to: one given to older
+    /// words, or stored before versions were, is asked again.
+    func testConsentToAnOlderDisclosureIsAskedAgain() {
+        let store = MemorySecrets()
+        let credentials = FarmCredentials(store: store)
+        credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
+
+        credentials.recordConsent(toVersion: ContributionDisclosure.version - 1)
+        XCTAssertFalse(credentials.hasConsented)
+        XCTAssertTrue(credentials.hasConsented(toVersion: ContributionDisclosure.version - 1))
+
+        credentials.recordConsent()
+        XCTAssertTrue(credentials.hasConsented)
+
+        store.removeValue(for: "consent-disclosure-version")
+        XCTAssertFalse(credentials.hasConsented, "an agreement stored before versions were")
+    }
+
     /// The next account on this iPhone hasn't seen the disclosure, even signing in as the same
     /// Apple user: the account that agreed is gone.
     @MainActor

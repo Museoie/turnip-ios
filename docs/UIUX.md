@@ -453,14 +453,19 @@ default empty state, so it never reads as "your library is empty."
 - Under the preferences, when the build points at a farm (`TURNIP_FARM_ENDPOINT`), a
   **Contribution** section. It leads with a sixth preference, **Contribute named clips**
   (switch, off by default): with it on, Name Clips' save (§3a) contributes the saved clips that
-  have a name, on a video with pose analysis. The first save opens the contribution confirmation
-  sheet, and nothing is sent until the user agrees there; after that each save sends in the
+  have a name and are marked as the user, on a video with pose analysis. The first save opens the
+  contribution confirmation sheet, and nothing is sent until the user confirms they are 16 or
+  older and agrees there; after that each save sends in the
   background ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §3.3, §5.3). Read when the save
   finishes; turning it off also cancels what is still waiting. While clips are waiting a row
   under it counts them, and asks for a sign-in when that is what they need. Under
   those, the account: Sign in with Apple while signed out; "Signed in with Apple", Sign Out and
   Delete Account once signed in, deletion confirming with the farm's disclosure first
-  (§5.4). The account is not a preference, and nothing outside contribution reads it.
+  (§5.4). The account is not a preference, and nothing outside contribution reads it. On an App
+  Store storefront in the EU, the EEA or the UK, or when there is no storefront to read, the
+  switch and Sign in with Apple are hidden, the
+  footer says contributing isn't available there, and a signed-in account keeps Sign Out and
+  Delete Account (`CONTRIBUTION_DESIGN.md` §8).
 - Further settings beyond these six are out of scope for this doc's current revision.
 
 ### 1b. Camera
