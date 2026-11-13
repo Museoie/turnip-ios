@@ -22,8 +22,8 @@ enum NameClipsLayout {
     /// Whether a new measurement of the page replaces `current` as the size the card is worked
     /// out from. The page's first measurements come before it settles (a pushed page is
     /// measured before its bottom bar arrives), so the card follows every one — except while
-    /// the name field has focus, when the bar steps aside for the keyboard and neither may
-    /// resize the card. A new width always counts.
+    /// the name field has focus, when nothing the keyboard brings, such as a bar stepping aside
+    /// for it, may resize the card. A new width always counts.
     static func acceptsMeasurement(_ size: CGSize, over current: CGSize, isFieldFocused: Bool) -> Bool {
         !isFieldFocused || current == .zero || size.width != current.width
     }

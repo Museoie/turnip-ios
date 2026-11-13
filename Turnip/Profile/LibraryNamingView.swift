@@ -46,7 +46,9 @@ struct LibraryNamingView: View {
                 Color.clear
                     .onAppear { screenSize = proxy.size }
                     .onChange(of: proxy.size) { size in
-                        if size.width != screenSize.width || screenSize == .zero { screenSize = size }
+                        if NameClipsLayout.acceptsMeasurement(size, over: screenSize, isFieldFocused: isFieldFocused) {
+                            screenSize = size
+                        }
                     }
             }
             .ignoresSafeArea(.keyboard)
