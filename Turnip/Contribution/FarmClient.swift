@@ -53,6 +53,15 @@ extension FarmError: LocalizedError {
     }
 }
 
+/// What account deletion does with the account's training segments: the farm's `contributions`
+/// query value on `DELETE /api/account`.
+enum ContributionsOnDeletion: String, Sendable {
+    /// They stay as training data, with no link to the account.
+    case keep
+    /// They are deleted with the account.
+    case delete
+}
+
 /// The turnip-farm REST API (`BACKEND_DESIGN.md` §7.3), as the calls the app makes. Holds no
 /// credentials: every call that needs a session or a source key takes it as an argument.
 struct FarmClient: Sendable {
@@ -84,8 +93,12 @@ struct FarmClient: Sendable {
         _ = try await send("POST", "api/consent", body: body, session: session)
     }
 
-    func deleteAccount(session: String) async throws {
-        _ = try await send("DELETE", "api/account", session: session)
+    /// `DELETE /api/account`, keeping the account's de-linked training segments or deleting them too
+    /// (`BACKEND_DESIGN.md` §7.3).
+    func deleteAccount(contributions: ContributionsOnDeletion, session: String) async throws {
+        _ = try await send(
+            "DELETE", "api/account", query: [URLQueryItem(name: "contributions", value: contributions.rawValue)],
+            session: session)
     }
 
     func registerSource(_ registration: SourceRegistrationRequest, session: String) async throws -> SourceRegistration {
@@ -127,10 +140,15 @@ struct FarmClient: Sendable {
     }
 
     private func send(
-        _ method: String, _ path: String, body: (any Encodable)? = nil,
+        _ method: String, _ path: String, query: [URLQueryItem] = [], body: (any Encodable)? = nil,
         session: String? = nil, sourceKey: String? = nil
     ) async throws -> Data {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        var url = baseURL.appendingPathComponent(path)
+        if !query.isEmpty, var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.queryItems = query
+            url = components.url ?? url
+        }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let body {

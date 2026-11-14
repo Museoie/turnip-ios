@@ -234,10 +234,10 @@ final class ContributionOutbox: ObservableObject {
     /// Deletes the farm account, with everything queued cancelled first so no upload can reach a
     /// source after its deletion. The agreement goes before the cancel as well as with the
     /// account: a resume landing during the cancel must find nothing it may send.
-    func deleteAccount() async throws {
+    func deleteAccount(contributions: ContributionsOnDeletion) async throws {
         account.credentials.withdrawConsent()
         await cancelAll()
-        try await account.deleteAccount()
+        try await account.deleteAccount(contributions: contributions)
     }
 
     private func stop() {

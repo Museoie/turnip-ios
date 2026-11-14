@@ -90,7 +90,9 @@ final class FarmAccount: ObservableObject {
     /// then the account, then the keys and the session (`BACKEND_DESIGN.md` §7.3 "Client first"). A
     /// source the farm no longer has under its key answers `404` and only loses its key; any other
     /// failure stops before the account goes, so a retry finds every source still deletable.
-    func deleteAccount() async throws {
+    /// `contributions` decides what happens to the training segments of sources the farm still
+    /// links to the account; deleting a source by its key deletes its segments either way.
+    func deleteAccount(contributions: ContributionsOnDeletion) async throws {
         guard let client, let session = credentials.sessionToken else { return }
         credentials.withdrawConsent()
         isWorking = true
@@ -105,7 +107,7 @@ final class FarmAccount: ObservableObject {
             credentials.removeSourceKey(for: videoID)
         }
         do {
-            try await client.deleteAccount(session: session)
+            try await client.deleteAccount(contributions: contributions, session: session)
         } catch FarmError.unauthenticated {
             // The session was already gone; the sources above were what this app could reach.
         }

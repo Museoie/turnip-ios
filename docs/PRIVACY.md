@@ -393,8 +393,11 @@ Planned:
     a video of the same clip could still match them to it
     (`BACKEND_DESIGN.md` §9 Q9). The farm records each agreement with its
     disclosure version (`CONTRIBUTION_DESIGN.md` §5.4).
-  - The account can be deleted in-app; that removes every contribution
-    the app still holds a key for.
+  - The account can be deleted in-app, with an equally prominent choice
+    to delete contributions too. Either removes every contribution the
+    app still holds a key for; the second also deletes the training
+    segments of contributions still linked to the account that the app
+    can no longer find (`CONTRIBUTION_DESIGN.md` §5.4).
   - The contribution sheet discloses both once, when the account first
     agrees, and asks users to contribute only clips of themselves or of
     people who agreed (`turnip-farm`

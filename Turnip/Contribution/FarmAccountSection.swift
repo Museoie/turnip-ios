@@ -2,8 +2,9 @@ import AuthenticationServices
 import SwiftUI
 
 /// Settings' Contribution section (`docs/CONTRIBUTION_DESIGN.md` §3.3, §5.4): the Contribute named
-/// clips switch, what is still waiting to send, then sign in with Apple, sign out, and delete the
-/// farm account. Shown only when the build points at a farm. Where contributing isn't offered
+/// clips switch, what is still waiting to send, then sign in with Apple, sign out, and the two
+/// equally weighted ways to delete the farm account: keeping the de-linked training segments, or
+/// deleting them too. Shown only when the build points at a farm. Where contributing isn't offered
 /// (`ContributionRegion`), the switch and sign-in are hidden, and an account already signed in can
 /// still sign out or be deleted.
 struct FarmAccountSection: View {
@@ -11,7 +12,7 @@ struct FarmAccountSection: View {
     @ObservedObject var outbox: ContributionOutbox
     @Binding var contributesClips: Bool
     let isContributingOffered: Bool
-    @State private var isConfirmingDeletion = false
+    @State private var pendingDeletion: ContributionsOnDeletion?
     @State private var failureMessage: String?
 
     var body: some View {
@@ -34,11 +35,16 @@ struct FarmAccountSection: View {
                 }
                 .disabled(account.isWorking)
                 .accessibilityIdentifier("settings-farm-sign-out")
-                Button("Delete Account", role: .destructive) {
-                    isConfirmingDeletion = true
+                Button(Self.deletionTitle(.keep), role: .destructive) {
+                    pendingDeletion = .keep
                 }
                 .disabled(account.isWorking)
                 .accessibilityIdentifier("settings-farm-delete-account")
+                Button(Self.deletionTitle(.delete), role: .destructive) {
+                    pendingDeletion = .delete
+                }
+                .disabled(account.isWorking)
+                .accessibilityIdentifier("settings-farm-delete-account-and-contributions")
             } else if isContributingOffered {
                 FarmSignInButton(account: account, failureMessage: $failureMessage)
                     .accessibilityIdentifier("settings-farm-sign-in")
@@ -54,21 +60,32 @@ struct FarmAccountSection: View {
             }
         }
         .confirmationDialog(
-            "Delete your Turnip account?", isPresented: $isConfirmingDeletion, titleVisibility: .visible
-        ) {
-            Button("Delete Account", role: .destructive) {
+            "Delete your Turnip account?",
+            isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingDeletion
+        ) { choice in
+            Button(Self.deletionTitle(choice), role: .destructive) {
                 Task {
                     do {
-                        try await outbox.deleteAccount()
+                        try await outbox.deleteAccount(contributions: choice)
                     } catch {
                         failureMessage = error.localizedDescription
                     }
                 }
             }
-        } message: {
-            Text(ContributionDisclosure.accountDeletion)
+        } message: { choice in
+            Text(ContributionDisclosure.deletionMessage(for: choice))
         }
         .errorAlert("Couldn't finish", message: $failureMessage)
+    }
+
+    /// The two deletion choices, worded alike and shown alike so neither is the easier tap.
+    static func deletionTitle(_ choice: ContributionsOnDeletion) -> String {
+        switch choice {
+        case .keep: return String(localized: "Delete My Account")
+        case .delete: return String(localized: "Delete My Account and Contributions")
+        }
     }
 
     /// Background uploads say nothing on their own, so this is where a queue stuck behind an
@@ -147,6 +164,23 @@ enum ContributionDisclosure {
         Nothing else in the app needs an account.
         """)
     static var accountDeletion: String { "\(linkWindow) \(deletionReach)" }
+    /// What each deletion choice keeps, then the disclosure again. Deleting a source by its key
+    /// deletes its training segments too, so the choice only decides about contributions this
+    /// iPhone can't find (`BACKEND_DESIGN.md` §7.3).
+    static let deletionKeepingContributions = String(localized: """
+        Deletes your account and every contribution this iPhone can find, with the training \
+        segments made from them. Contributions it can't find, such as ones from an earlier install, \
+        stay as short, transformed training segments with no link to your account.
+        """)
+    static let deletionWithContributions = String(localized: """
+        Deletes your account and every contribution still linked to it, with their training \
+        segments, including ones this iPhone can't find, such as ones from an earlier install.
+        """)
+
+    static func deletionMessage(for choice: ContributionsOnDeletion) -> String {
+        let summary = choice == .keep ? deletionKeepingContributions : deletionWithContributions
+        return "\(summary)\n\n\(accountDeletion)"
+    }
 
     /// The version of the words the sheet shows. An agreement counts only for the version it was
     /// given to (`FarmCredentials.hasConsented`), so bumping this asks every account again on its

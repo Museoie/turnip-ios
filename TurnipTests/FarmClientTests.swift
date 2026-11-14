@@ -103,6 +103,36 @@ final class FarmClientTests: XCTestCase {
         XCTAssertEqual(body["age_confirmed"] as? Bool, true)
     }
 
+    /// Both deletion choices go to the same endpoint; only the `contributions` value differs, and
+    /// the session is the only credential.
+    func testAccountDeletionSendsTheContributionsChoice() async throws {
+        let choices: [(ContributionsOnDeletion, String)] = [
+            (.keep, "contributions=keep"), (.delete, "contributions=delete")
+        ]
+        for (choice, query) in choices {
+            let farm = ScriptedFarm([.init(status: 204, body: "")])
+            try await farm.client.deleteAccount(contributions: choice, session: "tok")
+
+            let request = try XCTUnwrap(farm.requests.first)
+            XCTAssertEqual(request.httpMethod, "DELETE")
+            XCTAssertEqual(request.url?.path, "/api/account")
+            XCTAssertEqual(request.url?.query, query)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+            XCTAssertNil(request.httpBody)
+        }
+    }
+
+    /// The two confirmations say different things about what stays, and both repeat the disclosure.
+    func testEachDeletionChoiceSaysWhatItKeeps() {
+        let keep = ContributionDisclosure.deletionMessage(for: .keep)
+        let delete = ContributionDisclosure.deletionMessage(for: .delete)
+        XCTAssertNotEqual(keep, delete)
+        XCTAssertTrue(keep.hasPrefix(ContributionDisclosure.deletionKeepingContributions))
+        XCTAssertTrue(delete.hasPrefix(ContributionDisclosure.deletionWithContributions))
+        XCTAssertTrue(keep.hasSuffix(ContributionDisclosure.accountDeletion))
+        XCTAssertTrue(delete.hasSuffix(ContributionDisclosure.accountDeletion))
+    }
+
     func testTaxonomyDecodesTheFarmsVocabulary() async throws {
         let farm = ScriptedFarm([.init(status: 200, body: """
             {"taxonomy_version":2,"vocabulary":[{"canonical":"cork","aliases":["cork","corkscrew"]}]}
@@ -320,7 +350,7 @@ final class FarmClientTests: XCTestCase {
         credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
         credentials.recordConsent()
 
-        try await FarmAccount(client: farm.client, credentials: credentials).deleteAccount()
+        try await FarmAccount(client: farm.client, credentials: credentials).deleteAccount(contributions: .keep)
 
         credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
         XCTAssertFalse(credentials.hasConsented)
