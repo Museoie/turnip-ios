@@ -153,21 +153,29 @@ struct FarmClient: Sendable {
     /// name; anything else keeps its code and message.
     static func error(status response: HTTPURLResponse, body: Data) -> FarmError {
         let envelope = try? JSONDecoder().decode(ErrorEnvelope.self, from: body)
-        switch envelope?.error.code {
-        case "UNAUTHENTICATED": return .unauthenticated
-        case "ACCOUNT_BLOCKED": return .accountBlocked
-        case "SOURCE_ALREADY_CLAIMED": return .sourceAlreadyClaimed
-        case "BLOB_MISSING": return .blobMissing
-        case "CONSENT_REQUIRED": return .consentRequired
-        case "REGION_UNAVAILABLE": return .regionUnavailable
-        case "APPLE_UNAVAILABLE": return .appleUnavailable
+        guard let code = envelope?.error.code else {
+            return response.statusCode == 401 ? .unauthenticated : .http(status: response.statusCode)
+        }
+        if let known = errorsByCode[code] { return known }
+        switch code {
         case "RATE_LIMITED":
             let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
             return .rateLimited(retryAfter: retryAfter)
-        case let code?: return .rejected(code: code, message: envelope?.error.message ?? code)
-        case nil: return response.statusCode == 401 ? .unauthenticated : .http(status: response.statusCode)
+        default:
+            return .rejected(code: code, message: envelope?.error.message ?? code)
         }
     }
+
+    /// The codes whose case carries nothing from the response.
+    private static let errorsByCode: [String: FarmError] = [
+        "UNAUTHENTICATED": .unauthenticated,
+        "ACCOUNT_BLOCKED": .accountBlocked,
+        "SOURCE_ALREADY_CLAIMED": .sourceAlreadyClaimed,
+        "BLOB_MISSING": .blobMissing,
+        "CONSENT_REQUIRED": .consentRequired,
+        "REGION_UNAVAILABLE": .regionUnavailable,
+        "APPLE_UNAVAILABLE": .appleUnavailable
+    ]
 }
 
 private struct ErrorEnvelope: Decodable {
