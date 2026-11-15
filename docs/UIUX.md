@@ -1,5 +1,13 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 31 · 2026-11-15 · The camera (§1b) loses its person control: every take
+follows everyone, as every analysis has since Rev 28. On iPhone Duo every
+screen past the root lays its top controls down the vertical bar, as the root
+pages do. The Profile's achievements are a carousel with "Show More" to every
+achievement as tiles, its gallery filters by Me / Someone else, Needs a name
+can remove a clip, and a trick's clips can be selected and removed together
+(`PROFILE_DESIGN.md` §4.1, §5–§7).*
+
 *Rev 30 · 2026-11-12 · Processing (§2) loses its bottom buttons: "Clip it" in
 the top-trailing corner goes to Name Clips with no clips, and Name Clips' empty
 state (§3a) offers "Analyze clips", which returns to Processing to run, with
@@ -119,7 +127,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart. Rev 29 swaps the Camera page for a camera tile, leads the pager with the Profile and opens on it once a clip is saved, widens the grid to six columns on wide screens, and moves the root controls into iPhone Duo's vertical bar. Rev 30 moves Processing's choice between analyzing and clipping by hand to Name Clips, behind a "Clip it" corner button, and pages Name Clips with Previous / Next, Save Clips on the last clip.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart. Rev 29 swaps the Camera page for a camera tile, leads the pager with the Profile and opens on it once a clip is saved, widens the grid to six columns on wide screens, and moves the root controls into iPhone Duo's vertical bar. Rev 30 moves Processing's choice between analyzing and clipping by hand to Name Clips, behind a "Clip it" corner button, and pages Name Clips with Previous / Next, Save Clips on the last clip. Rev 31 drops the camera's person control, moves every screen's top controls into iPhone Duo's vertical bar, and gives the Profile an achievements carousel and page, a Me / Someone else filter, and clip removal from Needs a name and a trick's grid.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -312,9 +320,9 @@ Profile ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5) is the page before
 Home: one scrolling page headed by the same "Turnip" wordmark Home leads
 with (`HomeHeader`, under the same transparent bar, `WordmarkNavigationBar`;
 §1), so the two headers line up across the swipe, saying "Your Profile stays
-on this iPhone.", with "Needs a name" while any saved clip has no name, the
-achievement cards, and the gallery's rows by trick under a Me / Someone else
-filter. Screens pushed from it — Needs a name, a trick's clips, the Clip
+on this iPhone.", with "Needs a name" while any saved clip has no name, a
+carousel of achievement cards with "Show More" to every achievement, and the
+gallery's rows by trick under a Me / Someone else filter. Screens pushed from it — Needs a name, a trick's clips, the Clip
 view — hide the pill and own the full screen like Processing/Name
 Clips/the editor do, and `PageSwipeLock` switches the pager off while one is
 open, for the same reason it does over Home: the pager would otherwise take
@@ -336,8 +344,17 @@ off the page meanwhile, and the pager keeps to the safe area beside the
 column. Laid across the inset, a page `TabView` scrolls each page to its
 center inside it, half the bar's width short, which opened the app stuck
 partway into a swipe. Screens past the root — the camera, Processing, Name
-Clips, the editor, the Profile's pushed screens — keep their controls in the
-safe area.
+Clips, the editor, the Profile's pushed screens — lay the controls they keep
+along their top edge on any other iPhone down the same column, under the
+status bar and in the order the top row reads from its leading corner, and
+leave them off the screen (Rev 31). The camera and Home's destinations cover
+the window, so each lays its own column over itself, measured where it is
+presented (`verticalBarColumn`). The Profile's pushed screens keep to the pager
+beside the column, so each hands its controls to `RootTabView`, which lays
+them down the column while the screen is up (`verticalBarSlotControls`). A
+label too wide for the column becomes a glyph there: Processing's "Clip it"
+is scissors, a trick grid's "Select" a check circle and "Cancel" a cross.
+Settings and the contribution sheet keep their system bars as they are.
 
 ### 1. Home / Video Gallery
 

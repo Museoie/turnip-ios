@@ -73,7 +73,10 @@ control:
 - The grid's first tile opens the camera (`gallery-camera-tile`, see Camera above). It isn't a
   video, so the count the grid announces leaves it out.
 - On iPhone Duo the tab bar's icons and Home's filter and settings controls move into the
-  vertical bar's column, keeping their labels, values, traits and identifiers.
+  vertical bar's column, keeping their labels, values, traits and identifiers. Every screen past
+  the root moves its top controls there the same way, keeping theirs too; a control that shows
+  as a glyph there instead of its word keeps the word as its label ("Clip it", "Select",
+  "Cancel").
 - Stable `accessibilityIdentifier`s: `video-grid`, `video-tile-<localIdentifier>`,
   `limited-access-banner`, `select-more-videos`, `resolution-banner`,
   `cancel-video-resolution`, `photos-access-denied`, `open-settings`, `settings-button`,
@@ -261,17 +264,28 @@ Built:
 - "Needs a name" is one element and a button: "Needs a name, 3 clips". Its screen keeps Name
   Clips' rules: the title is the count ("2 of 5"), the back chevron is labeled "Back to
   Profile", and the naming controls are Name Clips' own. Unlike Name Clips, its paging has
-  buttons ("Skip" / "Next", "Done" on the last clip).
+  buttons ("Skip" / "Next", "Done" on the last clip). Its trash ("Remove clip") asks first, as
+  the Clip view's "Delete Clip" does.
 - Each achievement card is one element: label "Gainer, level 2", value "2 of 3 sessions to
   level 3" (a reps card: "Gainer, 10 reps", "14 of 50 reps"). The bar's fill is never the only
   signal: the same figures are printed under it. The cards don't open anything yet, so they
-  carry no button trait.
+  carry no button trait. They scroll sideways in a carousel; "Show More", a button beside the
+  section's header, reaches every one of them on the achievements page, so none depends on the
+  sideways scroll.
+- The achievements page's headers ("By trick", "Recently earned", "How levels and reps work")
+  are headers. Each total is one element ("12, Achievements"). Each trick's tile is one element:
+  label "Gainer, level 2", value the figures it prints in order ("7 of 10 sessions to level 3,
+  10 reps, 14 of 50 reps, First 3 Oct 2026 · Last 12 Nov 2026"); a tile with a clip of the trick
+  is a button that opens its clips.
 - An achievement is announced once, as it is earned: appended to Name Clips' save
   announcement ("Saved 2 clips to Photos. Earned Gainer, level 1"), or spoken as the name that
   earns it is given on Needs a name or the Clip view.
 - Each gallery row is one element and a button: "Gainer, 3 clips". A trick's grid announces the
   same on entry, and each tile is one element: its names, length and date, then "someone else"
-  for a clip marked so and "video not in Photos" once its video is gone.
+  for a clip marked so and "video not in Photos" once its video is gone. While the grid is
+  selecting ("Select"), a marked tile carries the selected trait and every tile's hint says a tap
+  marks it; the title says how many are marked ("3 Selected"), and "Delete 3 clips" asks first
+  ("Delete 3 clips?", then "Remove from Profile" / "Remove and Delete Videos from Photos").
 - The Clip view's player never auto-plays under Reduce Motion or with video autoplay off; its
   play/pause button ("Play" / "Pause") is a 44 pt target. Needs a name's cards follow the same
   rule. "Delete Clip" asks first, naming both choices ("Remove from Profile", "Remove and
@@ -280,9 +294,14 @@ Built:
   progress as its value ("42 percent"); a failed download says so in words, with "Try Again".
 - Identifiers: `tab-profile`, `profile`, `profile-privacy-note`, `profile-empty`,
   `needs-a-name`, `needs-a-name-screen`, `needs-a-name-primary`, `needs-a-name-back`,
-  `achievement-<trick>-<kind>`, `gallery-filter`, `gallery-trick-<trick>`, `trick-clips`,
-  `library-clip-tile`, `clip-view`, `clip-view-date`, `clip-view-delete`, `clip-play-pause`,
-  `clip-downloading`, `clip-load-failed`, `clip-load-retry`.
+  `needs-a-name-remove`, `achievement-<trick>-<kind>`, `achievements-carousel`,
+  `achievements-show-more`, `achievements-screen`, `achievements-totals`,
+  `achievement-tile-<trick>`, `achievements-recent`, `achievements-ladders`, `achievements-back`,
+  `gallery-filter`, `gallery-trick-<trick>`, `trick-clips`, `trick-clips-select`,
+  `trick-clips-delete`, `trick-clips-back`, `library-clip-tile`, `clip-view`, `clip-view-back`,
+  `clip-view-date`, `clip-view-delete`, `clip-play-pause`, `clip-downloading`, `clip-load-failed`,
+  `clip-load-retry`. `trick-clips-back`, `clip-view-back` and `achievements-back` exist on
+  iPhone Duo only, where the back chevron goes down the vertical bar in place of the system's.
 
 Not yet, from the plan:
 

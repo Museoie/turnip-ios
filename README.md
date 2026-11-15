@@ -59,8 +59,9 @@ Profile — the page before Home, a right swipe away, and the one the app
 opens on once a clip is saved — is built from
 ([`docs/PROFILE_DESIGN.md`](docs/PROFILE_DESIGN.md), Phase 2a's core):
 "Needs a name" for clips saved without names, a level (days practiced) and
-rep milestones per trick, and a gallery grouped by trick that opens each
-clip to play, rename or delete it (`Turnip/Profile/`). Highlights, the
+rep milestones per trick, with a page of every achievement, and a gallery
+grouped by trick that opens each clip to play, rename or delete it, or
+selects several to delete together (`Turnip/Profile/`). Highlights, the
 library's pose store and restoring the library after a reinstall are not
 built yet.
 

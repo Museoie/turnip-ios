@@ -3,7 +3,10 @@
 *Draft · 2026-10-15 · Revised 2026-10-21: on-device personalization
 ([`PERSONALIZATION_DESIGN.md`](PERSONALIZATION_DESIGN.md)) reads the
 library, keeps trashed proposals' windows (§2.3), and adds a tier to
-the naming suggestions (§4.2).*
+the naming suggestions (§4.2). Revised 2026-11-15: Needs a name removes
+a clip (§4.1), the achievements are a carousel with every achievement
+on a page of its own (§5.1, §6.7), the gallery's filter is Me / Someone
+else and a trick's clips can be selected and removed together (§7).*
 
 **Scope.** A companion to `docs/DESIGN.md`. This doc specifies the
 Profile tab and what it stands on: the on-device clip library, naming
@@ -351,6 +354,10 @@ also where an analysis lands: Clip List's triage moved onto it, UIUX
   clip, saves them all, which is how a user saves without naming.
 - The same screen names clips saved without names, opened from the
   Profile's "Needs a name" (§5.1), ending in "Done" instead of a save.
+  A trash button across from its back chevron removes the clip on screen
+  from the library, with the Clip view's confirmation (§5.2): from the
+  Profile alone, or its video from Photos too. The next clip takes its
+  place, and with none left the screen goes back.
 - The Clip Editor is unchanged.
 - Naming is optional. Nothing blocks on it (a swipe moves on); unnamed
   clips land in the Profile's "Needs a name".
@@ -423,8 +430,10 @@ counts once under each distinct canonical trick.
   - **Needs a name** — a row with the count of unnamed saved clips,
     shown only when it is above zero; opens them in Name Clips
     (UIUX §3a).
-  - **Achievements** (§6) — cards such as "Gainer · Level 2" and
-    "Gainer · 100 reps".
+  - **Achievements** (§6) — a carousel of cards such as "Gainer ·
+    Level 2" and "Gainer · 100 reps", the trick practiced most recently
+    first, scrolling past the page's margins to its edges. "Show More"
+    opens every achievement as tiles (§6.7).
   - **Gallery** (§7) — one row per trick.
   - **Highlights** (§8).
 - Empty state (no saved clips yet): what the tab will show once clips
@@ -433,14 +442,19 @@ counts once under each distinct canonical trick.
 
 ### 5.2 Pushed screens
 
-Achievement detail (§6.2), a trick's gallery (§7), a highlight's
-player (§8), and the **Clip view**: plays the saved clip; shows its
-names and `is_me` (editable), date and spot; holds the clip's
-Contribute toggle once contribution ships; and deletes the clip from
-the library, asking whether to delete its video from Photos too. While
-one of these is pushed, `PageSwipeLock` keeps the root pager from
+Achievement detail (§6.2), every achievement (§6.7), a trick's gallery
+(§7), a highlight's player (§8), and the **Clip view**: plays the saved
+clip; shows its names and `is_me` (editable), date and spot; holds the
+clip's Contribute toggle once contribution ships; and deletes the clip
+from the library, asking whether to delete its video from Photos too
+("Remove from Profile" / "Remove and Delete Video from Photos", the
+second only while the video is still there). Every removal of saved
+clips asks the same way (`LibraryClipRemoval`); Photos asks once more,
+for all of their videos together, and a decline there keeps every clip.
+While one of these is pushed, `PageSwipeLock` keeps the root pager from
 taking horizontal drags, as it does for Processing, Name Clips and the
-editor.
+editor. On iPhone Duo their top controls, the back chevron among them,
+go down the vertical bar (UIUX "Root navigation").
 
 ---
 
@@ -501,6 +515,24 @@ From Phase 3, the active manifest's `name_metrics` (`MODEL_CONTRACT.md`
 learning these tricks". It is shown as information. Naming or
 contributing those tricks earns nothing extra (rule 3).
 
+### 6.7 Every achievement
+
+The carousel's "Show More" (§5.1) pushes a page of every achievement,
+as tiles (`AchievementsView`):
+
+- **Totals** — achievements shown (each trick's level plus the rep
+  milestones it shows), tricks, days practiced, and clips of the user.
+  Days and clips count the user's named clips, a combo once.
+- **By trick** — a tile per trick, in the carousel's order: its level
+  with a bar toward the next one, its highest rep milestone with a bar
+  toward the next, and the days of its first and last clip. A tile with
+  a clip opens the trick's clips under Me (§7); one that keeps only what
+  it earned (§6.4) opens nothing.
+- **Recently earned** — the five most recent earned records, with the
+  day each was earned.
+- **How levels and reps work** — the two ladders (§6.1), what a session
+  and a rep are, and that what's earned stays earned.
+
 ---
 
 ## 7. Gallery
@@ -512,6 +544,11 @@ contributing those tricks earns nothing extra (rule 3).
   permitting (ACCESSIBILITY.md). A tile opens the Clip view (§5.2) with
   the tile-to-screen expansion transition the app already uses
   (`EXPANSION_TRANSITIONS.md`), the card being the clip's own player.
+- "Select", in a trick's grid, makes a tap mark or unmark a tile, as in
+  Photos: a check in each tile's corner, the count as the title, and the
+  back button hidden until "Cancel". A bar along the bottom deletes the
+  marked clips together, with the Clip view's confirmation (§5.2); with
+  none of the trick's clips left the grid goes back.
 - A filter switches between the user's clips (default) and the clips
   marked someone else ("Me" / "Someone else"): each clip is under
   exactly one of the two.
