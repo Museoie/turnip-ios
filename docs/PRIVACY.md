@@ -388,19 +388,14 @@ Planned:
   requests, GDPR/CCPA) — belongs to `turnip-farm`; see `docs/DESIGN.md`
   decision #4 (retention: keep forever, user-deletable). In outline:
   - Contributions are linked to the account until it is deleted, by the
-    user or after 24 months without use. Deleting it removes the link, the
-    full pose recordings, and every contribution the app can find with
-    its training segments; short, transformed segments of the rest stay
-    with no account link unless the user also deletes their
-    contributions. That makes them de-linked, not anonymous: someone with
-    a video of the same clip could still match them to it
-    (`BACKEND_DESIGN.md` §9 Q9). The farm records each agreement with its
-    disclosure version (`CONTRIBUTION_DESIGN.md` §5.4).
-  - The account can be deleted in-app, with an equally prominent choice
-    to delete contributions too. Either removes every contribution the
-    app still holds a key for; the second also deletes the training
-    segments of contributions still linked to the account that the app
-    can no longer find (`CONTRIBUTION_DESIGN.md` §5.4).
+    user or after 24 months without use. Deleting it deletes all its
+    contributions. Models already trained on them stay, and the farm's
+    backups keep deleted data for up to 30 days. The farm records each
+    agreement with its disclosure version (`CONTRIBUTION_DESIGN.md` §5.4).
+  - The account can be deleted in-app with one Delete My Account. It
+    deletes every contribution the app holds a key for, and the farm
+    deletes the rest linked to the account, such as ones from an earlier
+    install (`CONTRIBUTION_DESIGN.md` §5.4).
   - The contribution sheet discloses both once, when the account first
     agrees, and asks users to contribute only clips of themselves or of
     people who agreed (`turnip-farm`

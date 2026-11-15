@@ -324,12 +324,9 @@ frames are part of the session pose.
   (`BACKEND_DESIGN.md` §7.1):
   - contributions stay linked to the user's account until the account
     is deleted, by the user or after 24 months without use;
-  - deleting the account removes that link, the full pose recordings,
-    and every contribution this app can find with its training
-    segments (§5.4). Short, transformed segments of the rest stay with
-    no link to the account, unless the user also chooses to delete their
-    contributions. Someone with a video of the same clip could still
-    match them to it (`BACKEND_DESIGN.md` §9 Q9);
+  - deleting the account deletes all the user's contributions (§5.4);
+    models already trained on them stay, and the farm's backups keep
+    deleted data for up to 30 days;
   - only clips marked as the user are contributed, and clips marked as
     someone else (`PROFILE_DESIGN.md` §4.3) stay on the device. The
     sheet lists such a clip as staying behind;
@@ -338,7 +335,12 @@ frames are part of the session pose.
   The words carry a version (`ContributionDisclosure.version`, now 3;
   version 1 was the wording before clips of someone else stayed behind
   and before the age confirmation, and versions 1 and 2 said
-  contributions were unlinked 30 days after their last edit). Confirm
+  contributions were unlinked 30 days after their last edit). Version 3
+  first said short, transformed training segments stayed after
+  deletion; it was reworded to delete everything before any release,
+  so no one had agreed to the older words and the version stayed 3.
+  *(Judgment call: a bump to 4 would ask everyone again for no
+  change anyone agreed to.)* Confirm
   agrees to that version; the farm records it (§5.4) before anything
   is uploaded, and refuses uploads from an account that hasn't agreed
   to its current version. An agreement to an older version is asked
@@ -569,28 +571,20 @@ record of whose a contribution is.
   app deletion and reinstall on current iOS, but Apple doesn't
   guarantee it, so a missing key is an expected state: the source is
   contributed but unmanageable from this install.
-- **Account deletion** (Settings): two choices with equal weight, side
-  by side and styled alike, **Delete My Account** and **Delete My
-  Account and Contributions**. Either one withdraws the agreement and
-  empties the outbox, waiting out any upload under way, so nothing
-  reaches a source after its deletion; deletes every source the app
-  holds a key for (`DELETE /api/sources/:id`, which deletes the
-  source's training segments too); calls `DELETE /api/account` with
-  `?contributions=keep` or `?contributions=delete`; then deletes the
-  local keys and session token. The farm then deletes every source still
-  linked to the account, and with `delete` their training segments as
-  well (`BACKEND_DESIGN.md` §7.3).
-  - So the choice decides only about contributions this app can no
-    longer find, such as ones from an earlier install: kept as short,
-    transformed training segments with no link to the account, or
-    deleted. Each confirmation says what its choice keeps, then repeats
-    the §3.3 disclosure.
-  - *Open question for the maintainer:* because the per-source deletes
-    run for both choices, "Delete My Account" also deletes the training
-    segments of every contribution this app can find. If that choice
-    should keep them, it would skip the per-source deletes and leave
-    the farm to delete each linked source's full pose while keeping
-    its segments.
+- **Account deletion** (Settings): one **Delete My Account**, which
+  deletes the account and every contribution, including ones this app
+  no longer holds a key for. It withdraws the agreement and empties the
+  outbox, waiting out any upload under way, so nothing reaches a source
+  after its deletion; deletes every source the app holds a key for
+  (`DELETE /api/sources/:id`); calls
+  `DELETE /api/account?contributions=delete`; then deletes the local
+  keys and session token. The farm then deletes every other source
+  attributed to the account, such as ones from an earlier install
+  (`BACKEND_DESIGN.md` §7.3). The confirmation says so, then repeats
+  the §3.3 disclosure.
+  - The farm deletes everything whatever `contributions` says, and
+    ignores the value; the app still sends `delete` so a farm from
+    before that change does the same.
 
 ---
 
@@ -785,8 +779,10 @@ switch, and the confirmation sheet's Confirm once per account, §3.3):
   frame's width and height, not normalized to a standard body. It is not
   anonymous: how someone moves can identify them
   (gait-from-keypoints re-identification is real research), and a
-  sequence can be matched to a video of the same clip. Call what the
-  farm keeps de-linked and hard to re-identify, never anonymous.
+  sequence can be matched to a video of the same clip. Never call it
+  anonymous. Account deletion deletes it with every other contribution
+  (§5.4); models already trained on it stay, and the farm's backups
+  keep deleted data for up to 30 days.
 - confirmed clip windows + their trick names from the vocabulary, for
   clips marked as the user only
 - a typed name the vocabulary lacks, on its own as a suggestion for
@@ -838,19 +834,17 @@ the user are contributed, the 16-or-older confirmation (§3.3),
 contribution switched off on EU, EEA and UK storefronts (§8), consent
 recorded on the farm with disclosure version 3 (§3.3, §5.4), the
 account link kept until deletion or 24 months without use (§3.3, §8),
-which reverses `DESIGN.md` Decision #10, account deletion with an
-equal choice to delete contributions too (§5.4), the farm's EU, EEA and
+which reverses `DESIGN.md` Decision #10, account deletion that deletes
+every contribution (§5.4), the farm's EU, EEA and
 UK backstop, which turns contributing off on `403 REGION_UNAVAILABLE`
 behind the storefront check (§5.4, §8), and labels from the vocabulary
-only, with new names suggested on their own (§4). The rest below is not
-built in the app yet; until it is, the sections above describe the
-code.
+only, with new names suggested on their own (§4).
 
-- **Kept training data.** The farm cuts short segments at ingest. Each
-  is centered on the hips, scaled to a standard body, reduced to one
-  head point and lightly noised, with fresh IDs, no timestamps and no
-  adjacent segments kept. The segment-to-source link is deleted with
-  the account.
+- **Dropped: kept training segments.** An earlier plan had the farm
+  cut short, transformed segments at ingest and keep them, de-linked,
+  after account deletion. The farm no longer makes them: deletion
+  deletes everything, and models train on the TKP1 pose as sent, with
+  no on-device transform.
 
 ---
 

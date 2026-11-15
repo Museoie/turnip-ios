@@ -656,10 +656,10 @@ final class ContributionOutboxTests: XCTestCase {
         await outbox.enqueue(Self.source())
         await eventually("an upload under way") { reached.isSet }
 
-        try await outbox.deleteAccount(contributions: .keep)
+        try await outbox.deleteAccount()
 
         XCTAssertEqual(farm.calls, ["DELETE /api/sources/\(Self.videoID)", "DELETE /api/account"])
-        XCTAssertEqual(farm.requests.last?.url?.query, "contributions=keep")
+        XCTAssertEqual(farm.requests.last?.url?.query, "contributions=delete")
         XCTAssertTrue(outbox.jobs.isEmpty)
         XCTAssertEqual(filesOnDisk(), [])
         XCTAssertFalse(credentials.hasConsented)
@@ -689,7 +689,7 @@ final class ContributionOutboxTests: XCTestCase {
         await outbox.enqueue(Self.source())
         await eventually("an upload under way") { reached.isSet }
 
-        let deletion = Task { try await outbox.deleteAccount(contributions: .delete) }
+        let deletion = Task { try await outbox.deleteAccount() }
         try await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(farm.calls, [], "a delete went out with the upload still running")
 

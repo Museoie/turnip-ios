@@ -119,34 +119,34 @@ final class FarmClientTests: XCTestCase {
         XCTAssertEqual(body["age_confirmed"] as? Bool, true)
     }
 
-    /// Both deletion choices go to the same endpoint; only the `contributions` value differs, and
-    /// the session is the only credential.
-    func testAccountDeletionSendsTheContributionsChoice() async throws {
-        let choices: [(ContributionsOnDeletion, String)] = [
-            (.keep, "contributions=keep"), (.delete, "contributions=delete")
-        ]
-        for (choice, query) in choices {
-            let farm = ScriptedFarm([.init(status: 204, body: "")])
-            try await farm.client.deleteAccount(contributions: choice, session: "tok")
+    /// Deletion always asks for the contributions to go too, so a farm that still offers keeping
+    /// them deletes them like a newer farm does; the session is the only credential.
+    func testAccountDeletionAsksToDeleteContributions() async throws {
+        let farm = ScriptedFarm([.init(status: 204, body: "")])
+        try await farm.client.deleteAccount(session: "tok")
 
-            let request = try XCTUnwrap(farm.requests.first)
-            XCTAssertEqual(request.httpMethod, "DELETE")
-            XCTAssertEqual(request.url?.path, "/api/account")
-            XCTAssertEqual(request.url?.query, query)
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
-            XCTAssertNil(request.httpBody)
-        }
+        let request = try XCTUnwrap(farm.requests.first)
+        XCTAssertEqual(request.httpMethod, "DELETE")
+        XCTAssertEqual(request.url?.path, "/api/account")
+        XCTAssertEqual(request.url?.query, "contributions=delete")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+        XCTAssertNil(request.httpBody)
     }
 
-    /// The two confirmations say different things about what stays, and both repeat the disclosure.
-    func testEachDeletionChoiceSaysWhatItKeeps() {
-        let keep = ContributionDisclosure.deletionMessage(for: .keep)
-        let delete = ContributionDisclosure.deletionMessage(for: .delete)
-        XCTAssertNotEqual(keep, delete)
-        XCTAssertTrue(keep.hasPrefix(ContributionDisclosure.deletionKeepingContributions))
-        XCTAssertTrue(delete.hasPrefix(ContributionDisclosure.deletionWithContributions))
-        XCTAssertTrue(keep.hasSuffix(ContributionDisclosure.accountDeletion))
-        XCTAssertTrue(delete.hasSuffix(ContributionDisclosure.accountDeletion))
+    /// The confirmation says what deletion reaches, then repeats the disclosure.
+    func testDeletionConfirmationRepeatsTheDisclosure() {
+        let message = ContributionDisclosure.deletionMessage
+        XCTAssertTrue(message.hasPrefix(ContributionDisclosure.deletionSummary))
+        XCTAssertTrue(message.hasSuffix(ContributionDisclosure.accountDeletion))
+    }
+
+    /// Deletion takes everything: nothing in the words says part of a contribution stays behind.
+    func testDeletionWordsPromiseNothingStays() {
+        let words = [
+            ContributionDisclosure.deletionReach, ContributionDisclosure.deletionMessage
+        ].joined(separator: " ").lowercased()
+        XCTAssertFalse(words.contains("segment"))
+        XCTAssertTrue(ContributionDisclosure.deletionReach.contains("30 days"))
     }
 
     func testTaxonomyDecodesTheFarmsVocabulary() async throws {
@@ -366,7 +366,7 @@ final class FarmClientTests: XCTestCase {
         credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
         credentials.recordConsent()
 
-        try await FarmAccount(client: farm.client, credentials: credentials).deleteAccount(contributions: .keep)
+        try await FarmAccount(client: farm.client, credentials: credentials).deleteAccount()
 
         credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
         XCTAssertFalse(credentials.hasConsented)

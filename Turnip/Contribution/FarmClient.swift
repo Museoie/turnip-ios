@@ -56,15 +56,6 @@ extension FarmError: LocalizedError {
     }
 }
 
-/// What account deletion does with the account's training segments: the farm's `contributions`
-/// query value on `DELETE /api/account`.
-enum ContributionsOnDeletion: String, Sendable {
-    /// They stay as training data, with no link to the account.
-    case keep
-    /// They are deleted with the account.
-    case delete
-}
-
 /// The turnip-farm REST API (`BACKEND_DESIGN.md` §7.3), as the calls the app makes. Holds no
 /// credentials: every call that needs a session or a source key takes it as an argument.
 struct FarmClient: Sendable {
@@ -96,11 +87,12 @@ struct FarmClient: Sendable {
         _ = try await send("POST", "api/consent", body: body, session: session)
     }
 
-    /// `DELETE /api/account`, keeping the account's de-linked training segments or deleting them too
-    /// (`BACKEND_DESIGN.md` §7.3).
-    func deleteAccount(contributions: ContributionsOnDeletion, session: String) async throws {
+    /// `DELETE /api/account`: the account and every contribution linked to it (`BACKEND_DESIGN.md`
+    /// §7.3). `contributions=delete` gets a farm that still offers keeping them to do what a newer
+    /// farm does regardless.
+    func deleteAccount(session: String) async throws {
         _ = try await send(
-            "DELETE", "api/account", query: [URLQueryItem(name: "contributions", value: contributions.rawValue)],
+            "DELETE", "api/account", query: [URLQueryItem(name: "contributions", value: "delete")],
             session: session)
     }
 
