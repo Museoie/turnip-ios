@@ -1,6 +1,6 @@
 import Photos
 
-/// Deletes one asset from the Photos library by its `PHAsset.localIdentifier`. A
+/// Deletes assets from the Photos library by their `PHAsset.localIdentifier`s. A
 /// separate type from `ClipPhotosSaver`, whose docstring promises add-only access —
 /// this one needs the write half of `.readWrite`, which Home already requests to
 /// enumerate the library.
@@ -9,14 +9,15 @@ import Photos
 /// `performChanges` resolves; a decline surfaces as a thrown error indistinguishable
 /// from any other rejected change, and the asset stays in place.
 struct PhotoAssetDeleter: Sendable {
-    /// A no-op when the identifier no longer resolves to an asset — already deleted
-    /// (by this call or elsewhere) is the same outcome as deleted.
-    func delete(assetIdentifier: String) async throws {
-        guard let asset = PHAsset.fetchAssets(
-            withLocalIdentifiers: [assetIdentifier], options: nil
-        ).firstObject else { return }
+    /// Deletes every asset the identifiers still resolve to in one change, so PhotoKit asks
+    /// once for all of them; a decline keeps every one. An identifier that no longer resolves
+    /// is skipped — already deleted (by this call or elsewhere) is the same outcome as deleted —
+    /// and none resolving is a no-op.
+    func delete(assetIdentifiers: [String]) async throws {
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: assetIdentifiers, options: nil)
+        guard assets.count > 0 else { return }
         try await PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.deleteAssets([asset] as NSArray)
+            PHAssetChangeRequest.deleteAssets(assets)
         }
     }
 }

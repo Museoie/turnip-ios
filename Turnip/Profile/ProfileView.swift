@@ -7,14 +7,16 @@ enum ProfileRoute: Hashable {
     /// One trick's clips, under the gallery's filter.
     case trick(key: String, filter: TrickGallery.Filter)
     case clip(UUID)
+    /// Every achievement as tiles: the achievements carousel's "Show More".
+    case achievements
 }
 
 /// The Profile tab (`docs/PROFILE_DESIGN.md` §5): the root pager's first page, and the one the app
 /// opens on once a clip is saved (`MainTab.landing`), computed on the device from the clip library
 /// and never sent anywhere. One scrolling page under the same "Turnip" wordmark header Home leads
-/// with: "Needs a name" while any saved clip has no name, the achievements each trick has earned,
-/// and the gallery grouped by trick. Its pushed screens own the full screen, so `RootTabView` hides
-/// the floating bar and stops the pager while `path` holds one.
+/// with: "Needs a name" while any saved clip has no name, a carousel of the achievements each trick
+/// has earned, and the gallery grouped by trick. Its pushed screens own the full screen, so
+/// `RootTabView` hides the floating bar and stops the pager while `path` holds one.
 struct ProfileView: View {
     @ObservedObject var library: ClipLibrary
     @ObservedObject var vocabulary: VocabularyStore
@@ -22,6 +24,11 @@ struct ProfileView: View {
 
     @State private var filter: TrickGallery.Filter = .mine
     @Environment(\.scenePhase) private var scenePhase
+
+    /// The page's side margin, which the achievements carousel scrolls out past to the screen's
+    /// edges.
+    private static let margin: CGFloat = 16
+    private static let achievementCardWidth: CGFloat = 160
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -70,7 +77,7 @@ struct ProfileView: View {
                     gallery
                 }
             }
-            .padding(.horizontal)
+            .padding(.horizontal, Self.margin)
             .padding(.top, 8)
             // The floating tab bar overlays this page rather than reserving space for itself.
             .floatingTabBarClearance()
@@ -142,23 +149,42 @@ struct ProfileView: View {
 
     // MARK: - Achievements
 
+    /// A carousel of each trick's cards, the trick practiced most recently first, and "Show More"
+    /// to every achievement as tiles (`AchievementsView`).
     private var achievements: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Achievements")
             let progress = progress
+            HStack(alignment: .firstTextBaseline) {
+                sectionHeader("Achievements")
+                Spacer(minLength: 0)
+                if !progress.isEmpty {
+                    NavigationLink("Show More", value: ProfileRoute.achievements)
+                        .font(.subheadline.weight(.semibold))
+                        .accessibilityIdentifier("achievements-show-more")
+                }
+            }
             if progress.isEmpty {
                 Text("Name a clip of yourself to start that trick's levels.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 2), spacing: 12) {
-                    ForEach(progress) { trick in
-                        AchievementCard(progress: trick, kind: .level)
-                        if trick.repMilestone != nil {
-                            AchievementCard(progress: trick, kind: .reps)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: 12) {
+                        ForEach(progress) { trick in
+                            AchievementCard(progress: trick, kind: .level)
+                                .frame(width: Self.achievementCardWidth)
+                            if trick.repMilestone != nil {
+                                AchievementCard(progress: trick, kind: .reps)
+                                    .frame(width: Self.achievementCardWidth)
+                            }
                         }
                     }
+                    .padding(.horizontal, Self.margin)
                 }
+                // Out to the screen's edges, so a card scrolls off the side rather than being cut
+                // at the page's margin; the first card still starts at it.
+                .padding(.horizontal, -Self.margin)
+                .accessibilityIdentifier("achievements-carousel")
             }
         }
     }
@@ -236,9 +262,13 @@ struct ProfileView: View {
         case .needsAName(let ids):
             LibraryNamingView(clipIDs: ids, library: library, vocabulary: vocabulary, close: pop)
         case .trick(let key, let filter):
-            TrickClipsView(trickKey: key, filter: filter, library: library, vocabulary: vocabulary)
+            TrickClipsView(
+                trickKey: key, filter: filter, library: library, vocabulary: vocabulary,
+                open: { path.append(.clip($0)) }, close: pop)
         case .clip(let id):
             LibraryClipView(clipID: id, library: library, vocabulary: vocabulary, close: pop)
+        case .achievements:
+            AchievementsView(library: library, vocabulary: vocabulary, close: pop)
         }
     }
 

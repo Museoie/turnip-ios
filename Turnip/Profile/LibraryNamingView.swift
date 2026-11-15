@@ -9,7 +9,9 @@ import SwiftUI
 ///
 /// Pages through the clips that needed a name when it opened, so a clip named here stays on screen
 /// rather than leaving the pager under the user's finger. The pager owns every horizontal drag;
-/// the back chevron is the only way back.
+/// the back chevron is the only way back. The trash across from it removes the clip on screen
+/// from the Profile, asking first whether its video leaves Photos too, and the next clip takes
+/// its place.
 struct LibraryNamingView: View {
     let clipIDs: [UUID]
     @ObservedObject var library: ClipLibrary
@@ -27,6 +29,10 @@ struct LibraryNamingView: View {
     /// after focus does: a swipe or return on an empty field drops focus and brings the bar back
     /// while the keyboard is still up. So the card holds until the keyboard has gone.
     @State private var isKeyboardShown = false
+    @State private var isConfirmingRemoval = false
+    @State private var removalFailure: String?
+    /// iPhone Duo's vertical bar, which the bar's items go down instead.
+    @Environment(\.verticalBar) private var verticalBar
 
     private static let slide: Animation = .easeInOut(duration: 0.3)
 
@@ -69,6 +75,14 @@ struct LibraryNamingView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar { toolbar }
+        .verticalBarSlotControls(refreshingOn: clips.isEmpty) {
+            backButton
+            if !clips.isEmpty { removeButton }
+        }
+        .libraryClipRemovalDialog(isPresented: $isConfirmingRemoval, clips: currentClip.map { [$0] } ?? []) {
+            removeCurrentClip(alsoFromPhotos: $0)
+        }
+        .errorAlert("Couldn't delete the video", message: $removalFailure)
         // As on Name Clips, the bar gives its room to the naming controls while the name field
         // has focus, and comes back once the keyboard goes.
         .safeAreaInset(edge: .bottom) {
@@ -87,14 +101,25 @@ struct LibraryNamingView: View {
         .accessibilityIdentifier("needs-a-name-screen")
     }
 
+    /// None on iPhone Duo, where the items go down the vertical bar (`verticalBarSlotControls`).
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        if #available(iOS 26.0, *) {
-            // The chevron is glass already; the bar's own glass behind it would double it.
-            ToolbarItem(placement: .navigationBarLeading) { backButton }
-                .sharedBackgroundVisibility(.hidden)
-        } else {
-            ToolbarItem(placement: .navigationBarLeading) { backButton }
+        if verticalBar == nil {
+            if #available(iOS 26.0, *) {
+                // The chevron and the trash are glass already; the bar's own glass behind them
+                // would double it.
+                ToolbarItem(placement: .navigationBarLeading) { backButton }
+                    .sharedBackgroundVisibility(.hidden)
+                if !clips.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) { removeButton }
+                        .sharedBackgroundVisibility(.hidden)
+                }
+            } else {
+                ToolbarItem(placement: .navigationBarLeading) { backButton }
+                if !clips.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) { removeButton }
+                }
+            }
         }
     }
 
@@ -104,6 +129,13 @@ struct LibraryNamingView: View {
             close()
         }
         .accessibilityIdentifier("needs-a-name-back")
+    }
+
+    private var removeButton: some View {
+        ScrimIconButton(systemImage: "trash", accessibilityLabel: "Remove clip") {
+            isConfirmingRemoval = true
+        }
+        .accessibilityIdentifier("needs-a-name-remove")
     }
 
     /// `LocalizedStringKey`, matching `PrimaryActionBar`: the three titles are literals,
@@ -197,6 +229,36 @@ struct LibraryNamingView: View {
         withAnimation(Self.slide) {
             index = target
             dragOffset = 0
+        }
+    }
+
+    // MARK: - Removing
+
+    private var currentClip: LibraryClip? {
+        clips.indices.contains(index) ? clips[index] : nil
+    }
+
+    /// Removes the clip on screen. The clips after it close up, so the next one slides into its
+    /// place, or the one before when it was the last; with none left the screen goes back. What
+    /// was typed for it goes with it.
+    private func removeCurrentClip(alsoFromPhotos: Bool) {
+        guard let clip = currentClip else { return }
+        Task {
+            do {
+                try await LibraryClipRemoval(library: library).remove([clip], alsoFromPhotos: alsoFromPhotos)
+            } catch {
+                removalFailure = error.localizedDescription
+                return
+            }
+            draft = ""
+            guard !clips.isEmpty else {
+                close()
+                return
+            }
+            withAnimation(Self.slide) {
+                index = min(index, clips.count - 1)
+                dragOffset = 0
+            }
         }
     }
 

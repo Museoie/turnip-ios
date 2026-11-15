@@ -213,6 +213,74 @@ final class ClipLibraryTests: XCTestCase {
         XCTAssertEqual(makeLibrary().earned.map(\.trick), ["cork"])
     }
 
+    /// Several clips go in one call, each as one delete takes it: a video keeps its record while
+    /// any clip of it stays, and an ID no clip has is skipped.
+    func testDeletingSeveralClipsAtOnceKeepsWhatTheRestNeed() {
+        let library = makeLibrary()
+        library.record(save([savedClip(1, names: ["cork"]), savedClip(5)]), sourceRecordedAt: recorded)
+        library.record(save([savedClip(2)], source: "source-2"), sourceRecordedAt: recorded)
+        let keep = library.clips[1]
+        library.delete([library.clips[0].id, library.clips[2].id, UUID()])
+
+        XCTAssertEqual(library.clips, [keep])
+        XCTAssertEqual(library.sources.map(\.assetID), ["source-1"])
+        let reloaded = makeLibrary()
+        XCTAssertEqual(reloaded.clips, [keep])
+        XCTAssertEqual(reloaded.earned.map(\.trick), ["cork"])
+    }
+
+    func testDeletingNoKnownClipWritesNothing() {
+        let library = makeLibrary()
+        library.delete([UUID()])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    /// The clips' videos go from Photos first when asked, all in one call, and the clips only once
+    /// they have.
+    func testRemovingClipsDeletesTheirVideosFirstWhenAsked() async throws {
+        let library = makeLibrary()
+        library.record(
+            save([savedClip(1, export: "export-a"), savedClip(5, export: "export-b"),
+                  savedClip(9, export: "export-c")]),
+            sourceRecordedAt: recorded)
+        var deleted: [[String]] = []
+        let removal = LibraryClipRemoval(library: library, deleteVideos: { deleted.append($0) })
+        let removed = Array(library.clips.prefix(2))
+
+        try await removal.remove(removed, alsoFromPhotos: true)
+
+        XCTAssertEqual(deleted, [["export-a", "export-b"]])
+        XCTAssertEqual(library.clips.map(\.exportAssetID), ["export-c"])
+    }
+
+    func testRemovingClipsFromTheProfileAloneLeavesPhotosAlone() async throws {
+        let library = makeLibrary()
+        library.record(save([savedClip(1)]), sourceRecordedAt: recorded)
+        var deleted: [[String]] = []
+        let removal = LibraryClipRemoval(library: library, deleteVideos: { deleted.append($0) })
+
+        try await removal.remove(library.clips, alsoFromPhotos: false)
+
+        XCTAssertEqual(deleted, [])
+        XCTAssertEqual(library.clips, [])
+    }
+
+    /// Photos' own confirmation declined: nothing was deleted, so every clip stays.
+    func testADeclinedPhotosDeleteKeepsEveryClip() async {
+        struct Declined: Error {}
+        let library = makeLibrary()
+        library.record(save([savedClip(1), savedClip(5)]), sourceRecordedAt: recorded)
+        let removal = LibraryClipRemoval(library: library, deleteVideos: { _ in throw Declined() })
+
+        do {
+            try await removal.remove(library.clips, alsoFromPhotos: true)
+            XCTFail("A declined delete throws")
+        } catch {
+            XCTAssertTrue(error is Declined)
+        }
+        XCTAssertEqual(library.clips.count, 2)
+    }
+
     /// "Needs a name" opens on the most recent video first, each video's clips in the order they
     /// happen.
     func testUnnamedClipsComeNewestVideoFirstInClipOrder() {

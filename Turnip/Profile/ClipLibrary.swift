@@ -302,20 +302,22 @@ final class ClipLibrary: ObservableObject {
     /// video with no clip left goes too, and so does a pose no clip names any more, with the
     /// trashed proposals on it. What the clip earned stays earned.
     func delete(_ id: UUID) {
-        guard let index = clips.firstIndex(where: { $0.id == id }) else { return }
-        let removed = clips.remove(at: index)
-        if !clips.contains(where: { $0.sourceAssetID == removed.sourceAssetID }) {
-            sources.removeAll { $0.assetID == removed.sourceAssetID }
-        }
-        let releasedPose = removed.poseID.flatMap { poseID in
-            clips.contains { $0.poseID == poseID } ? nil : poseID
-        }
-        if let releasedPose {
-            dismissedWindows.removeAll { $0.poseID == releasedPose }
-        }
+        delete([id])
+    }
+
+    /// Removes several clips at once, each as `delete(_:)` removes one, in one write. IDs no clip
+    /// has are skipped.
+    func delete(_ ids: Set<UUID>) {
+        let removed = clips.filter { ids.contains($0.id) }
+        guard !removed.isEmpty else { return }
+        clips.removeAll { ids.contains($0.id) }
+        let releasedSources = Set(removed.map(\.sourceAssetID)).subtracting(clips.map(\.sourceAssetID))
+        sources.removeAll { releasedSources.contains($0.assetID) }
+        let releasedPoses = Set(removed.compactMap(\.poseID)).subtracting(clips.compactMap(\.poseID))
+        dismissedWindows.removeAll { releasedPoses.contains($0.poseID) }
         persist()
-        if let releasedPose {
-            poseStore.remove(releasedPose)
+        for poseID in releasedPoses {
+            poseStore.remove(poseID)
         }
     }
 

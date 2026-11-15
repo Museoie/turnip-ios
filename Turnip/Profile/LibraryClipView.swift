@@ -14,6 +14,8 @@ struct LibraryClipView: View {
     @FocusState private var isFieldFocused: Bool
     @State private var isConfirmingDelete = false
     @State private var deleteFailure: String?
+    /// iPhone Duo's vertical bar, which the back button goes down instead.
+    @Environment(\.verticalBar) private var verticalBar
 
     var body: some View {
         Group {
@@ -28,6 +30,11 @@ struct LibraryClipView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(verticalBar != nil)
+        .verticalBarSlotControls {
+            ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back", action: close)
+                .accessibilityIdentifier("clip-view-back")
+        }
         .accessibilityIdentifier("clip-view")
         .onDisappear(perform: commitDraft)
         .errorAlert("Couldn't delete the video", message: $deleteFailure)
@@ -68,16 +75,8 @@ struct LibraryClipView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
                 // On the button, so where the dialog shows as a popover it points at what was tapped.
-                .confirmationDialog("Delete this clip?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
-                    Button("Remove from Profile", role: .destructive) { delete(clip, alsoFromPhotos: false) }
-                    if LibraryClipMedia.asset(for: clip) != nil {
-                        Button("Remove and Delete Video from Photos", role: .destructive) {
-                            delete(clip, alsoFromPhotos: true)
-                        }
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("What this clip earned stays earned.")
+                .libraryClipRemovalDialog(isPresented: $isConfirmingDelete, clips: [clip]) { alsoFromPhotos in
+                    delete(clip, alsoFromPhotos: alsoFromPhotos)
                 }
                 .padding(.top, 8)
                 .accessibilityIdentifier("clip-view-delete")
@@ -112,15 +111,12 @@ struct LibraryClipView: View {
     /// user declined its confirmation — keeps the clip as well.
     private func delete(_ clip: LibraryClip, alsoFromPhotos: Bool) {
         Task {
-            if alsoFromPhotos {
-                do {
-                    try await PhotoAssetDeleter().delete(assetIdentifier: clip.exportAssetID)
-                } catch {
-                    deleteFailure = error.localizedDescription
-                    return
-                }
+            do {
+                try await LibraryClipRemoval(library: library).remove([clip], alsoFromPhotos: alsoFromPhotos)
+            } catch {
+                deleteFailure = error.localizedDescription
+                return
             }
-            library.delete(clip.id)
             close()
         }
     }

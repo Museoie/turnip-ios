@@ -160,6 +160,39 @@ enum Achievements {
         }
     }
 
+    /// The achievements page's totals (`docs/PROFILE_DESIGN.md` §6.7).
+    struct Summary: Equatable {
+        /// Tricks with a clip of the user's or an achievement earned: one per `progress` entry.
+        let tricks: Int
+        /// Distinct local calendar days with a named clip of the user's, whatever its tricks.
+        let sessions: Int
+        /// The user's named clips, a combo once.
+        let clips: Int
+        /// Every level and rep milestone each trick shows, summed.
+        let achievements: Int
+    }
+
+    static func summary(
+        of clips: [LibraryClip], progress: [TrickProgress], vocabulary: TrickVocabulary, calendar: Calendar
+    ) -> Summary {
+        let named = clips.filter { $0.isMe && !TrickNaming.tricks(in: $0.names, vocabulary: vocabulary).isEmpty }
+        let days = Set(named.map { calendar.dateComponents([.era, .year, .month, .day], from: $0.recordedAt) })
+        let achievements = progress.reduce(0) { total, trick in
+            total + trick.level + AchievementLadder.milestones(forReps: trick.repMilestone ?? 0).count
+        }
+        return Summary(tricks: progress.count, sessions: days.count, clips: named.count, achievements: achievements)
+    }
+
+    /// The `limit` most recently earned records, newest first; records earned together come in
+    /// trick, then ladder, then step order.
+    static func recentlyEarned(_ earned: [EarnedAchievement], limit: Int) -> [EarnedAchievement] {
+        Array(earned.sorted { lhs, rhs in
+            if lhs.earnedAt != rhs.earnedAt { return lhs.earnedAt > rhs.earnedAt }
+            return (lhs.trick, lhs.kind.rawValue, lhs.step) < (rhs.trick, rhs.kind.rawValue, rhs.step)
+        }
+        .prefix(limit))
+    }
+
     /// The highest level and rep milestone earned per trick key, each record read through today's
     /// vocabulary.
     private static func highestEarned(

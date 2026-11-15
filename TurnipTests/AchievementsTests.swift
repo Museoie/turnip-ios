@@ -111,6 +111,57 @@ final class AchievementsTests: XCTestCase {
         }
     }
 
+    // MARK: - Achievements page
+
+    /// A combo is one clip but a rep of each trick; someone else's clips and unnamed ones count
+    /// toward no total.
+    func testTheSummaryCountsTheUsersNamedClipsOnce() {
+        let lateNight = Date(timeIntervalSince1970: 1_793_143_800) // 2026-10-27 23:30 UTC
+        let clips = [
+            clip(["cork + gainer"], at: noon),
+            clip(["gainer"], at: lateNight.addingTimeInterval(3_600)),
+            clip([], at: noon.addingTimeInterval(5 * day)),
+            clip(["hook"], at: noon.addingTimeInterval(9 * day), isMe: false)
+        ]
+        let progress = Achievements.progress(
+            counts: Achievements.counts(of: clips, vocabulary: .seed, calendar: utc), earned: [], vocabulary: .seed)
+        let summary = Achievements.summary(of: clips, progress: progress, vocabulary: .seed, calendar: utc)
+
+        XCTAssertEqual(summary, Achievements.Summary(tricks: 2, sessions: 2, clips: 2, achievements: 2))
+    }
+
+    /// Every level and rep milestone a trick shows counts, earned ones a dropped count no longer
+    /// reaches among them.
+    func testTheSummaryCountsEveryLevelAndMilestoneShown() {
+        let earned = [
+            EarnedAchievement(trick: "gainer", kind: .level, step: 3, earnedAt: noon),
+            EarnedAchievement(trick: "gainer", kind: .reps, step: 50, earnedAt: noon)
+        ]
+        let clips = [clip(["gainer"], at: noon)]
+        let progress = Achievements.progress(
+            counts: Achievements.counts(of: clips, vocabulary: .seed, calendar: utc), earned: earned,
+            vocabulary: .seed)
+        let summary = Achievements.summary(of: clips, progress: progress, vocabulary: .seed, calendar: utc)
+
+        XCTAssertEqual(summary.achievements, 5)
+        XCTAssertEqual(summary.sessions, 1)
+    }
+
+    func testRecentlyEarnedIsNewestFirstAndCapped() {
+        let first = EarnedAchievement(trick: "gainer", kind: .level, step: 1, earnedAt: noon)
+        let together = [
+            EarnedAchievement(trick: "gainer", kind: .reps, step: 10, earnedAt: noon.addingTimeInterval(day)),
+            EarnedAchievement(trick: "cork", kind: .level, step: 2, earnedAt: noon.addingTimeInterval(day)),
+            EarnedAchievement(trick: "gainer", kind: .level, step: 2, earnedAt: noon.addingTimeInterval(day))
+        ]
+        let latest = EarnedAchievement(trick: "hook", kind: .level, step: 1, earnedAt: noon.addingTimeInterval(2 * day))
+
+        XCTAssertEqual(
+            Achievements.recentlyEarned([first] + together + [latest], limit: 4),
+            [latest, together[1], together[2], together[0]])
+        XCTAssertEqual(Achievements.recentlyEarned([first, latest], limit: 10), [latest, first])
+    }
+
     // MARK: - Ladders
 
     func testTheLevelLadderCountsSessions() {
@@ -247,6 +298,53 @@ final class AchievementsTests: XCTestCase {
         let top = progress(sessions: 60, reps: 600, level: 5, milestone: 500)
         XCTAssertEqual(ProfileAccessibility.levelCardValue(top), "Top level")
         XCTAssertEqual(ProfileAccessibility.repsCardValue(top), "Top milestone")
+    }
+
+    func testAnAchievementsTileSaysItsFiguresAndDays() {
+        let gainer = TrickProgress(
+            trick: Trick(key: "gainer", name: "gainer"), sessions: 7, reps: 14, firstClipAt: noon,
+            lastClipAt: noon.addingTimeInterval(3 * day), level: 2, repMilestone: 10)
+        let first = noon.formatted(date: .abbreviated, time: .omitted)
+        let last = noon.addingTimeInterval(3 * day).formatted(date: .abbreviated, time: .omitted)
+
+        XCTAssertEqual(ProfileAccessibility.repsHeadline(gainer), "10 reps")
+        XCTAssertEqual(ProfileAccessibility.practicedDays(gainer, calendar: utc), "First \(first) · Last \(last)")
+        XCTAssertEqual(
+            ProfileAccessibility.tileValue(gainer),
+            "7 of 10 sessions to level 3, 10 reps, 14 of 50 reps, First \(first) · Last \(last)")
+    }
+
+    /// One day reads as one, a trick with no milestone yet says so, and one whose clips are all
+    /// gone has no days to give.
+    func testAnAchievementsTileWithOneDayNoMilestoneOrNoClips() {
+        let oneDay = progress(sessions: 1, reps: 3, level: 1, milestone: nil)
+        XCTAssertEqual(ProfileAccessibility.repsHeadline(oneDay), "No rep milestone yet")
+        XCTAssertEqual(
+            ProfileAccessibility.practicedDays(oneDay, calendar: utc),
+            "Practiced \(noon.formatted(date: .abbreviated, time: .omitted))")
+
+        let earnedOnly = TrickProgress(
+            trick: Trick(key: "hook", name: "hook"), sessions: 0, reps: 0, firstClipAt: nil, lastClipAt: nil,
+            level: 1, repMilestone: nil)
+        XCTAssertNil(ProfileAccessibility.practicedDays(earnedOnly))
+    }
+
+    func testTheLaddersAndEarnedRecordsSayTheirSteps() {
+        XCTAssertEqual(
+            ProfileAccessibility.earnedTitle(
+                EarnedAchievement(trick: "gainer", kind: .reps, step: 50, earnedAt: noon), trickTitle: "Gainer"),
+            "Gainer, 50 reps")
+        XCTAssertEqual(
+            ProfileAccessibility.earnedTitle(
+                EarnedAchievement(trick: "gainer", kind: .level, step: 2, earnedAt: noon), trickTitle: "Gainer"),
+            "Gainer, level 2")
+        XCTAssertEqual(ProfileAccessibility.levelLadder, "Levels 1 to 5 take 1, 3, 10, 25, and 50 sessions.")
+        XCTAssertEqual(ProfileAccessibility.repLadder, "Rep milestones come at 10, 50, 100, 250, and 500 reps.")
+    }
+
+    func testTheRemovalQuestionCountsTheClips() {
+        XCTAssertEqual(ProfileAccessibility.removalTitle(count: 1), "Delete this clip?")
+        XCTAssertEqual(ProfileAccessibility.removalTitle(count: 12), "Delete 12 clips?")
     }
 
     func testAnEarnedAnnouncementNamesEachStep() {

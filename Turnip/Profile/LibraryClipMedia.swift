@@ -20,6 +20,11 @@ enum LibraryClipMedia {
         PHAsset.fetchAssets(withLocalIdentifiers: [clip.exportAssetID], options: nil).firstObject
     }
 
+    /// Whether any of `clips` still has its video in Photos, asked in one fetch.
+    static func anyInPhotos(_ clips: [LibraryClip]) -> Bool {
+        PHAsset.fetchAssets(withLocalIdentifiers: clips.map(\.exportAssetID), options: nil).count > 0
+    }
+
     /// One final-quality frame, filling `pixelSize`.
     static func thumbnail(for asset: PHAsset, pixelSize: CGSize) async -> UIImage? {
         let options = PHImageRequestOptions()
