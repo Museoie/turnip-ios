@@ -433,7 +433,10 @@ counts once under each distinct canonical trick.
   - **Achievements** (§6) — a carousel of cards such as "Gainer ·
     Level 2" and "Gainer · 100 reps", the trick practiced most recently
     first, scrolling past the page's margins to its edges. "Show More"
-    opens every achievement as tiles (§6.7).
+    opens every achievement as tiles (§6.7). A sideways drag that starts
+    on the carousel scrolls it, the innermost scroll view taking the
+    drag as it does in any nested pair, so the pager pages to Home from
+    anywhere else on the page.
   - **Gallery** (§7) — one row per trick.
   - **Highlights** (§8).
 - Empty state (no saved clips yet): what the tab will show once clips
