@@ -324,11 +324,12 @@ frames are part of the session pose.
   (`BACKEND_DESIGN.md` §7.1):
   - contributions stay linked to the user's account until the account
     is deleted, by the user or after 24 months without use;
-  - deleting the account removes that link and the full pose
-    recordings. Short, transformed training segments stay with no link
-    to the account, unless the user also chooses to delete their
-    contributions (§5.4). Someone with a video of the same clip could
-    still match them to it (`BACKEND_DESIGN.md` §9 Q9);
+  - deleting the account removes that link, the full pose recordings,
+    and every contribution this app can find with its training
+    segments (§5.4). Short, transformed segments of the rest stay with
+    no link to the account, unless the user also chooses to delete their
+    contributions. Someone with a video of the same clip could still
+    match them to it (`BACKEND_DESIGN.md` §9 Q9);
   - only clips marked as the user are contributed, and clips marked as
     someone else (`PROFILE_DESIGN.md` §4.3) stay on the device. The
     sheet lists such a clip as staying behind;
@@ -523,7 +524,8 @@ record of whose a contribution is.
   - `403 CONSENT_REQUIRED` from a contribution write (the farm now
     wants a newer version) withdraws the agreement here, so the next
     save shows the sheet again. What is queued waits for that
-    agreement.
+    agreement, and Settings' waiting row says the next save asks for
+    it.
   - `403 REGION_UNAVAILABLE` (the farm's country backstop) turns
     Contribute named clips off, which cancels what is queued, as the
     storefront check does (§8).
@@ -804,8 +806,10 @@ the user are contributed, the 16-or-older confirmation (§3.3),
 contribution switched off on EU, EEA and UK storefronts (§8), consent
 recorded on the farm with disclosure version 3 (§3.3, §5.4), the
 account link kept until deletion or 24 months without use (§3.3, §8),
-which reverses `DESIGN.md` Decision #10, and account deletion with an
-equal choice to delete contributions too (§5.4). The rest below is not
+which reverses `DESIGN.md` Decision #10, account deletion with an
+equal choice to delete contributions too (§5.4), and the farm's EU, EEA
+and UK backstop, which turns contributing off on
+`403 REGION_UNAVAILABLE` behind the storefront check (§5.4, §8). The rest below is not
 built in the app yet; until it is, the sections above describe the
 code.
 
@@ -817,9 +821,6 @@ code.
   head point and lightly noised, with fresh IDs, no timestamps and no
   adjacent segments kept. The segment-to-source link is deleted with
   the account.
-- **EU and UK backstop.** The farm refuses consent and uploads from the
-  EU, the EEA and the UK by the request's country, behind the app's
-  storefront check (§8).
 
 ---
 

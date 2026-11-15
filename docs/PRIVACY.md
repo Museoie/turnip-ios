@@ -386,8 +386,9 @@ Planned:
   requests, GDPR/CCPA) — belongs to `turnip-farm`; see `docs/DESIGN.md`
   decision #4 (retention: keep forever, user-deletable). In outline:
   - Contributions are linked to the account until it is deleted, by the
-    user or after 24 months without use. Deleting it removes the link and
-    the full pose recordings; short, transformed training segments stay
+    user or after 24 months without use. Deleting it removes the link, the
+    full pose recordings, and every contribution the app can find with
+    its training segments; short, transformed segments of the rest stay
     with no account link unless the user also deletes their
     contributions. That makes them de-linked, not anonymous: someone with
     a video of the same clip could still match them to it

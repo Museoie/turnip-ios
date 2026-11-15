@@ -91,11 +91,20 @@ struct FarmAccountSection: View {
     /// Background uploads say nothing on their own, so this is where a queue stuck behind an
     /// expired session gets noticed.
     private var waitingMessage: String {
-        let count = outbox.waitingClipCount
+        Self.waitingMessage(
+            count: outbox.waitingClipCount, isSignedIn: account.isSignedIn,
+            hasConsented: account.credentials.hasConsented)
+    }
+
+    /// What is waiting, and what it waits for: a sign-in, or an agreement the farm asked for again
+    /// (`CONSENT_REQUIRED`), which the next save's contribution sheet asks for.
+    static func waitingMessage(count: Int, isSignedIn: Bool, hasConsented: Bool) -> String {
         let waiting = count == 1
             ? String(localized: "1 clip waiting to send.")
             : String(localized: "\(count) clips waiting to send.")
-        return account.isSignedIn ? waiting : "\(waiting) \(String(localized: "Sign in to finish."))"
+        if !isSignedIn { return "\(waiting) \(String(localized: "Sign in to finish."))" }
+        if !hasConsented { return "\(waiting) \(ContributionDisclosure.agreeToFinish)" }
+        return waiting
     }
 }
 
@@ -135,9 +144,10 @@ enum ContributionDisclosure {
         without use.
         """)
     static let deletionReach = String(localized: """
-        Deleting your account removes that link and the full pose recordings. Short, transformed \
-        training segments stay, with no link to your account, unless you also choose to delete \
-        your contributions. Someone with a video of the same clip could still match them to it.
+        Deleting your account removes that link, the full pose recordings, and every contribution \
+        this iPhone can find with its training segments. Short, transformed segments of the rest \
+        stay, with no link to your account, unless you also choose to delete your contributions. \
+        Someone with a video of the same clip could still match them to it.
         """)
     static let consent = String(localized: """
         Only clips marked as you are contributed. Clips marked as someone else stay on this iPhone.
@@ -149,6 +159,9 @@ enum ContributionDisclosure {
         """)
     static let unavailableHere = String(localized: """
         Contributing clips isn't available in your country or region.
+        """)
+    static let agreeToFinish = String(localized: """
+        Your next save asks you to agree to the contribution terms, then they send.
         """)
     static let ageConfirmation = String(localized: "I'm 16 or older")
     static let ageRequirement = String(localized: """
