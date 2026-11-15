@@ -187,7 +187,7 @@ Where it applies today:
 | Name Clips card ↔ Clip Editor (§3a, §4) | Swipe down above the crop marker | Back chevron | Same, with the card showing the editor's own player |
 | Profile ↔ Home (Root navigation) | Horizontal page swipe | The tab bar's profile / gallery icons | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Name Clips, one clip ↔ the next (§3a) | Horizontal swipe | The card's VoiceOver actions, Previous clip / Next clip (no button on screen) | The page slide between clips (`NameClipsView.go(to:)`) |
-| Profile ↔ its pushed screens — a trick's clips, the Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe from the left edge | Back button | The navigation push and pop |
+| Profile ↔ its pushed screens — a trick's clips, the Clip view, every achievement ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe from the left edge, except on iPhone Duo (below) and while a trick's clips are selecting | Back button | The navigation push and pop |
 | Needs a name, one clip ↔ the next ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4.1) | Horizontal swipe | "Next" / "Skip" | The page slide between clips (`LibraryNamingView.go(to:)`) |
 | *Planned:* Profile clip tile ↔ Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §7) | Swipe down | Back chevron | The tile's expansion card, showing the clip's own player, in place of the push |
 
@@ -330,31 +330,34 @@ every horizontal drag first, among them Needs a name's paging and the edge
 swipe that pops a pushed screen. Every page's lock writes the same value, so
 one page can't switch the swipe back on under another's pushed screen.
 
-**iPhone Duo.** On the outer display, and on the inner display in
-landscape, the system's vertical bar runs down one side of the screen: a
-column holding the status bar and, in apps built from the system's own
-bars, their toolbar items and tab bar. It reaches the app as a safe-area
-inset on that side alone — 84 pt, against none on the other. The system
-doesn't move custom bars into it, and Turnip's are custom, so `RootTabView`
-lays the column out itself the way Apple's guidance stacks it
-(`VerticalBar`): the page's own controls under the status bar — Home's
-filter and gear, nothing for the Profile — and the tab bar at its foot, the
-same pill turned on end. The floating bar and Home's bar controls are left
-off the page meanwhile, and the pager keeps to the safe area beside the
-column. Laid across the inset, a page `TabView` scrolls each page to its
-center inside it, half the bar's width short, which opened the app stuck
-partway into a swipe. Screens past the root — the camera, Processing, Name
-Clips, the editor, the Profile's pushed screens — lay the controls they keep
-along their top edge on any other iPhone down the same column, under the
-status bar and in the order the top row reads from its leading corner, and
-leave them off the screen (Rev 31). The camera and Home's destinations cover
-the window, so each lays its own column over itself, measured where it is
-presented (`verticalBarColumn`). The Profile's pushed screens keep to the pager
-beside the column, so each hands its controls to `RootTabView`, which lays
-them down the column while the screen is up (`verticalBarSlotControls`). A
-label too wide for the column becomes a glyph there: Processing's "Clip it"
-is scissors, a trick grid's "Select" a check circle and "Cancel" a cross.
-Settings and the contribution sheet keep their system bars as they are.
+**iPhone Duo.** On the outer display, and on the inner display in landscape,
+the system's vertical bar runs down one side of the screen: a column holding
+the status bar and, in apps built from the system's own bars, their toolbar
+items and tab bar. It reaches the app as a safe-area inset on that side alone
+— 84 pt, against none on the other. The system doesn't move custom bars into
+it, and Turnip's are custom, so `RootTabView` lays the column out itself the
+way Apple's guidance stacks it (`VerticalBar`): the page's own controls under
+the status bar — Home's filter and gear, nothing for the Profile — and the
+tab bar at its foot, the same pill turned on end. The floating bar and Home's
+bar controls are left off the page meanwhile, and the pager keeps to the safe
+area beside the column. Laid across the inset, a page `TabView` scrolls each
+page to its center inside it, half the bar's width short, which opened the
+app stuck partway into a swipe. Screens past the root — the camera,
+Processing, Name Clips, the editor, the Profile's pushed screens — lay the
+controls they keep along their top edge on any other iPhone down the same
+column, under the status bar and in the order the top row reads from its
+leading corner, and leave them off the screen (Rev 31). On the Profile's
+pushed screens that includes the back button: the system's goes, and with it
+the swipe from the left edge, which the system only offers while its own back
+button shows, so the column's chevron is their one way back there. The camera
+and Home's destinations cover the window, so each lays its own column over
+itself, measured where it is presented (`verticalBarColumn`). The Profile's
+pushed screens keep to the pager beside the column, so each hands its
+controls to `RootTabView`, which lays them down the column while the screen
+is up (`verticalBarSlotControls`). A label too wide for the column becomes a
+glyph there: Processing's "Clip it" is scissors, a trick grid's "Select" a
+check circle and "Cancel" a cross. Settings and the contribution sheet keep
+their system bars as they are.
 
 ### 1. Home / Video Gallery
 

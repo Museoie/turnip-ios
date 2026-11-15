@@ -187,33 +187,37 @@ extension View {
 
     /// On iPhone Duo, hands a screen the Profile pushed's top controls to `RootTabView` to lay down
     /// the vertical bar (`VerticalBarSlot`, through `\.verticalBarSlot`); nothing anywhere else.
-    /// The controls are handed over as built, so `refreshingOn` is everything they read: a change
-    /// hands them over again.
+    /// The controls are handed over as built, so `refreshingOn` is everything they show, and they
+    /// are built from it: a change hands them over again, built from the new value. They're never
+    /// built from the screen's own state, which an `onChange` action can see from an earlier render.
     func verticalBarSlotControls<Key: Equatable, Controls: View>(
-        refreshingOn key: Key, @ViewBuilder _ controls: () -> Controls
+        refreshingOn key: Key, @ViewBuilder _ controls: @escaping (Key) -> Controls
     ) -> some View {
-        modifier(VerticalBarSlotControls(key: key, controls: controls()))
+        modifier(VerticalBarSlotControls(key: key, controls: controls))
     }
 
-    /// `verticalBarSlotControls(refreshingOn:_:)` for controls that read nothing that changes.
-    func verticalBarSlotControls<Controls: View>(@ViewBuilder _ controls: () -> Controls) -> some View {
-        verticalBarSlotControls(refreshingOn: true, controls)
+    /// `verticalBarSlotControls(refreshingOn:_:)` for controls that show nothing that changes.
+    func verticalBarSlotControls<Controls: View>(
+        @ViewBuilder _ controls: @escaping () -> Controls
+    ) -> some View {
+        verticalBarSlotControls(refreshingOn: true) { _ in controls() }
     }
 }
 
 private struct VerticalBarSlotControls<Key: Equatable, Controls: View>: ViewModifier {
     let key: Key
-    let controls: Controls
+    let controls: (Key) -> Controls
     @Environment(\.verticalBarSlot) private var slot
     @State private var owner = UUID()
 
     func body(content: Content) -> some View {
         content
-            .onAppear { slot?.show(AnyView(controls), for: owner) }
-            .onChange(of: key) { _ in slot?.update(AnyView(controls), for: owner) }
-            // The bar arriving while the screen is up: no appearance to hand the controls over on.
-            .onChange(of: slot.map { ObjectIdentifier($0) }) { _ in
-                slot?.show(AnyView(controls), for: owner)
+            .onAppear { slot?.show(AnyView(controls(key)), for: owner) }
+            .onChange(of: key) { newKey in slot?.update(AnyView(controls(newKey)), for: owner) }
+            // The bar arriving while the screen is up, with no appearance to hand the controls over
+            // on. A task rather than `onChange`, so it reads the slot from the render that set it.
+            .task(id: slot.map { ObjectIdentifier($0) }) {
+                slot?.show(AnyView(controls(key)), for: owner)
             }
             .onDisappear { slot?.clear(for: owner) }
     }

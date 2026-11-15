@@ -1,4 +1,5 @@
 import AVFoundation
+import Photos
 import UIKit
 import XCTest
 @testable import Turnip
@@ -247,8 +248,9 @@ final class ClipLibraryTests: XCTestCase {
         let removal = LibraryClipRemoval(library: library, deleteVideos: { deleted.append($0) })
         let removed = Array(library.clips.prefix(2))
 
-        try await removal.remove(removed, alsoFromPhotos: true)
+        let didRemove = try await removal.remove(removed, alsoFromPhotos: true)
 
+        XCTAssertTrue(didRemove)
         XCTAssertEqual(deleted, [["export-a", "export-b"]])
         XCTAssertEqual(library.clips.map(\.exportAssetID), ["export-c"])
     }
@@ -265,18 +267,32 @@ final class ClipLibraryTests: XCTestCase {
         XCTAssertEqual(library.clips, [])
     }
 
-    /// Photos' own confirmation declined: nothing was deleted, so every clip stays.
-    func testADeclinedPhotosDeleteKeepsEveryClip() async {
-        struct Declined: Error {}
+    /// Photos' own confirmation declined: the user changed their mind, so every clip stays and
+    /// nothing is reported.
+    func testADeclinedPhotosDeleteKeepsEveryClipQuietly() async throws {
         let library = makeLibrary()
         library.record(save([savedClip(1), savedClip(5)]), sourceRecordedAt: recorded)
-        let removal = LibraryClipRemoval(library: library, deleteVideos: { _ in throw Declined() })
+        let removal = LibraryClipRemoval(
+            library: library, deleteVideos: { _ in throw PHPhotosError(.userCancelled) })
+
+        let didRemove = try await removal.remove(library.clips, alsoFromPhotos: true)
+
+        XCTAssertFalse(didRemove)
+        XCTAssertEqual(library.clips.count, 2)
+    }
+
+    /// Any other failure to delete the videos is reported, and keeps every clip too.
+    func testAFailedPhotosDeleteThrowsAndKeepsEveryClip() async {
+        struct Failed: Error {}
+        let library = makeLibrary()
+        library.record(save([savedClip(1), savedClip(5)]), sourceRecordedAt: recorded)
+        let removal = LibraryClipRemoval(library: library, deleteVideos: { _ in throw Failed() })
 
         do {
             try await removal.remove(library.clips, alsoFromPhotos: true)
-            XCTFail("A declined delete throws")
+            XCTFail("A failed delete throws")
         } catch {
-            XCTAssertTrue(error is Declined)
+            XCTAssertTrue(error is Failed)
         }
         XCTAssertEqual(library.clips.count, 2)
     }

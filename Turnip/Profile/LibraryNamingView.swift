@@ -29,7 +29,7 @@ struct LibraryNamingView: View {
     /// after focus does: a swipe or return on an empty field drops focus and brings the bar back
     /// while the keyboard is still up. So the card holds until the keyboard has gone.
     @State private var isKeyboardShown = false
-    @State private var isConfirmingRemoval = false
+    @State private var removalPrompt: LibraryClipRemovalPrompt?
     @State private var removalFailure: String?
     /// iPhone Duo's vertical bar, which the bar's items go down instead.
     @Environment(\.verticalBar) private var verticalBar
@@ -75,13 +75,11 @@ struct LibraryNamingView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar { toolbar }
-        .verticalBarSlotControls(refreshingOn: clips.isEmpty) {
+        .verticalBarSlotControls(refreshingOn: clips.isEmpty) { isEmpty in
             backButton
-            if !clips.isEmpty { removeButton }
+            if !isEmpty { removeButton }
         }
-        .libraryClipRemovalDialog(isPresented: $isConfirmingRemoval, clips: currentClip.map { [$0] } ?? []) {
-            removeCurrentClip(alsoFromPhotos: $0)
-        }
+        .libraryClipRemovalDialog($removalPrompt, remove: remove)
         .errorAlert("Couldn't delete the video", message: $removalFailure)
         // As on Name Clips, the bar gives its room to the naming controls while the name field
         // has focus, and comes back once the keyboard goes.
@@ -133,7 +131,7 @@ struct LibraryNamingView: View {
 
     private var removeButton: some View {
         ScrimIconButton(systemImage: "trash", accessibilityLabel: "Remove clip") {
-            isConfirmingRemoval = true
+            removalPrompt = currentClip.map { LibraryClipRemovalPrompt(clips: [$0]) }
         }
         .accessibilityIdentifier("needs-a-name-remove")
     }
@@ -238,14 +236,14 @@ struct LibraryNamingView: View {
         clips.indices.contains(index) ? clips[index] : nil
     }
 
-    /// Removes the clip on screen. The clips after it close up, so the next one slides into its
-    /// place, or the one before when it was the last; with none left the screen goes back. What
-    /// was typed for it goes with it.
-    private func removeCurrentClip(alsoFromPhotos: Bool) {
-        guard let clip = currentClip else { return }
+    /// Removes the clip the trash was tapped on, the one on screen. The clips after it close up,
+    /// so the next one slides into its place, or the one before when it was the last; with none
+    /// left the screen goes back. What was typed for it goes with it.
+    private func remove(_ removed: [LibraryClip], alsoFromPhotos: Bool) {
         Task {
             do {
-                try await LibraryClipRemoval(library: library).remove([clip], alsoFromPhotos: alsoFromPhotos)
+                guard try await LibraryClipRemoval(library: library).remove(removed, alsoFromPhotos: alsoFromPhotos)
+                else { return }
             } catch {
                 removalFailure = error.localizedDescription
                 return

@@ -457,7 +457,9 @@ for all of their videos together, and a decline there keeps every clip.
 While one of these is pushed, `PageSwipeLock` keeps the root pager from
 taking horizontal drags, as it does for Processing, Name Clips and the
 editor. On iPhone Duo their top controls, the back chevron among them,
-go down the vertical bar (UIUX "Root navigation").
+go down the vertical bar in place of the system's back button, so the
+swipe back from the left edge isn't offered there (UIUX "Root
+navigation").
 
 ---
 

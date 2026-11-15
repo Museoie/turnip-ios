@@ -18,7 +18,7 @@ struct TrickClipsView: View {
 
     @State private var isSelecting = false
     @State private var selection: Set<UUID> = []
-    @State private var isConfirmingRemoval = false
+    @State private var removalPrompt: LibraryClipRemovalPrompt?
     @State private var removalFailure: String?
     /// iPhone Duo's vertical bar, which the bar's items go down instead.
     @Environment(\.verticalBar) private var verticalBar
@@ -79,17 +79,17 @@ struct TrickClipsView: View {
                 }
             }
         }
-        .verticalBarSlotControls(refreshingOn: VerticalBarState(isSelecting: isSelecting, hasClips: group != nil)) {
+        .verticalBarSlotControls(refreshingOn: verticalBarState) { state in
             // The back button stands down while selecting here too.
-            if !isSelecting {
+            if !state.isSelecting {
                 ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Profile", action: close)
                     .accessibilityIdentifier("trick-clips-back")
             }
-            if group != nil {
+            if state.hasClips {
                 // Glyphs here, as the column is too narrow for the bar's words at larger text.
                 ScrimIconButton(
-                    systemImage: isSelecting ? "xmark" : "checkmark.circle",
-                    accessibilityLabel: isSelecting ? "Cancel" : "Select",
+                    systemImage: state.isSelecting ? "xmark" : "checkmark.circle",
+                    accessibilityLabel: state.isSelecting ? "Cancel" : "Select",
                     action: toggleSelecting)
                 .accessibilityIdentifier("trick-clips-select")
             }
@@ -99,15 +99,19 @@ struct TrickClipsView: View {
                 removalBar
             }
         }
-        .libraryClipRemovalDialog(isPresented: $isConfirmingRemoval, clips: selectedClips, remove: removeSelected)
+        .libraryClipRemovalDialog($removalPrompt, remove: remove)
         .errorAlert("Couldn't delete the videos", message: $removalFailure)
         .accessibilityIdentifier("trick-clips")
     }
 
-    /// What the vertical bar's controls read.
+    /// What the vertical bar's controls show.
     private struct VerticalBarState: Equatable {
         let isSelecting: Bool
         let hasClips: Bool
+    }
+
+    private var verticalBarState: VerticalBarState {
+        VerticalBarState(isSelecting: isSelecting, hasClips: group != nil)
     }
 
     /// One button whichever the mode, so a tile keeps its identity, and its loaded still, as the
@@ -135,7 +139,7 @@ struct TrickClipsView: View {
         let title = count == 0
             ? String(localized: "Delete") : String(localized: "Delete \(ProfileAccessibility.clipCount(count))")
         return Button(role: .destructive) {
-            isConfirmingRemoval = true
+            removalPrompt = LibraryClipRemovalPrompt(clips: selectedClips)
         } label: {
             Label(title, systemImage: "trash")
                 .frame(maxWidth: .infinity)
@@ -153,14 +157,15 @@ struct TrickClipsView: View {
         selection = []
     }
 
-    /// Removes the marked clips, after their videos when those go too. Videos Photos didn't
-    /// delete — the user declined its confirmation — keep every clip as well. With no clip of the
-    /// trick left the screen goes back; otherwise the grid leaves selecting.
-    private func removeSelected(alsoFromPhotos: Bool) {
-        let clips = selectedClips
+    /// Removes the clips that were marked when Delete was tapped, after their videos when those
+    /// go too. Videos Photos didn't delete — the user declined its confirmation — keep every clip
+    /// as well, and the selection. With no clip of the trick left the screen goes back; otherwise
+    /// the grid leaves selecting.
+    private func remove(_ removed: [LibraryClip], alsoFromPhotos: Bool) {
         Task {
             do {
-                try await LibraryClipRemoval(library: library).remove(clips, alsoFromPhotos: alsoFromPhotos)
+                guard try await LibraryClipRemoval(library: library).remove(removed, alsoFromPhotos: alsoFromPhotos)
+                else { return }
             } catch {
                 removalFailure = error.localizedDescription
                 return

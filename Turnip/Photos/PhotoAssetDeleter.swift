@@ -6,8 +6,9 @@ import Photos
 /// enumerate the library.
 ///
 /// PhotoKit shows its own "Allow Turnip to delete?" confirmation before
-/// `performChanges` resolves; a decline surfaces as a thrown error indistinguishable
-/// from any other rejected change, and the asset stays in place.
+/// `performChanges` resolves; a decline throws `PHPhotosError.userCancelled`, which
+/// `LibraryClipRemoval` reads as the user changing their mind, and the assets stay
+/// in place.
 struct PhotoAssetDeleter: Sendable {
     /// Deletes every asset the identifiers still resolve to in one change, so PhotoKit asks
     /// once for all of them; a decline keeps every one. An identifier that no longer resolves

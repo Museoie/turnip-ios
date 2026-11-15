@@ -12,7 +12,7 @@ struct LibraryClipView: View {
 
     @State private var draft = ""
     @FocusState private var isFieldFocused: Bool
-    @State private var isConfirmingDelete = false
+    @State private var removalPrompt: LibraryClipRemovalPrompt?
     @State private var deleteFailure: String?
     /// iPhone Duo's vertical bar, which the back button goes down instead.
     @Environment(\.verticalBar) private var verticalBar
@@ -67,7 +67,7 @@ struct LibraryClipView: View {
                     isEnabled: true, commitDraft: commitDraft, actions: actions(for: clip.id))
                 Button(role: .destructive) {
                     commitDraft()
-                    isConfirmingDelete = true
+                    removalPrompt = LibraryClipRemovalPrompt(clips: [clip])
                 } label: {
                     Label("Delete Clip", systemImage: "trash")
                         .frame(maxWidth: .infinity)
@@ -75,9 +75,7 @@ struct LibraryClipView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.large)
                 // On the button, so where the dialog shows as a popover it points at what was tapped.
-                .libraryClipRemovalDialog(isPresented: $isConfirmingDelete, clips: [clip]) { alsoFromPhotos in
-                    delete(clip, alsoFromPhotos: alsoFromPhotos)
-                }
+                .libraryClipRemovalDialog($removalPrompt, remove: delete)
                 .padding(.top, 8)
                 .accessibilityIdentifier("clip-view-delete")
             }
@@ -108,11 +106,12 @@ struct LibraryClipView: View {
     }
 
     /// Removes the clip, after its video when that goes too. A video Photos didn't delete — the
-    /// user declined its confirmation — keeps the clip as well.
-    private func delete(_ clip: LibraryClip, alsoFromPhotos: Bool) {
+    /// user declined its confirmation — keeps the clip as well, and the screen with it.
+    private func delete(_ clips: [LibraryClip], alsoFromPhotos: Bool) {
         Task {
             do {
-                try await LibraryClipRemoval(library: library).remove([clip], alsoFromPhotos: alsoFromPhotos)
+                guard try await LibraryClipRemoval(library: library).remove(clips, alsoFromPhotos: alsoFromPhotos)
+                else { return }
             } catch {
                 deleteFailure = error.localizedDescription
                 return
