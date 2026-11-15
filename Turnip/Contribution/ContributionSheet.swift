@@ -26,6 +26,8 @@ struct ContributionSheet: View {
                 }
                 Section("What's sent") {
                     Text(ContributionDisclosure.payload)
+                    Text(ContributionDisclosure.newNames)
+                        .accessibilityIdentifier("contribution-new-names")
                     Text(ContributionDisclosure.ongoing)
                         .accessibilityIdentifier("contribution-ongoing")
                     Text(ContributionDisclosure.linkWindow)

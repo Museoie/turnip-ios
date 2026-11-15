@@ -28,6 +28,18 @@ struct TrickVocabulary: Codable, Equatable, Sendable {
         Entry(canonical: "scoot", aliases: ["scoot"])
     ])
 
+    /// Whether `name` may go to the farm as a label (`BACKEND_DESIGN.md` §1.2.25): its
+    /// `farmNormalized` form equals that of a canonical name or of any spelling of one. The farm
+    /// applies the same rule across every taxonomy version, so this is the one place the app
+    /// decides it.
+    func knows(_ name: String) -> Bool {
+        let key = Self.farmNormalized(name)
+        guard !key.isEmpty else { return false }
+        return entries.contains { entry in
+            ([entry.canonical] + entry.aliases).contains { Self.farmNormalized($0) == key }
+        }
+    }
+
     /// The canonical name `name` is spelled as, ignoring case and spacing; `nil` outside the
     /// vocabulary.
     func canonicalName(for name: String) -> String? {
@@ -71,7 +83,33 @@ struct TrickVocabulary: Codable, Equatable, Sendable {
         return best?.canonical
     }
 
-    /// Lowercased, trimmed, with runs of whitespace collapsed to one space.
+    /// What the farm counts as whitespace in a name (`BACKEND_DESIGN.md` §1.2.25, `normalizeName`):
+    /// ASCII space, tab, line feed, vertical tab, form feed and carriage return, and nothing else.
+    /// A no-break space or any other Unicode space is an ordinary character to it.
+    static let farmWhitespace: Set<Unicode.Scalar> = [" ", "\t", "\n", "\u{0B}", "\u{0C}", "\r"]
+
+    /// A name as the farm compares it: trimmed of `farmWhitespace`, runs of it collapsed to one
+    /// space, lowercased. Split by Unicode scalar, so a CR LF pair, one `Character`, counts too.
+    static func farmNormalized(_ name: String) -> String {
+        name.unicodeScalars
+            .split(whereSeparator: { farmWhitespace.contains($0) })
+            .map { String(Substring($0)) }
+            .joined(separator: " ")
+            .lowercased()
+    }
+
+    /// `farmNormalized`'s trimming alone: what the farm measures a candidate name by.
+    static func farmTrimmed(_ name: String) -> String {
+        let scalars = name.unicodeScalars
+        guard let first = scalars.firstIndex(where: { !farmWhitespace.contains($0) }),
+              let last = scalars.lastIndex(where: { !farmWhitespace.contains($0) })
+        else { return "" }
+        return String(Substring(scalars[first...last]))
+    }
+
+    /// Lowercased, trimmed, with runs of whitespace collapsed to one space: how names group on
+    /// this device, the same as turnip-ml's canonicalization, which splits on any Unicode
+    /// whitespace. What the farm accepts is `farmNormalized`.
     static func normalized(_ name: String) -> String {
         name.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }

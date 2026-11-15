@@ -30,6 +30,8 @@ enum FarmError: Error, Equatable {
     case consentRequired
     /// Contribution is switched off in the request's country (`BACKEND_DESIGN.md` §7.2).
     case regionUnavailable
+    /// Trick names the farm's vocabulary doesn't have (`BACKEND_DESIGN.md` §1.2.25).
+    case unknownLabel(names: [String])
     case rateLimited(retryAfter: TimeInterval?)
     case appleUnavailable
     case rejected(code: String, message: String)
@@ -45,6 +47,7 @@ extension FarmError: LocalizedError {
         case .blobMissing: return String(localized: "The farm is still processing the pose. Try again in a minute.")
         case .consentRequired: return String(localized: "Agree to the contribution terms again to keep contributing.")
         case .regionUnavailable: return ContributionDisclosure.unavailableHere
+        case .unknownLabel: return String(localized: "Some trick names aren't in the shared vocabulary yet.")
         case .rateLimited: return String(localized: "Too many requests. Try again in a minute.")
         case .appleUnavailable: return String(localized: "Sign in with Apple is unavailable. Try again later.")
         case .rejected(_, let message): return message
@@ -126,6 +129,13 @@ struct FarmClient: Sendable {
         return response.clips
     }
 
+    /// `POST /api/labels/candidates`: names the vocabulary lacks, suggested on their own, with no
+    /// clip or pose (`BACKEND_DESIGN.md` §1.2.25). The farm skips names it already knows.
+    func suggestLabels(_ names: [String], session: String) async throws {
+        let body = LabelCandidatesRequest(names: names)
+        _ = try await send("POST", "api/labels/candidates", body: body, session: session)
+    }
+
     func source(id: String, key: String, session: String) async throws -> RemoteSource {
         try await decode(send("GET", "api/sources/\(id)", session: session, sourceKey: key))
     }
@@ -179,6 +189,8 @@ struct FarmClient: Sendable {
         case "RATE_LIMITED":
             let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
             return .rateLimited(retryAfter: retryAfter)
+        case "UNKNOWN_LABEL":
+            return .unknownLabel(names: envelope?.error.details?.names ?? [])
         default:
             return .rejected(code: code, message: envelope?.error.message ?? code)
         }
@@ -200,6 +212,11 @@ private struct ErrorEnvelope: Decodable {
     struct Body: Decodable {
         let code: String
         let message: String?
+        let details: Details?
+    }
+    /// The one detail the app reads: the names an `UNKNOWN_LABEL` refused.
+    struct Details: Decodable {
+        let names: [String]?
     }
     let error: Body
 }
@@ -307,6 +324,10 @@ struct ClipSubmission: Encodable, Equatable, Sendable {
         try container.encode(suggestionsWithheld, forKey: .suggestionsWithheld)
         try container.encode(labels, forKey: .labels)
     }
+}
+
+private struct LabelCandidatesRequest: Encodable {
+    let names: [String]
 }
 
 private struct ClipsRequest: Encodable {

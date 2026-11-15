@@ -366,10 +366,40 @@ clip flow, because the Profile needs names on every saved clip,
 contributed or not: `PROFILE_DESIGN.md` §4 is its design. What stays
 here is what contribution adds:
 
-- **Free text is the contract.** No fixed vocabulary is enforced; the
-  farm stores raw strings and its `label_taxonomy` curates later.
-  *Planned (§8.1): only vocabulary names are contributed, and a new name
-  goes to a candidate list instead.*
+- **Only vocabulary names are contributed** (`BACKEND_DESIGN.md`
+  §1.2.25). Naming stays free text on the device, but when a job is
+  sent the outbox checks each name against the vocabulary the app holds
+  (`VocabularyStore`, `PROFILE_DESIGN.md` §4.2):
+  - a name the vocabulary has goes with the clip, as the user spelled
+    it. "Has" is one rule, shared with the farm (`TrickVocabulary.knows`):
+    the name's trimmed, whitespace-collapsed, lowercased form
+    (`farmNormalized`) equals that of a canonical name or of any
+    spelling of one, at any taxonomy version. Whitespace there is ASCII
+    only (space, tab, line feed, vertical tab, form feed, carriage
+    return), as on the farm: a no-break space is an ordinary character.
+    How names group on the device (`normalized`) stays as turnip-ml's
+    canonicalization has it, splitting on any Unicode whitespace;
+  - a name it lacks goes first, on its own, to
+    `POST /api/labels/candidates`, with no clip, pose or source, as a
+    suggestion for the vocabulary. The farm counts it per account by
+    keyed hash and drops it after 30 days unless the maintainer
+    promotes it. A failed suggestion is only logged: it never holds up
+    the contribution. Names over 64 UTF-16 code units, the farm's
+    measure, aren't suggested;
+  - a clip left with no vocabulary name isn't contributed, and a job
+    left with no clip registers no source.
+  - The farm's vocabulary can be older than the app's. It refuses names
+    it lacks with `422 UNKNOWN_LABEL`, naming only the first refused
+    clip's. The outbox suggests those names, drops them, and sends the
+    rest again, for as long as each refusal leaves fewer names to send;
+    a refusal that drops nothing drops the job. If no name is left
+    after the source and its pose went up, the source is deleted with
+    its key when the farm holds no clip of it, so the job leaves no
+    source behind. A source holding clips from an earlier save stays.
+  The sheet and Settings say briefly that new names are suggested to
+  the vocabulary. *(Judgment call: the disclosure version stays 3. A
+  name was already part of what is sent, and a suggestion carries less
+  than a label did.)*
 - **Origin.** Each name is sent with the `origin` the clip library
   recorded when it was given: `typed`, `vocabulary` (picked from the
   suggestions), or `model` (pre-filled by the trick model and kept)
@@ -757,8 +787,10 @@ switch, and the confirmation sheet's Confirm once per account, §3.3):
   (gait-from-keypoints re-identification is real research), and a
   sequence can be matched to a video of the same clip. Call what the
   farm keeps de-linked and hard to re-identify, never anonymous.
-- confirmed clip windows + free-text trick names, for clips marked as
-  the user only
+- confirmed clip windows + their trick names from the vocabulary, for
+  clips marked as the user only
+- a typed name the vocabulary lacks, on its own as a suggestion for
+  the vocabulary, with no clip, pose or source (§4)
 - label provenance — each name's `origin`, and the proposing model
   version, its pre-filled names, and the blind-sample flag per clip:
   how a label was made, never who made it
@@ -807,15 +839,13 @@ contribution switched off on EU, EEA and UK storefronts (§8), consent
 recorded on the farm with disclosure version 3 (§3.3, §5.4), the
 account link kept until deletion or 24 months without use (§3.3, §8),
 which reverses `DESIGN.md` Decision #10, account deletion with an
-equal choice to delete contributions too (§5.4), and the farm's EU, EEA
-and UK backstop, which turns contributing off on
-`403 REGION_UNAVAILABLE` behind the storefront check (§5.4, §8). The rest below is not
+equal choice to delete contributions too (§5.4), the farm's EU, EEA and
+UK backstop, which turns contributing off on `403 REGION_UNAVAILABLE`
+behind the storefront check (§5.4, §8), and labels from the vocabulary
+only, with new names suggested on their own (§4). The rest below is not
 built in the app yet; until it is, the sections above describe the
 code.
 
-- **Labels.** Only vocabulary names are contributed (§4). A new name
-  goes to a candidate list, counted per account by keyed hash, kept
-  briefly and promoted by hand.
 - **Kept training data.** The farm cuts short segments at ingest. Each
   is centered on the hips, scaled to a standard body, reduced to one
   head point and lightly noised, with fresh IDs, no timestamps and no

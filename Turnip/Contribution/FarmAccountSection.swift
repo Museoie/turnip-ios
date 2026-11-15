@@ -53,7 +53,10 @@ struct FarmAccountSection: View {
             Text("Contribution")
         } footer: {
             if isContributingOffered {
-                Text("\(ContributionDisclosure.contributeSwitch) \(ContributionDisclosure.accountFooter)")
+                Text("""
+                    \(ContributionDisclosure.contributeSwitch) \(ContributionDisclosure.newNames) \
+                    \(ContributionDisclosure.accountFooter)
+                    """)
             } else {
                 Text(ContributionDisclosure.unavailableHere)
                     .accessibilityIdentifier("settings-contribution-unavailable")
@@ -148,6 +151,11 @@ enum ContributionDisclosure {
         this iPhone can find with its training segments. Short, transformed segments of the rest \
         stay, with no link to your account, unless you also choose to delete your contributions. \
         Someone with a video of the same clip could still match them to it.
+        """)
+    /// Labels come only from the vocabulary (`BACKEND_DESIGN.md` §1.2.25).
+    static let newNames = String(localized: """
+        Only trick names in Turnip's shared vocabulary go with a clip. A new name is sent on its \
+        own, without the clip, as a suggestion to add to the vocabulary.
         """)
     static let consent = String(localized: """
         Only clips marked as you are contributed. Clips marked as someone else stay on this iPhone.

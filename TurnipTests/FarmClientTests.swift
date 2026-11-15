@@ -73,6 +73,9 @@ final class FarmClientTests: XCTestCase {
              .rateLimited(retryAfter: 7)),
             (.init(status: 422, body: #"{"error":{"code":"VALIDATION_ERROR","message":"bad end_frame"}}"#),
              .rejected(code: "VALIDATION_ERROR", message: "bad end_frame")),
+            (.init(status: 422, body: """
+                {"error":{"code":"UNKNOWN_LABEL","message":"m","details":{"field":"labels","names":["raiz"]}}}
+                """), .unknownLabel(names: ["raiz"])),
             (.init(status: 403, body: #"{"error":{"code":"CONSENT_REQUIRED","message":"m","details":{}}}"#),
              .consentRequired),
             (.init(status: 403, body: #"{"error":{"code":"REGION_UNAVAILABLE","message":"m"}}"#),
@@ -87,6 +90,19 @@ final class FarmClientTests: XCTestCase {
                 XCTAssertEqual(error as? FarmError, expected)
             }
         }
+    }
+
+    func testSuggestedNamesGoOnTheirOwn() async throws {
+        let farm = ScriptedFarm([.init(status: 202, body: "")])
+        try await farm.client.suggestLabels(["raiz", "butterfly twist"], session: "tok")
+
+        let request = try XCTUnwrap(farm.requests.first)
+        XCTAssertEqual(request.url?.absoluteString, "https://farm.test/api/labels/candidates")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+        let body = try json(request)
+        XCTAssertEqual(body.count, 1)
+        XCTAssertEqual(body["names"] as? [String], ["raiz", "butterfly twist"])
     }
 
     func testConsentSendsTheDisclosureVersionAndTheAgeConfirmation() async throws {

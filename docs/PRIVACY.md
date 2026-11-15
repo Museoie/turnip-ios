@@ -224,8 +224,10 @@ What a build with `TURNIP_FARM_ENDPOINT` set sends to the farm
   save. It goes in the background, not at a tap: the video's `video_id`
   (SHA-256 of the Photos identifier, never the identifier), the pose
   keypoints of the whole session as a TKP1 blob, each clip's window in
-  pose frames, its trick names with how each was given, the session token
-  and the source's key.
+  pose frames, its trick names from the shared vocabulary with how each
+  was given, the session token and the source's key. A typed name the
+  vocabulary lacks goes on its own, with no clip, pose or source, as a
+  suggestion for the vocabulary (`POST /api/labels/candidates`).
   Never the video, a thumbnail, whether a clip shows the user, or a
   location.
 - **Account deletion**, from Settings: `DELETE /api/sources/:id` for every
