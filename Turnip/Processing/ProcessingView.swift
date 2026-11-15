@@ -161,8 +161,8 @@ struct ProcessingView<Destination: View>: View {
     private static var slideDuration: TimeInterval { 0.25 }
     private static var browsingOverlayDelay: TimeInterval { 0.4 }
     /// Whose tricks a run here cuts clips for: everyone the pose model finds, each with clips of
-    /// their own. The screen offers no choice; the camera's own person control still decides a
-    /// take that live inference fully covered, which never passes through here.
+    /// their own. The screen offers no choice, and neither does the camera, whose fully covered
+    /// takes never pass through here.
     private static var people: PersonMode { .everyone }
 
     init(

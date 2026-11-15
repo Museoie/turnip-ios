@@ -28,8 +28,6 @@ final class TurnipSettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.autoAddToAlbum)
         XCTAssertEqual(store.albumName, TurnipSettings.defaultAlbumName)
         XCTAssertEqual(store.analysisGranularity, 10)
-        XCTAssertEqual(store.personMode, .one)
-        XCTAssertEqual(store.current.personMode, .one)
         XCTAssertFalse(store.contributesClips)
         XCTAssertFalse(store.current.contributesClips)
         XCTAssertTrue(store.learnsFromClips)
@@ -43,7 +41,6 @@ final class TurnipSettingsStoreTests: XCTestCase {
         first.autoAddToAlbum = true
         first.albumName = "Tricking Sessions"
         first.setAnalysisGranularity(24)
-        first.personMode = .everyone
         first.contributesClips = true
         first.learnsFromClips = false
 
@@ -53,8 +50,6 @@ final class TurnipSettingsStoreTests: XCTestCase {
         XCTAssertTrue(second.autoAddToAlbum)
         XCTAssertEqual(second.albumName, "Tricking Sessions")
         XCTAssertEqual(second.analysisGranularity, 24)
-        XCTAssertEqual(second.personMode, .everyone)
-        XCTAssertEqual(second.current.personMode, .everyone)
         XCTAssertTrue(second.contributesClips)
         XCTAssertTrue(second.current.contributesClips)
         XCTAssertFalse(second.learnsFromClips)

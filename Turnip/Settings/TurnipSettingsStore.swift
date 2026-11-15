@@ -18,7 +18,6 @@ final class TurnipSettingsStore: ObservableObject {
         static let autoAddToAlbum = "settings.autoAddToAlbum"
         static let albumName = "settings.albumName"
         static let analysisGranularity = "settings.analysisGranularity"
-        static let personMode = "settings.personMode"
         static let contributesClips = "settings.contributesClips"
         static let learnsFromClips = "settings.learnsFromClips"
     }
@@ -35,9 +34,6 @@ final class TurnipSettingsStore: ObservableObject {
         didSet { defaults.set(albumName, forKey: Key.albumName) }
     }
     @Published private(set) var analysisGranularity: Int
-    @Published var personMode: PersonMode {
-        didSet { defaults.set(personMode.rawValue, forKey: Key.personMode) }
-    }
     @Published var contributesClips: Bool {
         didSet { defaults.set(contributesClips, forKey: Key.contributesClips) }
     }
@@ -56,14 +52,12 @@ final class TurnipSettingsStore: ObservableObject {
             autoAddToAlbum: defaults.object(forKey: Key.autoAddToAlbum) as? Bool ?? false,
             albumName: defaults.string(forKey: Key.albumName) ?? TurnipSettings.defaultAlbumName,
             analysisGranularity: storedGranularity ?? TurnipSettings.defaultGranularity,
-            personMode: defaults.string(forKey: Key.personMode).flatMap(PersonMode.init(rawValue:)) ?? .one,
             contributesClips: defaults.object(forKey: Key.contributesClips) as? Bool ?? false,
             learnsFromClips: defaults.object(forKey: Key.learnsFromClips) as? Bool ?? true)
         analysisMode = loaded.analysisMode
         autoAddToAlbum = loaded.autoAddToAlbum
         albumName = loaded.albumName
         analysisGranularity = loaded.analysisGranularity
-        personMode = loaded.personMode
         contributesClips = loaded.contributesClips
         learnsFromClips = loaded.learnsFromClips
     }
@@ -88,7 +82,6 @@ final class TurnipSettingsStore: ObservableObject {
             autoAddToAlbum: autoAddToAlbum,
             albumName: albumName,
             analysisGranularity: analysisGranularity,
-            personMode: personMode,
             contributesClips: contributesClips,
             learnsFromClips: learnsFromClips)
     }

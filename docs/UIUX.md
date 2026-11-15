@@ -446,12 +446,8 @@ default empty state, so it never reads as "your library is empty."
     this iPhone. Off deletes what the layer derived and the trashed proposals it kept, and stops
     keeping them; back on rebuilds it from the library. The app never marks a suggestion or a
     proposal as personal.
-- A fifth preference lives in the same store but not on this screen: **person mode** (One
-  person / Everyone, default One person), whose tricks a take or an analysis is cut into clips
-  for. It is chosen where it takes effect, on the camera before recording (§1b), and kept for
-  the next take. An analysis started on Processing always follows everyone (§2).
 - Under the preferences, when the build points at a farm (`TURNIP_FARM_ENDPOINT`), a
-  **Contribution** section. It leads with a sixth preference, **Contribute named clips**
+  **Contribution** section. It leads with a fifth preference, **Contribute named clips**
   (switch, off by default): with it on, Name Clips' save (§3a) contributes the saved clips that
   have a name and are marked as the user, on a video with pose analysis. The first save opens the
   contribution confirmation sheet, and nothing is sent until the user confirms they are 16 or
@@ -467,7 +463,7 @@ default empty state, so it never reads as "your library is empty."
   switch and Sign in with Apple are hidden, the
   footer says contributing isn't available there, and a signed-in account keeps Sign Out and
   both deletions (`CONTRIBUTION_DESIGN.md` §8).
-- Further settings beyond these six are out of scope for this doc's current revision.
+- Further settings beyond these five are out of scope for this doc's current revision.
 
 ### 1b. Camera
 
@@ -488,15 +484,12 @@ default empty state, so it never reads as "your library is empty."
   (Info.plist); denied/restricted access shows a message pointing at
   Settings, matching Home's own denied state.
 - While recording, pose inference runs on the live camera frames and the
-  scored skeleton is drawn over the preview (`docs/LIVE_POSE.md`): the one
-  person followed, or everyone found.
-- A person control leads the top-right group: one figure while the take will
-  be cut into clips for one person (the person the pose model is surest of
-  in each frame), two figures while it will be cut for everyone, each person
-  with clips of their own (`docs/MULTI_PERSON.md`). A tap switches between
-  them. The choice is remembered, and it is the same setting Processing's
-  picker shows (§2). It is read when Record is tapped, so the control is
-  dimmed and disabled while recording, like the format and flip controls.
+  scored skeleton is drawn over the preview (`docs/LIVE_POSE.md`): everyone
+  found.
+- Every take is cut into clips for everyone the pose model finds, each person
+  with clips of their own (`docs/MULTI_PERSON.md`), as on Processing (§2). The
+  camera offers no choice between one person and everyone (Rev 31; until then
+  a person control led the top-right group).
 - While recording, the phone's roll is written into the take as a timed
   metadata track (`RollTrack`, `RollTrackRecorder`): gravity from the motion
   sensors, sampled 30 times a second and expressed as the horizon's tilt in
@@ -537,9 +530,9 @@ default empty state, so it never reads as "your library is empty."
   this screen's own swipe-to-dismiss gesture drives.
 - An analysis, started from Name Clips' "Analyze clips", and a retry, cuts clips for everyone the pose
   model finds, each with clips of their own (Rev 28; until then a picker above
-  "Analyze clips" chose between one person and everyone). The camera's person
-  control (§1b) still decides a take that live inference fully covered, which
-  never reaches this screen.
+  "Analyze clips" chose between one person and everyone), as the camera (§1b)
+  does for a take that live inference fully covered, which never reaches this
+  screen.
 - Once started, the video stays on screen (paused) rather than being replaced
   by a separate page: a progress panel — spinner or determinate bar, plus
   "Analyzing frame 400 of 1,200" — overlays the bottom of the still-visible video,

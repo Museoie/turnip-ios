@@ -20,9 +20,6 @@ struct CameraCaptureView: View {
     let onFinished: (CameraRecording) -> Void
     var onCancel: () -> Void = {}
 
-    /// The person mode the top-right control shows and the next take is recorded in, the same
-    /// remembered choice Processing's picker sets.
-    @ObservedObject private var settings = TurnipSettingsStore.shared
     @State private var showExposureSlider = false
     /// Whether this screen has started the session and not yet stopped it — see
     /// `CameraPreviewView.isLive`.
@@ -222,7 +219,6 @@ struct CameraCaptureView: View {
 
     private var topRightControls: some View {
         HStack(spacing: 12) {
-            personModeButton
             if viewModel.exposureBiasRange.lowerBound < viewModel.exposureBiasRange.upperBound {
                 exposureToggleButton
             }
@@ -237,24 +233,6 @@ struct CameraCaptureView: View {
             }
         }
         .screenHeaderItemPlacement()
-    }
-
-    /// Switches whose tricks the take is cut into clips for (`PersonMode`): one figure for the
-    /// person the model is surest of, two for everyone. Read at the Record tap, so it is disabled
-    /// while recording like the format and flip controls. Needs no capture device, so it shows
-    /// whatever the camera has to offer.
-    private var personModeButton: some View {
-        ScrimIconButton(
-            systemImage: settings.personMode == .one ? "person.fill" : "person.2.fill",
-            accessibilityLabel: "Clips for",
-            style: .scrim,
-            action: {
-                settings.personMode = settings.personMode == .one ? .everyone : .one
-            })
-            .accessibilityValue(settings.personMode.label)
-            .opacity(viewModel.isRecording ? 0.4 : 1)
-            .disabled(viewModel.isRecording)
-            .accessibilityIdentifier("camera-person-mode")
     }
 
     private var exposureToggleButton: some View {

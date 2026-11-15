@@ -100,8 +100,8 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
 
     /// The poses scored most recently during the current recording, in capture-device
     /// coordinates (the unrotated sensor picture, which `AVCaptureVideoPreviewLayer` maps onto
-    /// the preview for whatever orientation and mirroring it applies): the one person followed,
-    /// or everyone, by the take's person mode. Empty when not recording. See docs/LIVE_POSE.md.
+    /// the preview for whatever orientation and mirroring it applies): everyone found. Empty when
+    /// not recording. See docs/LIVE_POSE.md.
     @Published private(set) var livePoseSkeletons: [[PoseKeypoint]] = []
 
     /// Live pose inference alongside recording (docs/LIVE_POSE.md): a video data output on the
@@ -131,9 +131,9 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// so coverage is checked at the rate the recording was sampled at even if the setting
     /// changed mid-recording.
     private var armedSampleRate = VideoFrameSampler.targetSamplesPerSecond
-    /// The person mode read at the Record tap, so a take is detected the way it was recorded even
-    /// if the mode changes before it finishes. The control is disabled while recording.
-    private var armedPersonMode = PersonMode.one
+    /// Whose tricks a take is cut into clips for: everyone the pose model finds, each with clips
+    /// of their own, as on Processing. The camera offers no choice.
+    private nonisolated static let people = PersonMode.everyone
     /// Reads the current settings snapshot at the point a setting takes effect (Record tap),
     /// rather than once at init — a change made while the camera is already open is picked
     /// up by the next recording. `@MainActor`-typed (not plain, and not `@Sendable`/`async`) so
@@ -870,8 +870,6 @@ extension CameraCaptureViewModel {
               let dataConnection = livePoseTap.output.connection(with: .video),
               let movieConnection = movieOutput.connection(with: .video) else { return }
         armedSampleRate = settingsProvider().analysisGranularity
-        let mode = settingsProvider().personMode
-        armedPersonMode = mode
         let movieRotation = LivePoseFrameTap.rotationDegrees(of: movieConnection)
         let rotation = LivePoseKeypointRotation.relativeDegrees(
             producer: LivePoseFrameTap.rotationDegrees(of: dataConnection), consumer: movieRotation)
@@ -883,7 +881,7 @@ extension CameraCaptureViewModel {
             inference: { try await poseModel.runInference(on: $0) },
             channel: LivePoseSampleChannel(),
             onResult: { [weak self] result in
-                let skeletons = mode.skeletons(in: result).map {
+                let skeletons = Self.people.skeletons(in: result).map {
                     LivePoseKeypointRotation.rotated($0, clockwiseDegrees: toDeviceSpace)
                 }
                 Task { @MainActor in
@@ -933,7 +931,7 @@ extension CameraCaptureViewModel {
         let detect = makeDetectClips(armedSampleRate)
         do {
             let frames = try outcome.results.loadAll()
-            let clips = await detect(frames, armedPersonMode, liveRenderedPixelSize)
+            let clips = await detect(frames, Self.people, liveRenderedPixelSize)
             outcome.results.discard()
             return CameraRecording(fileURL: fileURL, detectedClips: clips)
         } catch {

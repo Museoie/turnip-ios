@@ -21,20 +21,11 @@ enum AnalysisMode: String, CaseIterable, Identifiable, Sendable {
 
 /// Whose tricks become clips: the person the pose model is surest of in each frame, or everyone
 /// it finds, each followed across the take and given clips of their own (`docs/MULTI_PERSON.md`).
-/// Chosen on the camera before a take and on Processing before an analysis, and remembered for
-/// the next one.
-enum PersonMode: String, CaseIterable, Identifiable, Sendable {
+/// The app follows everyone on the camera and on Processing alike, and offers no choice; following
+/// one person is the pipeline's own default, which the detection evaluation can still score.
+enum PersonMode: String, Sendable {
     case one
     case everyone
-
-    var id: Self { self }
-
-    var label: String {
-        switch self {
-        case .one: return "One person"
-        case .everyone: return "Everyone"
-        }
-    }
 }
 
 /// The app's user-configurable preferences, as a plain value type — what `TurnipSettingsStore`
@@ -50,7 +41,6 @@ struct TurnipSettings: Equatable, Sendable {
     var autoAddToAlbum: Bool
     var albumName: String
     private(set) var analysisGranularity: Int
-    var personMode: PersonMode
     /// Whether Name Clips' save contributes the saved, named clips of an analyzed video to the farm
     /// (`docs/CONTRIBUTION_DESIGN.md` §3.3). Off by default: contribution is opt-in, and the
     /// confirmation sheet still asks once before anything is sent.
@@ -65,7 +55,6 @@ struct TurnipSettings: Equatable, Sendable {
         autoAddToAlbum: Bool = false,
         albumName: String = TurnipSettings.defaultAlbumName,
         analysisGranularity: Int = TurnipSettings.defaultGranularity,
-        personMode: PersonMode = .one,
         contributesClips: Bool = false,
         learnsFromClips: Bool = true
     ) {
@@ -73,7 +62,6 @@ struct TurnipSettings: Equatable, Sendable {
         self.autoAddToAlbum = autoAddToAlbum
         self.albumName = albumName
         self.analysisGranularity = Self.clampedGranularity(analysisGranularity)
-        self.personMode = personMode
         self.contributesClips = contributesClips
         self.learnsFromClips = learnsFromClips
     }

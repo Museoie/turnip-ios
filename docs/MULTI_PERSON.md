@@ -1,5 +1,7 @@
 # Several people in one video
 
+*Rev 3 · 2026-11-15 · The camera's person control, and the setting behind it, are gone: like Processing since `UIUX.md` Rev 28, every take follows everyone.*
+
 *Rev 2 · 2026-10-23 · Built: the model swap, and the choice between following one person and following everyone, made by the user on the camera and on Processing. Rev 1 planned the per-person mode behind a Settings toggle, off by default, until multi-person footage was labelled. A choice the user makes keeps one-person videos exactly as they were, so labels now tune the tracker rather than gate it. A spike ran the multi-person model on the evaluation footage, and its numbers are in "Measurements".*
 
 *Companion to [`DESIGN.md`](DESIGN.md). This doc covers one question: when a video holds several people, how does each person's trick become a clip of its own? Pipeline steps 4-6 (motion signal, trick windows, crop) stay as `DESIGN.md` records them. What changes is the pose they run on.*
@@ -73,9 +75,9 @@ Two clips of different people may overlap in time, or cover the same moments. Ea
 
 ### Screens
 
-- **Camera:** a person control leads the top-right group, one figure for one person and two for everyone (`UIUX.md` §1b). It is read at the Record tap and disabled while recording.
-- **Processing:** every run, and every retry, follows everyone (`UIUX.md` §2, Rev 28). The segmented picker, "One person | Everyone", that sat between the scrub bar and "Analyze clips" is gone. A take the camera scored in part is detected following everyone, whatever the camera's control said.
-- **The setting** (`TurnipSettings.personMode`, default one person) now drives the camera alone: it carries to the next session, and decides a take live inference fully covered, which goes straight to Name Clips.
+- **Camera:** every take follows everyone (`UIUX.md` §1b, Rev 31). The person control that led the top-right group, one figure for one person and two for everyone, is gone.
+- **Processing:** every run, and every retry, follows everyone (`UIUX.md` §2, Rev 28). The segmented picker, "One person | Everyone", that sat between the scrub bar and "Analyze clips" is gone. A take the camera scored in part is detected following everyone, as is one it scored in full.
+- **The setting** (`TurnipSettings.personMode`) is gone with the camera's control: nothing in the app follows one person. `PersonMode.one` stays the pipeline's default, which the detection evaluation scores unless run with `TEST_RUNNER_TURNIP_EVAL_PEOPLE=everyone`.
 - **Name Clips** (Clip List until 2026-10-27): one clip per detected trick in start order, as before. Clips of different people can overlap, and each card's crop shows whose it is. No label or grouping by person: tracks have no stable identity across takes, and nothing in v1 needs one. "No tricks found" is unchanged.
 - **Processing's progress overlay and the camera overlay** draw the followed person's skeleton, or everyone's.
 - **Editor:** Auto crop and Auto follow frame the clip's own person. A hand-added clip keeps Reset crop (`UIUX.md` Rev 13).
