@@ -86,13 +86,29 @@ final class AchievementsTests: XCTestCase {
         XCTAssertEqual(mine[0].clips, [combo, old])
         XCTAssertEqual(mine[1].clips, [combo])
 
-        let everyone = TrickGallery.groups(of: [old, combo, other], filter: .everyone, vocabulary: .seed)
-        XCTAssertEqual(everyone.map(\.trick.key), ["gainer", "cork"])
-        XCTAssertEqual(everyone[0].clips, [other, combo])
+        let someoneElse = TrickGallery.groups(of: [old, combo, other], filter: .someoneElse, vocabulary: .seed)
+        XCTAssertEqual(someoneElse.map(\.trick.key), ["gainer"])
+        XCTAssertEqual(someoneElse[0].clips, [other])
+    }
+
+    /// The two filters split the library: a clip of the user's never shows under someone else.
+    func testEachClipIsUnderExactlyOneFilter() {
+        let mine = clip(["cork"], at: noon)
+        let theirs = clip(["cork"], at: noon.addingTimeInterval(day), isMe: false)
+
+        XCTAssertEqual(
+            TrickGallery.groups(of: [mine, theirs], filter: .mine, vocabulary: .seed).flatMap(\.clips), [mine])
+        XCTAssertEqual(
+            TrickGallery.groups(of: [mine, theirs], filter: .someoneElse, vocabulary: .seed).flatMap(\.clips),
+            [theirs])
     }
 
     func testAnUnnamedClipIsInNoGalleryRow() {
-        XCTAssertEqual(TrickGallery.groups(of: [clip([], at: noon)], filter: .everyone, vocabulary: .seed), [])
+        for filter in TrickGallery.Filter.allCases {
+            XCTAssertEqual(TrickGallery.groups(of: [clip([], at: noon)], filter: filter, vocabulary: .seed), [])
+            XCTAssertEqual(
+                TrickGallery.groups(of: [clip([], at: noon, isMe: false)], filter: filter, vocabulary: .seed), [])
+        }
     }
 
     // MARK: - Ladders

@@ -66,16 +66,21 @@ enum TrickGallery {
         var id: String { trick.key }
     }
 
-    /// Which clips the gallery shows: the user's own (the default), or everyone filmed.
+    /// Which clips the gallery shows: the user's own (the default), or the ones marked someone
+    /// else. Each clip is under exactly one of the two.
     enum Filter: Hashable, CaseIterable {
         case mine
-        case everyone
+        case someoneElse
+
+        func keeps(_ clip: LibraryClip) -> Bool {
+            clip.isMe == (self == .mine)
+        }
     }
 
     /// One group per trick with a clip the filter keeps, the trick practiced most recently first.
     static func groups(of clips: [LibraryClip], filter: Filter, vocabulary: TrickVocabulary) -> [Group] {
         var byTrick: [String: (trick: Trick, clips: [LibraryClip])] = [:]
-        for clip in clips where filter == .everyone || clip.isMe {
+        for clip in clips where filter.keeps(clip) {
             for trick in TrickNaming.tricks(in: clip.names, vocabulary: vocabulary) {
                 byTrick[trick.key, default: (trick, [])].clips.append(clip)
             }

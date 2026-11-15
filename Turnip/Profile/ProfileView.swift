@@ -170,13 +170,13 @@ struct ProfileView: View {
             sectionHeader("Gallery")
             Picker("Whose clips", selection: $filter) {
                 Text("Me").tag(TrickGallery.Filter.mine)
-                Text("Everyone").tag(TrickGallery.Filter.everyone)
+                Text("Someone else").tag(TrickGallery.Filter.someoneElse)
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("gallery-filter")
             let groups = groups
             if groups.isEmpty {
-                Text(filter == .mine ? "No named clips of yours yet." : "No named clips yet.")
+                Text(filter == .mine ? "No named clips of yours yet." : "No named clips of someone else yet.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {

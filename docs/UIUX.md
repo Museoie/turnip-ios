@@ -313,7 +313,7 @@ Home: one scrolling page headed by the same "Turnip" wordmark Home leads
 with (`HomeHeader`, under the same transparent bar, `WordmarkNavigationBar`;
 §1), so the two headers line up across the swipe, saying "Your Profile stays
 on this iPhone.", with "Needs a name" while any saved clip has no name, the
-achievement cards, and the gallery's rows by trick under a Me / Everyone
+achievement cards, and the gallery's rows by trick under a Me / Someone else
 filter. Screens pushed from it — Needs a name, a trick's clips, the Clip
 view — hide the pill and own the full screen like Processing/Name
 Clips/the editor do, and `PageSwipeLock` switches the pager off while one is

@@ -512,8 +512,9 @@ contributing those tricks earns nothing extra (rule 3).
   permitting (ACCESSIBILITY.md). A tile opens the Clip view (§5.2) with
   the tile-to-screen expansion transition the app already uses
   (`EXPANSION_TRANSITIONS.md`), the card being the clip's own player.
-- A filter switches between the user's clips (default) and everyone
-  filmed, which includes clips marked someone else.
+- A filter switches between the user's clips (default) and the clips
+  marked someone else ("Me" / "Someone else"): each clip is under
+  exactly one of the two.
 
 ---
 
