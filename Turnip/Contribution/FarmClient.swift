@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import StoreKit
 
 /// How a trick name was given (`BACKEND_DESIGN.md` §1.2.18): typed by hand, picked from the
 /// vocabulary's suggestions, or kept from the trick model's pre-fill. Provenance for training,
@@ -62,12 +63,27 @@ struct FarmClient: Sendable {
     typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     let baseURL: URL
+    /// The App Store storefront's ISO 3166-1 alpha-3 country, or `nil` with no storefront to read.
+    /// Sent with the agreement and each source registration for the farm's region check, which
+    /// uses it and doesn't store it (`CONTRIBUTION_DESIGN.md` §8).
+    let storefrontCountry: @Sendable () async -> String?
     let transport: Transport
+
+    init(
+        baseURL: URL, transport: @escaping Transport,
+        storefrontCountry: @escaping @Sendable () async -> String? = { nil }
+    ) {
+        self.baseURL = baseURL
+        self.storefrontCountry = storefrontCountry
+        self.transport = transport
+    }
 
     /// An ephemeral session: nothing the farm answers is cached or kept in cookies on disk.
     static func live(baseURL: URL) -> FarmClient {
         let session = URLSession(configuration: .ephemeral)
-        return FarmClient(baseURL: baseURL) { request in try await session.data(for: request) }
+        return FarmClient(
+            baseURL: baseURL, transport: { request in try await session.data(for: request) },
+            storefrontCountry: { await Storefront.current?.countryCode })
     }
 
     func signIn(identityToken: String, authorizationCode: String, nonce: String) async throws -> SessionGrant {
@@ -83,7 +99,8 @@ struct FarmClient: Sendable {
     /// `POST /api/consent`: the farm's record of the agreement the sheet's Confirm gave, sent before
     /// anything is uploaded. Only a user who confirmed they are 16 or older gets this far.
     func recordConsent(disclosureVersion: Int, session: String) async throws {
-        let body = ConsentRequest(disclosureVersion: disclosureVersion, ageConfirmed: true)
+        let country = await storefrontCountry()
+        let body = ConsentRequest(disclosureVersion: disclosureVersion, ageConfirmed: true, storefrontCountry: country)
         _ = try await send("POST", "api/consent", body: body, session: session)
     }
 
@@ -97,7 +114,9 @@ struct FarmClient: Sendable {
     }
 
     func registerSource(_ registration: SourceRegistrationRequest, session: String) async throws -> SourceRegistration {
-        try await decode(send("POST", "api/sources", body: registration, session: session))
+        var body = registration
+        body.storefrontCountry = await storefrontCountry()
+        return try await decode(send("POST", "api/sources", body: body, session: session))
     }
 
     /// PUTs the gzipped TKP1 blob to the presigned staging URL. `Content-MD5` is the
@@ -225,13 +244,16 @@ private struct AppleSignInRequest: Encodable {
     }
 }
 
+/// `storefront_country` is left out when it is `nil`.
 private struct ConsentRequest: Encodable {
     let disclosureVersion: Int
     let ageConfirmed: Bool
+    let storefrontCountry: String?
 
     enum CodingKeys: String, CodingKey {
         case disclosureVersion = "disclosure_version"
         case ageConfirmed = "age_confirmed"
+        case storefrontCountry = "storefront_country"
     }
 }
 
@@ -251,6 +273,8 @@ struct SourceRegistrationRequest: Encodable, Equatable {
     /// The as-sent analysis rate, which the blob's header also carries.
     let sampleRate: Double
     let keypointFormat = "tkp1"
+    /// Filled in by `FarmClient.registerSource` as it sends; left out of the body when `nil`.
+    var storefrontCountry: String?
 
     enum CodingKeys: String, CodingKey {
         case videoID = "video_id"
@@ -258,6 +282,7 @@ struct SourceRegistrationRequest: Encodable, Equatable {
         case frameCount = "frame_count"
         case sampleRate = "sample_rate"
         case keypointFormat = "keypoint_format"
+        case storefrontCountry = "storefront_country"
     }
 }
 

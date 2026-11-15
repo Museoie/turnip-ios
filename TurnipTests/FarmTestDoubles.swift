@@ -27,10 +27,13 @@ final class ScriptedFarm: @unchecked Sendable {
         lock.withLock { self.replies += replies }
     }
 
-    var client: FarmClient {
-        FarmClient(baseURL: URL(string: "https://farm.test")!) { request in
-            try self.answer(request)
-        }
+    var client: FarmClient { client(storefrontCountry: nil) }
+
+    /// A client on an App Store storefront of `country`, or with none to read for `nil`.
+    func client(storefrontCountry country: String?) -> FarmClient {
+        FarmClient(
+            baseURL: URL(string: "https://farm.test")!, transport: { request in try self.answer(request) },
+            storefrontCountry: { country })
     }
 
     private func answer(_ request: URLRequest) throws -> (Data, URLResponse) {

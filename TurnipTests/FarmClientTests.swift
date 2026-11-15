@@ -105,9 +105,10 @@ final class FarmClientTests: XCTestCase {
         XCTAssertEqual(body["names"] as? [String], ["raiz", "butterfly twist"])
     }
 
+    /// With no storefront to read, `storefront_country` is left out rather than sent empty.
     func testConsentSendsTheDisclosureVersionAndTheAgeConfirmation() async throws {
         let farm = ScriptedFarm([.init(status: 204, body: "")])
-        try await farm.client.recordConsent(disclosureVersion: 3, session: "tok")
+        try await farm.client(storefrontCountry: nil).recordConsent(disclosureVersion: 3, session: "tok")
 
         let request = try XCTUnwrap(farm.requests.first)
         XCTAssertEqual(request.url?.absoluteString, "https://farm.test/api/consent")
@@ -117,6 +118,35 @@ final class FarmClientTests: XCTestCase {
         XCTAssertEqual(body.count, 2)
         XCTAssertEqual(body["disclosure_version"] as? Int, 3)
         XCTAssertEqual(body["age_confirmed"] as? Bool, true)
+        XCTAssertNil(body["storefront_country"])
+    }
+
+    func testConsentSendsTheStorefrontCountry() async throws {
+        let farm = ScriptedFarm([.init(status: 204, body: "")])
+        try await farm.client(storefrontCountry: "USA").recordConsent(disclosureVersion: 3, session: "tok")
+
+        let body = try json(try XCTUnwrap(farm.requests.first))
+        XCTAssertEqual(body.count, 3)
+        XCTAssertEqual(body["storefront_country"] as? String, "USA")
+    }
+
+    /// Each source registration carries the storefront's country when there is one, and leaves
+    /// the field out when there isn't.
+    func testSourceRegistrationSendsTheStorefrontCountryOnlyWhenThereIsOne() async throws {
+        let reply = ScriptedFarm.Reply(status: 200, body: """
+            {"source_id":"\(Self.videoID)","upload_url":"https://r2.test/put","blob_present":true}
+            """)
+        let registration = SourceRegistrationRequest(
+            videoID: Self.videoID, sourceKey: "key", frameCount: 30, sampleRate: 10)
+        for country in ["KOR", nil] {
+            let farm = ScriptedFarm([reply])
+            _ = try await farm.client(storefrontCountry: country).registerSource(registration, session: "tok")
+
+            let body = try json(try XCTUnwrap(farm.requests.first))
+            XCTAssertEqual(body["storefront_country"] as? String, country)
+            XCTAssertEqual(body.keys.contains("storefront_country"), country != nil)
+            XCTAssertEqual(body["video_id"] as? String, Self.videoID)
+        }
     }
 
     /// Deletion always asks for the contributions to go too, so a farm that still offers keeping

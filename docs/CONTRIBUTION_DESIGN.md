@@ -436,7 +436,9 @@ authenticated action, and the sheet prompts sign-in when needed. Every
 contribution request also carries the source's key (§5.4).
 
 1. `POST /api/sources` with `{video_id, source_key, frame_count,
-   sample_rate, keypoint_format: "tkp1"}` → `{source_id, r2_key,
+   sample_rate, keypoint_format: "tkp1", storefront_country}` (the
+   storefront's country, left out when there is none; §8) →
+   `{source_id, r2_key,
    upload_url, upload_expires_at, blob_present}`. The client never
    sends a blob digest; the farm computes the stored digest at ingest.
    `409 SOURCE_ALREADY_CLAIMED` means the video is already contributed
@@ -548,8 +550,9 @@ record of whose a contribution is.
 - **Consent.** The confirmation sheet's agreement (§3.3) is kept in the
   Keychain as the Apple user who gave it and the disclosure version,
   with the same accessibility, and the farm records it too:
-  `POST /api/consent {"disclosure_version": 3, "age_confirmed": true}`
-  (`BACKEND_DESIGN.md` §7.3). The outbox sends it before the first
+  `POST /api/consent {"disclosure_version": 3, "age_confirmed": true,
+  "storefront_country": "USA"}` (`BACKEND_DESIGN.md` §7.3), with
+  `storefront_country` left out when there is no storefront (§8). The outbox sends it before the first
   upload after Confirm, and keeps a Keychain mark that the farm holds
   it, so later jobs skip it. Until the farm has it, nothing is uploaded;
   a failed send is retried like any other step (§5.3).
@@ -798,6 +801,9 @@ switch, and the confirmation sheet's Confirm once per account, §3.3):
   (`BACKEND_DESIGN.md` §1.2.17).
 - Source key — random per-source secret proving ownership; the farm
   stores only its hash
+- App Store storefront country (ISO 3166-1 alpha-3), with the agreement
+  and each source registration, for the farm's region check; checked,
+  not stored, and left out when there is no storefront
 
 **Where contribution is offered** — not on an App Store storefront in
 the EU, the EEA or the UK (`ContributionRegion`): Settings hides the
@@ -806,7 +812,12 @@ off, which cancels what is waiting. An account already signed in can
 still sign out or be deleted. With no storefront to read, contribution
 isn't offered either (the maintainer's call), which includes builds
 without an App Store account such as the simulator. The farm's
-backstop (§8.1) refuses by the request's country as well.
+backstop (§8.1) refuses by the same storefront: the app sends
+`Storefront.current?.countryCode` (ISO 3166-1 alpha-3) as
+`storefront_country` with `POST /api/consent` and `POST /api/sources`
+(§5.1, §5.4), and leaves it out when there is no storefront. The farm
+checks it and doesn't store it. A farm from before that change ignores
+the field.
 
 **Never leaves the device, even on opt-in** — the Profile: whether a
 clip shows the user, favorites, spots, achievements and progress

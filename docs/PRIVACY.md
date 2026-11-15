@@ -251,7 +251,9 @@ What changes before release, and is not decided here: the nutrition label
 deleted, by the user or after 24 months without use, so the label reads
 "linked to you"), `NSPrivacyCollectedDataTypes` in the manifest, and
 `site/privacy.html`. `ITSAppUsesNonExemptEncryption` stays `NO`: HTTPS
-only. Contribution is off on EU, EEA and UK App Store storefronts, only
+only. Contribution is off on EU, EEA and UK App Store storefronts, and the
+storefront's country goes with the agreement and each source registration for
+the farm's matching check, which doesn't store it. Only
 clips marked as the user are contributed, and the farm records each
 agreement with its disclosure version (`CONTRIBUTION_DESIGN.md` §5.4,
 §8.1).
