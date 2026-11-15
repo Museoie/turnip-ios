@@ -92,7 +92,8 @@ extension EnvironmentValues {
 
 /// The vertical bar a screen past the root lays its top controls down, or nil anywhere else
 /// (`VerticalBar`). Set where the bar is measured: by `RootTabView` for the pages and the camera,
-/// and by the expansion containers for the screens they present, which cover the whole window.
+/// and by the expansion containers for the screens they present, which cover the whole window
+/// (`measuresVerticalBar`).
 private struct VerticalBarKey: EnvironmentKey {
     static var defaultValue: VerticalBar? { nil }
 }
@@ -170,6 +171,19 @@ final class VerticalBarSlot: ObservableObject {
 }
 
 extension View {
+    /// Hands this view iPhone Duo's vertical bar as `\.verticalBar`, read from the safe area around
+    /// it, for a view whose own frame reaches past the safe area, as the expansion containers' do:
+    /// a `GeometryReader` inside one reports no inset on a side it reaches past, so a bar read there
+    /// is always nil.
+    func measuresVerticalBar() -> some View {
+        GeometryReader { safeArea in
+            self.environment(\.verticalBar, VerticalBar(safeAreaInsets: safeArea.safeAreaInsets))
+        }
+        // The keyboard's inset is never at a side, so it can't make or change the bar; ignored, so
+        // the keyboard coming up doesn't resize this.
+        .ignoresSafeArea(.keyboard)
+    }
+
     /// On iPhone Duo (`bar` set), lays a screen's top controls down the vertical bar over the
     /// screen (`VerticalBarColumn`), for a screen whose frame spans the window: the camera, and the
     /// screens the expansion containers present. Nothing anywhere else, where the screen keeps them

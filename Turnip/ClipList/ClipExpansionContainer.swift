@@ -191,11 +191,11 @@ struct ClipExpansionContainer: View {
                             steepness: ExpansionFlightGeometry.chromeCrossfadeSteepness)
                 }
             }
-            // Measured here, over the whole window, since the editor lays its back chevron down
-            // iPhone Duo's vertical bar (`verticalBarColumn`).
-            .environment(\.verticalBar, VerticalBar(safeAreaInsets: screen.safeAreaInsets))
         }
         .ignoresSafeArea()
+        // The editor lays its back chevron down iPhone Duo's vertical bar (`verticalBarColumn`).
+        // Read out here: `screen` reaches past the safe area, so it reports none.
+        .measuresVerticalBar()
         .onAppear(perform: armOpenFlight)
         .onChange(of: dragTranslation != nil) { isDraggingNow in
             guard !isDraggingNow else { return }

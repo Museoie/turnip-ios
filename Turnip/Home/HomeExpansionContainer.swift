@@ -194,11 +194,11 @@ struct HomeExpansionContainer<Content: View>: View {
                 }
             }
             .offset(x: slideProgress * screen.size.width)
-            // Measured here, over the whole window, since the destination's screens lay their top
-            // controls down iPhone Duo's vertical bar (`verticalBarColumn`).
-            .environment(\.verticalBar, VerticalBar(safeAreaInsets: screen.safeAreaInsets))
         }
         .ignoresSafeArea()
+        // The destination's screens lay their top controls down iPhone Duo's vertical bar
+        // (`verticalBarColumn`). Read out here: `screen` reaches past the safe area, so it reports none.
+        .measuresVerticalBar()
         .onAppear {
             onFlightStarted()
             ExpansionFlightGeometry.animateFlight({ progress = 1 }, completion: {
