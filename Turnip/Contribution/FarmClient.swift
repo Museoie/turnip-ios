@@ -26,6 +26,10 @@ enum FarmError: Error, Equatable {
     case sourceAlreadyClaimed
     /// The uploaded pose hasn't been ingested yet.
     case blobMissing
+    /// The account hasn't agreed to the farm's current contribution disclosure: ask again.
+    case consentRequired
+    /// Contribution is switched off in the request's country (`BACKEND_DESIGN.md` §7.2).
+    case regionUnavailable
     case rateLimited(retryAfter: TimeInterval?)
     case appleUnavailable
     case rejected(code: String, message: String)
@@ -39,6 +43,8 @@ extension FarmError: LocalizedError {
         case .accountBlocked: return String(localized: "This account can't contribute.")
         case .sourceAlreadyClaimed: return String(localized: "This video was already contributed from another install.")
         case .blobMissing: return String(localized: "The farm is still processing the pose. Try again in a minute.")
+        case .consentRequired: return String(localized: "Agree to the contribution terms again to keep contributing.")
+        case .regionUnavailable: return ContributionDisclosure.unavailableHere
         case .rateLimited: return String(localized: "Too many requests. Try again in a minute.")
         case .appleUnavailable: return String(localized: "Sign in with Apple is unavailable. Try again later.")
         case .rejected(_, let message): return message
@@ -78,6 +84,13 @@ struct FarmClient: Sendable {
 
     func signOut(session: String) async throws {
         _ = try await send("POST", "api/auth/signout", session: session)
+    }
+
+    /// `POST /api/consent`: the farm's record of the agreement the sheet's Confirm gave, sent before
+    /// anything is uploaded. Only a user who confirmed they are 16 or older gets this far.
+    func recordConsent(disclosureVersion: Int, session: String) async throws {
+        let body = ConsentRequest(disclosureVersion: disclosureVersion, ageConfirmed: true)
+        _ = try await send("POST", "api/consent", body: body, session: session)
     }
 
     /// `DELETE /api/account`, keeping the account's de-linked training segments or deleting them too
@@ -158,19 +171,29 @@ struct FarmClient: Sendable {
     /// name; anything else keeps its code and message.
     static func error(status response: HTTPURLResponse, body: Data) -> FarmError {
         let envelope = try? JSONDecoder().decode(ErrorEnvelope.self, from: body)
-        switch envelope?.error.code {
-        case "UNAUTHENTICATED": return .unauthenticated
-        case "ACCOUNT_BLOCKED": return .accountBlocked
-        case "SOURCE_ALREADY_CLAIMED": return .sourceAlreadyClaimed
-        case "BLOB_MISSING": return .blobMissing
-        case "APPLE_UNAVAILABLE": return .appleUnavailable
+        guard let code = envelope?.error.code else {
+            return response.statusCode == 401 ? .unauthenticated : .http(status: response.statusCode)
+        }
+        if let known = errorsByCode[code] { return known }
+        switch code {
         case "RATE_LIMITED":
             let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
             return .rateLimited(retryAfter: retryAfter)
-        case let code?: return .rejected(code: code, message: envelope?.error.message ?? code)
-        case nil: return response.statusCode == 401 ? .unauthenticated : .http(status: response.statusCode)
+        default:
+            return .rejected(code: code, message: envelope?.error.message ?? code)
         }
     }
+
+    /// The codes whose case carries nothing from the response.
+    private static let errorsByCode: [String: FarmError] = [
+        "UNAUTHENTICATED": .unauthenticated,
+        "ACCOUNT_BLOCKED": .accountBlocked,
+        "SOURCE_ALREADY_CLAIMED": .sourceAlreadyClaimed,
+        "BLOB_MISSING": .blobMissing,
+        "CONSENT_REQUIRED": .consentRequired,
+        "REGION_UNAVAILABLE": .regionUnavailable,
+        "APPLE_UNAVAILABLE": .appleUnavailable
+    ]
 }
 
 private struct ErrorEnvelope: Decodable {
@@ -190,6 +213,16 @@ private struct AppleSignInRequest: Encodable {
         case identityToken = "identity_token"
         case authorizationCode = "authorization_code"
         case nonce
+    }
+}
+
+private struct ConsentRequest: Encodable {
+    let disclosureVersion: Int
+    let ageConfirmed: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case disclosureVersion = "disclosure_version"
+        case ageConfirmed = "age_confirmed"
     }
 }
 

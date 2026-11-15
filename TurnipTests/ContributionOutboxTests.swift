@@ -62,7 +62,7 @@ final class ContributionOutboxTests: XCTestCase {
         let credentials = FarmCredentials(store: MemorySecrets())
         if let consenting {
             credentials.signedIn(sessionToken: "tok", appleUserID: consenting)
-            credentials.recordConsent()
+            credentials.agreeAndRecordOnFarm()
             credentials.signedOut()
         }
         if let user { credentials.signedIn(sessionToken: "tok", appleUserID: user) }
@@ -122,6 +122,7 @@ final class ContributionOutboxTests: XCTestCase {
     }
 
     private static let clipsTaken = ScriptedFarm.Reply(status: 200, body: #"{"clips":[]}"#)
+    private static let consentTaken = ScriptedFarm.Reply(status: 204, body: "")
 
     private static func readBack(_ ids: [UUID] = [clipID], names: String = "cork") -> ScriptedFarm.Reply {
         let clips = ids.map { id in
@@ -192,9 +193,10 @@ final class ContributionOutboxTests: XCTestCase {
     }
 
     /// The Confirm path: agreeing covers this save and every later one, so the same account's
-    /// next save needs no sheet.
-    func testConfirmRecordsTheAgreementAndSends() async {
-        let farm = ScriptedFarm(Self.delivered())
+    /// next save needs no sheet. The farm records the agreement, with the disclosure's version and
+    /// the age confirmation, before anything is uploaded.
+    func testConfirmRecordsTheAgreementOnTheFarmBeforeSending() async throws {
+        let farm = ScriptedFarm([Self.consentTaken] + Self.delivered())
         let account = account(client: farm.client, consentedAs: nil)
         let outbox = outbox(account)
         XCTAssertFalse(account.credentials.hasConsented)
@@ -203,8 +205,79 @@ final class ContributionOutboxTests: XCTestCase {
         await settled(outbox)
 
         XCTAssertTrue(account.credentials.hasConsented)
-        XCTAssertEqual(farm.calls.count, 3)
+        XCTAssertTrue(account.credentials.farmHasRecordedConsent)
+        XCTAssertEqual(farm.calls, [
+            "POST /api/consent", "POST /api/sources", "POST /api/clips", "GET /api/sources/\(Self.videoID)"
+        ])
+        let request = try XCTUnwrap(farm.requests.first)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+        XCTAssertEqual(body["disclosure_version"] as? Int, ContributionDisclosure.version)
+        XCTAssertEqual(body["age_confirmed"] as? Bool, true)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
         XCTAssertTrue(outbox.jobs.isEmpty)
+    }
+
+    /// The farm records the agreement once; later jobs go straight to their sources.
+    func testTheFarmRecordsTheAgreementOnce() async {
+        let farm = ScriptedFarm([Self.consentTaken] + Self.delivered() + Self.delivered(Self.otherVideoID))
+        let account = account(client: farm.client, consentedAs: nil)
+        account.credentials.recordConsent()
+        let outbox = outbox(account)
+
+        await outbox.enqueue(Self.source())
+        await outbox.enqueue(Self.source(Self.otherVideoID))
+        await settled(outbox)
+
+        XCTAssertEqual(farm.calls.filter { $0 == "POST /api/consent" }.count, 1)
+        XCTAssertEqual(farm.calls.count, 7)
+        XCTAssertTrue(outbox.jobs.isEmpty)
+    }
+
+    /// The agreement didn't reach the farm, so nothing else is sent: the job waits for a retry.
+    func testNothingIsUploadedUntilTheFarmHasTheAgreement() async {
+        let farm = ScriptedFarm([Self.refusal(500, "INTERNAL")])
+        let account = account(client: farm.client, consentedAs: nil)
+        account.credentials.recordConsent()
+        let outbox = outbox(account)
+
+        await outbox.enqueue(Self.source())
+        await eventually("the consent call fails") { !farm.calls.isEmpty && waits.delays.count == 1 }
+
+        XCTAssertEqual(farm.calls, ["POST /api/consent"])
+        XCTAssertFalse(account.credentials.farmHasRecordedConsent)
+        XCTAssertEqual(outbox.jobs.count, 1)
+    }
+
+    /// The farm needs a newer agreement: the one here is withdrawn, so the next save shows the
+    /// sheet, and the job waits rather than being dropped.
+    func testConsentRequiredAsksAgainAndKeepsTheJob() async {
+        let farm = ScriptedFarm([Self.refusal(403, "CONSENT_REQUIRED")])
+        let account = account(client: farm.client)
+        let outbox = outbox(account)
+
+        await outbox.enqueue(Self.source())
+        await settled(outbox)
+
+        XCTAssertEqual(farm.calls, ["POST /api/sources"])
+        XCTAssertFalse(account.credentials.hasConsented)
+        XCTAssertFalse(account.credentials.farmHasRecordedConsent)
+        XCTAssertEqual(outbox.jobs.count, 1)
+    }
+
+    /// Contribution is off in this country: the switch goes off, which empties the queue.
+    func testRegionUnavailableTurnsContributingOff() async {
+        let farm = ScriptedFarm([Self.refusal(403, "REGION_UNAVAILABLE")])
+        let settings = settings()
+        let account = account(client: farm.client, consentedAs: nil)
+        account.credentials.recordConsent()
+        let outbox = outbox(account, settings: settings)
+
+        await outbox.enqueue(Self.source())
+        await eventually("the switch goes off and the queue empties") {
+            !settings.contributesClips && outbox.jobs.isEmpty && outbox.drain == nil && filesOnDisk().isEmpty
+        }
+
+        XCTAssertEqual(farm.calls, ["POST /api/consent"])
     }
 
     /// Killed mid-upload: the next launch's outbox finds the job on disk and finishes it.
@@ -390,6 +463,8 @@ final class ContributionOutboxTests: XCTestCase {
         XCTAssertEqual(ContributionOutbox.disposition(of: CancellationError()), .retry(after: nil))
 
         XCTAssertEqual(disposition(status: 401, code: "UNAUTHENTICATED"), .signIn)
+        XCTAssertEqual(disposition(status: 403, code: "CONSENT_REQUIRED"), .consentRequired)
+        XCTAssertEqual(disposition(status: 403, code: "REGION_UNAVAILABLE"), .regionUnavailable)
     }
 
     func testARefusedJobIsDroppedAndTheNextStillGoes() async {
@@ -437,7 +512,7 @@ final class ContributionOutboxTests: XCTestCase {
         let farm = ScriptedFarm([Self.refusal(401, "UNAUTHENTICATED")])
         let credentials = FarmCredentials(store: MemorySecrets())
         credentials.signedIn(sessionToken: "old", appleUserID: "user-1")
-        credentials.recordConsent()
+        credentials.agreeAndRecordOnFarm()
         let client = FarmClient(baseURL: URL(string: "https://farm.test")!) { request in
             credentials.signedIn(sessionToken: "new", appleUserID: "user-1")
             return try await farm.client.transport(request)
@@ -462,7 +537,7 @@ final class ContributionOutboxTests: XCTestCase {
         let released = Latch()
         let credentials = FarmCredentials(store: MemorySecrets())
         credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
-        credentials.recordConsent()
+        credentials.agreeAndRecordOnFarm()
         let client = FarmClient(baseURL: URL(string: "https://farm.test")!) { request in
             reached.set()
             while !released.isSet { await Task.yield() }
@@ -502,7 +577,7 @@ final class ContributionOutboxTests: XCTestCase {
         let reached = Latch()
         let credentials = FarmCredentials(store: MemorySecrets())
         credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
-        credentials.recordConsent()
+        credentials.agreeAndRecordOnFarm()
         let account = FarmAccount(client: Self.stalledClient(reached: reached), credentials: credentials)
         let outbox = outbox(account)
         await outbox.enqueue(Self.source())
@@ -522,7 +597,7 @@ final class ContributionOutboxTests: XCTestCase {
         let reached = Latch()
         let credentials = FarmCredentials(store: MemorySecrets())
         credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
-        credentials.recordConsent()
+        credentials.agreeAndRecordOnFarm()
         let settings = settings()
         let account = FarmAccount(client: Self.stalledClient(reached: reached), credentials: credentials)
         let outbox = outbox(account, settings: settings)
@@ -567,7 +642,7 @@ final class ContributionOutboxTests: XCTestCase {
         let reached = Latch()
         let credentials = FarmCredentials(store: MemorySecrets())
         credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
-        credentials.recordConsent()
+        credentials.agreeAndRecordOnFarm()
         let client = FarmClient(baseURL: URL(string: "https://farm.test")!) { request in
             if request.url?.path == "/api/sources" {
                 reached.set()
@@ -601,7 +676,7 @@ final class ContributionOutboxTests: XCTestCase {
         let released = Latch()
         let credentials = FarmCredentials(store: MemorySecrets())
         credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
-        credentials.recordConsent()
+        credentials.agreeAndRecordOnFarm()
         let client = FarmClient(baseURL: URL(string: "https://farm.test")!) { request in
             if request.url?.path == "/api/sources" {
                 reached.set()

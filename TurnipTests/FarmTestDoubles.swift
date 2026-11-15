@@ -45,6 +45,14 @@ final class ScriptedFarm: @unchecked Sendable {
     }
 }
 
+extension FarmCredentials {
+    /// Agreed here and recorded on the farm, so an upload goes straight to its source.
+    func agreeAndRecordOnFarm() {
+        recordConsent()
+        farmRecordedConsent()
+    }
+}
+
 /// Every Keychain operation, in memory.
 final class MemorySecrets: SecretStore, @unchecked Sendable {
     private let lock = NSLock()

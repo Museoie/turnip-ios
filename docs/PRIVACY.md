@@ -245,14 +245,14 @@ added: the Keychain isn't one, and the vocabulary cache and the outbox are read
 and written without file metadata.
 
 What changes before release, and is not decided here: the nutrition label
-(the Apple `sub` and pose keypoints, linked to the account for 30 days after
-a contribution's last edit), `NSPrivacyCollectedDataTypes` in the manifest,
-and `site/privacy.html`. `ITSAppUsesNonExemptEncryption` stays `NO`: HTTPS
-only. The privacy plan in `CONTRIBUTION_DESIGN.md` §8.1 changes several of
-these answers before contribution ships: the account link would last until
-deletion, so the label would read "linked to you". Contribution is already
-off on EU, EEA and UK App Store storefronts, and only clips marked as the
-user are contributed.
+(the Apple `sub` and pose keypoints, linked to the account until it is
+deleted, by the user or after 24 months without use, so the label reads
+"linked to you"), `NSPrivacyCollectedDataTypes` in the manifest, and
+`site/privacy.html`. `ITSAppUsesNonExemptEncryption` stays `NO`: HTTPS
+only. Contribution is off on EU, EEA and UK App Store storefronts, only
+clips marked as the user are contributed, and the farm records each
+agreement with its disclosure version (`CONTRIBUTION_DESIGN.md` §5.4,
+§8.1).
 
 ## The clip library and the Profile (core built; the rest planned)
 
@@ -385,10 +385,15 @@ Planned:
 - Server-side data handling for uploaded clips (retention, deletion
   requests, GDPR/CCPA) — belongs to `turnip-farm`; see `docs/DESIGN.md`
   decision #4 (retention: keep forever, user-deletable). In outline:
-  - Contributions are linked to the account only until 30 days after
-    their last edit, then kept with no account link. That makes them
-    de-linked, not anonymous: someone with a video of the same clip
-    could still match them to it (`BACKEND_DESIGN.md` §9 Q9).
+  - Contributions are linked to the account until it is deleted, by the
+    user or after 24 months without use. Deleting it removes the link, the
+    full pose recordings, and every contribution the app can find with
+    its training segments; short, transformed segments of the rest stay
+    with no account link unless the user also deletes their
+    contributions. That makes them de-linked, not anonymous: someone with
+    a video of the same clip could still match them to it
+    (`BACKEND_DESIGN.md` §9 Q9). The farm records each agreement with its
+    disclosure version (`CONTRIBUTION_DESIGN.md` §5.4).
   - The account can be deleted in-app, with an equally prominent choice
     to delete contributions too. Either removes every contribution the
     app still holds a key for; the second also deletes the training

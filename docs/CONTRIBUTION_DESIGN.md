@@ -322,23 +322,26 @@ frames are part of the session pose.
   semantics are not.)*
 - The sheet also carries the disclosure the farm requires
   (`BACKEND_DESIGN.md` §7.1):
-  - contributions stay linked to the user's account for 30 days after
-    their last edit, then are kept without any link to it;
-  - deleting the account removes every contribution this app can still
-    find, and the rest remain in the training data with no link to the
-    account, though someone with a video of the same clip could still
-    match them to it (`BACKEND_DESIGN.md` §9 Q9). The farm's §7.1 wording
-    ("can't be traced back to the user") overstates this and needs the
-    same change;
+  - contributions stay linked to the user's account until the account
+    is deleted, by the user or after 24 months without use;
+  - deleting the account removes that link, the full pose recordings,
+    and every contribution this app can find with its training
+    segments (§5.4). Short, transformed segments of the rest stay with
+    no link to the account, unless the user also chooses to delete their
+    contributions. Someone with a video of the same clip could still
+    match them to it (`BACKEND_DESIGN.md` §9 Q9);
   - only clips marked as the user are contributed, and clips marked as
     someone else (`PROFILE_DESIGN.md` §4.3) stay on the device. The
     sheet lists such a clip as staying behind;
   - the user is 16 or older, confirmed on the sheet.
 
-  The words carry a version (`ContributionDisclosure.version`, now 2;
+  The words carry a version (`ContributionDisclosure.version`, now 3;
   version 1 was the wording before clips of someone else stayed behind
-  and before the age confirmation). The agreement is kept with the
-  version it was given to, and one given to an older version is asked
+  and before the age confirmation, and versions 1 and 2 said
+  contributions were unlinked 30 days after their last edit). Confirm
+  agrees to that version; the farm records it (§5.4) before anything
+  is uploaded, and refuses uploads from an account that hasn't agreed
+  to its current version. An agreement to an older version is asked
   again on the next save.
 - A contributed clip needs at least one trick name, given in the core
   flow (`PROFILE_DESIGN.md` §4); a clip with no names is never
@@ -511,8 +514,24 @@ record of whose a contribution is.
   `credentialRevokedNotification`. On any `401`, delete the token and
   sign in again.
 - **Consent.** The confirmation sheet's agreement (§3.3) is kept in the
-  Keychain as the Apple user who gave it, with the same accessibility.
-  It is recorded nowhere else. *Planned (§8.1): the farm records it too.*
+  Keychain as the Apple user who gave it and the disclosure version,
+  with the same accessibility, and the farm records it too:
+  `POST /api/consent {"disclosure_version": 3, "age_confirmed": true}`
+  (`BACKEND_DESIGN.md` §7.3). The outbox sends it before the first
+  upload after Confirm, and keeps a Keychain mark that the farm holds
+  it, so later jobs skip it. Until the farm has it, nothing is uploaded;
+  a failed send is retried like any other step (§5.3).
+  - `403 CONSENT_REQUIRED` from a contribution write (the farm now
+    wants a newer version) withdraws the agreement here, so the next
+    save shows the sheet again. What is queued waits for that
+    agreement, and Settings' waiting row says the next save asks for
+    it.
+  - `403 REGION_UNAVAILABLE` (the farm's country backstop) turns
+    Contribute named clips off, which cancels what is queued, as the
+    storefront check does (§8).
+  *(Judgment call: sending the agreement from the outbox rather than
+  from the sheet keeps Confirm instant and offline-safe, and the
+  outbox's retry covers a failed send.)*
 - **Source keys.** The first time a source is contributed, generate 32
   random bytes as its key and store it in the Keychain under its
   `video_id`, with the same accessibility as the session token. The key
@@ -745,8 +764,10 @@ switch, and the confirmation sheet's Confirm once per account, §3.3):
   how a label was made, never who made it
 - Sign in with Apple subject — per-app opaque pseudonym, for sign-in,
   rate limiting, and blocking. The farm links it to a contribution
-  only until 30 days after the contribution's last edit (anti-poisoning
-  attribution), then the contribution has no account link.
+  until the account is deleted, by the user or after 24 months without
+  use (anti-poisoning attribution); an account that agreed only to
+  disclosure version 1 or 2 keeps the old 30-day link
+  (`BACKEND_DESIGN.md` §1.2.17).
 - Source key — random per-source secret proving ownership; the farm
   stores only its hash
 
@@ -770,30 +791,28 @@ in-memory only; nothing is written to `Documents/`.
 
 **Submission-time consequences** (open question): the v1 "Data Not
 Collected" nutrition label changes the moment contribution ships. The
-new disclosures must cover the Apple `sub` identifier, its 30-day link
-to contributions, and the pose keypoints; the precise App Store label
-taxonomy for pose keypoints
-needs a call at submission time. `ITSAppUsesNonExemptEncryption` stays
-`NO` (HTTPS only, exempt). With §8.1's retention change the label reads
-"linked to you".
+new disclosures must cover the Apple `sub` identifier, its link to
+contributions until the account is deleted, and the pose keypoints; the
+precise App Store label taxonomy for pose keypoints needs a call at
+submission time. `ITSAppUsesNonExemptEncryption` stays `NO` (HTTPS
+only, exempt). With the account link kept until deletion, the label
+reads "linked to you".
 
 ### 8.1 Planned changes (privacy plan, 2026-11)
 
 The maintainer's privacy plan changes contribution before it goes live.
 Built so far, and described in the sections above: only clips marked as
-the user are contributed, the 16-or-older confirmation (§3.3), and
-contribution switched off on EU, EEA and UK storefronts (§8). Account
-deletion with an equal choice to delete contributions too (§5.4) is
-built as well. The rest below is not built yet; until it is, the
-sections above describe the code.
+the user are contributed, the 16-or-older confirmation (§3.3),
+contribution switched off on EU, EEA and UK storefronts (§8), consent
+recorded on the farm with disclosure version 3 (§3.3, §5.4), the
+account link kept until deletion or 24 months without use (§3.3, §8),
+which reverses `DESIGN.md` Decision #10, account deletion with an
+equal choice to delete contributions too (§5.4), and the farm's EU, EEA
+and UK backstop, which turns contributing off on
+`403 REGION_UNAVAILABLE` behind the storefront check (§5.4, §8). The rest below is not
+built in the app yet; until it is, the sections above describe the
+code.
 
-- **Consent.** The farm records each agreement (account, time,
-  disclosure version), and accounts that agreed to the 30-day wording
-  are asked again. Today the app keeps the agreement and its version
-  only in the Keychain (§3.3).
-- **Retention.** The account link is kept until the user deletes it, or
-  until 24 months without activity, instead of 30 days after the last
-  edit. This reverses `DESIGN.md` Decision #10.
 - **Labels.** Only vocabulary names are contributed (§4). A new name
   goes to a candidate list, counted per account by keyed hash, kept
   briefly and promoted by hand.
@@ -802,9 +821,6 @@ sections above describe the code.
   head point and lightly noised, with fresh IDs, no timestamps and no
   adjacent segments kept. The segment-to-source link is deleted with
   the account.
-- **EU and UK backstop.** The farm refuses consent and uploads from the
-  EU, the EEA and the UK by the request's country, behind the app's
-  storefront check (§8).
 
 ---
 

@@ -13,9 +13,10 @@ protocol SecretStore: Sendable {
 /// The farm's credentials, by what they are rather than by Keychain name
 /// (`docs/CONTRIBUTION_DESIGN.md` §5.4): the farm session token, the Apple user the session was
 /// signed in as (for `getCredentialState(forUserID:)`), the Apple user who agreed to contribute
-/// and the disclosure version they agreed to, and one source key per contributed `video_id`. The
-/// source keys are the only record of what this app contributed — the farm keeps no list of
-/// anyone's sources — so they outlive sign-out and go only with account deletion.
+/// and the disclosure version they agreed to, whether the farm has recorded that agreement, and one
+/// source key per contributed `video_id`. The source keys are the only record of what this app
+/// contributed — the farm keeps no list of anyone's sources — so they outlive sign-out and go only
+/// with account deletion.
 struct FarmCredentials: Sendable {
     let store: SecretStore
 
@@ -23,6 +24,7 @@ struct FarmCredentials: Sendable {
     private static let appleUserName = "apple-user"
     private static let consentName = "consenting-apple-user"
     private static let consentVersionName = "consent-disclosure-version"
+    private static let farmConsentName = "farm-consent-version"
     private static let sourceKeyPrefix = "source-key."
 
     var sessionToken: String? { store.value(for: Self.sessionName) }
@@ -55,15 +57,28 @@ struct FarmCredentials: Sendable {
         return appleUserID.map { $0 == consenting } ?? true
     }
 
+    /// A new agreement, which the farm hasn't recorded yet (`farmHasRecordedConsent`).
     func recordConsent(toVersion version: Int = ContributionDisclosure.version) {
         guard let appleUserID else { return }
         store.setValue(appleUserID, for: Self.consentName)
         store.setValue(String(version), for: Self.consentVersionName)
+        store.removeValue(for: Self.farmConsentName)
     }
 
     func withdrawConsent() {
         store.removeValue(for: Self.consentName)
         store.removeValue(for: Self.consentVersionName)
+        store.removeValue(for: Self.farmConsentName)
+    }
+
+    /// Whether `POST /api/consent` has recorded the current agreement on the farm. Until it has,
+    /// nothing is uploaded: the outbox sends the agreement first (`BACKEND_DESIGN.md` §7.3).
+    var farmHasRecordedConsent: Bool {
+        hasConsented && store.value(for: Self.farmConsentName) == String(ContributionDisclosure.version)
+    }
+
+    func farmRecordedConsent(toVersion version: Int = ContributionDisclosure.version) {
+        store.setValue(String(version), for: Self.farmConsentName)
     }
 
     func sourceKey(for videoID: String) -> String? {

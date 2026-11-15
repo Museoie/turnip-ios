@@ -120,6 +120,11 @@ final class ContributionOutbox: ObservableObject {
         case drop
         /// The session is gone; the job waits for the next sign-in.
         case signIn
+        /// The farm needs the current disclosure agreed to: the agreement here is withdrawn, so the
+        /// next save shows the sheet again, and the job waits for it.
+        case consentRequired
+        /// Contribution is off in this country: the switch goes off, which cancels the queue.
+        case regionUnavailable
     }
 
     private enum Attempt {
@@ -190,7 +195,7 @@ final class ContributionOutbox: ObservableObject {
     // MARK: - Queueing
 
     /// The confirmation sheet's Confirm: the agreement every later save rides on, and this save's
-    /// clips.
+    /// clips. The farm records the agreement before the first upload (`attempt`).
     func confirm(_ source: SourceContribution) async {
         account.credentials.recordConsent()
         await enqueue(source)
@@ -304,6 +309,10 @@ final class ContributionOutbox: ObservableObject {
         let backgroundTime = BackgroundTime()
         defer { backgroundTime.end() }
         do {
+            if !account.credentials.farmHasRecordedConsent {
+                try await client.recordConsent(disclosureVersion: ContributionDisclosure.version, session: session)
+                account.credentials.farmRecordedConsent()
+            }
             let uploader = ContributionUploader(client: client, credentials: account.credentials)
             let stored = try await uploader.contribute(source, session: session)
             guard source.clipsNotHeld(by: stored).isEmpty else {
@@ -312,18 +321,31 @@ final class ContributionOutbox: ObservableObject {
             }
             return .settled
         } catch {
-            switch Self.disposition(of: error) {
-            case .retry(let delay):
-                return .retry(after: delay)
-            case .drop:
-                Self.logger.error("Dropped a job the farm refused: \(error.localizedDescription, privacy: .public)")
-                return .settled
-            case .signIn:
-                // A sign-in that landed during the attempt has a session this 401 says nothing about.
-                guard account.credentials.sessionToken == session else { return .retry(after: nil) }
-                account.sessionEnded()
-                return .stopped
-            }
+            return handle(error, session: session)
+        }
+    }
+
+    /// What a failed attempt, made with `session`, means for its job and for sending at all.
+    private func handle(_ error: Error, session: String) -> Attempt {
+        switch Self.disposition(of: error) {
+        case .retry(let delay):
+            return .retry(after: delay)
+        case .drop:
+            Self.logger.error("Dropped a job the farm refused: \(error.localizedDescription, privacy: .public)")
+            return .settled
+        case .signIn:
+            // A sign-in that landed during the attempt has a session this 401 says nothing about.
+            guard account.credentials.sessionToken == session else { return .retry(after: nil) }
+            account.sessionEnded()
+            return .stopped
+        case .consentRequired:
+            Self.logger.error("The farm needs the current disclosure agreed to")
+            account.credentials.withdrawConsent()
+            return .stopped
+        case .regionUnavailable:
+            Self.logger.error("Contribution is off in this country")
+            settings.contributesClips = false
+            return .stopped
         }
     }
 
@@ -366,6 +388,10 @@ final class ContributionOutbox: ObservableObject {
         switch error as? FarmError {
         case .unauthenticated:
             return .signIn
+        case .consentRequired:
+            return .consentRequired
+        case .regionUnavailable:
+            return .regionUnavailable
         case .sourceAlreadyClaimed, .accountBlocked:
             return .drop
         case .rateLimited(let retryAfter):
