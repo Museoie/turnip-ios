@@ -45,6 +45,8 @@ struct NameClipsView: View {
     @State private var hiddenItemID: UUID?
     @State private var contribution: ContributionPlan?
     @State private var isShowingContribution = false
+    /// iPhone Duo's vertical bar, which the bar's items go down instead.
+    @Environment(\.verticalBar) private var verticalBar
 
     private static let slide: Animation = .easeInOut(duration: 0.3)
 
@@ -112,6 +114,15 @@ struct NameClipsView: View {
         .navigationBarBackButtonHidden(true)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbar }
+        // Back, add, then the menu, as the bar reads from its leading item.
+        .verticalBarColumn(verticalBar) {
+            backButton
+            ScrimIconButton(systemImage: "plus", accessibilityLabel: "Add clip", action: addClip)
+                .accessibilityIdentifier("add-clip")
+            if !clips.isEmpty {
+                menu(label: ScrimIconGlyph(systemImage: "ellipsis"))
+            }
+        }
         // The keyboard is up while the name field has focus: the bar gives its room to the
         // naming controls, and comes back once the keyboard goes.
         .safeAreaInset(edge: .bottom) {
@@ -289,23 +300,26 @@ struct NameClipsView: View {
 
     // MARK: - Chrome
 
+    /// None on iPhone Duo, where the items go down the vertical bar (`verticalBarColumn`).
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
-        if #available(iOS 26.0, *) {
-            ToolbarItem(placement: .navigationBarLeading) { backButton }
-                .sharedBackgroundVisibility(.hidden)
-            ToolbarItem(placement: .topBarTrailing) { addButton }
-            if !clips.isEmpty {
-                // Two circles rather than one shared capsule.
-                ToolbarSpacer(.fixed, placement: .topBarTrailing)
-                ToolbarItem(placement: .topBarTrailing) { menu }
-            }
-        } else {
-            ToolbarItem(placement: .navigationBarLeading) { backButton }
-            ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 12) {
-                    addButton
-                    if !clips.isEmpty { menu }
+        if verticalBar == nil {
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .navigationBarLeading) { backButton }
+                    .sharedBackgroundVisibility(.hidden)
+                ToolbarItem(placement: .topBarTrailing) { addButton }
+                if !clips.isEmpty {
+                    // Two circles rather than one shared capsule.
+                    ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                    ToolbarItem(placement: .topBarTrailing) { menu(label: moreGlyph) }
+                }
+            } else {
+                ToolbarItem(placement: .navigationBarLeading) { backButton }
+                ToolbarItem(placement: .topBarTrailing) {
+                    HStack(spacing: 12) {
+                        addButton
+                        if !clips.isEmpty { menu(label: moreGlyph) }
+                    }
                 }
             }
         }
@@ -328,14 +342,19 @@ struct NameClipsView: View {
         .accessibilityIdentifier("add-clip")
     }
 
-    private var menu: some View {
+    /// The bar's own glyph, which the bar styles.
+    private var moreGlyph: some View {
+        Image(systemName: "ellipsis")
+    }
+
+    private func menu<MenuLabel: View>(label: MenuLabel) -> some View {
         Menu {
             Button(role: .destructive, action: removeCurrentClip) {
                 Label("Remove this clip", systemImage: "trash")
             }
             .accessibilityIdentifier("remove-clip")
         } label: {
-            Image(systemName: "ellipsis")
+            label
         }
         .accessibilityLabel("More")
         .accessibilityIdentifier("name-clips-more")

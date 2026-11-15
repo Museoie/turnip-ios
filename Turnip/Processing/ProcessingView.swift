@@ -155,6 +155,8 @@ struct ProcessingView<Destination: View>: View {
     @GestureState private var isDragTouchActive = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.displayScale) private var displayScale
+    /// iPhone Duo's vertical bar, which the corner controls go down instead.
+    @Environment(\.verticalBar) private var verticalBar
 
     /// How long a committed swipe takes to carry the page the rest of the way off screen.
     /// Computed, since a generic type can't hold a stored static.
@@ -228,8 +230,19 @@ struct ProcessingView<Destination: View>: View {
             // window, which is what a `contentShape` bounded by this view's own frame cannot.
             .contentShape(Rectangle())
             .background(swipeBackdrop)
-            topLeadingControl
-            topTrailingControl
+            if let verticalBar {
+                VerticalBarColumn(bar: verticalBar) {
+                    backOrCancelButton
+                    if case .idle = viewModel.state {
+                        // A glyph here, as the column is too narrow for the label at larger text.
+                        ScrimIconButton(systemImage: "scissors", accessibilityLabel: "Clip it", action: clipIt)
+                            .accessibilityIdentifier("processing-clip-it")
+                    }
+                }
+            } else {
+                topLeadingControl
+                topTrailingControl
+            }
             // Last in the stack, so it draws over both the strip and the corner controls —
             // it belongs to the video arriving, not to anything on the page leaving, and it
             // must block the controls too or a tap during a browse-in-flight would leave out
@@ -375,23 +388,26 @@ struct ProcessingView<Destination: View>: View {
     /// bar this screen's chrome sits over its media the same way, placed where a bar's own
     /// leading item would sit so every screen's header lines up. A sibling of the draggable
     /// strip in `body`, so neither a horizontal browse-swipe nor a vertical dismiss-swipe
-    /// carries it along.
-    @ViewBuilder
+    /// carries it along. At the top of the vertical bar on iPhone Duo instead.
     private var topLeadingControl: some View {
+        backOrCancelButton
+            .screenHeaderItemPlacement()
+    }
+
+    @ViewBuilder
+    private var backOrCancelButton: some View {
         if isAnalyzing {
             ScrimIconButton(systemImage: "xmark", accessibilityLabel: "Cancel") {
                 guard !isSwipeInFlight else { return }
                 handleBackAction()
             }
             .accessibilityIdentifier("processing-cancel")
-            .screenHeaderItemPlacement()
         } else {
             ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home") {
                 guard !isSwipeInFlight else { return }
                 handleBackAction()
             }
             .accessibilityIdentifier("processing-back")
-            .screenHeaderItemPlacement()
         }
     }
 

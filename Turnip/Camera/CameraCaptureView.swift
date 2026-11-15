@@ -29,6 +29,8 @@ struct CameraCaptureView: View {
     /// had already stopped stays stopped.
     @State private var wasLiveBeforeBackground = false
     @Environment(\.scenePhase) private var scenePhase
+    /// iPhone Duo's vertical bar, which the top controls go down instead (`verticalBarColumn`).
+    @Environment(\.verticalBar) private var verticalBar
 
     var body: some View {
         ZStack {
@@ -64,10 +66,23 @@ struct CameraCaptureView: View {
                 interruptionScrim(reason: reason)
             }
         }
-        .overlay(alignment: .topLeading) { cancelButton }
+        .overlay(alignment: .topLeading) {
+            if verticalBar == nil {
+                cancelButton
+                    .screenHeaderItemPlacement()
+            }
+        }
         .overlay(alignment: .topTrailing) {
+            if verticalBar == nil, viewModel.authorization == .authorized {
+                HStack(spacing: 12) { settingControls }
+                    .screenHeaderItemPlacement()
+            }
+        }
+        // Down the vertical bar, cancel first, as the top row reads from the leading corner.
+        .verticalBarColumn(verticalBar) {
+            cancelButton
             if viewModel.authorization == .authorized {
-                topRightControls
+                settingControls
             }
         }
         .safeAreaInset(edge: .bottom) {
@@ -131,12 +146,11 @@ struct CameraCaptureView: View {
     }
 
     /// Placed where a navigation bar's leading item would sit (`screenHeaderItemPlacement`),
-    /// level with Home's own bar controls under it.
+    /// level with Home's own bar controls under it; at the top of the vertical bar on iPhone Duo.
     private var cancelButton: some View {
         ScrimIconButton(
             systemImage: "xmark", accessibilityLabel: "Cancel", style: .scrim, action: onCancel)
             .accessibilityIdentifier("camera-cancel")
-            .screenHeaderItemPlacement()
     }
 
     private var bottomControls: some View {
@@ -217,22 +231,21 @@ struct CameraCaptureView: View {
 
     // MARK: - Top-right controls
 
-    private var topRightControls: some View {
-        HStack(spacing: 12) {
-            if viewModel.exposureBiasRange.lowerBound < viewModel.exposureBiasRange.upperBound {
-                exposureToggleButton
-            }
-            if viewModel.isTorchAvailable {
-                flashButton
-            }
-            if !viewModel.formatGroups.isEmpty {
-                formatMenu
-            }
-            if viewModel.hasCaptureDevice {
-                flipButton
-            }
+    /// The top-right group's controls, laid in a row there or down the vertical bar under Cancel.
+    @ViewBuilder
+    private var settingControls: some View {
+        if viewModel.exposureBiasRange.lowerBound < viewModel.exposureBiasRange.upperBound {
+            exposureToggleButton
         }
-        .screenHeaderItemPlacement()
+        if viewModel.isTorchAvailable {
+            flashButton
+        }
+        if !viewModel.formatGroups.isEmpty {
+            formatMenu
+        }
+        if viewModel.hasCaptureDevice {
+            flipButton
+        }
     }
 
     private var exposureToggleButton: some View {

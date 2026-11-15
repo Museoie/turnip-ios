@@ -194,6 +194,9 @@ struct HomeExpansionContainer<Content: View>: View {
                 }
             }
             .offset(x: slideProgress * screen.size.width)
+            // Measured here, over the whole window, since the destination's screens lay their top
+            // controls down iPhone Duo's vertical bar (`verticalBarColumn`).
+            .environment(\.verticalBar, VerticalBar(safeAreaInsets: screen.safeAreaInsets))
         }
         .ignoresSafeArea()
         .onAppear {

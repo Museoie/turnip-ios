@@ -191,6 +191,9 @@ struct ClipExpansionContainer: View {
                             steepness: ExpansionFlightGeometry.chromeCrossfadeSteepness)
                 }
             }
+            // Measured here, over the whole window, since the editor lays its back chevron down
+            // iPhone Duo's vertical bar (`verticalBarColumn`).
+            .environment(\.verticalBar, VerticalBar(safeAreaInsets: screen.safeAreaInsets))
         }
         .ignoresSafeArea()
         .onAppear(perform: armOpenFlight)

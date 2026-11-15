@@ -32,6 +32,8 @@ struct ClipEditorView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.expansionHasLanded) private var expansionHasLanded
+    /// iPhone Duo's vertical bar, which the back chevron goes down instead.
+    @Environment(\.verticalBar) private var verticalBar
     /// The crop gestures' in-flight deltas, drawn on top of the follow crop until the gesture
     /// commits into the view model (`CropGestureSurface`).
     @State private var gestureScale: CGFloat = 1
@@ -122,6 +124,7 @@ struct ClipEditorView: View {
         ZStack {
             stage
             chrome
+                .verticalBarColumn(verticalBar) { backButton }
         }
         .preference(key: ClipEditorCropMarkerFramePreferenceKey.self, value: markerFrame)
         // Behind this view's own content rather than wrapping it, so the dismiss
@@ -179,8 +182,9 @@ struct ClipEditorView: View {
     }
 
     /// The screen's own top row in place of a navigation bar (see `body`): the back chevron
-    /// leading, at the same position as Name Clips' bar this screen flies open from. The title
-    /// stays as the screen's VoiceOver header, drawn clear.
+    /// leading, at the same position as Name Clips' bar this screen flies open from, or down the
+    /// vertical bar on iPhone Duo. The title stays as the screen's VoiceOver header, drawn clear,
+    /// and the row keeps its height either way, so the stage below it doesn't move.
     private var topRow: some View {
         ZStack {
             Text("Edit clip")
@@ -188,9 +192,11 @@ struct ClipEditorView: View {
                 .foregroundStyle(.clear)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("clip-editor-title")
-            HStack {
-                backButton
-                Spacer()
+            if verticalBar == nil {
+                HStack {
+                    backButton
+                    Spacer()
+                }
             }
         }
     }

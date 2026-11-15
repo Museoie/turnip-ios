@@ -32,7 +32,7 @@ struct ScrimIconButton: View {
 
     var body: some View {
         Button(action: action) {
-            glyph
+            ScrimIconGlyph(systemImage: systemImage, diameter: diameter, font: font, style: style)
                 // Touch-target floor (docs/ACCESSIBILITY.md's 44x44 pt minimum), applied
                 // on the label so it's part of the Button's own hit-testing region. A
                 // no-op at the 44 pt default;
@@ -44,9 +44,17 @@ struct ScrimIconButton: View {
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)
     }
+}
 
-    @ViewBuilder
-    private var glyph: some View {
+/// `ScrimIconButton`'s drawn circle on its own, for a control whose label has to be a bare glyph
+/// rather than a nested `Button`: a `Menu`'s, which a nested `Button` would fight for the tap.
+struct ScrimIconGlyph: View {
+    let systemImage: String
+    var diameter: CGFloat = 44
+    var font: Font = .body.weight(.semibold)
+    var style: ScrimIconButton.Style = .glass
+
+    var body: some View {
         let image = Image(systemName: systemImage)
             .font(font)
             .foregroundStyle(.white)

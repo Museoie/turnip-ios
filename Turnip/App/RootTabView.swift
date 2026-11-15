@@ -63,6 +63,9 @@ private struct FloatingTabBarClearance: ViewModifier {
 /// tab bar and Home's filter and settings controls move into that column (`VerticalBar`). A page
 /// `TabView` laid across a side inset scrolls each page to its center *inside* the inset — half
 /// the vertical bar's width short of the page — which opened the app stuck partway into a swipe.
+/// Every screen past the root lays its top controls down the column too: the camera and Home's
+/// destinations over their own full-window frames, and the Profile's pushed screens, which keep
+/// to the pager beside it, through `profileScreenControls`.
 ///
 /// Owns the one `VideoLibraryViewModel` shared by the camera and Home, since a finished camera
 /// recording needs to hand its asset to the same gallery/navigation state a tapped tile would
@@ -77,6 +80,10 @@ struct RootTabView: View {
     /// draws, and observing it here would re-run this whole body, pages included, at that rate.
     /// The screen starts the session as it appears, and this view stops it as the camera closes.
     @State private var camera = CameraCaptureViewModel()
+    /// Where a screen the Profile pushed hands its top controls on iPhone Duo, for the vertical
+    /// bar's column here (`VerticalBarSlot`). Held, not observed, like `camera`: only the column
+    /// draws them (`ProfileScreenColumn`).
+    @State private var profileScreenControls = VerticalBarSlot()
     @State private var selectedTab: MainTab
     @State private var profilePath: [ProfileRoute] = []
     @State private var showsCamera = false
@@ -102,8 +109,9 @@ struct RootTabView: View {
             let insets = proxy.safeAreaInsets
             let verticalBar = VerticalBar(safeAreaInsets: insets)
             ZStack(alignment: verticalBar?.edge == .leading ? .topLeading : .topTrailing) {
-                pager
+                pager(verticalBar: verticalBar)
                     .environment(\.rootControlsInVerticalBar, verticalBar != nil)
+                    .environment(\.verticalBar, verticalBar)
                     // Inside the side insets, so the pager's paging scroll view has none to center
                     // its pages in: on iPhone Duo the vertical bar's 84 pt would otherwise leave
                     // every page 42 pt short of where a swipe settles. No side insets on any other
@@ -120,6 +128,10 @@ struct RootTabView: View {
                     .frame(width: verticalBar.width)
                     .frame(maxHeight: .infinity)
                     .transition(.opacity)
+                } else if let verticalBar, !profilePath.isEmpty {
+                    // The pushed screen's own top controls, which it can't reach from the page.
+                    ProfileScreenColumn(slot: profileScreenControls, bar: verticalBar)
+                        .transition(.opacity)
                 }
             }
             .background(Color.black)
@@ -148,6 +160,7 @@ struct RootTabView: View {
             .overlay {
                 if showsCamera {
                     CameraCaptureView(viewModel: camera, onFinished: handleRecorded, onCancel: closeCamera)
+                        .environment(\.verticalBar, verticalBar)
                         // The whole window's height, not this overlay's: the camera's black
                         // reaches under the status bar and the home indicator, and a move by the
                         // safe area's height alone would leave that strip showing.
@@ -172,9 +185,12 @@ struct RootTabView: View {
         .errorAlert("Couldn't Save Recording", message: $recordingSaveError)
     }
 
-    private var pager: some View {
+    /// The pages. Only the Profile's pushed screens hand their controls to the column here: Home's
+    /// destinations cover the window and lay their own down it.
+    private func pager(verticalBar: VerticalBar?) -> some View {
         TabView(selection: $selectedTab) {
             ProfileView(library: .shared, vocabulary: .shared, path: $profilePath)
+                .environment(\.verticalBarSlot, verticalBar == nil ? nil : profileScreenControls)
                 .background(PageSwipeLock(swipeEnabled: swipeEnabled))
                 .tag(MainTab.profile)
             HomeView(
@@ -277,6 +293,19 @@ private struct VerticalBarControls: View {
         .padding(.top, VerticalBar.controlsTop)
         .padding(.bottom, max(bottomInset, Self.minimumBottomPadding))
         .animation(.easeInOut(duration: 0.2), value: selectedTab)
+    }
+}
+
+/// The top controls of the screen the Profile pushed, down the vertical bar's column on iPhone Duo:
+/// whatever the screen last handed `slot` (`verticalBarSlotControls`).
+private struct ProfileScreenColumn: View {
+    @ObservedObject var slot: VerticalBarSlot
+    let bar: VerticalBar
+
+    var body: some View {
+        if let controls = slot.controls {
+            VerticalBarColumn(bar: bar) { controls }
+        }
     }
 }
 
