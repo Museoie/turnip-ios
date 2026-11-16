@@ -51,7 +51,7 @@ sequences, never from video.
   there as revoked, a just-issued one included.
 - **`video_id`** (§1.1) for Photos-backed videos, `VideoIdentity`.
 - **Settings' Contribute named clips switch** and **the confirmation
-  sheet** (§3.3), which opens once Name Clips' save finishes until the
+  sheet** (§3.3), which opens once a save, Clip List's or Name Clips', finishes until the
   account has agreed, with the clips and their names, the someone-else
   flag, the disclosure, and the pose-quality gate of §2.3 (warn over 30%
   gaps, refuse over 60%). After that a save goes straight to the outbox.
@@ -259,9 +259,9 @@ The flow rides the existing screens from `UIUX.md`:
   contributed is Settings' Contribute named clips switch (§3.3). It took
   over Clip List's triage on 2026-10-27; since 2026-11-16 an analysis
   lands on Clip List again (`UIUX.md` §3), a grid whose tiles open Name
-  Clips. The grid adds no save of its own; saving stays on Name Clips'
-  last clip, and `UIUX.md` decision 13 records what that leaves open
-  for pre-filled names on clips the user skipped.
+  Clips, and whose own "Save Clips" saves the same way. Either save
+  contributes pre-filled names on clips the user never opened, as names
+  kept (`UIUX.md` decision 13 records that ruling).
 - **Clip Detail / Editor (§4)** — window trimming via the scrub-bar
   handles and crop editing are unchanged.
 - **The Profile's Clip view** (`PROFILE_DESIGN.md` §5.2) — a saved
@@ -289,7 +289,7 @@ frames are part of the session pose.
 - Name Clips has no toggle of its own: Settings' Contribution section
   leads with one **Contribute named clips** switch (`UIUX.md` §1a,
   default off) that decides for every clip at once. With it on, the
-  clips a Name Clips save writes that have a name and are marked as the
+  clips a save — Clip List's or Name Clips' — writes that have a name and are marked as the
   user (`PROFILE_DESIGN.md` §4.3), on a video with pose analysis, are
   contributed. A clip marked as someone else never leaves the device,
   and a save with only such clips asks nothing. The switch is hidden on

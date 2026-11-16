@@ -140,6 +140,30 @@ final class PoseFrameStoreTests: XCTestCase {
             FileManager.default.fileExists(atPath: url.path), "an abandoned recording leaves nothing behind")
     }
 
+    /// The pose archive copies a store's file out and reads it back into a store of its own: the
+    /// copy holds every frame, and the store over it deletes only its own copy.
+    func testCopyFileAndCopyingRoundTripTheFrames() throws {
+        let frames = (0..<4).map { MultiPoseFrame(single: PoseFixture.body(index: $0, hip: (x: 0.5, y: 0.5))) }
+        let original = try PoseFrameStore(frames: frames)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("turnip-pose-copy-\(UUID().uuidString).tpos")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try original.copyFile(to: url)
+
+        let copy = try PoseFrameStore(copying: url)
+        XCTAssertEqual(copy.count, 4)
+        XCTAssertEqual(try copy.loadAll().map(\.timestamp), frames.map(\.timestamp))
+        copy.discard()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), "discarding the copy took the source with it")
+    }
+
+    func testAStoreWithNothingInItHasNoFileToCopy() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("turnip-pose-copy-\(UUID().uuidString).tpos")
+        XCTAssertThrowsError(try PoseFrameStore().copyFile(to: url))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
     func testConvenienceInitWritesFrames() throws {
         let frames = (0..<3).map { index in
             MultiPoseFrame(single: PoseFixture.body(index: index, hip: (x: 0.5, y: 0.5)))

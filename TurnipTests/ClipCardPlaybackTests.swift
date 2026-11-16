@@ -12,9 +12,17 @@ private final class FakeLoop: ClipLooping {
     var playCount = 0
     var pauseCount = 0
     var stopCount = 0
+    /// Run in place of a real loop's wait for its first frame (`AVPlayerLoop.cue`).
+    let whileCueing: (@MainActor () -> Void)?
 
-    init(geometry: ClipCardPlaybackGeometry) {
+    init(geometry: ClipCardPlaybackGeometry, whileCueing: (@MainActor () -> Void)? = nil) {
         self.geometry = geometry
+        self.whileCueing = whileCueing
+    }
+
+    @MainActor
+    func cue() async {
+        whileCueing?()
     }
 
     func play() {
@@ -42,6 +50,8 @@ private final class LoopRecorder {
     var isVideoAutoplayEnabled = true
     var isReduceMotionEnabled = false
     var duration: TimeInterval?
+    /// Handed to every loop made, to run while the build waits for it to be cued.
+    var whileCueing: (@MainActor () -> Void)?
     var loops: [FakeLoop] = []
     var compositionRequests: [CompositionRequest] = []
     var compositionWindows: [TrickWindow] = []
@@ -98,7 +108,7 @@ final class ClipCardPlaybackTests: XCTestCase {
             },
             loadDuration: { recorder.duration },
             makeLoop: { _, geometry, _ in
-                let loop = FakeLoop(geometry: geometry)
+                let loop = FakeLoop(geometry: geometry, whileCueing: recorder.whileCueing)
                 recorder.loops.append(loop)
                 return loop
             })
@@ -429,6 +439,23 @@ final class ClipCardPlaybackTests: XCTestCase {
         XCTAssertNil(playback.loop)
     }
 
+    /// The loop is cued on its first frame before the card is given it, and a tile scrolled off in
+    /// that wait is the same hazard: the build stops the loop it made and assigns none.
+    func testTeardownWhileTheLoopIsCuedStopsItAndAssignsNone() async {
+        let recorder = LoopRecorder()
+        let playback = makePlayback(recorder)
+        recorder.whileCueing = { [weak playback] in playback?.teardown() }
+
+        playback.start(geometry: geometry(), isSuspended: false)
+        let cancelled = playback.buildTask
+        await cancelled?.value
+
+        XCTAssertEqual(recorder.loops.count, 1)
+        XCTAssertEqual(recorder.loops[0].stopCount, 1)
+        XCTAssertEqual(recorder.loops[0].playCount, 0)
+        XCTAssertNil(playback.loop)
+    }
+
     /// The editor opening mid-load is the same hazard from the other direction:
     /// `setSuspended` can only pause a loop that already exists, so the load itself has to
     /// re-check before assigning one behind the cover. The tile then comes back on resume.
@@ -681,5 +708,23 @@ final class ClipCardPlaybackTests: XCTestCase {
         await settle(playback)
 
         XCTAssertEqual(recorder.loops[0].geometry.window, overshooting)
+    }
+
+    /// A real loop's first pass starts on the frame the card's poster shows, not on the window's
+    /// first: the card swaps its poster for the video once the loop has a frame, and a loop that
+    /// began elsewhere cut to another picture as a page pushed from its tile settled.
+    func testARealLoopStartsOnThePostersFrame() async throws {
+        let url = try await TestVideoWriter.writeTestVideo(frameCount: 60, width: 64, height: 48, fps: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let window = TrickWindow(startTime: 0.2, endTime: 1.4)
+        let loop = AVPlayerLoop(
+            asset: AVURLAsset(url: url), geometry: geometry(window: window), videoComposition: nil)
+        defer { loop.stop() }
+
+        await loop.cue()
+
+        let item = try XCTUnwrap(loop.player.currentItem, "the looper queued nothing")
+        XCTAssertEqual(item.status, .readyToPlay)
+        XCTAssertEqual(item.currentTime().seconds, ClipThumbnailLoader.posterTime(of: window), accuracy: 1.0 / 30)
     }
 }

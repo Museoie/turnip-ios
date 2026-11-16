@@ -83,7 +83,8 @@ final class ScreenshotTests: XCTestCase {
     /// decodes nothing, so the tiles show their placeholder. The wait is on a tile's own
     /// accessibility element, which proves the grid laid its tiles out, not just that the
     /// navigation bar appeared; its placeholder clause is there from the first render, so it says
-    /// nothing about the loader. The grid doesn't save: its bar offers "Name clips".
+    /// nothing about the loader. The first clip's names, shown as chips in its caption, are in its
+    /// label, and the bar saves.
     func testClipListTriage() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipList"]
@@ -95,20 +96,47 @@ final class ScreenshotTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(placeholder.waitForExistence(timeout: 15))
         XCTAssertTrue(app.clipTile(3).exists, "the grid doesn't hold a tile per clip")
-        XCTAssertTrue(app.buttons["clip-list-name-clips"].exists)
-        XCTAssertFalse(app.buttons["Save Clips"].exists, "the grid saves")
+        XCTAssertTrue(app.clipTile(1).label.contains("named cork and gainer"), app.clipTile(1).label)
+        let save = app.buttons["clip-list-save"]
+        XCTAssertTrue(save.exists)
+        XCTAssertEqual(save.label, "Save Clips")
         addScreenshot(named: "clip-list-triage")
     }
 
-    /// The grid's "Name clips" opens Name Clips on the first clip.
-    func testNameClipsButtonOpensTheFirstClip() throws {
+    /// "Select" marks tiles rather than opening them, the back chevron and Save Clips stand down,
+    /// and the bar deletes the marked clips together once the dialog confirms; the grid then leaves
+    /// selecting with the unmarked clip alone.
+    func testSelectDeletesTheMarkedClipsTogether() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["-screenshotClipListMedia"]
+        app.launchArguments = ["-screenshotClipList"]
         app.launch()
-        let nameClips = app.buttons["clip-list-name-clips"]
-        XCTAssertTrue(nameClips.waitForExistence(timeout: 15))
-        nameClips.tap()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.clipTile(3).waitForExistence(timeout: 15))
+        let select = app.buttons["clip-list-select"].firstMatch
+        XCTAssertTrue(select.waitForExistence(timeout: 5))
+        select.tap()
+        XCTAssertTrue(app.navigationBars["Select Clips"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["clip-list-save"].exists, "Save Clips stayed up while selecting")
+        XCTAssertFalse(app.buttons["Back to Home"].exists, "the back chevron stayed up while selecting")
+
+        app.clipTile(1).tap()
+        app.clipTile(3).tap()
+        XCTAssertTrue(app.navigationBars["2 Selected"].waitForExistence(timeout: 5), "a tile tap didn't mark it")
+        XCTAssertFalse(app.navigationBars["1 of 3"].exists, "a tile tap opened Name Clips while selecting")
+        addScreenshot(named: "clip-list-selecting")
+
+        let delete = app.buttons["clip-list-delete"].firstMatch
+        XCTAssertEqual(delete.label, "Delete 2 Clips")
+        delete.tap()
+        let confirm = app.buttons
+            .matching(NSPredicate(format: "label == 'Delete 2 Clips' AND identifier != 'clip-list-delete'"))
+            .firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), "deleting didn't ask first")
+        confirm.tap()
+
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 5), "the grid stayed selecting")
+        XCTAssertTrue(waitUntil { !app.clipTile(2).exists }, "the marked clips are still on the grid")
+        XCTAssertTrue(app.clipTile(1).label.hasPrefix("Clip 1 of 1"), app.clipTile(1).label)
     }
 
     /// Clip List over real media: the `/dev/null` asset in `testClipListTriage` never loads a

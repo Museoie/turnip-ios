@@ -36,6 +36,12 @@ final class ClipListAccessibilityTests: XCTestCase {
         XCTAssertEqual(ClipListAccessibility.namesLabel(["cork", "gainer"]), "named cork and gainer")
     }
 
+    /// The selection's delete button says how many clips go, in the count's own number.
+    func testDeleteClipsCountsTheMarkedClips() {
+        XCTAssertEqual(ClipListAccessibility.deleteClips(count: 1), "Delete 1 Clip")
+        XCTAssertEqual(ClipListAccessibility.deleteClips(count: 3), "Delete 3 Clips")
+    }
+
     func testDoneValueCountsWhatTheTapCommitsTo() {
         XCTAssertEqual(
             ClipListAccessibility.saveClipsValue(clipCount: 3),

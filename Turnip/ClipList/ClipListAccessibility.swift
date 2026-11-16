@@ -36,6 +36,11 @@ enum ClipListAccessibility {
         String(localized: "named \(ListFormatter.localizedString(byJoining: names))")
     }
 
+    /// The selection's delete button, and the button that confirms it: "Delete 3 Clips".
+    static func deleteClips(count: Int) -> String {
+        count == 1 ? String(localized: "Delete 1 Clip") : String(localized: "Delete \(count) Clips")
+    }
+
     /// What Save Clips is going to do, as its `accessibilityValue`. The button says only "Save
     /// Clips", so without this the count it commits to is visible only by counting tiles.
     static func saveClipsValue(clipCount: Int) -> String {

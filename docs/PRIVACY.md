@@ -49,9 +49,10 @@ store.
   MoveNet model, and exported clips are written back to Photos. While the
   in-app camera records, the same model scores the live camera frames
   on-device to draw the skeleton and detect clips; the frames are reduced to
-  model input in memory and released immediately, nothing but the recording
-  itself is written, and the only trace left behind is per-recording timing
-  and count figures in the device's own log. The in-app camera also reads
+  model input in memory and released immediately. Besides the recording
+  itself, what is written is the keypoints the model scored, which stay on
+  the device with the take's pose ("Kept pose analysis" below), and
+  per-recording timing and count figures in the device's own log. The in-app camera also reads
   the phone's gravity vector from Core Motion while it records and writes
   the resulting roll angle into the recording as a metadata track
   (`Turnip/Camera/RollTrackRecorder.swift`, format in
@@ -158,7 +159,7 @@ require a manifest/signature. If a dependency is added, check both.
   never accumulates files. `TurnipApp` sweeps orphans left by crashed sessions
   at launch. The prefix is what makes both the delete and the sweep recognize
   only our files.
-- **Clip exports.** Tapping "Save Clips" on Name Clips (`ClipListViewModel.save()`)
+- **Clip exports.** Tapping "Save Clips" on Clip List or Name Clips (`ClipListViewModel.save()`)
   stages every derived clip not yet in Photos in a fresh `tmp/turnip-export-<uuid>/`
   scratch directory, hands each one to Photos through `ClipPhotosSaver`
   (add-only), and deletes the whole directory once the run ends — success or
@@ -181,22 +182,46 @@ require a manifest/signature. If a dependency is added, check both.
   holds at most a 64 KB buffer in memory instead of the whole take. A partial
   that reaches Processing stays on disk in the eight-take store until it is
   evicted. It never leaves the device, is never backed up, and is deleted at
-  end of use or swept at the next launch.
+  end of use or swept at the next launch. Once the take is in Photos, a copy
+  of what live inference scored, all of the take or part, is kept with the
+  video's pose ("Kept pose analysis" below).
 - **Offline run scratch.** Processing a take from the file scores it the same
   way and streams the scored frames to a `tmp/` scratch file
   (`turnip-live-pose-<uuid>.bin`) instead of holding them in memory, so a long
   take holds at most a 64 KB buffer in memory while it is scored and detected.
   The file is deleted when the run ends — success, failure, or cancellation —
-  and swept at launch when a session died before that. It never leaves the
-  device, is never backed up, and holds only the packed keypoints, never video.
+  and swept at launch when a session died before that, after a copy of what it
+  scored is kept with the video's pose ("Kept pose analysis" below). It never
+  leaves the device, is never backed up, and holds only the packed keypoints,
+  never video.
 - **Everyone in frame.** The pose model finds up to six people per frame, so
   bystanders' keypoints are computed and held alongside the athlete's, in either person mode (`docs/MULTI_PERSON.md`). Following
   everyone, the poses of the people who own a clip travel with the clips to Clip List and Name Clips.
   None of it leaves the device: it rides the same session scratch file as the
-  athlete's frames and is gone with it; only the pose of someone with a saved
-  clip is kept on disk ("The clip library and the Profile" below).
+  athlete's frames, and every frame's people are kept with the video's pose
+  ("Kept pose analysis" below).
 - **Logs** go to `os.Logger` only; nothing is written to log files.
 - Nothing is written to `Documents/` anywhere in v1.
+
+## Kept pose analysis (built)
+
+- **What.** `VideoPoseArchive` keeps the pose keypoints of every video the app has
+  scored — Processing's analyses, in part when one is cancelled or fails, and the
+  camera's live pass of each take once it is in Photos — so analyzing a video again
+  reuses them (`docs/DESIGN.md` § "Pose archive"). Keypoints, boxes and scores for
+  everyone the model found in each sampled frame, bystanders included; never video,
+  frames or images.
+- **Where.** `Application Support/VideoPoses/`: per video, the packed frames
+  (`<sha256>.tpos`, the scratch files' format) and a small JSON of how to read them
+  (sample spacing, render size, the pose model) and of the file they were scored from
+  (its length, and a 64-bit average hash of an 8 × 8 grey thumbnail of each of three
+  frames — too coarse to show anything, enough to tell an edited file), both named by a
+  SHA-256 of the video's `PHAsset.localIdentifier`. Excluded from device backups
+  (`isExcludedFromBackup`), since it can always be scored again from the video.
+- **How long.** Until the app is deleted. Nothing in the app deletes an entry: a video
+  deleted from Photos leaves its entry behind, and one analyzed again replaces its own.
+- **Where it goes.** Nowhere: it is read only by the app's own analysis. A contribution
+  sends the pose of the clips it lists, as before ("Contribution" below), not this.
 
 ## Export compliance
 
@@ -275,7 +300,7 @@ Built (`Turnip/Profile/`):
   days at most (`BACKEND_DESIGN.md` §8), are its only record. The Profile
   reads the vocabulary already held and fetches nothing.
 - **The first persistent user data.** `ClipLibrary` keeps one JSON file,
-  `Application Support/ClipLibrary/library.json`, written by Name Clips' save
+  `Application Support/ClipLibrary/library.json`, written by a save — Clip List's or Name Clips' —
   and by naming on the Profile: for each video that produced a saved clip,
   its Photos identifiers (this device's and iCloud Photos', which finds the
   video again after a restore onto a new device), recording date and

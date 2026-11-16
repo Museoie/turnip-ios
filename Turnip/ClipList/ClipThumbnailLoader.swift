@@ -40,7 +40,12 @@ actor ClipThumbnailLoader {
             if Task.isCancelled { return nil }
             let naturalSize = try await track.load(.naturalSize)
             let preferredTransform = try await track.load(.preferredTransform)
-            let midpoint = (item.window.startTime + item.window.endTime) / 2
+            // The window as the card's loop plays it, clamped to the file the way
+            // `ClipCardPlayback` clamps it: a camera take's last window can run past the end.
+            let window = (try? await asset.load(.duration).seconds)
+                .flatMap { $0.isFinite && $0 > 0 ? ClipEditorViewModel.clamped(window: item.window, to: $0) : nil }
+                ?? item.window
+            let midpoint = Self.posterTime(of: window)
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = false
             // Exact seek: the default infinite tolerances let the generator return the
@@ -86,6 +91,13 @@ actor ClipThumbnailLoader {
         } catch {
             return nil
         }
+    }
+
+    /// The asset time a clip's poster shows: the midpoint of its window as clamped to the file. A
+    /// card's loop starts its first pass here too (`AVPlayerLoop`, over the same clamped window), so
+    /// the poster hands over to the video on the same frame.
+    static func posterTime(of window: TrickWindow) -> TimeInterval {
+        (window.startTime + window.endTime) / 2
     }
 
     /// How far from the window's midpoint a poster may come when the exact frame won't decode.

@@ -39,6 +39,19 @@ final class PoseBackfillTests: XCTestCase {
         assertTimes(PoseBackfill.wantedTimes(scored: scored, interval: interval, duration: 0.55), [0.3, 0.4, 0.5])
     }
 
+    /// A tail time past the file's last frame has no frame to sample, and asking for it every time
+    /// would keep a take scored whole from ever reading as whole. Real frames up to the last stay.
+    func testNothingIsAskedForPastTheFilesLastFrame() {
+        // 29.97 fps at 10 a second: the tail lands a hair short of the end.
+        let ntsc = 1 / 29.97
+        assertTimes(PoseBackfill.sampleable([3.3, 3.4, 3.5 - 0.0001], duration: 3.5, frameDuration: ntsc), [3.3, 3.4])
+        // 25 fps at 10 a second: it lands half a frame short, between the last frame's start and the end.
+        assertTimes(PoseBackfill.sampleable([3.38, 3.48], duration: 3.5, frameDuration: 0.04), [3.38])
+        // The last frame's own start is a frame, float noise and all.
+        assertTimes(PoseBackfill.sampleable([3.4000000000000004], duration: 3.5, frameDuration: 0.1), [3.4])
+        assertTimes(PoseBackfill.sampleable([3.4999], duration: 3.5, frameDuration: 0), [3.4999])
+    }
+
     func testTheHeadIsFilledBackwardFromTheFirstSample() {
         assertTimes(
             PoseBackfill.wantedTimes(scored: [0.35, 0.45], interval: interval, duration: 0.5), [0.05, 0.15, 0.25])

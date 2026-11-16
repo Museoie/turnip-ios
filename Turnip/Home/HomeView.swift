@@ -205,7 +205,8 @@ struct HomeView: View {
                     } else {
                         ProcessingView(
                             video: video,
-                            runner: ProcessingPipeline(sampleRate: settings.analysisGranularity),
+                            runner: ProcessingPipeline(
+                                sampleRate: settings.analysisGranularity, poseArchive: .shared),
                             autostart: false,
                             // The clip list it pushes pops sideways back to Home; this
                             // screen's own chevron still flies back into the tile.
