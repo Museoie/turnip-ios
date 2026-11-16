@@ -810,14 +810,18 @@ the EU, the EEA or the UK (`ContributionRegion`): Settings hides the
 Contribute named clips switch and sign-in there, and turns the switch
 off, which cancels what is waiting. An account already signed in can
 still sign out or be deleted. With no storefront to read, contribution
-isn't offered either (the maintainer's call), which includes builds
-without an App Store account such as the simulator. The farm's
+isn't offered either, which includes builds without an App Store
+account such as the simulator. The app fails closed because the farm
+does: it refuses a contribution with no `storefront_country` (`403
+REGION_UNAVAILABLE`, `details.reason = "storefront_missing"`), so
+offering it would only queue clips the farm turns away. Settings'
+footer then says contributing needs an App Store account rather than
+that it isn't available in the user's country. The farm's
 backstop (§8.1) refuses by the same storefront: the app sends
 `Storefront.current?.countryCode` (ISO 3166-1 alpha-3) as
 `storefront_country` with `POST /api/consent` and `POST /api/sources`
 (§5.1, §5.4), and leaves it out when there is no storefront. The farm
-checks it and doesn't store it. A farm from before that change ignores
-the field.
+checks it and doesn't store it.
 
 **Never leaves the device, even on opt-in** — the Profile: whether a
 clip shows the user, favorites, spots, achievements and progress

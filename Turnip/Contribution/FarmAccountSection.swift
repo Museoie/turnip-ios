@@ -10,7 +10,7 @@ struct FarmAccountSection: View {
     @ObservedObject var account: FarmAccount
     @ObservedObject var outbox: ContributionOutbox
     @Binding var contributesClips: Bool
-    let isContributingOffered: Bool
+    let availability: ContributionRegion.Availability
     @State private var isConfirmingDeletion = false
     @State private var failureMessage: String?
 
@@ -52,7 +52,7 @@ struct FarmAccountSection: View {
                     \(ContributionDisclosure.accountFooter)
                     """)
             } else {
-                Text(ContributionDisclosure.unavailableHere)
+                Text(ContributionDisclosure.unavailable(availability))
                     .accessibilityIdentifier("settings-contribution-unavailable")
             }
         }
@@ -78,6 +78,8 @@ struct FarmAccountSection: View {
 
     /// The one way to delete the account, which deletes every contribution with it.
     static let deletionTitle = String(localized: "Delete My Account")
+
+    private var isContributingOffered: Bool { availability == .available }
 
     /// Background uploads say nothing on their own, so this is where a queue stuck behind an
     /// expired session gets noticed.
@@ -154,6 +156,14 @@ enum ContributionDisclosure {
     static let unavailableHere = String(localized: """
         Contributing clips isn't available in your country or region.
         """)
+    static let needsAppStoreAccount = String(localized: """
+        Contributing clips needs an App Store account signed in on this iPhone.
+        """)
+
+    /// Why contributing isn't offered, for Settings' footer.
+    static func unavailable(_ availability: ContributionRegion.Availability) -> String {
+        availability == .needsAppStoreAccount ? needsAppStoreAccount : unavailableHere
+    }
     static let agreeToFinish = String(localized: """
         Your next save asks you to agree to the contribution terms, then they send.
         """)

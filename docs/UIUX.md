@@ -481,7 +481,8 @@ default empty state, so it never reads as "your library is empty."
   ([`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md) §5.4). The account is not a preference, and nothing outside contribution reads it. On an App
   Store storefront in the EU, the EEA or the UK, or when there is no storefront to read, the
   switch and Sign in with Apple are hidden, the
-  footer says contributing isn't available there, and a signed-in account keeps Sign Out and
+  footer says contributing isn't available there (with no storefront, that it needs an App
+  Store account), and a signed-in account keeps Sign Out and
   Delete My Account (`CONTRIBUTION_DESIGN.md` §8).
 - Further settings beyond these five are out of scope for this doc's current revision.
 
