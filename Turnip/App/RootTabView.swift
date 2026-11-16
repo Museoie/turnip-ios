@@ -236,16 +236,21 @@ struct RootTabView: View {
             do {
                 let identifier = try await ClipPhotosSaver().saveVideo(at: recording.fileURL)
                 // What the camera scored live is the take's pose from now on, so analyzing it again,
-                // today or later, reuses it (`VideoPoseArchive`). Fingerprinted off the recording,
-                // the same bytes Photos now holds, before the recording goes; copied off the main
-                // thread.
-                if let livePose = recording.livePose,
-                   let fingerprint = await VideoPoseArchive.Fingerprint.of(AVURLAsset(url: recording.fileURL)) {
+                // today or later, reuses it (`VideoPoseArchive`): fingerprinted off the recording, the
+                // same bytes Photos now holds, which goes once that is done. Off the way to the clip
+                // list, so the take lands as soon as it is saved; the launch sweep takes a recording
+                // a session left behind.
+                let fileURL = recording.fileURL
+                if let livePose = recording.livePose {
                     Task.detached(priority: .utility) {
-                        VideoPoseArchive.shared.keep(livePose, for: identifier, fingerprint: fingerprint)
+                        if let fingerprint = await VideoPoseArchive.Fingerprint.of(AVURLAsset(url: fileURL)) {
+                            VideoPoseArchive.shared.keep(livePose, for: identifier, fingerprint: fingerprint)
+                        }
+                        try? FileManager.default.removeItem(at: fileURL)
                     }
+                } else {
+                    try? FileManager.default.removeItem(at: fileURL)
                 }
-                try? FileManager.default.removeItem(at: recording.fileURL)
                 guard let asset = PHAsset.fetchAssets(
                     withLocalIdentifiers: [identifier], options: nil
                 ).firstObject else { return }

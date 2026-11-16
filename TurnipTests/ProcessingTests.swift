@@ -551,6 +551,23 @@ final class ProcessingPipelineRunTests: XCTestCase {
         XCTAssertEqual(fixture.kept?.store.count, fixture.fixtures.count)
     }
 
+    /// A granularity finer than the file's own frames has nothing to add between them: a video
+    /// kept frame by frame is read back, not asked for the same frames again.
+    func testAGranularityFinerThanTheFileAsksForNothing() async throws {
+        let fixture = try await archiveFixture()
+        let whole = try PartialPoseFrames(
+            frames: fixture.fixtures.map(MultiPoseFrame.init(single:)), interval: 0.1,
+            renderedPixelSize: CGSize(width: 48, height: 64))
+        fixture.archive.keep(whole, for: fixture.video.assetIdentifier, fingerprint: fixture.fingerprint)
+
+        _ = try await ProcessingPipeline(
+            sampler: fixture.sampler, sampleRate: 30, makeInference: { throw TestError.boom },
+            poseArchive: fixture.archive
+        ).run(video: fixture.video) { _ in }
+
+        XCTAssertTrue(fixture.sampler.requests.all.isEmpty, "the file's own frames were asked for again")
+    }
+
     /// A take the camera covered in part carries its live frames on the video for the whole
     /// session; once the archive holds the whole take, a run reads that instead and scores nothing.
     func testTheKeptPoseWinsOverTheCamerasFramesOnTheVideo() async throws {

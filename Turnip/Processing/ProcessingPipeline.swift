@@ -305,7 +305,8 @@ struct ProcessingPipeline: Sendable {
     /// `PoseBackfill` plans for the stretches those frames miss, and detects over the two merged.
     /// The spacing is the frames' own, or the current granularity's when that is finer, so a
     /// video analyzed again at a higher granularity has the stretches between its kept frames
-    /// filled in. Frames past the end of the file are dropped first: the camera keeps scoring
+    /// filled in — but never finer than the file's own frames, which would ask again for frames
+    /// already kept. Frames past the end of the file are dropped first: the camera keeps scoring
     /// between Stop and its own hand-off. Progress counts the frames in hand as already processed,
     /// so the bar starts where they left off. The merged take is kept in the archive — also when
     /// the run is cancelled or fails partway — unless it is the archive's own entry with nothing
@@ -316,7 +317,8 @@ struct ProcessingPipeline: Sendable {
     ) async throws -> ProcessingResult {
         let asset = analyzed.video.asset
         let duration = analyzed.duration
-        let interval = min(partial.interval, 1 / Double(sampleRate))
+        let frameDuration = await Self.frameDuration(of: asset)
+        let interval = max(min(partial.interval, 1 / Double(sampleRate)), frameDuration)
         // An unreadable store (the system may purge `tmp/` while the app is suspended) reads as
         // no live frames: the whole file is sampled instead of failing the run. Only the
         // timestamps are collected — the live frames themselves stream from the store at
@@ -397,6 +399,14 @@ struct ProcessingPipeline: Sendable {
             return
         }
         keep(merged, of: analyzed, interval: interval, renderedPixelSize: renderedPixelSize)
+    }
+
+    /// The file's own frame spacing, from the track's declared rate; 0 when it declares none.
+    private static func frameDuration(of asset: AVURLAsset) async -> TimeInterval {
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let frameRate = try? await track.load(.nominalFrameRate), frameRate > 0
+        else { return 0 }
+        return 1 / Double(frameRate)
     }
 
     /// The spacing a whole-file run samples at: the sampler's stride over the track's frame rate,
