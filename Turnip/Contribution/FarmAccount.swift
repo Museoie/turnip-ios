@@ -91,25 +91,28 @@ final class FarmAccount: ObservableObject {
     /// source the farm no longer has under its key answers `404` and only loses its key; any other
     /// failure stops before the account goes, so a retry finds every source still deletable.
     /// The farm then deletes every other source linked to the account, such as ones whose keys an
-    /// earlier install held.
+    /// earlier install held, which only the account call can reach. So a `401` is never success:
+    /// the dead session is dropped and `AccountDeletionError.signInExpired` says the account is
+    /// still there, with the keys of every source not yet deleted kept for the retry.
     func deleteAccount() async throws {
         guard let client, let session = credentials.sessionToken else { return }
         credentials.withdrawConsent()
         isWorking = true
         defer { isWorking = false }
-        for videoID in credentials.contributedVideoIDs {
-            guard let key = credentials.sourceKey(for: videoID) else { continue }
-            do {
-                try await client.deleteSource(id: videoID, key: key, session: session)
-            } catch FarmError.rejected(code: "NOT_FOUND", _) {
-                // Already gone, or never registered under this key: nothing left to delete.
-            }
-            credentials.removeSourceKey(for: videoID)
-        }
         do {
+            for videoID in credentials.contributedVideoIDs {
+                guard let key = credentials.sourceKey(for: videoID) else { continue }
+                do {
+                    try await client.deleteSource(id: videoID, key: key, session: session)
+                } catch FarmError.rejected(code: "NOT_FOUND", _) {
+                    // Already gone, or never registered under this key: nothing left to delete.
+                }
+                credentials.removeSourceKey(for: videoID)
+            }
             try await client.deleteAccount(session: session)
         } catch FarmError.unauthenticated {
-            // The session was already gone; the sources above were what this app could reach.
+            sessionEnded()
+            throw AccountDeletionError.signInExpired
         }
         sessionEnded()
     }
@@ -131,6 +134,21 @@ final class FarmAccount: ObservableObject {
             await signOut()
         }
         #endif
+    }
+}
+
+/// Why Delete My Account stopped with the account still on the farm.
+enum AccountDeletionError: LocalizedError, Equatable {
+    case signInExpired
+
+    var errorDescription: String? {
+        switch self {
+        case .signInExpired:
+            return String(localized: """
+                Your account wasn't deleted because your sign-in expired. Sign in again, then delete \
+                your account.
+                """)
+        }
     }
 }
 

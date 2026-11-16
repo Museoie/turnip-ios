@@ -402,6 +402,50 @@ final class FarmClientTests: XCTestCase {
         XCTAssertFalse(credentials.hasConsented)
     }
 
+    /// With no key held here, the account call is the only one that reaches the contributions, so
+    /// its `401` must not read as a finished deletion.
+    @MainActor
+    func testAnExpiredSessionOnTheAccountCallIsNotADeletion() async {
+        let farm = ScriptedFarm([.init(status: 401, body: "")])
+        let credentials = FarmCredentials(store: MemorySecrets())
+        credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
+        let account = FarmAccount(client: farm.client, credentials: credentials)
+
+        do {
+            try await account.deleteAccount()
+            XCTFail("a 401 on DELETE /api/account reported success")
+        } catch {
+            XCTAssertEqual(error as? AccountDeletionError, .signInExpired)
+        }
+
+        XCTAssertEqual(farm.calls, ["DELETE /api/account"])
+        XCTAssertFalse(account.isSignedIn, "the dead session is kept, so a retry can only 401 again")
+        XCTAssertNil(credentials.sessionToken)
+    }
+
+    /// A `401` on a source stops before the account call, keeps that source's key for the retry,
+    /// and ends the session the same way the account call's `401` does.
+    @MainActor
+    func testAnExpiredSessionOnASourceStopsTheDeletion() async {
+        let farm = ScriptedFarm([.init(status: 401, body: "")])
+        let credentials = FarmCredentials(store: MemorySecrets())
+        credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
+        let key = credentials.sourceKeyMintingIfNeeded(for: Self.videoID)
+        let account = FarmAccount(client: farm.client, credentials: credentials)
+
+        do {
+            try await account.deleteAccount()
+            XCTFail("a 401 on DELETE /api/sources reported success")
+        } catch {
+            XCTAssertEqual(error as? AccountDeletionError, .signInExpired)
+        }
+
+        XCTAssertEqual(farm.calls, ["DELETE /api/sources/\(Self.videoID)"])
+        XCTAssertEqual(credentials.sourceKey(for: Self.videoID), key)
+        XCTAssertFalse(account.isSignedIn)
+        XCTAssertNil(credentials.sessionToken)
+    }
+
     func testGivesUpWaitingForIngestWithBlobMissing() async {
         let farm = ScriptedFarm([
             registration(blobPresent: false), .init(status: 200, body: ""),

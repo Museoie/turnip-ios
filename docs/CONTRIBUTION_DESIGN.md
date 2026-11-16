@@ -591,6 +591,11 @@ record of whose a contribution is.
   - The farm deletes everything whatever `contributions` says, and
     ignores the value; the app still sends `delete` so a farm from
     before that change does the same.
+  - A `401` from any of these calls is never a finished deletion: the
+    account call is the only one that reaches sources this app holds no
+    key for. The app drops the dead session, keeps the keys of sources
+    not yet deleted, and says the account wasn't deleted and to sign in
+    again and retry.
 
 ---
 
