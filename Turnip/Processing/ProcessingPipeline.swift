@@ -324,7 +324,9 @@ struct ProcessingPipeline: Sendable {
         // timestamps are collected — the live frames themselves stream from the store at
         // detection, so the live take never sits in memory as an array.
         let liveTimes = partial.store.frames().map(\.timestamp).filter { $0 < duration }
-        let wanted = PoseBackfill.wantedTimes(scored: liveTimes, interval: interval, duration: duration)
+        let wanted = PoseBackfill.sampleable(
+            PoseBackfill.wantedTimes(scored: liveTimes, interval: interval, duration: duration),
+            duration: duration, frameDuration: frameDuration)
 
         // The gaps are sampled into a fresh store, and detection streams the live and
         // backfilled stores merged by timestamp — neither take sits in memory as an array.

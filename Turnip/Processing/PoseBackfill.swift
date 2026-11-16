@@ -78,6 +78,17 @@ enum PoseBackfill {
         return wanted
     }
 
+    /// `wanted` less the times past the file's last frame, for which a sampler that hands over the
+    /// first frame at or after each time has nothing: a tail filled at a spacing a hair off the
+    /// file's own (29.97 fps sampled at 10 a second) lands one there, and a take scored whole would
+    /// never read as whole. A `frameDuration` of 0, unknown, drops nothing.
+    static func sampleable(
+        _ wanted: [TimeInterval], duration: TimeInterval, frameDuration: TimeInterval
+    ) -> [TimeInterval] {
+        guard frameDuration > 0 else { return wanted }
+        return wanted.filter { $0 < duration - frameDuration / 2 }
+    }
+
     /// `live` and `backfilled` as one timestamp-ordered take. A file frame lands at or after the
     /// time it was wanted for, so it can drift up against the live sample after its gap; one
     /// closer than half an interval to any live sample is dropped, because the motion signal
