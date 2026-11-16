@@ -251,15 +251,16 @@ training. When pose quality is poor:
 
 The flow rides the existing screens from `UIUX.md`:
 
-- **Processing (§2)** — analysis runs as today; proposals land on Name
-  Clips.
+- **Processing (§2)** — analysis runs as today; proposals land on Clip
+  List, whose tiles open them on Name Clips.
 - **Name Clips** (`UIUX.md` §3a, `PROFILE_DESIGN.md` §4) — one clip at a
   time, where clips are triaged (open in the editor, discard, add), named,
   contributed or not, and saved. Whether its saved, named clips are
   contributed is Settings' Contribute named clips switch (§3.3). It took
   over Clip List's triage on 2026-10-27; since 2026-11-16 an analysis
   lands on Clip List again (`UIUX.md` §3), a grid whose tiles open Name
-  Clips and whose own "Save Clips" saves the same way.
+  Clips. The grid doesn't save, so every pre-filled name has been on
+  screen as a chip before a save can contribute it.
 - **Clip Detail / Editor (§4)** — window trimming via the scrub-bar
   handles and crop editing are unchanged.
 - **The Profile's Clip view** (`PROFILE_DESIGN.md` §5.2) — a saved

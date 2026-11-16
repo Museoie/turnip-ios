@@ -7,12 +7,15 @@ import SwiftUI
 /// where it sits in the video, over a caption with its length and the names it has been given.
 ///
 /// Tapping a tile pushes Name Clips (`NameClipsView`) on that clip, which pages through the rest
-/// from there. Both screens work on this screen's `ClipListViewModel`, so a name, an edit, a clip
-/// added or removed there is on the grid on the way back.
+/// from there; the bottom bar's "Name clips" pushes it on the first clip. Both screens work on this
+/// screen's `ClipListViewModel`, so a name, an edit, a clip added or removed there is on the grid on
+/// the way back.
 ///
-/// The header's "+" adds a clip and "Save Clips" saves them all. With no clip, the screen offers
-/// "Analyze clips" (`analyze`) and "Clip manually". The back chevron pops to Home. This view
-/// declares no `NavigationStack` of its own.
+/// The grid doesn't save: "Save Clips" stays on Name Clips' last clip, so every clip has been on
+/// screen as a page, with the names the trick model filled in as chips that can be removed, before
+/// it is saved. The header's "+" adds a clip. With no clip, the screen offers "Analyze clips"
+/// (`analyze`) and "Clip manually". The back chevron pops to Home. This view declares no
+/// `NavigationStack` of its own.
 struct ClipListView: View {
     @StateObject private var viewModel: ClipListViewModel
     private let vocabulary: VocabularyStore
@@ -31,8 +34,6 @@ struct ClipListView: View {
     @State private var namingStart = 0
     /// The clip "+" or "Clip manually" just added, which the grid scrolls to.
     @State private var addedClipID: UUID?
-    @State private var contribution: ContributionPlan?
-    @State private var isShowingContribution = false
     /// iPhone Duo's vertical bar, which the bar's items go down instead.
     @Environment(\.verticalBar) private var verticalBar
 
@@ -73,7 +74,6 @@ struct ClipListView: View {
                 grid
             }
         }
-        .disabled(viewModel.isSaving)
         .navigationTitle("Clips")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -86,12 +86,6 @@ struct ClipListView: View {
                 .accessibilityIdentifier("add-clip")
         }
         .safeAreaInset(edge: .bottom) { actionBar }
-        .overlay { if viewModel.isSaving { SavingOverlay() } }
-        // Name Clips, pushed over the grid, puts up the failure of a save it started itself.
-        .errorAlert(
-            "Couldn't save clips",
-            message: isNaming ? Binding<String?>.constant(nil) : $viewModel.saveFailureMessage)
-        .sheet(isPresented: $isShowingContribution, onDismiss: popToRoot) { contributionSheet }
         .navigationDestination(isPresented: $isNaming) {
             NameClipsView(
                 viewModel: viewModel, startIndex: namingStart, vocabulary: vocabulary, account: account,
@@ -138,8 +132,8 @@ struct ClipListView: View {
         VStack(alignment: .leading, spacing: 6) {
             ClipCard(
                 item: item, side: side, placement: .tile, viewModel: viewModel,
-                // Paused, not playing, under Name Clips, a save and the contribution sheet.
-                isPlaying: !isNaming && !viewModel.isSaving && !isShowingContribution,
+                // Paused, not playing, while Name Clips covers the grid.
+                isPlaying: !isNaming,
                 onOpen: { _, _, _ in openNaming(on: item) })
             // The card's own label already reads the length and the names.
             Text(caption(for: item))
@@ -160,6 +154,10 @@ struct ClipListView: View {
 
     private func openNaming(on item: ClipListItem) {
         guard let start = clips.firstIndex(where: { $0.id == item.id }) else { return }
+        openNaming(at: start)
+    }
+
+    private func openNaming(at start: Int) {
         namingStart = start
         isNaming = true
     }
@@ -192,7 +190,6 @@ struct ClipListView: View {
 
     private var backButton: some View {
         ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home", action: popToRoot)
-            .disabled(viewModel.isSaving)
             .accessibilityIdentifier("clip-list-back")
     }
 
@@ -215,10 +212,8 @@ struct ClipListView: View {
                     .accessibilityIdentifier("clip-list-clip-manually")
             }
         } else {
-            PrimaryActionBar("Save Clips", isEnabled: !viewModel.isSaving, action: save)
-                // What the tap commits to, read after the label: how many clips it writes.
-                .accessibilityValue(ClipListAccessibility.saveClipsValue(clipCount: viewModel.unsavedClipCount))
-                .accessibilityIdentifier("clip-list-save")
+            PrimaryActionBar("Name clips") { openNaming(at: 0) }
+                .accessibilityIdentifier("clip-list-name-clips")
         }
     }
 
@@ -241,35 +236,6 @@ struct ClipListView: View {
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { if showsNoTricksFound { viewModel.announceNoTricksFound() } }
-    }
-
-    // MARK: - Save
-
-    /// The save, then back to Home, by way of the contribution sheet when it asks first
-    /// (`ClipListViewModel.saveClips`).
-    private func save() {
-        Task {
-            switch await viewModel.saveClips(account: account, outbox: outbox) {
-            case .failed:
-                break
-            case .finished:
-                popToRoot()
-            case .asksToContribute(let plan):
-                contribution = plan
-                isShowingContribution = true
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var contributionSheet: some View {
-        if let contribution {
-            ContributionSheet(
-                plan: contribution,
-                account: account,
-                thumbnail: { await viewModel.thumbnail(for: $0) },
-                confirm: { source in Task { await outbox.confirm(source) } })
-        }
     }
 }
 

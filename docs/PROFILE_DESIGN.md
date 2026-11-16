@@ -165,7 +165,7 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
 
 ### 2.3 When it is written
 
-- **Saving writes it** — Clip List's or Name Clips' "Save Clips" (UIUX §3, §3a). Each saved derived clip
+- **Saving writes it** — Name Clips' "Save Clips" (UIUX §3a). Each saved derived clip
   gets a clip record with its `export_asset_id` and whatever names it
   was given; its source gets a source record and its pose. Trashed clips
   are not stored. The one exception is on-device personalization: a
@@ -353,8 +353,7 @@ it, UIUX §3.)*
   chips are removable; a combo is N chips on one clip (no
   sub-segmentation, matching the model's `trick_names`). "Previous"
   and "Next" step through the clips, and "Save Clips", on the last
-  clip, saves them all; Clip List's own "Save Clips" does too, which
-  is how a user saves without naming.
+  clip, saves them all, which is how a user saves without naming.
 - The same screen names clips saved without names, opened from the
   Profile's "Needs a name" (§5.1), ending in "Done" instead of a save.
   A trash button across from its back chevron removes the clip on screen

@@ -775,11 +775,11 @@ enum SaveClipsOutcome {
 }
 
 extension ClipListViewModel {
-    /// Clip List's and Name Clips' "Save Clips": the save, then whether the contribution sheet
-    /// comes before Home. When Settings' Contribute named clips is on, a saved clip of the user
-    /// has a name and the farm can take it, the sheet asks if this account hasn't agreed yet;
-    /// once it has, the clips go to the outbox and Home doesn't wait for their upload. A save
-    /// with only clips of someone else has nothing to send, so it asks nothing.
+    /// Name Clips' "Save Clips": the save, then whether the contribution sheet comes before
+    /// Home. When Settings' Contribute named clips is on, a saved clip of the user has a name and
+    /// the farm can take it, the sheet asks if this account hasn't agreed yet; once it has, the
+    /// clips go to the outbox and Home doesn't wait for their upload. A save with only clips of
+    /// someone else has nothing to send, so it asks nothing.
     func saveClips(account: FarmAccount, outbox: ContributionOutbox) async -> SaveClipsOutcome {
         guard await save() else { return .failed }
         let plan = contributionPlan()

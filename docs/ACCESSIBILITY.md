@@ -215,8 +215,8 @@ under "Clip List (UIUX §3)" below.
 
 ### Export Confirmation (#19) — retired
 
-- The screen is gone (UIUX decision 6): the save happens inline, now on Clip List and Name Clips.
-  Its one item moved there — see the save announcements under Name Clips.
+- The screen is gone (UIUX decision 6): the save happens inline, now on Name Clips. Its one item
+  moved there — see the save announcements under Name Clips.
 
 ### Clip List (UIUX §3)
 
@@ -231,14 +231,13 @@ Built:
   names. The caption under the tile, which shows the length and the names, is hidden from the
   tree, since the label carries both. `.isButton`, hinted "Opens the clip to name it"; its value
   is the timeline's words, and a tile whose frame hasn't decoded appends "thumbnail placeholder".
-- The header's controls are labeled "Back to Home" and "Add clip". "Save Clips" carries what it
-  commits to as its value ("Saves 3 clips to Photos"), and its save speaks Name Clips'
-  announcements: starting, finished, and each failure numbered by the clip it belongs to.
-- With no clip, the bar offers "Analyze clips" with "Clip manually" under it ("Clip manually"
-  alone on a camera take with no Processing screen under it).
+- The header's controls are labeled "Back to Home" and "Add clip". With clips, the bar's one
+  button is "Name clips", which opens Name Clips on the first clip; the grid has no save of its
+  own. With no clip, the bar offers "Analyze clips" with "Clip manually" under it ("Clip
+  manually" alone on a camera take with no Processing screen under it).
 - The tiles loop under the same gate as Name Clips' card: none under Reduce Motion or with video
   autoplay off, where each tile shows its poster.
-- Identifiers: `clip-grid`, `clip-list-back`, `add-clip`, `clip-tile-<n>`, `clip-list-save`,
+- Identifiers: `clip-grid`, `clip-list-back`, `add-clip`, `clip-tile-<n>`, `clip-list-name-clips`,
   `start-analysis` (the empty state's bar), `clip-list-clip-manually`, `no-tricks-notice`.
 
 ### Name Clips (UIUX §3a, `PROFILE_DESIGN.md` §4)
@@ -299,8 +298,8 @@ Built:
   label "Gainer, level 2", value the figures it prints in order ("7 of 10 sessions to level 3,
   10 reps, 14 of 50 reps, First 3 Oct 2026 · Last 12 Nov 2026"); a tile with a clip of the trick
   is a button that opens its clips.
-- An achievement is announced once, as it is earned: appended to Clip List's or Name Clips'
-  save announcement ("Saved 2 clips to Photos. Earned Gainer, level 1"), or spoken as the name that
+- An achievement is announced once, as it is earned: appended to Name Clips' save
+  announcement ("Saved 2 clips to Photos. Earned Gainer, level 1"), or spoken as the name that
   earns it is given on Needs a name or the Clip view.
 - Each gallery row is one element and a button: "Gainer, 3 clips". A trick's grid announces the
   same on entry, and each tile is one element: its names, length and date, then "someone else"

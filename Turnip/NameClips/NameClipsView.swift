@@ -104,6 +104,7 @@ struct NameClipsView: View {
         .verticalBarColumn(verticalBar) {
             backButton
             ScrimIconButton(systemImage: "plus", accessibilityLabel: "Add clip", action: addClip)
+                .disabled(viewModel.isSaving)
                 .accessibilityIdentifier("add-clip")
             if !clips.isEmpty {
                 menu(label: ScrimIconGlyph(systemImage: "ellipsis"))
@@ -325,10 +326,13 @@ struct NameClipsView: View {
         .accessibilityIdentifier("name-clips-back")
     }
 
+    /// Off during a save, like every header control: the bar sits outside the content the save
+    /// disables, and a clip added mid-save would be left out of it without a word.
     private var addButton: some View {
         Button(action: addClip) {
             Image(systemName: "plus")
         }
+        .disabled(viewModel.isSaving)
         .accessibilityLabel("Add clip")
         .accessibilityIdentifier("add-clip")
     }
@@ -347,6 +351,7 @@ struct NameClipsView: View {
         } label: {
             label
         }
+        .disabled(viewModel.isSaving)
         .accessibilityLabel("More")
         .accessibilityIdentifier("name-clips-more")
     }

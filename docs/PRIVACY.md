@@ -158,7 +158,7 @@ require a manifest/signature. If a dependency is added, check both.
   never accumulates files. `TurnipApp` sweeps orphans left by crashed sessions
   at launch. The prefix is what makes both the delete and the sweep recognize
   only our files.
-- **Clip exports.** Tapping "Save Clips" on Clip List or Name Clips (`ClipListViewModel.save()`)
+- **Clip exports.** Tapping "Save Clips" on Name Clips (`ClipListViewModel.save()`)
   stages every derived clip not yet in Photos in a fresh `tmp/turnip-export-<uuid>/`
   scratch directory, hands each one to Photos through `ClipPhotosSaver`
   (add-only), and deletes the whole directory once the run ends — success or
@@ -168,7 +168,7 @@ require a manifest/signature. If a dependency is added, check both.
   the sweep recognize only our directories.
 - **Thumbnails** are in-memory only — `PHCachingImageManager` for the
   Home grid (`ThumbnailLoader`) and `AVAssetImageGenerator` frames for
-  Name Clips' cards (`ClipThumbnailLoader`). There is no on-disk thumbnail
+  Clip List's tiles and Name Clips' cards (`ClipThumbnailLoader`). There is no on-disk thumbnail
   cache. If one ever lands, it belongs in `Caches/`, never `Documents/`,
   so iOS can evict it and it isn't backed up.
 - **Partial live pose.** When live inference covers a take only in part,

@@ -155,10 +155,13 @@ final class NameClipsTests: XCTestCase {
         FarmAccount(client: farm?.client, credentials: FarmCredentials(store: MemorySecrets()))
     }
 
-    private func makeOutbox(_ account: FarmAccount) -> ContributionOutbox {
+    /// An outbox over its own directory and settings, with Contribute named clips set to
+    /// `contributes`: off, it clears whatever is queued.
+    private func makeOutbox(_ account: FarmAccount, contributes: Bool = false) -> ContributionOutbox {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("turnip-name-clips-outbox-\(UUID().uuidString)", isDirectory: true)
         let settings = TurnipSettingsStore(defaults: UserDefaults(suiteName: "NameClipsTests-\(UUID().uuidString)")!)
+        settings.contributesClips = contributes
         return ContributionOutbox(
             account: account, settings: settings, store: ContributionOutboxStore(directory: directory),
             savedClip: { _ in nil }, vocabulary: { .seed })
@@ -188,6 +191,23 @@ final class NameClipsTests: XCTestCase {
         let model = viewModel([item(1, names: Self.cork)], poseFrames: Self.posed(from: 0, to: 10), contributes: true)
         let outcome = await saveOutcome(of: model, farm: ScriptedFarm([]))
         XCTAssertEqual(outcome, "asks")
+    }
+
+    /// Once the account has agreed, the save asks nothing: its named clips go to the outbox and the
+    /// screen goes straight to Home. No one is signed in, so nothing is sent from here.
+    func testSaveClipsQueuesTheClipsOnceTheAccountHasAgreed() async {
+        let model = viewModel([item(1, names: Self.cork)], poseFrames: Self.posed(from: 0, to: 10), contributes: true)
+        let credentials = FarmCredentials(store: MemorySecrets())
+        credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
+        credentials.agreeAndRecordOnFarm()
+        credentials.signedOut()
+        let account = FarmAccount(client: ScriptedFarm([]).client, credentials: credentials)
+        let outbox = makeOutbox(account, contributes: true)
+
+        let outcome = await model.saveClips(account: account, outbox: outbox)
+        guard case .finished = outcome else { return XCTFail("an account that agreed was asked again") }
+        XCTAssertEqual(outbox.waitingClipCount, 1, "the agreed save's clip never reached the outbox")
+        await outbox.cancelAll()
     }
 
     /// With nothing to send — Contribute named clips off, or no farm in this build — the save goes

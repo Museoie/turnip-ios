@@ -4,9 +4,10 @@
 analysis, Processing's "Clip it" and a camera take land on a grid of the
 video's clips, and tapping a tile opens Name Clips (§3a) on that clip. Name
 Clips' back chevron returns to the grid, as removing its last clip does. The
-grid carries "+", a "Save Clips" of its own, and the empty state with "Analyze
-clips" and "Clip manually" that Name Clips had; Name Clips keeps its paging,
-naming, editor, "…" menu and "Save Clips" on the last clip.*
+grid carries "+", a "Name clips" that opens Name Clips on the first clip, and
+the empty state with "Analyze clips" and "Clip manually" that Name Clips had.
+It doesn't save: Name Clips keeps its paging, naming, editor, "…" menu and
+"Save Clips" on the last clip.*
 
 *Rev 31 · 2026-11-15 · The camera (§1b) loses its person control: every take
 follows everyone, as every analysis has since Rev 28. On iPhone Duo every
@@ -148,8 +149,9 @@ recording" to "clips are in my Photos library," and is scoped to v1
 labeling, following/feed) — those get their own flow notes once the v1 screens
 exist and v2 work starts. The first of them is the Profile tab, whose screens
 live in [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5–§8; this doc carries only
-what it changes in the v1 flow — the root pager's Profile page, the Name Clips
-screen an analysis lands on (§3a), and saving into the clip library — the
+what it changes in the v1 flow — the root pager's Profile page, Clip List (§3)
+where an analysis lands and the Name Clips screen it opens (§3a), and saving
+into the clip library — the
 parts not built yet marked *Planned*. OTA model updates were scoped here as v2 and have
 since been built ahead of that; see "Built ahead of this doc" below.
 
@@ -266,13 +268,12 @@ flowchart TD
     B -->|pipeline error| E2[Error state]
     B -->|cancel| A
     E2 -->|retry / back to Home| A
-    L -->|tap a tile| N[Name Clips]
+    L -->|tap a tile, or Name clips| N[Name Clips]
     N -->|back, or its last clip removed| L
     N -->|tap the clip| D[Clip Detail / Editor]
     D -->|back, commits edits| N
     L -->|back| A
-    L -->|Save Clips, then contribution sheet the first time Contribute named clips is on| A
-    N -->|Save Clips on the last clip, likewise| A
+    N -->|Save Clips, then contribution sheet the first time Contribute named clips is on| A
     P -->|Needs a name| NN[Needs a name]
     NN -->|Done / back| P
     P -->|gallery row, then a tile| CV[Clip view]
@@ -629,17 +630,18 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
   own person. The original video has no tile.
 - Tapping a tile pushes Name Clips (§3a) on that tile's clip, which pages
   through the rest from there; its back chevron comes back here. The tiles
-  pause while Name Clips covers the grid, and under a save. Name Clips and
-  the grid share the video's clips, so a name given, an edit, and a clip added
-  or removed there are on the grid on the way back.
+  pause while Name Clips covers the grid. Name Clips and the grid share the
+  video's clips, so a name given, an edit, and a clip added or removed there
+  are on the grid on the way back.
 - The header: the back chevron and a "+" that adds a new full-frame clip over
   the first seconds of the video and scrolls the grid to its tile. On
   iPhone Duo they go down the vertical bar, as every screen's top controls do.
   A clip is removed from Name Clips' "…" menu; a tile has no trash of its own.
-- "Save Clips" across the bottom saves every clip not yet in Photos, exactly
-  as Name Clips' does (§3a): the same spinner, failure alert and retry, the
-  same clip library record, and the same contribution sheet the first time,
-  then Home.
+- With clips, the bottom bar's "Name clips" pushes Name Clips on the first
+  clip. The grid doesn't save: "Save Clips" stays on Name Clips' last clip
+  (§3a), so every clip has been on screen as a page, with any names the trick
+  model filled in as chips the user can remove, before it is saved and
+  contributed. A tile's caption cuts its names to one line.
 - With no clip — a run that found none, every clip removed, or a video that
   arrived by "Clip it" — the screen says "No tricks found" (the first) or
   "No clips yet" (the others) over "Add a clip, then trim it to the trick in
@@ -648,10 +650,9 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
   manually" under it, which adds a clip the way the header's "+" does. A camera
   take that lands here directly has no Processing screen under it and has
   already been analyzed, so its bar offers "Clip manually" alone.
-- VoiceOver reads the grid's count on entry ("4 clips"), each tile as one
+- VoiceOver reads the grid's count on entry ("4 clips"), and each tile as one
   element ("Clip 2 of 4, 2.4 seconds, named cork and gainer", with the
-  timeline as its value and "Opens the clip to name it" as its hint), and
-  "Save Clips" with what it commits to ("Saves 4 clips to Photos").
+  timeline as its value and "Opens the clip to name it" as its hint).
 
 ### 3a. Name Clips *([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4)*
 
@@ -719,8 +720,8 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
   that drifts up or down moves the page sideways only. Naming is never
   required.
 - "Save Clips", on the last clip, exports and saves every clip not yet in
-  Photos under a full-screen spinner and pops to Home; Clip List's own "Save
-  Clips" (§3) does the same.
+  Photos under a full-screen spinner and pops to Home. The header's "+" and
+  "…" take no tap while it runs.
   A clip that fails leaves the screen up with an alert naming the failure, and
   the retry saves only what is still missing; a clip edited after a partial
   failure loses its checkmark and is written again, and the pre-edit copy stays
@@ -1125,7 +1126,7 @@ Resolved 2026-09-04.
    the keep/discard concept it bulk-toggled. *Clip List itself was retired
    2026-10-27 (decision 9); its inline save is now Name Clips', and the app
    no longer deletes the original (decision 10). Clip List came back
-   2026-11-16 (decision 13), saving inline again beside Name Clips.*
+   2026-11-16 (decision 13) without a save of its own.*
 7. **Camera takes skip Processing → Added.** Recorded 2026-09-23: the camera
    scores pose on its live frames while recording and draws the skeleton on
    the preview; when that covered the whole take, the same trick detection
@@ -1221,19 +1222,22 @@ Resolved 2026-09-04.
    place, partly undoing decision 10's one button on every clip. Given up:
    starting an analysis from Processing in one tap, and saving from any clip
    but the last without paging there first. *Recorded 2026-11-16 (Rev 32,
-   decision 13): the empty state with this choice is Clip List's now, and
-   Clip List saves from the grid.*
+   decision 13): the empty state with this choice is Clip List's now;
+   saving stays on Name Clips' last clip.*
 13. **Clip List back in front of Name Clips → Changed.** Recorded 2026-11-16
    (Rev 32), partly reversing decision 9: with Name Clips the only view of a
    video's clips, seeing what an analysis found meant swiping through them,
    and reaching the fifth clip meant paging past the first four. The grid
    comes back as the screen an analysis, "Clip it" and a camera take land
    on, and a tile opens Name Clips on its own clip, which stays the one place
-   to name, edit and remove a clip. The grid takes Name Clips' empty state
-   and adds "+" and a "Save Clips" of its own, so saving no longer needs
-   paging to the last clip (given up in decision 12); Name Clips keeps its
-   "Save Clips" on the last clip, and its back chevron now returns to the
-   grid rather than Home. Decision 9's cost — the grid's players decoding
-   behind Name Clips — is met by pausing the tiles while Name Clips is
-   pushed. Not brought back: the original video's tile, a trash button on
-   each tile, and "Save without names".
+   to name, edit, remove and save a clip. The grid takes Name Clips' empty
+   state and adds "+" and "Name clips", which opens Name Clips on the first
+   clip; Name Clips' back chevron now returns to the grid rather than Home.
+   The grid doesn't save, so decision 12's paging to the last clip to save
+   stands: the trick model fills in names it is confident in, and a save
+   from the grid would write them to the library, and contribute them as
+   names the user kept, with only a caption cut to one line ever showing
+   them. Decision 9's cost — the grid's players decoding behind Name Clips —
+   is met by pausing the tiles while Name Clips is pushed. Not brought back:
+   the original video's tile, a trash button on each tile, and "Save
+   without names".

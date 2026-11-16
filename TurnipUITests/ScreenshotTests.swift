@@ -79,10 +79,11 @@ final class ScreenshotTests: XCTestCase {
         addScreenshot(named: "gallery-filter-menu")
     }
 
-    /// Clip List: three detected windows as a grid of tiles, thumbnails as placeholders (the
-    /// /dev/null asset decodes nothing; the loader falls back to the placeholder — the test waits
-    /// for the placeholder clause of a tile's accessibility label, so it guards the fallback and
-    /// not just the navigation bar appearing).
+    /// Clip List: three detected windows as a grid of tiles over the /dev/null asset, which
+    /// decodes nothing, so the tiles show their placeholder. The wait is on a tile's own
+    /// accessibility element, which proves the grid laid its tiles out, not just that the
+    /// navigation bar appeared; its placeholder clause is there from the first render, so it says
+    /// nothing about the loader. The grid doesn't save: its bar offers "Name clips".
     func testClipListTriage() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipList"]
@@ -94,8 +95,20 @@ final class ScreenshotTests: XCTestCase {
             .firstMatch
         XCTAssertTrue(placeholder.waitForExistence(timeout: 15))
         XCTAssertTrue(app.clipTile(3).exists, "the grid doesn't hold a tile per clip")
-        XCTAssertTrue(app.buttons["clip-list-save"].exists)
+        XCTAssertTrue(app.buttons["clip-list-name-clips"].exists)
+        XCTAssertFalse(app.buttons["Save Clips"].exists, "the grid saves")
         addScreenshot(named: "clip-list-triage")
+    }
+
+    /// The grid's "Name clips" opens Name Clips on the first clip.
+    func testNameClipsButtonOpensTheFirstClip() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipListMedia"]
+        app.launch()
+        let nameClips = app.buttons["clip-list-name-clips"]
+        XCTAssertTrue(nameClips.waitForExistence(timeout: 15))
+        nameClips.tap()
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
     }
 
     /// Clip List over real media: the `/dev/null` asset in `testClipListTriage` never loads a
