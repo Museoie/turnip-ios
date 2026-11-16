@@ -139,6 +139,12 @@ final class ClipListViewModel: ObservableObject {
         let window: TrickWindow
         let cropRect: NormalizedRect
         let followCrop: FollowCrop?
+
+        init(_ item: ClipListItem) {
+            window = item.window
+            cropRect = item.cropRect
+            followCrop = item.followCrop
+        }
     }
 
     /// Decoded thumbnails by item id, each tagged with the key it was decoded from.
@@ -515,7 +521,7 @@ final class ClipListViewModel: ObservableObject {
     /// cancelling the shared task cannot save the expensive work — it can only throw the
     /// result away from under another waiter.)
     func thumbnail(for item: ClipListItem) async -> CGImage? {
-        let key = ThumbnailCacheKey(window: item.window, cropRect: item.cropRect, followCrop: item.followCrop)
+        let key = ThumbnailCacheKey(item)
         if let cached = thumbnails[item.id], cached.key == key {
             return cached.image
         }
@@ -538,6 +544,15 @@ final class ClipListViewModel: ObservableObject {
             thumbnails[item.id] = (key, image)
         }
         return image
+    }
+
+    /// The thumbnail already decoded for `item` as it stands, without waiting: what a card shows
+    /// from its first frame, so a page pushed from its tile doesn't flash a placeholder before its
+    /// own `thumbnail(for:)` returns. `nil` before any decode, and after an edit the cached one
+    /// predates.
+    func cachedThumbnail(for item: ClipListItem) -> CGImage? {
+        guard let cached = thumbnails[item.id], cached.key == ThumbnailCacheKey(item) else { return nil }
+        return cached.image
     }
 
     /// The "Save Clips" action: exports and saves every derived clip that has not already
@@ -775,8 +790,8 @@ enum SaveClipsOutcome {
 }
 
 extension ClipListViewModel {
-    /// Name Clips' "Save Clips": the save, then whether the contribution sheet comes before
-    /// Home. When Settings' Contribute named clips is on, a saved clip of the user has a name and
+    /// Clip List's and Name Clips' "Save Clips": the save, then whether the contribution sheet
+    /// comes before Home. When Settings' Contribute named clips is on, a saved clip of the user has a name and
     /// the farm can take it, the sheet asks if this account hasn't agreed yet; once it has, the
     /// clips go to the outbox and Home doesn't wait for their upload. A save with only clips of
     /// someone else has nothing to send, so it asks nothing.

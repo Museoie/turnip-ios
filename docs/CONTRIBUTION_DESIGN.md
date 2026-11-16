@@ -259,9 +259,9 @@ The flow rides the existing screens from `UIUX.md`:
   contributed is Settings' Contribute named clips switch (§3.3). It took
   over Clip List's triage on 2026-10-27; since 2026-11-16 an analysis
   lands on Clip List again (`UIUX.md` §3), a grid whose tiles open Name
-  Clips. The grid adds no save of its own; saving stays on Name Clips'
-  last clip, and `UIUX.md` decision 13 records what that leaves open
-  for pre-filled names on clips the user skipped.
+  Clips, and whose own "Save Clips" saves the same way. Either save
+  contributes pre-filled names on clips the user never opened, as names
+  kept (`UIUX.md` decision 13 records that ruling).
 - **Clip Detail / Editor (§4)** — window trimming via the scrub-bar
   handles and crop editing are unchanged.
 - **The Profile's Clip view** (`PROFILE_DESIGN.md` §5.2) — a saved

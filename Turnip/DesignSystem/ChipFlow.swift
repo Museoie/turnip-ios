@@ -83,7 +83,7 @@ struct TrailingIconLabelStyle: LabelStyle {
     }
 }
 
-/// The full-screen spinner Name Clips' save to Photos runs under.
+/// The full-screen spinner a save to Photos runs under, on Clip List and on Name Clips.
 struct SavingOverlay: View {
     var body: some View {
         ZStack {

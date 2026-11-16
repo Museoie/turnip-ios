@@ -20,8 +20,9 @@ struct ClipCard: View {
     enum Placement {
         /// A Name Clips page: a tap opens the editor. Its identifier is `clip-card-N`.
         case page
-        /// A Clip List tile: a tap opens Name Clips on the clip, and VoiceOver reads the names it
-        /// has been given. Its identifier is `clip-tile-N`.
+        /// A Clip List tile: a tap opens Name Clips on the clip, or marks it while the grid is
+        /// selecting (`selection`), and VoiceOver reads the names it has been given. Its
+        /// identifier is `clip-tile-N`.
         case tile
     }
 
@@ -34,6 +35,9 @@ struct ClipCard: View {
     let isPlaying: Bool
     /// True for the card whose clip is open in the editor; the flying card stands in for it.
     let isHidden: Bool
+    /// Whether the tile is marked, while its grid is selecting; `nil` otherwise, and on a page. A
+    /// selecting tile's tap marks it rather than leaving, so its loop plays on.
+    let selection: Bool?
     /// The tap: hands over the card's on-screen frame (global space), and the poster and the
     /// asset time the loop was showing (`nil` without a loop), which the editor's flight opens
     /// from. A tile's tap needs none of them.
@@ -52,7 +56,7 @@ struct ClipCard: View {
 
     init(
         item: ClipListItem, side: CGFloat, placement: Placement, viewModel: ClipListViewModel, isPlaying: Bool,
-        isHidden: Bool = false, onOpen: @escaping (CGRect, CGImage?, TimeInterval?) -> Void,
+        isHidden: Bool = false, selection: Bool? = nil, onOpen: @escaping (CGRect, CGImage?, TimeInterval?) -> Void,
         onPrevious: (() -> Void)? = nil, onNext: (() -> Void)? = nil
     ) {
         self.item = item
@@ -61,9 +65,13 @@ struct ClipCard: View {
         _viewModel = ObservedObject(wrappedValue: viewModel)
         self.isPlaying = isPlaying
         self.isHidden = isHidden
+        self.selection = selection
         self.onOpen = onOpen
         self.onPrevious = onPrevious
         self.onNext = onNext
+        // The poster another card already decoded — the tile a page was opened from — is on screen
+        // from the first frame, rather than a placeholder for the moment the `.task` takes to ask.
+        _thumbnail = State(initialValue: viewModel.cachedThumbnail(for: item))
         _playback = StateObject(wrappedValue: ClipCardPlayback(
             asset: viewModel.sourceAsset,
             loadComposition: { [viewModel] geometry in await viewModel.videoComposition(for: geometry) },
@@ -83,7 +91,7 @@ struct ClipCard: View {
                 // The timeline's own words: the bar drawn over the picture has no other way to
                 // be heard.
                 .accessibilityValue(timelineDescription)
-                .accessibilityAddTraits(.isButton)
+                .accessibilityAddTraits(selection == true ? [.isButton, .isSelected] : .isButton)
                 .accessibilityHint(accessibilityHint)
                 .accessibilityActions {
                     if let onPrevious { Button("Previous clip", action: onPrevious) }
@@ -95,6 +103,7 @@ struct ClipCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(alignment: .topLeading) { savedBadge }
         .overlay(alignment: .bottom) { timeline }
+        .overlay(alignment: .topTrailing) { selectionMark }
         .opacity(isHidden ? 0 : 1)
         // Keyed by the geometry, not the item: a name given doesn't touch the loop, an editor
         // commit that changes the window or the framing rebuilds it.
@@ -163,8 +172,12 @@ struct ClipCard: View {
     }
 
     /// Pauses the loop first, then reads its position: the frame handed to the editor's flight has
-    /// to be the one the card keeps showing until it is hidden.
+    /// to be the one the card keeps showing until it is hidden. A selecting tile only marks.
     private func open(frame: CGRect) {
+        guard selection == nil else {
+            onOpen(frame, thumbnail, nil)
+            return
+        }
         playback.setSuspended(true)
         let loopTime = playback.loop.map { $0.player.currentTime() }
         onOpen(frame, thumbnail, loopTime.flatMap { $0.isNumeric ? $0.seconds : nil })
@@ -185,6 +198,26 @@ struct ClipCard: View {
             }
             .frame(width: Self.iconDiameter, height: Self.iconDiameter)
             .padding(8)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+
+    /// While the grid is selecting, the check circle Photos and the Profile's trick grid draw, and
+    /// a light wash over a marked tile. It takes no tap: the tile's own tap marks.
+    @ViewBuilder
+    private var selectionMark: some View {
+        if let selection {
+            ZStack(alignment: .topTrailing) {
+                if selection {
+                    RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.25))
+                }
+                Image(systemName: selection ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, selection ? Color.accentColor : Color.black.opacity(0.3))
+                    .padding(8)
+            }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
         }
@@ -221,7 +254,7 @@ struct ClipCard: View {
     private var accessibilityHint: LocalizedStringKey {
         switch placement {
         case .page: return "Opens the clip in the editor"
-        case .tile: return "Opens the clip to name it"
+        case .tile: return selection == nil ? "Opens the clip to name it" : "Marks the clip for deleting"
         }
     }
 

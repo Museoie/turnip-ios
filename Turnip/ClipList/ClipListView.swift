@@ -4,17 +4,17 @@ import SwiftUI
 /// Clip List (`docs/UIUX.md` § "Clip List"): where an analysis lands, where Processing's "Clip it"
 /// goes, and where a camera take live inference fully covered lands. A grid with a tile per clip
 /// (`ClipCard`), each looping its window with the framing it exports with, carrying the timeline of
-/// where it sits in the video, over a caption with its length and the names it has been given.
+/// where it sits in the video, over its length and the names it has been given as chips.
 ///
 /// Tapping a tile pushes Name Clips (`NameClipsView`) on that clip, which pages through the rest
-/// from there; the bottom bar's "Name clips" pushes it on the first clip. Both screens work on this
-/// screen's `ClipListViewModel`, so a name, an edit, a clip added or removed there is on the grid on
-/// the way back.
+/// from there. Both screens work on this screen's `ClipListViewModel`, so a name, an edit, a clip
+/// added or removed there is on the grid on the way back.
 ///
-/// The grid adds no save of its own: "Save Clips" stays on Name Clips' last clip, where it was
-/// (`docs/UIUX.md` decision 13 says why, and what that leaves open). The header's "+" adds a clip.
-/// With no clip, the screen offers "Analyze clips" (`analyze`) and "Clip manually". The back
-/// chevron pops to Home. This view declares no `NavigationStack` of its own.
+/// "Save Clips" saves every clip, as Name Clips' does on its last clip. "Select" turns the grid into
+/// a selection, as Photos does: a tile tap marks or unmarks it, the back chevron and "+" stand down
+/// until "Cancel", and a bar along the bottom deletes the marked clips together. With no clip, the
+/// screen offers "Analyze clips" (`analyze`) and "Clip manually". The back chevron pops to Home.
+/// This view declares no `NavigationStack` of its own.
 struct ClipListView: View {
     @StateObject private var viewModel: ClipListViewModel
     private let vocabulary: VocabularyStore
@@ -33,6 +33,11 @@ struct ClipListView: View {
     @State private var namingStart = 0
     /// The clip "+" or "Clip manually" just added, which the grid scrolls to.
     @State private var addedClipID: UUID?
+    @State private var isSelecting = false
+    @State private var selection: Set<UUID> = []
+    @State private var isConfirmingDelete = false
+    @State private var contribution: ContributionPlan?
+    @State private var isShowingContribution = false
     /// iPhone Duo's vertical bar, which the bar's items go down instead.
     @Environment(\.verticalBar) private var verticalBar
 
@@ -65,6 +70,15 @@ struct ClipListView: View {
 
     private var clips: [ClipListItem] { viewModel.clipsToName }
 
+    /// The marked clips still on the grid, in grid order.
+    private var selectedIDs: [UUID] { clips.map(\.id).filter(selection.contains) }
+
+    private var title: String {
+        guard isSelecting else { return String(localized: "Clips") }
+        return selectedIDs.isEmpty
+            ? String(localized: "Select Clips") : String(localized: "\(selectedIDs.count) Selected")
+    }
+
     var body: some View {
         Group {
             if clips.isEmpty {
@@ -73,18 +87,45 @@ struct ClipListView: View {
                 grid
             }
         }
-        .navigationTitle("Clips")
+        .disabled(viewModel.isSaving)
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbar }
-        // Back, then add, as the bar reads from its leading item.
+        // Back, add, then Select, as the bar reads from its leading item.
         .verticalBarColumn(verticalBar) {
-            backButton
-            ScrimIconButton(systemImage: "plus", accessibilityLabel: "Add clip", action: addClip)
-                .accessibilityIdentifier("add-clip")
+            if !isSelecting {
+                backButton
+                ScrimIconButton(systemImage: "plus", accessibilityLabel: "Add clip", action: addClip)
+                    .disabled(viewModel.isSaving)
+                    .accessibilityIdentifier("add-clip")
+            }
+            if !clips.isEmpty {
+                // A glyph here, as the column is too narrow for the bar's words at larger text.
+                ScrimIconButton(
+                    systemImage: isSelecting ? "xmark" : "checkmark.circle",
+                    accessibilityLabel: isSelecting ? "Cancel" : "Select",
+                    action: toggleSelecting)
+                .disabled(viewModel.isSaving)
+                .accessibilityIdentifier("clip-list-select")
+            }
         }
         .safeAreaInset(edge: .bottom) { actionBar }
+        .overlay { if viewModel.isSaving { SavingOverlay() } }
+        // Name Clips, pushed over the grid, puts up the failure of a save it started itself.
+        .errorAlert(
+            "Couldn't save clips",
+            message: isNaming ? Binding<String?>.constant(nil) : $viewModel.saveFailureMessage)
+        .sheet(isPresented: $isShowingContribution, onDismiss: popToRoot) { contributionSheet }
+        .confirmationDialog(
+            ClipListAccessibility.deleteClips(count: selectedIDs.count),
+            isPresented: $isConfirmingDelete, titleVisibility: .hidden
+        ) {
+            Button(
+                ClipListAccessibility.deleteClips(count: selectedIDs.count), role: .destructive,
+                action: deleteSelected)
+        }
         .navigationDestination(isPresented: $isNaming) {
             NameClipsView(
                 viewModel: viewModel, startIndex: namingStart, vocabulary: vocabulary, account: account,
@@ -127,36 +168,36 @@ struct ClipListView: View {
         }
     }
 
+    /// One card whichever the mode, so a tile keeps its loop as the grid goes in and out of
+    /// selecting.
     private func tile(for item: ClipListItem, side: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ClipCard(
                 item: item, side: side, placement: .tile, viewModel: viewModel,
-                // Paused, not playing, while Name Clips covers the grid.
-                isPlaying: !isNaming,
-                onOpen: { _, _, _ in openNaming(on: item) })
-            // The card's own label already reads the length and the names.
-            Text(caption(for: item))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .frame(width: side, alignment: .leading)
-                .accessibilityHidden(true)
+                // Paused, not playing, under Name Clips, a save and the contribution sheet.
+                isPlaying: !isNaming && !viewModel.isSaving && !isShowingContribution,
+                selection: isSelecting ? selection.contains(item.id) : nil,
+                onOpen: { _, _, _ in tapped(item) })
+            ClipTileCaption(item: item, width: side)
         }
         .id(item.id)
     }
 
-    /// "2.4s", then the names given, if any: "2.4s · cork, gainer".
-    private func caption(for item: ClipListItem) -> String {
-        guard !item.names.isEmpty else { return item.durationLabel }
-        return item.durationLabel + " · " + item.names.map(\.name).joined(separator: ", ")
+    /// A tile's tap: Name Clips on its clip, or, while selecting, a mark on or off it.
+    private func tapped(_ item: ClipListItem) {
+        guard isSelecting else {
+            openNaming(on: item)
+            return
+        }
+        if selection.contains(item.id) {
+            selection.remove(item.id)
+        } else {
+            selection.insert(item.id)
+        }
     }
 
     private func openNaming(on item: ClipListItem) {
         guard let start = clips.firstIndex(where: { $0.id == item.id }) else { return }
-        openNaming(at: start)
-    }
-
-    private func openNaming(at start: Int) {
         namingStart = start
         isNaming = true
     }
@@ -170,39 +211,90 @@ struct ClipListView: View {
         }
     }
 
+    // MARK: - Selecting
+
+    private func toggleSelecting() {
+        isSelecting.toggle()
+        selection = []
+    }
+
+    /// Removes every marked clip at once, as Name Clips' "Remove this clip" removes one, and leaves
+    /// selecting. A clip already in Photos stays there, as it does from Name Clips.
+    private func deleteSelected() {
+        let removed = selectedIDs
+        withAnimation(.easeInOut(duration: 0.3)) {
+            for id in removed {
+                viewModel.delete(id)
+            }
+        }
+        isSelecting = false
+        selection = []
+    }
+
     // MARK: - Chrome
 
-    /// None on iPhone Duo, where the items go down the vertical bar (`verticalBarColumn`).
+    /// None on iPhone Duo, where the items go down the vertical bar (`verticalBarColumn`). While
+    /// selecting, the back chevron and "+" stand down: "Cancel" is the way out of a selection.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         if verticalBar == nil {
             if #available(iOS 26.0, *) {
-                ToolbarItem(placement: .navigationBarLeading) { backButton }
-                    .sharedBackgroundVisibility(.hidden)
-                ToolbarItem(placement: .topBarTrailing) { addButton }
+                if !isSelecting {
+                    ToolbarItem(placement: .navigationBarLeading) { backButton }
+                        .sharedBackgroundVisibility(.hidden)
+                    ToolbarItem(placement: .topBarTrailing) { addButton }
+                }
+                if !clips.isEmpty {
+                    if !isSelecting {
+                        // "+" and Select as two pieces of glass rather than one shared capsule.
+                        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                    }
+                    ToolbarItem(placement: .topBarTrailing) { selectButton }
+                }
             } else {
-                ToolbarItem(placement: .navigationBarLeading) { backButton }
-                ToolbarItem(placement: .topBarTrailing) { addButton }
+                if !isSelecting {
+                    ToolbarItem(placement: .navigationBarLeading) { backButton }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    HStack(spacing: 16) {
+                        if !isSelecting { addButton }
+                        if !clips.isEmpty { selectButton }
+                    }
+                }
             }
         }
     }
 
     private var backButton: some View {
         ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home", action: popToRoot)
+            .disabled(viewModel.isSaving)
             .accessibilityIdentifier("clip-list-back")
     }
 
+    /// Off during a save, like every header control: the bar sits outside the content the save
+    /// disables, and a clip added mid-save would be left out of it without a word.
     private var addButton: some View {
         Button(action: addClip) {
             Image(systemName: "plus")
         }
+        .disabled(viewModel.isSaving)
         .accessibilityLabel("Add clip")
         .accessibilityIdentifier("add-clip")
     }
 
+    private var selectButton: some View {
+        Button(action: toggleSelecting) {
+            Text(isSelecting ? "Cancel" : "Select")
+        }
+        .disabled(viewModel.isSaving)
+        .accessibilityIdentifier("clip-list-select")
+    }
+
     @ViewBuilder
     private var actionBar: some View {
-        if clips.isEmpty {
+        if isSelecting {
+            deleteBar
+        } else if clips.isEmpty {
             if let analyze {
                 PrimaryActionBar("Analyze clips", secondary: .init("Clip manually", action: addClip), action: analyze)
                     .accessibilityIdentifier("start-analysis")
@@ -211,9 +303,30 @@ struct ClipListView: View {
                     .accessibilityIdentifier("clip-list-clip-manually")
             }
         } else {
-            PrimaryActionBar("Name clips") { openNaming(at: 0) }
-                .accessibilityIdentifier("clip-list-name-clips")
+            PrimaryActionBar("Save Clips", isEnabled: !viewModel.isSaving, action: save)
+                // What the tap commits to, read after the label: how many clips it writes.
+                .accessibilityValue(ClipListAccessibility.saveClipsValue(clipCount: viewModel.unsavedClipCount))
+                .accessibilityIdentifier("clip-list-save")
         }
+    }
+
+    /// The selection's one action, asking first: the marked clips go with no restore.
+    private var deleteBar: some View {
+        let count = selectedIDs.count
+        return Button(role: .destructive) {
+            isConfirmingDelete = true
+        } label: {
+            Label(
+                count == 0 ? String(localized: "Delete") : ClipListAccessibility.deleteClips(count: count),
+                systemImage: "trash")
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .disabled(count == 0)
+        .padding()
+        .background(.thinMaterial)
+        .accessibilityIdentifier("clip-list-delete")
     }
 
     /// What an analysis that left no clip shows: that it found nothing, or — for a video reached
@@ -235,6 +348,69 @@ struct ClipListView: View {
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { if showsNoTricksFound { viewModel.announceNoTricksFound() } }
+    }
+
+    // MARK: - Save
+
+    /// The save, then back to Home, by way of the contribution sheet when it asks first
+    /// (`ClipListViewModel.saveClips`).
+    private func save() {
+        Task {
+            switch await viewModel.saveClips(account: account, outbox: outbox) {
+            case .failed:
+                break
+            case .finished:
+                popToRoot()
+            case .asksToContribute(let plan):
+                contribution = plan
+                isShowingContribution = true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var contributionSheet: some View {
+        if let contribution {
+            ContributionSheet(
+                plan: contribution,
+                account: account,
+                thumbnail: { await viewModel.thumbnail(for: $0) },
+                confirm: { source in Task { await outbox.confirm(source) } })
+        }
+    }
+}
+
+/// A tile's caption: the clip's length, then each name it has been given as a chip in Name Clips'
+/// style (`ChipButtonStyle`, prominent), cut down to the length's own size, wrapping onto another
+/// line when the names don't fit beside it. VoiceOver skips it: the card's label reads both.
+private struct ClipTileCaption: View {
+    let item: ClipListItem
+    let width: CGFloat
+
+    /// The chips' padding above and below their text, given to the length too, so the two sit on
+    /// one line at one height.
+    private static let verticalPadding: CGFloat = 1
+
+    var body: some View {
+        ChipFlow(spacing: 4) {
+            Text(item.durationLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, Self.verticalPadding)
+            ForEach(item.names, id: \.self) { name in
+                Text(name.name)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, Self.verticalPadding)
+                    .background(Capsule().fill(Color.accentColor))
+                    // A name longer than the tile is wide is cut short rather than run past it.
+                    .frame(maxWidth: width, alignment: .leading)
+            }
+        }
+        .frame(width: width, alignment: .leading)
+        .accessibilityHidden(true)
     }
 }
 
@@ -266,7 +442,8 @@ enum ClipListLayout {
             items: [
                 ClipListItem(
                     window: TrickWindow(startTime: 2, endTime: 5),
-                    cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)),
+                    cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+                    names: [ClipName(name: "cork", origin: .typed), ClipName(name: "gainer", origin: .typed)]),
                 ClipListItem(
                     window: TrickWindow(startTime: 9, endTime: 11.5),
                     cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1))

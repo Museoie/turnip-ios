@@ -319,6 +319,28 @@ final class ClipListTests: XCTestCase {
         XCTAssertEqual(after.width, 36)
     }
 
+    /// A card reads the poster another card decoded without waiting, so a page pushed from its tile
+    /// opens on it: nothing before the decode, the decoded image after, and nothing once an edit
+    /// has made it stale.
+    @MainActor
+    func testCachedThumbnailIsTheDecodedPosterUntilAnEdit() async throws {
+        let url = try await TestVideoWriter.writeTestVideo(frameCount: 1, width: 64, height: 64, fps: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let item = ClipListItem(window: TrickWindow(startTime: 0, endTime: 1.0 / 30), cropRect: fullFrame)
+        let viewModel = makeViewModel(items: [item], asset: AVURLAsset(url: url), duration: 1.0 / 30)
+        let target = viewModel.items[1]
+        XCTAssertNil(viewModel.cachedThumbnail(for: target))
+
+        let decodedImage = await viewModel.thumbnail(for: target)
+        let decoded = try XCTUnwrap(decodedImage)
+        XCTAssertTrue(viewModel.cachedThumbnail(for: target) === decoded)
+
+        viewModel.applyEditorResult(
+            ClipEditorResult(window: item.window, cropRect: NormalizedRect(minX: 0, maxX: 0.5, minY: 0, maxY: 1)),
+            to: target.id)
+        XCTAssertNil(viewModel.cachedThumbnail(for: viewModel.items[1]), "a stale poster was handed out")
+    }
+
     /// Regression for the clip list's live preview player showing the raw, un-cropped,
     /// un-framed source regardless of the item's crop rect or follow crop:
     /// `videoComposition(for:)` — what a tile's loop attaches to its `AVPlayerItem` before

@@ -18,6 +18,11 @@ protocol ClipLooping: AnyObject {
 /// Loops one window of an asset forever and muted, which needs an `AVQueuePlayer`
 /// rather than a plain `AVPlayer`: `AVPlayerLooper` drives the repeat by keeping a
 /// queue topped up with copies of its template item.
+///
+/// The first pass starts at the window's midpoint, the frame the card's poster is decoded at
+/// (`ClipThumbnailLoader`), and every pass after it at the window's start. The card shows its
+/// poster until the loop has a frame, so a loop that began at the window's start would cut from
+/// the poster to a different picture the moment it was ready — just after a page has slid in.
 final class AVPlayerLoop: ClipLooping {
     let player: AVQueuePlayer
     private var looper: AVPlayerLooper?
@@ -37,6 +42,11 @@ final class AVPlayerLoop: ClipLooping {
             timeRange: CMTimeRange(
                 start: CMTime(seconds: geometry.window.startTime, preferredTimescale: 600),
                 end: CMTime(seconds: geometry.window.endTime, preferredTimescale: 600)))
+        // The looper queues its copies of the template as it is made: the seek moves only the
+        // first, the one that plays now, and every copy after it starts at the window's start.
+        queuePlayer.seek(
+            to: CMTime(seconds: ClipThumbnailLoader.posterTime(of: geometry.window), preferredTimescale: 600),
+            toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     func play() {

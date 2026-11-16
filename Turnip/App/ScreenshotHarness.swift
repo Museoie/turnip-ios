@@ -72,9 +72,9 @@ struct ScreenshotGalleryFilterHarness: View {
 
 // MARK: - Clip List and Name Clips
 
-/// Clip List (`-screenshotClipList`): three detected windows. Tiles render as their placeholder
-/// — `/dev/null` decodes nothing, and the loader fails gracefully to the placeholder (the honest
-/// fallback).
+/// Clip List (`-screenshotClipList`): three detected windows, the first with two names, which its
+/// caption shows as chips. Tiles render as their placeholder — `/dev/null` decodes nothing, and the
+/// loader fails gracefully to the placeholder (the honest fallback).
 struct ScreenshotClipListHarness: View {
     var body: some View {
         NavigationStack {
@@ -82,7 +82,8 @@ struct ScreenshotClipListHarness: View {
                 items: [
                     ClipListItem(
                         window: TrickWindow(startTime: 2, endTime: 5),
-                        cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)),
+                        cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+                        names: [ClipName(name: "cork", origin: .typed), ClipName(name: "gainer", origin: .model)]),
                     ClipListItem(
                         window: TrickWindow(startTime: 9, endTime: 11.5),
                         cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)),
