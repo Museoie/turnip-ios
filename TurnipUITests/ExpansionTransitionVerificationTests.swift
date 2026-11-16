@@ -57,7 +57,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
     }
 
     /// `ClipExpansionContainer`'s focus measurement, over the real `-screenshotClipListMedia`
-    /// flow `testClipListTapOpensEditor` already exercises for reachability. The card is laid
+    /// flow `testNameClipsCardOpensEditor` already exercises for reachability. The card is laid
     /// out at the editor's crop marker, so its reported accessibility frame is that marker
     /// rect. Comparing it against the editor's own
     /// marker element proves `measuredMarker` converged to the real marker rather than
@@ -68,7 +68,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.openNameClips(atClip: 1, of: 2))
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
@@ -108,16 +108,16 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
     }
 
     /// The editor's own top row (`ScreenHeaderBand`) against Name Clips' titled bar it flies
-    /// open from: the back chevron cross-fades over the list's through the flight, so it has
+    /// open from: the back chevron cross-fades over Name Clips' through the flight, so it has
     /// to sit at the same place or the header visibly jumps at the cut. Compares the two
     /// screens' element frames in one flow, on whichever OS the run is on — the band's metrics
     /// branch per OS. The row holds the chevron alone: no mode switch, no Delete.
-    func testClipEditorHeaderLinesUpWithTheClipListsBar() throws {
+    func testClipEditorHeaderLinesUpWithNameClipsBar() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
-        let listBack = settledFrame(of: app.buttons["Back to Home"].firstMatch)
+        XCTAssertTrue(app.openNameClips(atClip: 1, of: 2))
+        let listBack = settledFrame(of: app.buttons["Back to all clips"].firstMatch)
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
@@ -127,7 +127,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         XCTAssertFalse(app.segmentedControls["framing-mode-switch"].exists)
         XCTAssertFalse(app.buttons["clip-editor-delete"].exists)
         XCTAssertEqual(editorBack.midY, listBack.midY, accuracy: 1)
-        // Both are the same `ScrimIconButton` circle, the list's with the bar's own wider
+        // Both are the same `ScrimIconButton` circle, Name Clips' with the bar's own wider
         // pill hidden under it, so the frames match outright, not just the glyph.
         XCTAssertEqual(editorBack.midX, listBack.midX, accuracy: 1)
         XCTAssertEqual(editorBack.size.width, listBack.size.width, accuracy: 1)
@@ -151,7 +151,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListFollow"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 1"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.openNameClips(atClip: 1, of: 1))
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()
@@ -176,7 +176,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.openNameClips(atClip: 1, of: 2))
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         let timeline = app.descendants(matching: .any)
@@ -223,7 +223,7 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.openNameClips(atClip: 1, of: 2))
         let tile = firstClipCard(in: app)
         XCTAssertTrue(tile.waitForExistence(timeout: 15))
         tile.tap()

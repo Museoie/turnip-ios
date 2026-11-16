@@ -20,8 +20,8 @@ final class ProcessingViewModel: ObservableObject {
     @Published private(set) var state: State = .idle
     @Published private(set) var result: ProcessingResult?
     /// Drives the navigation to the success destination once a run finishes — including a
-    /// run that detected zero tricks: its empty `ProcessingResult` still navigates, and Name
-    /// Clips itself says "No tricks found" (`NameClipsView`).
+    /// run that detected zero tricks: its empty `ProcessingResult` still navigates, and Clip
+    /// List itself says "No tricks found" (`ClipListView`).
     @Published var isShowingClips = false
 
     var isRunning: Bool {
@@ -102,7 +102,7 @@ final class ProcessingViewModel: ObservableObject {
         isShowingClips = true
     }
 
-    /// Leaves the clip list this screen pushed and runs the analysis: an empty Name Clips'
+    /// Leaves the clip list this screen pushed and runs the analysis: an empty Clip List's
     /// "Analyze clips". Only from `.succeeded`, the one state with the list pushed. The state is
     /// out of `.succeeded` by the time the screen sees `isShowingClips` clear, so its pop to
     /// Home on a dismissed list doesn't fire. `result` stays until the run replaces it: the

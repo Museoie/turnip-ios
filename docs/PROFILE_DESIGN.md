@@ -14,7 +14,7 @@ clips in the core clip flow, achievements per trick, the gallery
 grouped by trick, highlight videos, how the library survives a
 reinstall, and how the Profile hands named clips to contribution and
 shows what they did. The parts of the v1 flow it changes — the root
-pager and the Name Clips screen an analysis lands on — are specified in
+pager, and Clip List and the Name Clips screen it opens — are specified in
 `docs/UIUX.md`; contribution itself in
 `docs/CONTRIBUTION_DESIGN.md`.
 
@@ -165,14 +165,14 @@ Rules (the farm and ML docs rely on 2, 3 and 6):
 
 ### 2.3 When it is written
 
-- **Saving writes it** — Name Clips' "Save Clips" (UIUX §3a). Each saved derived clip
+- **Saving writes it** — Clip List's or Name Clips' "Save Clips" (UIUX §3, §3a). Each saved derived clip
   gets a clip record with its `export_asset_id` and whatever names it
   was given; its source gets a source record and its pose. Trashed clips
   are not stored. The one exception is on-device personalization: a
   trashed trick-model proposal on a saved source leaves the source, its
   pose and two frame indices behind, and nothing else
   (`PERSONALIZATION_DESIGN.md` §3).
-- Backing out of Name Clips without saving stores nothing.
+- Backing out of Clip List without saving stores nothing.
 - A saved clip can later have its names, `is_me` and `favorite`
   changed from the Clip view (§5.2). Its window and crop cannot: the
   export is what it is. *(Judgment call; re-cutting from the source
@@ -339,19 +339,22 @@ Naming moves out of the contribution path, where
 `CONTRIBUTION_DESIGN.md` §4 first placed it, into the clip flow itself:
 every saved clip can carry names, contributed or not. It gets a screen
 of its own rather than space on the Clip Editor, which is already full
-with trimming and framing controls. *(Since 2026-10-27 that screen is
-also where an analysis lands: Clip List's triage moved onto it, UIUX
-§3.)*
+with trimming and framing controls. *(From 2026-10-27 that screen was
+also where an analysis landed, Clip List's triage having moved onto it;
+since 2026-11-16 an analysis lands on Clip List again, whose tiles open
+it, UIUX §3.)*
 
 ### 4.1 Where names are given
 
-- **Name Clips** (UIUX §3a) is where an analysis lands, before the
-  save. It shows one clip at a time, larger, with a free-text
+- **Name Clips** (UIUX §3a) opens from a tile of Clip List, where an
+  analysis lands (UIUX §3), before the save. It shows one clip at a
+  time, larger, starting at the tapped one, with a free-text
   field ("What trick is this? e.g. cork"); committing adds a chip;
   chips are removable; a combo is N chips on one clip (no
   sub-segmentation, matching the model's `trick_names`). "Previous"
   and "Next" step through the clips, and "Save Clips", on the last
-  clip, saves them all, which is how a user saves without naming.
+  clip, saves them all; Clip List's own "Save Clips" does too, which
+  is how a user saves without naming.
 - The same screen names clips saved without names, opened from the
   Profile's "Needs a name" (§5.1), ending in "Done" instead of a save.
   A trash button across from its back chevron removes the clip on screen

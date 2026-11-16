@@ -101,10 +101,10 @@ control:
 - The failed state is announced with the reason the screen shows. It replaces the page content
   in place rather than pushing, so there is no screen-change notification either — the
   announcement is the only signal a listener gets.
-- The empty result is announced on Name Clips instead, where its "No tricks found" empty state
+- The empty result is announced on Clip List instead, where its "No tricks found" empty state
   lives: a run that detects nothing still navigates, and an announcement posted into a
   simultaneous screen change is the one VoiceOver drops. A run that *did* find clips is read
-  off Name Clips' title ("1 of 3") for the same reason — see that section below.
+  off Clip List's grid label ("3 clips") for the same reason — see that section below.
 - The progress bar carries the frame counter as its `accessibilityValue`, so the count is
   reachable from the bar itself and not only from the `Text` beside it.
 - Cancel is reachable and labeled throughout the run.
@@ -112,10 +112,11 @@ control:
 - Identifiers: `processing-cancel`, `processing-back`, `processing-clip-it`, `analysis-progress`,
   `processing-retry`, `processing-back-home`, `cancel-browsing`.
 
-### Clip List (#11) — retired
+### Clip List (#11) — the first grid, retired
 
-Clip List became part of Name Clips on 2026-10-27 (UIUX §3, §3a). The items below are its
-history; what carried over is listed under Name Clips.
+Clip List became part of Name Clips on 2026-10-27 (UIUX §3, §3a). The items below are that
+grid's history. A new grid came back in front of Name Clips on 2026-11-16; what it does is
+under "Clip List (UIUX §3)" below.
 
 - **The grid states its count on entry** ("3 clips" / "1 clip" / "No clips"), the same way
   Home's does. This is how a run's *result* reaches a listener: a run that found clips announces
@@ -214,33 +215,54 @@ history; what carried over is listed under Name Clips.
 
 ### Export Confirmation (#19) — retired
 
-- The screen is gone (UIUX decision 6): the save happens inline, now on Name Clips. Its one item
-  moved there — see the save announcements under Name Clips.
+- The screen is gone (UIUX decision 6): the save happens inline, now on Clip List and Name Clips.
+  Its one item moved there — see the save announcements under Name Clips.
+
+### Clip List (UIUX §3)
+
+Built:
+
+- **The grid states its count on entry** ("3 clips" / "1 clip"), declared an accessibility
+  container so the label is read at all. This is how a run's result reaches a listener, as it
+  was on the first grid. A run that found nothing lands on an empty state whose "No tricks
+  found" is announced once the push has settled.
+- **Each tile is one element**, Name Clips' card in its tile form: "Clip 2 of 3, 2.4 seconds",
+  then ", saved to Photos" after a partial failure, and ", named cork and gainer" once it has
+  names. The caption under the tile, which shows the length and the names, is hidden from the
+  tree, since the label carries both. `.isButton`, hinted "Opens the clip to name it"; its value
+  is the timeline's words, and a tile whose frame hasn't decoded appends "thumbnail placeholder".
+- The header's controls are labeled "Back to Home" and "Add clip". "Save Clips" carries what it
+  commits to as its value ("Saves 3 clips to Photos"), and its save speaks Name Clips'
+  announcements: starting, finished, and each failure numbered by the clip it belongs to.
+- With no clip, the bar offers "Analyze clips" with "Clip manually" under it ("Clip manually"
+  alone on a camera take with no Processing screen under it).
+- The tiles loop under the same gate as Name Clips' card: none under Reduce Motion or with video
+  autoplay off, where each tile shows its poster.
+- Identifiers: `clip-grid`, `clip-list-back`, `add-clip`, `clip-tile-<n>`, `clip-list-save`,
+  `start-analysis` (the empty state's bar), `clip-list-clip-manually`, `no-tricks-notice`.
 
 ### Name Clips (UIUX §3a, `PROFILE_DESIGN.md` §4)
 
 Built:
 
-- The screen's title is the count ("2 of 4"), read on the screen change, which is how a run's
-  result reaches a listener; a run that found nothing lands on an empty state whose "No tricks
-  found" is announced once the push has settled.
+- The screen's title is the count ("2 of 4"), read on the screen change, so a listener who
+  opened it from a Clip List tile hears which clip it opened on.
 - Each clip's card is one element: "Clip 2 of 4, 1.5 seconds", with ", saved to Photos"
   after a partial failure, `.isButton` with the hint "Opens the clip in the editor". Its value
   is the timeline's words ("Clip from 3.0s to 4.5s of 6.0s"), the bar drawn over the card
   having no other way to be heard. "Previous clip" and "Next clip" are custom actions on the
   card, offered where there is a clip that way. The card's element is the picture alone, so
   its frame is the card's.
-- The header's controls are labeled: "Back to Home", "Add clip", and "More", whose menu holds
+- The header's controls are labeled: "Back to all clips", "Add clip", and "More", whose menu holds
   "Remove this clip". Save Clips' value counts what it commits to ("Saves 2 clips to Photos").
 - The save keeps Clip List's announcements: starting, finished, and each failure numbered by
   the clip it belongs to.
 - The bottom bar pages with "Previous" and "Next", the last clip's "Next" being "Save Clips";
   the card's Previous clip / Next clip actions stay too, so a listener on the card moves on
   without leaving it.
-- With no clip, the bar offers "Analyze clips" with "Clip manually" under it ("Clip manually"
-  alone on a camera take with no Processing screen under it).
-- Identifiers: `name-clips-previous`, `name-clips-next`, `name-clips-save`, `start-analysis`
-  (the empty state's bar), `name-clips-clip-manually`, `no-tricks-notice`.
+- Removing the only clip left goes back to Clip List, whose empty state says so.
+- Identifiers: `name-clips-back`, `name-clips-more`, `clip-card-<n>`, `name-clips-previous`,
+  `name-clips-next`, `name-clips-save`.
 - Each name chip is a button labeled with the name, hinted "Removes this name".
 - No auto-playing loop under Reduce Motion or with video autoplay off, for the current clip and
   for the one prepared beside it alike; the card shows its poster.
@@ -277,8 +299,8 @@ Built:
   label "Gainer, level 2", value the figures it prints in order ("7 of 10 sessions to level 3,
   10 reps, 14 of 50 reps, First 3 Oct 2026 · Last 12 Nov 2026"); a tile with a clip of the trick
   is a button that opens its clips.
-- An achievement is announced once, as it is earned: appended to Name Clips' save
-  announcement ("Saved 2 clips to Photos. Earned Gainer, level 1"), or spoken as the name that
+- An achievement is announced once, as it is earned: appended to Clip List's or Name Clips'
+  save announcement ("Saved 2 clips to Photos. Earned Gainer, level 1"), or spoken as the name that
   earns it is given on Needs a name or the Clip view.
 - Each gallery row is one element and a button: "Gainer, 3 clips". A trick's grid announces the
   same on entry, and each tile is one element: its names, length and date, then "someone else"

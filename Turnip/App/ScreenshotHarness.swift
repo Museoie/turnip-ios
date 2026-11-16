@@ -70,15 +70,15 @@ struct ScreenshotGalleryFilterHarness: View {
     }
 }
 
-// MARK: - Name Clips
+// MARK: - Clip List and Name Clips
 
-/// Name Clips (`-screenshotClipList`): three detected windows. Cards render as their placeholder
+/// Clip List (`-screenshotClipList`): three detected windows. Tiles render as their placeholder
 /// — `/dev/null` decodes nothing, and the loader fails gracefully to the placeholder (the honest
 /// fallback).
 struct ScreenshotClipListHarness: View {
     var body: some View {
         NavigationStack {
-            NameClipsView(
+            ClipListView(
                 items: [
                     ClipListItem(
                         window: TrickWindow(startTime: 2, endTime: 5),
@@ -97,9 +97,10 @@ struct ScreenshotClipListHarness: View {
     }
 }
 
-/// Name Clips over real media (`-screenshotClipListMedia`): two clips within the generated
+/// Clip List over real media (`-screenshotClipListMedia`): two clips within the generated
 /// sample movie's six seconds, so — unlike `-screenshotClipList`'s `/dev/null` asset — the asset
-/// duration actually loads and each card's range timeline renders. Shares
+/// duration actually loads and each card's range timeline renders. The UI tests reach Name Clips
+/// and the editor from here the way the app does, by tapping a tile, then the card. Shares
 /// `ScreenshotClipEditorHarness`'s sample-movie writer and warm-up.
 ///
 /// The first clip is seeded as already saved, the state a save that partially failed leaves:
@@ -117,7 +118,7 @@ struct ScreenshotClipListMediaHarness: View {
     }
 
     private func clipList(asset: AVURLAsset) -> some View {
-        NameClipsView(
+        ClipListView(
                 items: [
                     ClipListItem(
                         window: TrickWindow(startTime: 0.5, endTime: 2),
@@ -574,7 +575,7 @@ struct ScreenshotProcessingPoseRunner: ProcessingRunning {
 /// the screen with no native playback chrome, the thin scrub bar, and "Clip it" in the
 /// top-trailing corner. `autostart: false`, so nothing runs until the clip list's "Analyze
 /// clips" asks; the scripted runner then reports one frame of progress and holds, like
-/// `-screenshotProcessing`'s. The destination is the real Name Clips, wired the way Home wires
+/// `-screenshotProcessing`'s. The destination is the real Clip List, wired the way Home wires
 /// it, so the UI test that taps "Clip it" reads the empty state it lands on and drives its
 /// "Analyze clips" back to this screen. `popToRoot` puts up a marker instead of closing a cover,
 /// so that test can tell "Analyze clips" stayed on Processing rather than leaving for Home.
@@ -592,7 +593,7 @@ struct ScreenshotProcessingIdleHarness: View {
                 autostart: false,
                 popToRoot: { hasPoppedToRoot = true },
                 destination: { result, actions in
-                    NameClipsView(
+                    ClipListView(
                         items: [],
                         asset: result.asset,
                         assetIdentifier: "screenshot",
@@ -613,13 +614,13 @@ struct ScreenshotProcessingIdleHarness: View {
     }
 }
 
-/// Name Clips as a camera take that live inference fully covered lands on it with nothing found
-/// (`-screenshotNameClipsCameraEmpty`): the root of the cover, with no Processing screen under
+/// Clip List as a camera take that live inference fully covered lands on it with nothing found
+/// (`-screenshotClipListCameraEmpty`): the root of the cover, with no Processing screen under
 /// it, so no `analyze` — the empty state offers "Clip manually" alone.
-struct ScreenshotNameClipsCameraEmptyHarness: View {
+struct ScreenshotClipListCameraEmptyHarness: View {
     var body: some View {
         NavigationStack {
-            NameClipsView(
+            ClipListView(
                 items: [],
                 asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
                 assetIdentifier: "screenshot",

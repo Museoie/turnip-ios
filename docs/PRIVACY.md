@@ -120,7 +120,7 @@ require a manifest/signature. If a dependency is added, check both.
   `requestAuthorization(for: .addOnly)`, and iOS terminates the app on
   that call when the string is absent. On neither path does the user
   normally see the string: the clip-save path is reached from Home
-  through Processing and Name Clips, and the camera opens from a tile in
+  through Processing, Clip List and Name Clips, and the camera opens from a tile in
   Home's grid (UIUX §1b), which only exists once Home has its Photos
   access. Reaching either save means the read/write grant from Home is
   already in place, which determines add-only as authorized, so the call
@@ -158,7 +158,7 @@ require a manifest/signature. If a dependency is added, check both.
   never accumulates files. `TurnipApp` sweeps orphans left by crashed sessions
   at launch. The prefix is what makes both the delete and the sweep recognize
   only our files.
-- **Clip exports.** Tapping "Save Clips" on Name Clips (`ClipListViewModel.save()`)
+- **Clip exports.** Tapping "Save Clips" on Clip List or Name Clips (`ClipListViewModel.save()`)
   stages every derived clip not yet in Photos in a fresh `tmp/turnip-export-<uuid>/`
   scratch directory, hands each one to Photos through `ClipPhotosSaver`
   (add-only), and deletes the whole directory once the run ends — success or
@@ -191,7 +191,7 @@ require a manifest/signature. If a dependency is added, check both.
   device, is never backed up, and holds only the packed keypoints, never video.
 - **Everyone in frame.** The pose model finds up to six people per frame, so
   bystanders' keypoints are computed and held alongside the athlete's, in either person mode (`docs/MULTI_PERSON.md`). Following
-  everyone, the poses of the people who own a clip travel with the clips to Name Clips.
+  everyone, the poses of the people who own a clip travel with the clips to Clip List and Name Clips.
   None of it leaves the device: it rides the same session scratch file as the
   athlete's frames and is gone with it; only the pose of someone with a saved
   clip is kept on disk ("The clip library and the Profile" below).

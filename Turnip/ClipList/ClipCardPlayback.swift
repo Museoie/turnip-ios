@@ -54,10 +54,11 @@ final class AVPlayerLoop: ClipLooping {
     }
 }
 
-/// The playback lifecycle of one clip card on Name Clips: builds the card's loop when it should
-/// be running — or ahead of time, paused on its first frame, for the page beside the current one
-/// (`prepare`) — pauses it while the editor covers the screen, releases it when the page leaves,
-/// and rebuilds it over the new geometry when an editor commit changes the window or the framing.
+/// The playback lifecycle of one clip card, a Clip List tile or a Name Clips page: builds the
+/// card's loop when it should be running — or ahead of time, paused on its first frame, for the
+/// page beside the current one (`prepare`) — pauses it while the editor or Name Clips covers the
+/// screen, releases it when the card leaves, and rebuilds it over the new geometry when an editor
+/// commit changes the window or the framing.
 ///
 /// A reference type outside the view rather than `@State` on it, for two reasons. The
 /// system accessibility reads, the composition load and the loop construction become

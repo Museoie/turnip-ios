@@ -116,10 +116,10 @@ private func saveOneClipToPhotos(_ url: URL, albumTitle: String?) async throws -
     }
 }
 
-/// Backing store for Name Clips (`NameClipsView`, `docs/UIUX.md` § "Name Clips"): the video's
-/// clips with their windows, framing and save state, and the names given them. `items[0]`
-/// stands for the source video itself: never one of the clips, its window carries the video's
-/// Photos duration until the asset's own has loaded.
+/// Backing store for Clip List (`ClipListView`) and the Name Clips it pushes (`NameClipsView`),
+/// which share one: the video's clips with their windows, framing and save state, and the names
+/// given them. `items[0]` stands for the source video itself: never one of the clips, its window
+/// carries the video's Photos duration until the asset's own has loaded.
 @MainActor
 final class ClipListViewModel: ObservableObject {
     @Published private(set) var items: [ClipListItem]
@@ -759,5 +759,33 @@ extension ClipListViewModel {
             videoID: VideoIdentity.videoID(forAssetIdentifier: assetIdentifier),
             duration: loadedAssetDuration ?? items.first?.window.endTime ?? 0,
             poseFrames: poseFrames(forPerson:))
+    }
+}
+
+// MARK: - Save Clips
+
+/// Where a "Save Clips" tap leaves its screen.
+enum SaveClipsOutcome {
+    /// A clip failed: the screen stays up under the failure alert, for a retry.
+    case failed
+    /// Every clip is in Photos and nothing is asked: back to Home.
+    case finished
+    /// Every clip is in Photos, and the contribution sheet asks before Home.
+    case asksToContribute(ContributionPlan)
+}
+
+extension ClipListViewModel {
+    /// Clip List's and Name Clips' "Save Clips": the save, then whether the contribution sheet
+    /// comes before Home. When Settings' Contribute named clips is on, a saved clip of the user
+    /// has a name and the farm can take it, the sheet asks if this account hasn't agreed yet;
+    /// once it has, the clips go to the outbox and Home doesn't wait for their upload. A save
+    /// with only clips of someone else has nothing to send, so it asks nothing.
+    func saveClips(account: FarmAccount, outbox: ContributionOutbox) async -> SaveClipsOutcome {
+        guard await save() else { return .failed }
+        let plan = contributionPlan()
+        guard account.isAvailable, plan.hasReadyClips else { return .finished }
+        guard account.credentials.hasConsented else { return .asksToContribute(plan) }
+        if let source = plan.source { await outbox.enqueue(source) }
+        return .finished
     }
 }

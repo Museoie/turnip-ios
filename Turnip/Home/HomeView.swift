@@ -61,7 +61,7 @@ struct HomeView: View {
                 presentationSlot = nil
             } else if presentationSlot == nil, let video = viewModel.path.last {
                 // `detectedClips` already non-nil here means this lands straight on
-                // `NameClipsView` (the full-screen fallback is already correct for that), so no
+                // `ClipListView` (the full-screen fallback is already correct for that), so no
                 // aspect-ratio guess — only a video headed for `ProcessingView` needs one.
                 let aspectRatio = video.detectedClips == nil
                     ? viewModel.asset(withIdentifier: video.assetIdentifier).flatMap(Self.pixelAspectRatio)
@@ -107,11 +107,11 @@ struct HomeView: View {
         { pixelSize in await viewModel.thumbnails.poster(for: asset, pixelSize: pixelSize) }
     }
 
-    /// Where a video lands once it has clips to name: Name Clips, over the detection's clips.
-    /// `analysisSkipped` is Processing's "Clip it" path: the detection is empty because
-    /// nothing looked, not because nothing was found, so Name Clips doesn't say "No tricks found".
-    /// The camera path never skips; it always has a real detection, and no Processing screen
-    /// under it to `analyze` on.
+    /// Where a video lands once it has clips to name: Clip List, over the detection's clips, from
+    /// which a tile opens Name Clips. `analysisSkipped` is Processing's "Clip it" path: the
+    /// detection is empty because nothing looked, not because nothing was found, so the list
+    /// doesn't say "No tricks found". The camera path never skips; it always has a real
+    /// detection, and no Processing screen under it to `analyze` on.
     private func labeling(
         for video: SelectedVideo,
         detection: DetectedClips,
@@ -119,8 +119,8 @@ struct HomeView: View {
         analysisSkipped: Bool = false,
         popToRoot: @escaping () -> Void,
         analyze: (() -> Void)? = nil
-    ) -> NameClipsView {
-        NameClipsView(
+    ) -> ClipListView {
+        ClipListView(
             items: detection.clips.map {
                 ClipListItem(
                     window: $0.window, cropRect: $0.cropRect, personID: $0.personID,
@@ -317,7 +317,7 @@ private final class HomePresentationSlot: Identifiable {
     let id = UUID()
     let tappedAssetIdentifier: String
     /// See `HomeExpansionContainer.initialAspectRatio`'s own doc comment — `nil` when this
-    /// slot's video is already known to land straight on `NameClipsView`, which never
+    /// slot's video is already known to land straight on `ClipListView`, which never
     /// letterboxes.
     let initialAspectRatio: CGSize?
     init(tappedAssetIdentifier: String, initialAspectRatio: CGSize?) {
@@ -538,7 +538,7 @@ struct HomeHeader: View {
 struct VideoGalleryView: View {
     @ObservedObject var viewModel: VideoLibraryViewModel
     /// The identifier of the video currently expanded (`HomeView.currentIdentifier(for:)`) —
-    /// that tile hides rather than un-rendering, the same reasoning as `NameClipCard.isHidden`:
+    /// that tile hides rather than un-rendering, the same reasoning as `ClipCard.isHidden`:
     /// `HomeExpansionContainer`'s flying card stands in at this tile's
     /// exact frame, so hiding avoids any grid reflow underneath it.
     let hiddenAssetIdentifier: String?

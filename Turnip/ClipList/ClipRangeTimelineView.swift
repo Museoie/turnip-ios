@@ -1,13 +1,13 @@
 import SwiftUI
 
 /// A read-only indicator of where a clip's window sits within the full source video
-/// (`docs/UIUX.md` § "Clip List (triage)"). The track spans the whole asset
+/// (`docs/UIUX.md` § "Clip List"). The track spans the whole asset
 /// (`0...duration`), not just the window plus local context, with the window drawn as
 /// a highlighted segment — so a glance at the grid shows roughly which part of the
 /// video each clip is from.
 ///
-/// Not draggable: trimming lives in the editor (a tile tap opens it), so the
-/// timeline in the grid can show the whole video instead of a zoomed-in range
+/// Not draggable: trimming lives in the editor (Name Clips' card opens it), so the
+/// timeline on a tile or a card can show the whole video instead of a zoomed-in range
 /// that stays finger-sized.
 struct ClipRangeTimelineView: View {
     let window: TrickWindow

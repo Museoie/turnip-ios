@@ -12,8 +12,8 @@ import SwiftUI
 /// - `-screenshotClipEditorFollow`: the editor over the take's middle, on Auto follow's crop,
 ///   the way Name Clips opens a detected clip (add `-keyframedZoom` to open it
 ///   on `keyframedCrop` instead, whose zoom and turn change from keyframe to keyframe).
-/// - `-screenshotClipListFollow`: Name Clips with that clip, for the card, its
-///   poster and the expansion flight's card.
+/// - `-screenshotClipListFollow`: Clip List with that clip, whose tile opens Name Clips on it,
+///   for the card, its poster and the expansion flight's card.
 enum FollowHarness {
     static let size = CGSize(width: 640, height: 360)
     static let fps: Int32 = 30
@@ -197,7 +197,7 @@ struct ScreenshotFollowClipListHarness: View {
     var body: some View {
         HarnessMovieGate(FollowHarness.movie) { movie in
             NavigationStack {
-                NameClipsView(
+                ClipListView(
                     items: [
                         ClipListItem(window: FollowHarness.window, cropRect: FollowHarness.cropRect)
                     ],

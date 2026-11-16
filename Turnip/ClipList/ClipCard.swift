@@ -2,28 +2,41 @@ import AVFoundation
 import SwiftUI
 import UIKit
 
-/// The clip a Name Clips page is about, at its fixed size: its window looping with the framing
-/// export uses through `ClipCardPlayback`, over its poster until the loop has a frame. A card
-/// beside the current page builds its loop paused on the first frame, so it slides in showing the
-/// video it is about to play rather than a poster that cuts to it.
+/// One clip at a fixed size, as a Clip List tile and as a Name Clips page's card (`Placement`): its
+/// window looping with the framing export uses through `ClipCardPlayback`, over its poster until
+/// the loop has a frame. A card that isn't playing builds its loop paused on the first frame, so a
+/// page beside the current one slides in showing the video it is about to play rather than a
+/// poster that cuts to it.
 ///
 /// The card also carries the saved-to-Photos badge and the read-only timeline of where the
-/// window sits in the video. A tap opens the editor, flying the card open from where it sits.
+/// window sits in the video. A tap on a page flies the card open into the editor from where it
+/// sits; a tap on a tile opens Name Clips on its clip.
 ///
 /// The card's size comes from its caller and never from its content: a poster drawn
 /// `scaledToFill` overflows whatever proposes its size, so the frame is fixed first and the
 /// picture is clipped to it.
-struct NameClipCard: View {
+struct ClipCard: View {
+    /// Where the card is shown, which decides what a tap on it opens and what it is called.
+    enum Placement {
+        /// A Name Clips page: a tap opens the editor. Its identifier is `clip-card-N`.
+        case page
+        /// A Clip List tile: a tap opens Name Clips on the clip, and VoiceOver reads the names it
+        /// has been given. Its identifier is `clip-tile-N`.
+        case tile
+    }
+
     let item: ClipListItem
     let side: CGFloat
+    let placement: Placement
     @ObservedObject var viewModel: ClipListViewModel
-    /// Whether the loop may play: the page is the current one, and nothing covers it. A card that
-    /// isn't playing keeps its loop, paused.
+    /// Whether the loop may play: the page is the current one, or the tile's list is on screen,
+    /// and nothing covers it. A card that isn't playing keeps its loop, paused.
     let isPlaying: Bool
     /// True for the card whose clip is open in the editor; the flying card stands in for it.
     let isHidden: Bool
-    /// Opens the editor from the card's on-screen frame (global space), on the poster and the
-    /// asset time the loop was showing (`nil` without a loop).
+    /// The tap: hands over the card's on-screen frame (global space), and the poster and the
+    /// asset time the loop was showing (`nil` without a loop), which the editor's flight opens
+    /// from. A tile's tap needs none of them.
     let onOpen: (CGRect, CGImage?, TimeInterval?) -> Void
     /// The swipe's way to the clip before and after this one, as VoiceOver actions on the card
     /// itself, beside the bar's Previous and Next. `nil` where there is no clip that way, or on a
@@ -38,12 +51,13 @@ struct NameClipCard: View {
     @State private var isLoopReady = false
 
     init(
-        item: ClipListItem, side: CGFloat, viewModel: ClipListViewModel, isPlaying: Bool, isHidden: Bool,
-        onOpen: @escaping (CGRect, CGImage?, TimeInterval?) -> Void,
+        item: ClipListItem, side: CGFloat, placement: Placement, viewModel: ClipListViewModel, isPlaying: Bool,
+        isHidden: Bool = false, onOpen: @escaping (CGRect, CGImage?, TimeInterval?) -> Void,
         onPrevious: (() -> Void)? = nil, onNext: (() -> Void)? = nil
     ) {
         self.item = item
         self.side = side
+        self.placement = placement
         _viewModel = ObservedObject(wrappedValue: viewModel)
         self.isPlaying = isPlaying
         self.isHidden = isHidden
@@ -70,7 +84,7 @@ struct NameClipCard: View {
                 // be heard.
                 .accessibilityValue(timelineDescription)
                 .accessibilityAddTraits(.isButton)
-                .accessibilityHint("Opens the clip in the editor")
+                .accessibilityHint(accessibilityHint)
                 .accessibilityActions {
                     if let onPrevious { Button("Previous clip", action: onPrevious) }
                     if let onNext { Button("Next clip", action: onNext) }
@@ -196,7 +210,19 @@ struct NameClipCard: View {
                 from: item.window.endTime - item.window.startTime),
             hasThumbnail: thumbnail != nil)
         if item.isSaved { label += String(localized: ", saved to Photos") }
+        // A page's names are the chips under it; a tile's are only in its caption, which
+        // VoiceOver skips.
+        if placement == .tile, !item.names.isEmpty {
+            label += ", " + ClipListAccessibility.namesLabel(item.names.map(\.name))
+        }
         return label
+    }
+
+    private var accessibilityHint: LocalizedStringKey {
+        switch placement {
+        case .page: return "Opens the clip in the editor"
+        case .tile: return "Opens the clip to name it"
+        }
     }
 
     private var timelineDescription: String {
@@ -204,6 +230,7 @@ struct NameClipCard: View {
     }
 
     private var accessibilityIdentifier: String {
-        viewModel.clipPosition(of: item).map { "clip-card-\($0.number)" } ?? "clip-card"
+        let prefix = placement == .page ? "clip-card" : "clip-tile"
+        return viewModel.clipPosition(of: item).map { "\(prefix)-\($0.number)" } ?? prefix
     }
 }

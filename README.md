@@ -45,10 +45,11 @@ before contribution ships.
 Very early, but the v1 flow now runs end to end. Home (a grid of every
 video in your Photos library — the first of the v1 screens in
 [`docs/UIUX.md`](docs/UIUX.md)) pushes `Processing` when you tap a video;
-`Processing` runs the detection pipeline and pushes Name Clips: one detected
-clip at a time, where a tap opens `ClipEditor`, clips can be discarded or
-added, each gets its trick names, and the clips are saved to Photos ("Save
-now" saves without going through every clip). With contributing switched on,
+`Processing` runs the detection pipeline and pushes Clip List, a grid of the
+detected clips; a tile opens Name Clips on that clip: one clip at a time,
+where a tap opens `ClipEditor`, clips can be discarded or added, and each
+gets its trick names. "Save Clips", on the grid or on the last clip, saves
+the clips to Photos. With contributing switched on,
 a confirmation sheet asks once, then each save's named clips go to
 `turnip-farm` in the background
 ([`docs/CONTRIBUTION_DESIGN.md`](docs/CONTRIBUTION_DESIGN.md), not yet

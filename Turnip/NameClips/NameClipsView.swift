@@ -1,36 +1,29 @@
 import AVFoundation
 import SwiftUI
 
-/// Name Clips (`docs/UIUX.md` § "Name Clips", `docs/PROFILE_DESIGN.md` §4): where an analysis
-/// lands. One detected clip at a time, looping with the framing it exports with, and under it the
-/// trick-name field, the names given as chips, suggestions, and who is in the clip. Naming is
-/// never required: "Previous" and "Next" step through the clips, and the last clip's "Save Clips"
-/// saves them all at once.
+/// Name Clips (`docs/UIUX.md` § "Name Clips", `docs/PROFILE_DESIGN.md` §4): Clip List
+/// (`ClipListView`) pushes this on the tile it was tapped from. One clip at a time, looping with
+/// the framing it exports with, and under it the trick-name field, the names given as chips,
+/// suggestions, and who is in the clip. Naming is never required: "Previous" and "Next" step
+/// through the clips, and the last clip's "Save Clips" saves them all at once.
 ///
-/// It is also the triage the clip grid used to be: tapping the card flies it open into the
-/// editor (`ClipExpansionContainer`), the header's "+" adds a clip, and the header's menu
-/// removes the one on screen. With no clip, it offers "Analyze clips" (`analyze`) and "Clip
-/// manually".
+/// Tapping the card flies it open into the editor (`ClipExpansionContainer`), the header's "+"
+/// adds a clip, and the header's menu removes the one on screen; removing the last clip goes back
+/// to the list, which says there are none. Every change is to the list's own `ClipListViewModel`,
+/// so the grid shows it on the way back.
 ///
 /// The pager owns every horizontal drag that starts above the bottom bar (the bar sits outside
 /// it, so a swipe that starts there doesn't page), and holds the page's own vertical scroll
-/// still while it slides. The processing screen pushes this with the
-/// pipeline's output, or with nothing from its "Clip it"; the back chevron pops to Home. This
-/// view declares no `NavigationStack` of its own.
+/// still while it slides. The back chevron pops to the list; a save pops to Home (`popToRoot`).
+/// This view declares no `NavigationStack` of its own.
 struct NameClipsView: View {
-    @StateObject private var viewModel: ClipListViewModel
+    @ObservedObject private var viewModel: ClipListViewModel
     @ObservedObject private var vocabulary: VocabularyStore
     @ObservedObject private var account: FarmAccount
     private let outbox: ContributionOutbox
-    /// A run that found nothing says so; a video that arrived by "Clip it" wasn't looked at.
-    let showsNoTricksFound: Bool
     let popToRoot: () -> Void
-    /// Leaves for Processing to analyze the video: the empty state's "Analyze clips". Nil where
-    /// no Processing screen sits under this one (a camera take live inference fully covered,
-    /// which has been analyzed), and the empty state then offers "Clip manually" alone.
-    let analyze: (() -> Void)?
 
-    @State private var index = 0
+    @State private var index: Int
     @State private var dragOffset: CGFloat = 0
     /// The axis a drag committed to on its first movement: a vertical one scrolls the page and
     /// never pages, a horizontal one pages and stops the page's scroll (`NameClipPage.isPaging`).
@@ -47,34 +40,26 @@ struct NameClipsView: View {
     @State private var isShowingContribution = false
     /// iPhone Duo's vertical bar, which the bar's items go down instead.
     @Environment(\.verticalBar) private var verticalBar
+    /// Pops back to the list.
+    @Environment(\.dismiss) private var dismiss
 
     private static let slide: Animation = .easeInOut(duration: 0.3)
 
+    /// `startIndex` is the clip the list's tile was tapped on, among `viewModel.clipsToName`.
     init(
-        items: [ClipListItem],
-        poseFrames: [PoseFrameResult] = [],
-        people: [PoseTrack] = [],
-        windowEmbeddings: [WindowEmbeddings] = [],
-        asset: AVAsset,
-        assetIdentifier: String,
-        duration: TimeInterval,
-        loader: ClipThumbnailLoader = ClipThumbnailLoader(),
-        showsNoTricksFound: Bool = false,
+        viewModel: ClipListViewModel,
+        startIndex: Int = 0,
         vocabulary: VocabularyStore = .shared,
         account: FarmAccount = .shared,
         outbox: ContributionOutbox = .shared,
-        popToRoot: @escaping () -> Void = {},
-        analyze: (() -> Void)? = nil
+        popToRoot: @escaping () -> Void = {}
     ) {
-        _viewModel = StateObject(wrappedValue: ClipListViewModel(
-            items: items, poseFrames: poseFrames, people: people, windowEmbeddings: windowEmbeddings, asset: asset,
-            assetIdentifier: assetIdentifier, duration: duration, loader: loader))
+        _viewModel = ObservedObject(wrappedValue: viewModel)
+        _index = State(initialValue: startIndex)
         _vocabulary = ObservedObject(wrappedValue: vocabulary)
         _account = ObservedObject(wrappedValue: account)
         self.outbox = outbox
-        self.showsNoTricksFound = showsNoTricksFound
         self.popToRoot = popToRoot
-        self.analyze = analyze
     }
 
     private var clips: [ClipListItem] { viewModel.clipsToName }
@@ -87,7 +72,8 @@ struct NameClipsView: View {
     var body: some View {
         Group {
             if clips.isEmpty {
-                emptyState
+                // Only for as long as the pop back to the list takes, once the last clip is removed.
+                Color.clear
             } else {
                 pager
             }
@@ -141,8 +127,13 @@ struct NameClipsView: View {
             }
         }
         .onChange(of: clips.count) { count in
+            // With no clip left there is nothing to name: the list says so instead.
+            guard count > 0 else {
+                dismiss()
+                return
+            }
             // A discarded last clip leaves its neighbour current, sliding in from the side.
-            if index >= count { withAnimation(Self.slide) { index = max(count - 1, 0) } }
+            if index >= count { withAnimation(Self.slide) { index = count - 1 } }
         }
         .task { await vocabulary.refreshIfStale() }
     }
@@ -326,9 +317,9 @@ struct NameClipsView: View {
     }
 
     private var backButton: some View {
-        ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Home") {
+        ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to all clips") {
             commitDraft()
-            popToRoot()
+            dismiss()
         }
         .disabled(viewModel.isSaving)
         .accessibilityIdentifier("name-clips-back")
@@ -362,17 +353,7 @@ struct NameClipsView: View {
 
     @ViewBuilder
     private var actionBar: some View {
-        if clips.isEmpty {
-            if let analyze {
-                PrimaryActionBar("Analyze clips", secondary: .init("Clip manually", action: addClip), action: analyze)
-                    .accessibilityIdentifier("start-analysis")
-            } else {
-                PrimaryActionBar("Clip manually", action: addClip)
-                    .accessibilityIdentifier("name-clips-clip-manually")
-            }
-        } else {
-            pagingBar
-        }
+        if !clips.isEmpty { pagingBar }
     }
 
     /// Previous in the leading corner and Next in the trailing one, playing the swipe's slide.
@@ -414,46 +395,20 @@ struct NameClipsView: View {
         ClipListAccessibility.saveClipsValue(clipCount: viewModel.unsavedClipCount)
     }
 
-    /// What an analysis that left no clip shows: that it found nothing, or — for a video reached
-    /// by "Clip it" — that there is nothing yet, over the bar's "Analyze clips" and "Clip manually".
-    private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "film.stack")
-                .font(.system(size: 44))
-                .foregroundStyle(.secondary)
-            Text(showsNoTricksFound ? ClipListAccessibility.noTricksFound : String(localized: "No clips yet"))
-                .font(.headline)
-                .accessibilityIdentifier("no-tricks-notice")
-            Text("Add a clip, then trim it to the trick in the editor.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { if showsNoTricksFound { viewModel.announceNoTricksFound() } }
-    }
-
     // MARK: - Save
 
-    /// The save, then back to Home. When Settings' Contribute named clips is on, a saved clip of the
-    /// user has a name and the farm can take it, the contribution sheet comes first if this account
-    /// hasn't agreed yet; once it has, the clips go to the outbox and Home doesn't wait for their
-    /// upload. A save with only clips of someone else has nothing to send, so it asks nothing.
+    /// The save, then back to Home, by way of the contribution sheet when it asks first
+    /// (`ClipListViewModel.saveClips`).
     private func save() {
         commitDraft()
         isFieldFocused = false
         Task {
-            guard await viewModel.save() else { return }
-            let plan = viewModel.contributionPlan()
-            guard account.isAvailable, plan.hasReadyClips else {
+            switch await viewModel.saveClips(account: account, outbox: outbox) {
+            case .failed:
+                break
+            case .finished:
                 popToRoot()
-                return
-            }
-            if account.credentials.hasConsented {
-                if let source = plan.source { await outbox.enqueue(source) }
-                popToRoot()
-            } else {
+            case .asksToContribute(let plan):
                 contribution = plan
                 isShowingContribution = true
             }
@@ -479,7 +434,7 @@ private extension String {
 
 #Preview {
     NavigationStack {
-        NameClipsView(
+        NameClipsView(viewModel: ClipListViewModel(
             items: [
                 ClipListItem(
                     window: TrickWindow(startTime: 2, endTime: 5),
@@ -488,7 +443,7 @@ private extension String {
             // AVAsset is abstract; the URL resolves to nothing, so the card shows its placeholder.
             asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
             assetIdentifier: "preview",
-            duration: 15)
+            duration: 15))
     }
     .preferredColorScheme(.dark)
 }

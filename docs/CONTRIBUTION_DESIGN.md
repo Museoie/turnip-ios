@@ -138,7 +138,7 @@ truth — it is recomputed on demand, which is the whole point.
 A small `VideoIdentityResolver` (new, beside the existing
 `PhotoVideoResolver`) called from the video-select path
 (`VideoLibraryViewModel.select(_:)`). The resulting `source_id` travels
-with the existing `SelectedVideo` value through Processing → Name Clips,
+with the existing `SelectedVideo` value through Processing → Clip List → Name Clips,
 so every downstream screen can reference it without recomputing.
 
 ### 1.3 Edge cases
@@ -253,12 +253,13 @@ The flow rides the existing screens from `UIUX.md`:
 
 - **Processing (§2)** — analysis runs as today; proposals land on Name
   Clips.
-- **Name Clips** (`UIUX.md` §3a, `PROFILE_DESIGN.md` §4) — the screen an
-  analysis lands on, one clip at a time, where clips are triaged (open
-  in the editor, discard, add), named, contributed or not, and saved.
-  Whether its saved, named clips are contributed is Settings' Contribute
-  named clips switch (§3.3). It took over Clip List's triage on
-  2026-10-27 (`UIUX.md` §3).
+- **Name Clips** (`UIUX.md` §3a, `PROFILE_DESIGN.md` §4) — one clip at a
+  time, where clips are triaged (open in the editor, discard, add), named,
+  contributed or not, and saved. Whether its saved, named clips are
+  contributed is Settings' Contribute named clips switch (§3.3). It took
+  over Clip List's triage on 2026-10-27; since 2026-11-16 an analysis
+  lands on Clip List again (`UIUX.md` §3), a grid whose tiles open Name
+  Clips and whose own "Save Clips" saves the same way.
 - **Clip Detail / Editor (§4)** — window trimming via the scrub-bar
   handles and crop editing are unchanged.
 - **The Profile's Clip view** (`PROFILE_DESIGN.md` §5.2) — a saved

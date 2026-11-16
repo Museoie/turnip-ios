@@ -29,6 +29,13 @@ final class ClipListAccessibilityTests: XCTestCase {
         XCTAssertEqual(ClipListAccessibility.gridLabel(clipCount: 0), "No clips")
     }
 
+    /// A Clip List tile's names reach a listener only through its label, since its caption is
+    /// skipped.
+    func testNamesLabelReadsATilesNamesAsAList() {
+        XCTAssertEqual(ClipListAccessibility.namesLabel(["cork"]), "named cork")
+        XCTAssertEqual(ClipListAccessibility.namesLabel(["cork", "gainer"]), "named cork and gainer")
+    }
+
     func testDoneValueCountsWhatTheTapCommitsTo() {
         XCTAssertEqual(
             ClipListAccessibility.saveClipsValue(clipCount: 3),

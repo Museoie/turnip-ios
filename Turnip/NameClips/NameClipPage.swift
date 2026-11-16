@@ -90,7 +90,7 @@ struct NameClipPage: View {
     let isPaging: Bool
     let commitDraft: () -> Void
     let openEditor: (CGRect, CGImage?, TimeInterval?) -> Void
-    /// The card's VoiceOver actions for the swipe (`NameClipCard.onPrevious`, `onNext`).
+    /// The card's VoiceOver actions for the swipe (`ClipCard.onPrevious`, `onNext`).
     let goToPrevious: (() -> Void)?
     let goToNext: (() -> Void)?
 
@@ -98,8 +98,8 @@ struct NameClipPage: View {
         ScrollViewReader { scroller in
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 16) {
-                    NameClipCard(
-                        item: item, side: cardSide, viewModel: viewModel, isPlaying: isCardPlaying,
+                    ClipCard(
+                        item: item, side: cardSide, placement: .page, viewModel: viewModel, isPlaying: isCardPlaying,
                         isHidden: isCardHidden, onOpen: openEditor, onPrevious: goToPrevious, onNext: goToNext)
                     VStack(alignment: .leading, spacing: 12) {
                         ClipNamingFields(

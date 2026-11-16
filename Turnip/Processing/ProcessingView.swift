@@ -24,8 +24,8 @@ private enum DragAxis {
 /// Only the error state stays on this screen, with a way back. It declares no
 /// `NavigationStack` of its own; Home's cover supplies it.
 ///
-/// The success destination is injected rather than hardcoded to Name Clips, so
-/// `Processing` never depends on its view type (`NameClipsView`): the screen
+/// The success destination is injected rather than hardcoded to Clip List, so
+/// `Processing` never depends on its view type (`ClipListView`): the screen
 /// that presents this one supplies `destination`. The destination also receives
 /// `ProcessingDestinationActions`: `popToRoot` — the flow's "back to Home" action — so its back
 /// button can skip this screen instead of stepping back through the flow, and `analyze`.
