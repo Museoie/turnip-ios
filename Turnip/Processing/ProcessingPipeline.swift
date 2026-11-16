@@ -230,13 +230,8 @@ struct ProcessingPipeline: Sendable {
         // lets the last window run past the file, and the card labels a
         // longer clip than the export produces. It is also what a kept pose is checked against.
         let duration = try await asset.load(.duration).seconds
-        if let partial = video.partialPose {
-            return try await backfill(
-                partial, of: video, duration: duration, isKept: false, people: mode, onProgress: onProgress)
-        }
-        if let kept = poseArchive?.pose(for: video.assetIdentifier, duration: duration) {
-            return try await backfill(
-                kept, of: video, duration: duration, isKept: true, people: mode, onProgress: onProgress)
+        if let scored = video.partialPose ?? poseArchive?.pose(for: video.assetIdentifier, duration: duration) {
+            return try await backfill(scored, of: video, duration: duration, people: mode, onProgress: onProgress)
         }
         let totalFrames = await Self.estimatedSampledFrames(of: videoTrack, sampleRate: sampleRate)
         let interval = await Self.sampleInterval(of: videoTrack, sampleRate: sampleRate)
@@ -287,18 +282,21 @@ struct ProcessingPipeline: Sendable {
             asset: asset)
     }
 
-    /// A video already scored, in whole or part — live by the camera, or by an earlier run the
-    /// archive kept (`isKept`): scores only the times `PoseBackfill` plans for the stretches those
-    /// frames miss, at their own spacing rather than `sampleRate`, and detects over the two merged.
-    /// Frames past the end of the file are dropped first: the camera keeps scoring between Stop
-    /// and its own hand-off. Progress counts the frames in hand as already processed, so the bar
-    /// starts where they left off. The merged take is kept in the archive, unless it is the
+    /// A video already scored, in whole or part — live by the camera (`video.partialPose`), or by
+    /// an earlier run the archive kept: scores only the times `PoseBackfill` plans for the stretches
+    /// those frames miss, at their own spacing rather than `sampleRate`, and detects over the two
+    /// merged. Frames past the end of the file are dropped first: the camera keeps scoring between
+    /// Stop and its own hand-off. Progress counts the frames in hand as already processed, so the
+    /// bar starts where they left off. The merged take is kept in the archive, unless it is the
     /// archive's own entry with nothing added.
     private func backfill(
-        _ partial: PartialPoseFrames, of video: SelectedVideo, duration: TimeInterval, isKept: Bool,
+        _ partial: PartialPoseFrames, of video: SelectedVideo, duration: TimeInterval,
         people mode: PersonMode, onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
         let asset = video.asset
+        // `run` reaches here with the camera's frames when the video carries them, and with the
+        // archive's entry otherwise.
+        let isKept = video.partialPose == nil
         // An unreadable store (the system may purge `tmp/` while the app is suspended) reads as
         // no live frames: the whole file is sampled instead of failing the run. Only the
         // timestamps are collected — the live frames themselves stream from the store at

@@ -45,10 +45,6 @@ struct VideoPoseArchive: Sendable {
 
     private static let logger = Logger(subsystem: "com.hoiekim.turnip", category: "VideoPoseArchive")
 
-    init(directory: URL?) {
-        self.directory = directory
-    }
-
     /// Keeps `pose` as the video `assetIdentifier`'s, replacing what was kept for it before.
     /// `duration` is the video's length in seconds. A pose with no frames is not kept. Best
     /// effort: a failure is logged, and leaves the video with no entry.
