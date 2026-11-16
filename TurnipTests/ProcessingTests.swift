@@ -435,6 +435,93 @@ final class ProcessingPipelineRunTests: XCTestCase {
             result.clips,
             pipeline.detectClips(in: fixtures, renderedPixelSize: renderSize, duration: duration))
     }
+
+    // MARK: - The pose archive
+
+    /// The fixture every archive test runs over: a slide the detector finds one window in, a
+    /// 3.5 s, 10 fps file, and an inference that answers from the fixture.
+    private struct ArchiveFixture {
+        let fixtures: [PoseFrameResult]
+        let sampler: ScriptedSampler
+        let video: SelectedVideo
+        let archive: VideoPoseArchive
+        let directory: URL
+
+        var inference: ProcessingPipeline.InferenceFactory {
+            let fixtures = fixtures
+            return { { frame in [.fixture(fixtures[frame.frameIndex].keypoints)] } }
+        }
+    }
+
+    private func archiveFixture() async throws -> ArchiveFixture {
+        let videoURL = try await TestVideoWriter.writeTestVideo(frameCount: 35, width: 64, height: 48, fps: 10)
+        let fixtures = PoseFixture.slide(
+            quietFrames: 15, from: 0.2, perFrame: 0.1, movingFrames: 6, tailFrames: 14
+        ).enumerated().map { index, y in PoseFixture.body(index: index, hip: (x: 0.5, y: y)) }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("turnip-pose-archive-run-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: videoURL)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        return ArchiveFixture(
+            fixtures: fixtures,
+            sampler: ScriptedSampler(renderSize: CGSize(width: 48, height: 64), results: fixtures),
+            video: SelectedVideo(assetIdentifier: "analyzed", asset: AVURLAsset(url: videoURL), duration: 3.5),
+            archive: VideoPoseArchive(directory: directory),
+            directory: directory)
+    }
+
+    /// A run keeps what it scored, and analyzing the same video again reads it back instead of
+    /// running the pose model: the second run's inference only throws, it samples nothing, and
+    /// its clips are the first run's.
+    func testAnalyzingAgainReusesTheKeptPose() async throws {
+        let fixture = try await archiveFixture()
+        let first = try await ProcessingPipeline(
+            sampler: fixture.sampler, makeInference: fixture.inference, poseArchive: fixture.archive
+        ).run(video: fixture.video) { _ in }
+        let second = try await ProcessingPipeline(
+            sampler: fixture.sampler, makeInference: { throw TestError.boom }, poseArchive: fixture.archive
+        ).run(video: fixture.video) { _ in }
+
+        XCTAssertFalse(first.clips.isEmpty, "the fixture should yield a clip to compare")
+        XCTAssertEqual(second.clips, first.clips)
+        XCTAssertEqual(second.detection.poseFrames.map(\.timestamp), first.detection.poseFrames.map(\.timestamp))
+        XCTAssertTrue(fixture.sampler.requests.all.isEmpty, "the second run sampled: \(fixture.sampler.requests.all)")
+    }
+
+    /// A run cut short keeps the frames it did score, and the next run scores only the rest of the
+    /// video, at the kept frames' spacing, and keeps the whole take in their place.
+    func testARunCutShortKeepsWhatItScoredAndTheNextScoresTheRest() async throws {
+        let fixture = try await archiveFixture()
+        let fixtures = fixture.fixtures
+        let failing: ProcessingPipeline.InferenceFactory = {
+            { frame in
+                guard frame.frameIndex < 20 else { throw TestError.boom }
+                return [.fixture(fixtures[frame.frameIndex].keypoints)]
+            }
+        }
+        do {
+            _ = try await ProcessingPipeline(
+                sampler: fixture.sampler, makeInference: failing, poseArchive: fixture.archive
+            ).run(video: fixture.video) { _ in }
+            XCTFail("the run should have failed at the 21st frame")
+        } catch {
+            XCTAssertTrue(error is TestError, "\(error)")
+        }
+        XCTAssertEqual(fixture.archive.pose(for: "analyzed", duration: 3.5)?.store.count, 20)
+
+        let resumed = try await ProcessingPipeline(
+            sampler: fixture.sampler, makeInference: fixture.inference, poseArchive: fixture.archive
+        ).run(video: fixture.video) { _ in }
+        let requested = try XCTUnwrap(fixture.sampler.requests.all.first)
+        XCTAssertEqual(requested.count, 15, "only the stretch the cut-short run missed is sampled: \(requested)")
+        XCTAssertEqual(requested.first ?? 0, 2.0, accuracy: 1e-9)
+        XCTAssertEqual(resumed.detection.poseFrames.map(\.timestamp), fixtures.map(\.timestamp))
+        XCTAssertEqual(
+            fixture.archive.pose(for: "analyzed", duration: 3.5)?.store.count, fixtures.count,
+            "the merged take wasn't kept")
+    }
 }
 
 /// Collects a run's progress reports, which arrive off the main actor.

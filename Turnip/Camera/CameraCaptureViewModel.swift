@@ -926,14 +926,17 @@ extension CameraCaptureViewModel {
             let partial = PartialPoseFrames(
                 store: outcome.results, interval: interval,
                 renderedPixelSize: liveRenderedPixelSize)
-            return CameraRecording(fileURL: fileURL, detectedClips: nil, partialPose: partial)
+            return CameraRecording(fileURL: fileURL, detectedClips: nil, partialPose: partial, livePose: partial)
         }
         let detect = makeDetectClips(armedSampleRate)
         do {
             let frames = try outcome.results.loadAll()
             let clips = await detect(frames, Self.people, liveRenderedPixelSize)
-            outcome.results.discard()
-            return CameraRecording(fileURL: fileURL, detectedClips: clips)
+            // The frames stay on disk until the take is in Photos and the archive has a copy; the
+            // store deletes its file once the recording is let go.
+            let livePose = PartialPoseFrames(
+                store: outcome.results, interval: interval, renderedPixelSize: liveRenderedPixelSize)
+            return CameraRecording(fileURL: fileURL, detectedClips: clips, livePose: livePose)
         } catch {
             // The file is still handed on with no clips and no partial, so Processing analyzes
             // it from scratch; the failure is logged, not shown — a store that cannot be read

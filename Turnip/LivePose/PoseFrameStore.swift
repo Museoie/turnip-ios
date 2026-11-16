@@ -69,6 +69,33 @@ final class PoseFrameStore: Hashable, Sendable {
         try flush()
     }
 
+    /// A store over a copy of `url`, a file `copyFile(to:)` wrote: the store owns the copy and
+    /// deletes it as it would its own frames, so `url` itself is left alone (`VideoPoseArchive`
+    /// reads its entries this way). Throws when the file can't be copied or a record in it
+    /// doesn't parse.
+    convenience init(copying url: URL) throws {
+        self.init()
+        try FileManager.default.copyItem(at: url, to: fileURL)
+        let reader = try RecordReader(url: fileURL)
+        var read = 0
+        while try reader.next() != nil {
+            read += 1
+        }
+        let total = read
+        state.withLock { state in
+            state.count = total
+            state.fileExists = true
+        }
+    }
+
+    /// Writes the frames, flushed first, to a new file at `url` in this store's own format: what
+    /// `init(copying:)` reads back. Throws on a store with nothing in it, or one discarded.
+    func copyFile(to url: URL) throws {
+        try flush()
+        guard state.withLock({ $0.fileExists && !$0.discarded }) else { throw PoseFrameStoreError.discarded }
+        try FileManager.default.copyItem(at: fileURL, to: url)
+    }
+
     /// Packs one frame and buffers it, flushing to the file at 64 KB. A failure surfaces to
     /// the drain, which reports it the same way it reports an inference failure.
     func append(_ frame: MultiPoseFrame) throws {

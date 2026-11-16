@@ -11,4 +11,8 @@ struct CameraRecording {
     /// What live inference did score when it fell short, so Processing analyzes only the rest.
     /// Nil when `detectedClips` is set, and when nothing was scored live at all.
     var partialPose: PartialPoseFrames?
+    /// Every frame live inference scored, whether or not they covered the take: what the pose
+    /// archive keeps for the take once it is in Photos (`VideoPoseArchive`), so analyzing it again
+    /// later reuses them. Nil when nothing was scored live.
+    var livePose: PartialPoseFrames?
 }

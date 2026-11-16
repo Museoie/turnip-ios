@@ -82,6 +82,17 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
   backoff, shed samples) goes through the file path above like a picked video. Steps 4-6 are
   one implementation for both sources. Design and acceptance gate: [`LIVE_POSE.md`](LIVE_POSE.md).
 
+- **Pose archive** (`VideoPoseArchive`): every pose the app scores of a video is kept on the
+  device until the app is deleted — a Processing run's (in part, when it is cancelled or fails
+  partway) and a camera take's live frames once the take is in Photos — one entry per
+  `PHAsset.localIdentifier`, in `Application Support/VideoPoses/`, out of device backups.
+  Analyzing a video again reads its entry back and runs steps 1-3 only over what it misses
+  (`PoseBackfill`), at the entry's own spacing, then keeps the merged take in its place; a video
+  scored whole goes straight to steps 4-6. An entry is passed over, and the video scored afresh,
+  when the video's length has changed since (a trim in Photos) or the entry's format version
+  has. It is reused whatever Settings' analysis granularity is by then. Keypoints only, never
+  frames; it never leaves the device.
+
 - **Preview UI**: a looping preview tile per detected clip; tapping one opens Name Clips on that clip, whose card opens the clip editor (a crop that follows the athlete, with Auto follow, Auto rotate and keyframes; trim with start/end handles); "Remove this clip" in the screen's menu; "Save Clips" saves the rest to Photos. Screens: [`UIUX.md`](UIUX.md).
 - **Clip library + Profile** (v2, first): saving — from Clip List, where an analysis lands, or the Name Clips its tiles open — writes each saved clip — its window, names, whose clip it is, the saved Photos asset, and the source's pose sequence — to an on-device library, and the Profile tab (the root pager's first page, and the one the app opens on once a clip is saved) is computed from it: achievements per trick counted by sessions and reps, a gallery grouped by canonical trick name, and highlight videos composed on the device. Nothing in it leaves the device except the id and names of a clip the user contributes, and nothing in it requires an account or contributing. Full design: [`PROFILE_DESIGN.md`](PROFILE_DESIGN.md).
 - **Contribution** (v2): opt-in — Settings' "Contribute named clips" switch contributes a Name Clips save's named clips, the confirmation sheet asks once and sends nothing until Confirm, and after that each save uploads in the background from an outbox that resumes by itself; a per-clip toggle on the Profile's Clip view is planned, never on the Clip Editor. Uploads the pose-format keypoint sequence plus the confirmed clip windows, the free-text trick names the clips already carry, and each name's provenance to `turnip-farm` — keypoints only, video never leaves the device. The farm upserts on ID match, so re-contribution is safe and idempotent. Full design: [`CONTRIBUTION_DESIGN.md`](CONTRIBUTION_DESIGN.md).

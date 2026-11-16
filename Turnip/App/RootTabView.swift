@@ -238,6 +238,14 @@ struct RootTabView: View {
                 guard let asset = PHAsset.fetchAssets(
                     withLocalIdentifiers: [identifier], options: nil
                 ).firstObject else { return }
+                // What the camera scored live is the take's pose from now on, so analyzing it again,
+                // today or later, reuses it (`VideoPoseArchive`). Copied off the main thread.
+                if let livePose = recording.livePose {
+                    let duration = asset.duration
+                    Task.detached(priority: .utility) {
+                        VideoPoseArchive.shared.keep(livePose, for: identifier, duration: duration)
+                    }
+                }
                 // Instant, unlike `closeCamera()` and `slide(to:)`: `select` opens the expansion
                 // cover over Home in this same update, and a camera still sliding away, or a page
                 // still sliding in, underneath it would hand the cover's flight a moving backdrop.

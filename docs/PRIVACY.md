@@ -181,22 +181,44 @@ require a manifest/signature. If a dependency is added, check both.
   holds at most a 64 KB buffer in memory instead of the whole take. A partial
   that reaches Processing stays on disk in the eight-take store until it is
   evicted. It never leaves the device, is never backed up, and is deleted at
-  end of use or swept at the next launch.
+  end of use or swept at the next launch. Once the take is in Photos, a copy
+  of what live inference scored, all of the take or part, is kept with the
+  video's pose ("Kept pose analysis" below).
 - **Offline run scratch.** Processing a take from the file scores it the same
   way and streams the scored frames to a `tmp/` scratch file
   (`turnip-live-pose-<uuid>.bin`) instead of holding them in memory, so a long
   take holds at most a 64 KB buffer in memory while it is scored and detected.
   The file is deleted when the run ends — success, failure, or cancellation —
-  and swept at launch when a session died before that. It never leaves the
-  device, is never backed up, and holds only the packed keypoints, never video.
+  and swept at launch when a session died before that, after a copy of what it
+  scored is kept with the video's pose ("Kept pose analysis" below). It never
+  leaves the device, is never backed up, and holds only the packed keypoints,
+  never video.
 - **Everyone in frame.** The pose model finds up to six people per frame, so
   bystanders' keypoints are computed and held alongside the athlete's, in either person mode (`docs/MULTI_PERSON.md`). Following
   everyone, the poses of the people who own a clip travel with the clips to Clip List and Name Clips.
   None of it leaves the device: it rides the same session scratch file as the
-  athlete's frames and is gone with it; only the pose of someone with a saved
-  clip is kept on disk ("The clip library and the Profile" below).
+  athlete's frames, and every frame's people are kept with the video's pose
+  ("Kept pose analysis" below).
 - **Logs** go to `os.Logger` only; nothing is written to log files.
 - Nothing is written to `Documents/` anywhere in v1.
+
+## Kept pose analysis (built)
+
+- **What.** `VideoPoseArchive` keeps the pose keypoints of every video the app has
+  scored — Processing's analyses, in part when one is cancelled or fails, and the
+  camera's live pass of each take once it is in Photos — so analyzing a video again
+  reuses them (`docs/DESIGN.md` § "Pose archive"). Keypoints, boxes and scores for
+  everyone the model found in each sampled frame, bystanders included; never video,
+  frames or images.
+- **Where.** `Application Support/VideoPoses/`: per video, the packed frames
+  (`<sha256>.tpos`, the scratch files' format) and a small JSON of how to read them
+  (sample spacing, render size, the video's length), both named by a SHA-256 of the
+  video's `PHAsset.localIdentifier`. Excluded from device backups
+  (`isExcludedFromBackup`), since it can always be scored again from the video.
+- **How long.** Until the app is deleted. Nothing in the app deletes an entry: a video
+  deleted from Photos leaves its entry behind, and one analyzed again replaces its own.
+- **Where it goes.** Nowhere: it is read only by the app's own analysis. A contribution
+  sends the pose of the clips it lists, as before ("Contribution" below), not this.
 
 ## Export compliance
 
