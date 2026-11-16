@@ -240,8 +240,9 @@ Built:
   selected trait, and every tile's hint becomes "Marks the clip for deleting". The bar's button
   says how many clips it deletes ("Delete 2 Clips"), and the confirmation's button says it
   again. The check circle drawn on a tile is hidden from the tree; the trait carries it.
-- Each tile's caption shows its names as chips; they are hidden from the tree with the rest of
-  the caption, since the tile's label reads them.
+- Each tile's caption shows its names as chips on one line, the last cut short when they run out
+  of room; they are hidden from the tree with the rest of the caption, since the tile's label
+  reads every name in full.
 - The tiles loop under the same gate as Name Clips' card: none under Reduce Motion or with video
   autoplay off, where each tile shows its poster.
 - Identifiers: `clip-grid`, `clip-list-back`, `add-clip`, `clip-list-select`, `clip-tile-<n>`,

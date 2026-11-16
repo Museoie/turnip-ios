@@ -381,8 +381,9 @@ struct ClipListView: View {
 }
 
 /// A tile's caption: the clip's length, then each name it has been given as a chip in Name Clips'
-/// style (`ChipButtonStyle`, prominent), cut down to the length's own size, wrapping onto another
-/// line when the names don't fit beside it. VoiceOver skips it: the card's label reads both.
+/// style (`ChipButtonStyle`, prominent), cut down to the length's own size, all on one line
+/// (`ChipLine`): names that don't fit beside the length are cut short with an ellipsis. VoiceOver
+/// skips it: the card's label reads the length and every name.
 private struct ClipTileCaption: View {
     let item: ClipListItem
     let width: CGFloat
@@ -392,22 +393,26 @@ private struct ClipTileCaption: View {
     private static let verticalPadding: CGFloat = 1
 
     var body: some View {
-        ChipFlow(spacing: 4) {
+        HStack(spacing: 4) {
             Text(item.durationLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.vertical, Self.verticalPadding)
-            ForEach(item.names, id: \.self) { name in
-                Text(name.name)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, Self.verticalPadding)
-                    .background(Capsule().fill(Color.accentColor))
-                    // A name longer than the tile is wide is cut short rather than run past it.
-                    .frame(maxWidth: width, alignment: .leading)
+                .fixedSize()
+            ChipLine(spacing: 4) {
+                ForEach(item.names, id: \.self) { name in
+                    Text(name.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, Self.verticalPadding)
+                        .background(Capsule().fill(Color.accentColor))
+                }
             }
+            // The names left out sit just past the line's end.
+            .clipped()
         }
         .frame(width: width, alignment: .leading)
         .accessibilityHidden(true)
