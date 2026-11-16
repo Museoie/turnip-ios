@@ -1,5 +1,12 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 34 · 2026-11-16 · A Clip List tile's name chips (§3) stay on one line,
+cut short with an ellipsis where they run out of room, rather than wrapping.
+Auto follow's keyframes sit at least 1 s apart rather than 3 s, so the crop
+follows a move away and back instead of zooming out over it. The Clip
+Editor's follow lane lines up with the trim timeline at its leading end, and
+its keyframe button sits closer to it.*
+
 *Rev 33 · 2026-11-16 · Clip List (§3) saves: its bar's "Name clips" becomes
 "Save Clips", by a ruling on decision 13. "Select" in its header marks tiles and
 deletes the marked clips together. Each tile's caption shows the clip's names as
@@ -145,7 +152,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart. Rev 29 swaps the Camera page for a camera tile, leads the pager with the Profile and opens on it once a clip is saved, widens the grid to six columns on wide screens, and moves the root controls into iPhone Duo's vertical bar. Rev 30 moves Processing's choice between analyzing and clipping by hand to Name Clips, behind a "Clip it" corner button, and pages Name Clips with Previous / Next, Save Clips on the last clip. Rev 31 drops the camera's person control, moves every screen's top controls into iPhone Duo's vertical bar, and gives the Profile an achievements carousel and page, a Me / Someone else filter, and clip removal from Needs a name and a trick's grid. Rev 32 puts Clip List back in front of Name Clips, a tile opening Name Clips on its clip. Rev 33 gives Clip List a save, a select mode and name chips, starts a card's loop on its poster's frame, and keeps every video's pose.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart. Rev 29 swaps the Camera page for a camera tile, leads the pager with the Profile and opens on it once a clip is saved, widens the grid to six columns on wide screens, and moves the root controls into iPhone Duo's vertical bar. Rev 30 moves Processing's choice between analyzing and clipping by hand to Name Clips, behind a "Clip it" corner button, and pages Name Clips with Previous / Next, Save Clips on the last clip. Rev 31 drops the camera's person control, moves every screen's top controls into iPhone Duo's vertical bar, and gives the Profile an achievements carousel and page, a Me / Someone else filter, and clip removal from Needs a name and a trick's grid. Rev 32 puts Clip List back in front of Name Clips, a tile opening Name Clips on its clip. Rev 33 gives Clip List a save, a select mode and name chips, starts a card's loop on its poster's frame, and keeps every video's pose. Rev 34 keeps a tile's name chips on one line, spaces Auto follow's keyframes 1 s apart, and lines the follow lane up with the trim timeline.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -643,8 +650,9 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
   the loop's first frame, the read-only timeline over its bottom edge, and the
   green checkmark on a clip already in Photos. Under it, the clip's length
   and then each name given so far as a chip, in Name Clips' filled style cut
-  down to the length's size, wrapping onto another line when they don't fit
-  beside it. A video analyzed following everyone has a tile per person's
+  down to the length's size, all on one line: where they run out of room the
+  last chip shown is cut short with an ellipsis and any after it are left out
+  (VoiceOver reads them all in the tile's label). A video analyzed following everyone has a tile per person's
   trick, each framing its own person. The original video has no tile.
 - Tapping a tile pushes Name Clips (§3a) on that tile's clip, which pages
   through the rest from there; its back chevron comes back here. The tiles
@@ -937,8 +945,9 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
       hollow when Auto follow wrote it, filled yellow once the user set or
       moved it. That is the split Photos' Cinematic editor draws between
       automatic and manual focus points, and it shows what tapping Auto follow
-      again would replace. Tapping a diamond jumps to it. A button at
-      the lane's trailing end adds a keyframe at the playhead, or removes the one
+      again would replace. Tapping a diamond jumps to it. The lane's leading
+      end lines up with the trim timeline's below it. A button just past the
+      lane's trailing end adds a keyframe at the playhead, or removes the one
       under it. A long press on a diamond jumps to it and offers a choice:
       remove it, as the button would there, or "Apply zoom and turn to all
       keyframes" (below). Removing a keyframe Auto follow wrote and the user
@@ -961,22 +970,21 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
       keyframe" below). It keeps the turn, replaces the zoom and the
       positions, and discards keyframes the user set. The video moves to the
       path at the playhead over the same 0.4 s ease and then follows it.
-      Its keyframes sit at least 3 s apart (Rev 28), so the lane shows a few
-      diamonds worth adjusting by hand rather than a cluster: a moment that
-      would want a keyframe nearer than that to another goes without. A
-      detected clip is 4 to 6 s long more often than not, which leaves room for
-      only two keyframes, at or near its ends. The two that start and stop the
-      crop's move are spread into the still stretches either side until they
-      are 3 s apart, or sit at the window's two ends when it is shorter than
-      that. Between two keyframes the crop can only travel from one framing to
-      the other, so where the athlete moves away and back in between — out to
-      the side and back, or up into a jump and down — the curve would cut them;
-      instead the keyframes either side zoom out until the athlete stays
-      inside at every moment, no wider than the frame. Such a clip frames
-      looser than it did with keyframes placed freely: an athlete crossing
-      40% of a portrait frame and back within 5 s gets a crop about 830 source
-      pixels wide where the zoom floor alone would give 432 (`DESIGN.md` step
-      6). Where the fewer keyframes would let a crop that zooms and moves at
+      Its keyframes sit at least 1 s apart (3 s from Rev 28, 1 s since Rev
+      34), so the lane shows diamonds worth adjusting by hand rather than a
+      cluster: a moment that would want a keyframe nearer than that to another
+      goes without. The two that start and stop the crop's move are spread
+      into the still stretches either side until they are 1 s apart, or sit at
+      the window's two ends when it is shorter than that. Between two
+      keyframes the crop can only travel from one framing to the other, so
+      where the athlete moves away and back within a second — out to the side
+      and back, or up into a jump and down — the curve would cut them; instead
+      the keyframes either side zoom out until the athlete stays inside at
+      every moment, no wider than the frame. At 3 s that zoom-out took most
+      detected clips, which have room for only two keyframes: an athlete
+      crossing 40% of a portrait frame and back within 5 s got a crop about
+      830 source pixels wide where the zoom floor alone gives 432 (`DESIGN.md`
+      step 6). At 1 s the curve follows such a move with keyframes of its own. Where the fewer keyframes would let a crop that zooms and moves at
       once show past the frame between them, their positions are pulled in
       until it can't. Keyframes added by hand go anywhere, so a tighter follow
       is a few keyframes by hand.
