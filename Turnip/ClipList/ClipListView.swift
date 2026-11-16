@@ -11,11 +11,10 @@ import SwiftUI
 /// screen's `ClipListViewModel`, so a name, an edit, a clip added or removed there is on the grid on
 /// the way back.
 ///
-/// The grid doesn't save: "Save Clips" stays on Name Clips' last clip, so every clip has been on
-/// screen as a page, with the names the trick model filled in as chips that can be removed, before
-/// it is saved. The header's "+" adds a clip. With no clip, the screen offers "Analyze clips"
-/// (`analyze`) and "Clip manually". The back chevron pops to Home. This view declares no
-/// `NavigationStack` of its own.
+/// The grid adds no save of its own: "Save Clips" stays on Name Clips' last clip, where it was
+/// (`docs/UIUX.md` decision 13 says why, and what that leaves open). The header's "+" adds a clip.
+/// With no clip, the screen offers "Analyze clips" (`analyze`) and "Clip manually". The back
+/// chevron pops to Home. This view declares no `NavigationStack` of its own.
 struct ClipListView: View {
     @StateObject private var viewModel: ClipListViewModel
     private let vocabulary: VocabularyStore

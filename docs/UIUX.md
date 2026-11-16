@@ -638,10 +638,10 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
   iPhone Duo they go down the vertical bar, as every screen's top controls do.
   A clip is removed from Name Clips' "…" menu; a tile has no trash of its own.
 - With clips, the bottom bar's "Name clips" pushes Name Clips on the first
-  clip. The grid doesn't save: "Save Clips" stays on Name Clips' last clip
-  (§3a), so every clip has been on screen as a page, with any names the trick
-  model filled in as chips the user can remove, before it is saved and
-  contributed. A tile's caption cuts its names to one line.
+  clip. The grid has no save of its own: "Save Clips" stays on Name Clips'
+  last clip (§3a), where it was (decision 13). A tile's caption cuts its
+  names to one line, so names the trick model filled in are read and removed
+  as Name Clips' chips, not here.
 - With no clip — a run that found none, every clip removed, or a video that
   arrived by "Clip it" — the screen says "No tricks found" (the first) or
   "No clips yet" (the others) over "Add a clip, then trim it to the trick in
@@ -1233,11 +1233,18 @@ Resolved 2026-09-04.
    to name, edit, remove and save a clip. The grid takes Name Clips' empty
    state and adds "+" and "Name clips", which opens Name Clips on the first
    clip; Name Clips' back chevron now returns to the grid rather than Home.
-   The grid doesn't save, so decision 12's paging to the last clip to save
-   stands: the trick model fills in names it is confident in, and a save
-   from the grid would write them to the library, and contribute them as
-   names the user kept, with only a caption cut to one line ever showing
-   them. Decision 9's cost — the grid's players decoding behind Name Clips —
+   The grid adds no save of its own, and "Save Clips" stays on Name Clips'
+   last clip (decision 12): the trick model fills in names it is confident
+   in, and a save from the grid would write them to the library, and
+   contribute them as names the user kept, with no page of Name Clips
+   opened and only a caption cut to one line showing them. That keeps one
+   path, not a guarantee: Name Clips opened on a later tile reaches the
+   last clip, and "Save Clips", without paging past the clips before it,
+   as its "+" already did by sliding to the clip it adds, and the
+   pre-filled names on the clips skipped are saved without having been on
+   screen as chips. *Open, for a ruling:* hold "Save Clips" back until
+   every clip has been the page on screen, or accept the skip.
+   Decision 9's cost — the grid's players decoding behind Name Clips —
    is met by pausing the tiles while Name Clips is pushed. Not brought back:
    the original video's tile, a trash button on each tile, and "Save
    without names".
