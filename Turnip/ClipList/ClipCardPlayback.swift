@@ -13,19 +13,29 @@ protocol ClipLooping: AnyObject {
     /// Releases the loop and the decode pipeline behind it. Not reusable afterwards —
     /// a later start builds a fresh loop.
     func stop()
+    /// Waits until the loop holds the frame it starts on, before anything draws it. Returns at
+    /// once for a loop with nothing to wait for.
+    @MainActor func cue() async
+}
+
+extension ClipLooping {
+    @MainActor func cue() async {}
 }
 
 /// Loops one window of an asset forever and muted, which needs an `AVQueuePlayer`
 /// rather than a plain `AVPlayer`: `AVPlayerLooper` drives the repeat by keeping a
 /// queue topped up with copies of its template item.
 ///
-/// The first pass starts at the window's midpoint, the frame the card's poster is decoded at
-/// (`ClipThumbnailLoader`), and every pass after it at the window's start. The card shows its
-/// poster until the loop has a frame, so a loop that began at the window's start would cut from
-/// the poster to a different picture the moment it was ready — just after a page has slid in.
+/// The first pass starts at the window's midpoint (`cue()`), the frame the card's poster is
+/// decoded at (`ClipThumbnailLoader`), and every pass after it at the window's start. The card
+/// shows its poster until the loop has a frame, so a loop that began at the window's start would
+/// cut from the poster to a different picture the moment it was ready — just after a page has
+/// slid in.
 final class AVPlayerLoop: ClipLooping {
     let player: AVQueuePlayer
     private var looper: AVPlayerLooper?
+    /// Where the first pass starts: the poster's frame.
+    private let posterTime: CMTime
 
     /// `videoComposition` is attached to the template item *before* `AVPlayerLooper` is
     /// constructed from it: the looper reads the template's properties at construction, so
@@ -36,17 +46,41 @@ final class AVPlayerLoop: ClipLooping {
         let queuePlayer = AVQueuePlayer()
         queuePlayer.isMuted = true
         player = queuePlayer
+        posterTime = CMTime(seconds: ClipThumbnailLoader.posterTime(of: geometry.window), preferredTimescale: 600)
         looper = AVPlayerLooper(
             player: queuePlayer,
             templateItem: templateItem,
             timeRange: CMTimeRange(
                 start: CMTime(seconds: geometry.window.startTime, preferredTimescale: 600),
                 end: CMTime(seconds: geometry.window.endTime, preferredTimescale: 600)))
-        // The looper queues its copies of the template as it is made: the seek moves only the
-        // first, the one that plays now, and every copy after it starts at the window's start.
-        queuePlayer.seek(
-            to: CMTime(seconds: ClipThumbnailLoader.posterTime(of: geometry.window), preferredTimescale: 600),
-            toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    /// How long `cue()` waits for the looper's first copy to be ready. A looper whose range the
+    /// file doesn't hold never queues one (`ClipCardPlayback.clampedForLoop`), and a wait with no
+    /// end would hold the card's build open for as long as the card is up.
+    static let cueTimeout: DispatchQueue.SchedulerTimeType.Stride = .seconds(3)
+
+    /// Waits for the looper's first copy, which it queues once the asset has loaded rather than as
+    /// it is made, to be ready, then moves that copy alone to the poster's frame; every copy after
+    /// it starts at the window's start. Returns without seeking when the copy fails or isn't
+    /// ready within `cueTimeout`, and the loop then starts where the looper put it.
+    @MainActor
+    func cue() async {
+        let ready = player.publisher(for: \.currentItem)
+            .compactMap { $0 }
+            .first()
+            .flatMap { item in
+                item.publisher(for: \.status)
+                    .first { $0 != .unknown }
+                    .map { status -> AVPlayerItem? in status == .readyToPlay ? item : nil }
+            }
+            .timeout(Self.cueTimeout, scheduler: DispatchQueue.main)
+        var first: AVPlayerItem?
+        for await item in ready.values {
+            first = item
+        }
+        guard let first else { return }
+        _ = await first.seek(to: posterTime, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     func play() {
@@ -281,6 +315,15 @@ final class ClipCardPlayback: ObservableObject {
             }
             let clamped = Self.clampedForLoop(target, to: duration)
             let built = makeLoop(asset, clamped, composition)
+            // On the frame it starts on before the card's surface is given it, so the surface's
+            // first frame is the poster's (`AVPlayerLoop.cue`). The same checks again after it:
+            // the wait is a suspension point a teardown or a suspension can land in.
+            await built.cue()
+            guard !Task.isCancelled, mayAutoplayLoops(), keepsLoopWhileSuspended || !isSuspended else {
+                built.stop()
+                releaseBuildSlot(token)
+                return
+            }
             loop = built
             loopGeometry = target
             releaseBuildSlot(token)
