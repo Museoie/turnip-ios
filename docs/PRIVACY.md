@@ -49,9 +49,10 @@ store.
   MoveNet model, and exported clips are written back to Photos. While the
   in-app camera records, the same model scores the live camera frames
   on-device to draw the skeleton and detect clips; the frames are reduced to
-  model input in memory and released immediately, nothing but the recording
-  itself is written, and the only trace left behind is per-recording timing
-  and count figures in the device's own log. The in-app camera also reads
+  model input in memory and released immediately. Besides the recording
+  itself, what is written is the keypoints the model scored, which stay on
+  the device with the take's pose ("Kept pose analysis" below), and
+  per-recording timing and count figures in the device's own log. The in-app camera also reads
   the phone's gravity vector from Core Motion while it records and writes
   the resulting roll angle into the recording as a metadata track
   (`Turnip/Camera/RollTrackRecorder.swift`, format in
@@ -212,8 +213,10 @@ require a manifest/signature. If a dependency is added, check both.
   frames or images.
 - **Where.** `Application Support/VideoPoses/`: per video, the packed frames
   (`<sha256>.tpos`, the scratch files' format) and a small JSON of how to read them
-  (sample spacing, render size, the video's length), both named by a SHA-256 of the
-  video's `PHAsset.localIdentifier`. Excluded from device backups
+  (sample spacing, render size, the pose model) and of the file they were scored from
+  (its length, and a 64-bit average hash of an 8 × 8 grey thumbnail of each of three
+  frames — too coarse to show anything, enough to tell an edited file), both named by a
+  SHA-256 of the video's `PHAsset.localIdentifier`. Excluded from device backups
   (`isExcludedFromBackup`), since it can always be scored again from the video.
 - **How long.** Until the app is deleted. Nothing in the app deletes an entry: a video
   deleted from Photos leaves its entry behind, and one analyzed again replaces its own.
@@ -297,7 +300,7 @@ Built (`Turnip/Profile/`):
   days at most (`BACKEND_DESIGN.md` §8), are its only record. The Profile
   reads the vocabulary already held and fetches nothing.
 - **The first persistent user data.** `ClipLibrary` keeps one JSON file,
-  `Application Support/ClipLibrary/library.json`, written by Name Clips' save
+  `Application Support/ClipLibrary/library.json`, written by a save — Clip List's or Name Clips' —
   and by naming on the Profile: for each video that produced a saved clip,
   its Photos identifiers (this device's and iCloud Photos', which finds the
   video again after a restore onto a new device), recording date and

@@ -12,10 +12,13 @@ import os
 /// finished and flushed. `discard()` deletes the file on the paths the owner controls; `deinit`
 /// deletes it as a safety net, so an abandoned recording leaves nothing behind either.
 ///
-/// The file is device-local scratch, not a portable format: values are little-endian, and the
-/// file is never read by another process or version. Format: 8-byte header (magic "TPOS",
-/// version 1), then records: frameIndex Int64, timestamp Double bits, person count UInt32,
-/// then per person score Float, box 4× Float, keypoint count UInt32, keypoints 3× Float each.
+/// The file is device-local, never read by another process, with little-endian values. It is
+/// not only scratch: the pose archive keeps copies (`copyFile(to:)`, `VideoPoseArchive`) that
+/// later versions of the app read back, so any change to the layout below must bump
+/// `RecordCoder.version`, which turns every older copy into one that doesn't parse — and is
+/// scored again — rather than one misread. Format: 8-byte header (magic "TPOS", version 1), then
+/// records: frameIndex Int64, timestamp Double bits, person count UInt32, then per person score
+/// Float, box 4× Float, keypoint count UInt32, keypoints 3× Float each.
 final class PoseFrameStore: Hashable, Sendable {
     static func == (lhs: PoseFrameStore, rhs: PoseFrameStore) -> Bool { lhs === rhs }
 

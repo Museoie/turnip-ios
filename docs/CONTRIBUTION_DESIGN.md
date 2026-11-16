@@ -51,7 +51,7 @@ sequences, never from video.
   there as revoked, a just-issued one included.
 - **`video_id`** (§1.1) for Photos-backed videos, `VideoIdentity`.
 - **Settings' Contribute named clips switch** and **the confirmation
-  sheet** (§3.3), which opens once Name Clips' save finishes until the
+  sheet** (§3.3), which opens once a save, Clip List's or Name Clips', finishes until the
   account has agreed, with the clips and their names, the someone-else
   flag, the disclosure, and the pose-quality gate of §2.3 (warn over 30%
   gaps, refuse over 60%). After that a save goes straight to the outbox.
@@ -289,7 +289,7 @@ frames are part of the session pose.
 - Name Clips has no toggle of its own: Settings' Contribution section
   leads with one **Contribute named clips** switch (`UIUX.md` §1a,
   default off) that decides for every clip at once. With it on, the
-  clips a Name Clips save writes that have a name and are marked as the
+  clips a save — Clip List's or Name Clips' — writes that have a name and are marked as the
   user (`PROFILE_DESIGN.md` §4.3), on a video with pose analysis, are
   contributed. A clip marked as someone else never leaves the device,
   and a save with only such clips asks nothing. The switch is hidden on

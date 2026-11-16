@@ -474,8 +474,8 @@ default empty state, so it never reads as "your library is empty."
   each taking effect at its own integration point rather than needing a restart:
   - **Analysis mode** (segmented Real-time / Offline) — whether the camera scores pose live while
     recording (§1b below) or always defers to Processing (§2). Real-time is the default.
-  - **Save to an album**, with a name field shown once it's on — whether Name Clips' save
-    (§3a) adds each saved clip to a named Photos album (created on first use) instead of landing
+  - **Save to an album**, with a name field shown once it's on — whether a save, Clip List's
+    or Name Clips' (§3, §3a), adds each saved clip to a named Photos album (created on first use) instead of landing
     with no album, the default. Scoped to the curated clip exports only: a camera recording's raw
     take, saved to Photos the moment recording stops (§1b), never goes in the album.
   - **Analysis granularity** (stepper, 1-30, default 10) — frames sampled per second of footage,
@@ -490,7 +490,7 @@ default empty state, so it never reads as "your library is empty."
     proposal as personal.
 - Under the preferences, when the build points at a farm (`TURNIP_FARM_ENDPOINT`), a
   **Contribution** section. It leads with a fifth preference, **Contribute named clips**
-  (switch, off by default): with it on, Name Clips' save (§3a) contributes the saved clips that
+  (switch, off by default): with it on, a save, Clip List's or Name Clips' (§3, §3a), contributes the saved clips that
   have a name and are marked as the user, on a video with pose analysis. The first save opens the
   contribution confirmation sheet, and nothing is sent until the user confirms they are 16 or
   older and agrees there; after that each save sends in the
@@ -540,7 +540,7 @@ default empty state, so it never reads as "your library is empty."
   only inside the user's own video file. The editor's Auto rotate (§4)
   levels an in-app take by it, instead of guessing from the picture.
 - A finished recording is saved to the Photos library (via the same
-  `ClipPhotosSaver` Name Clips' save uses) rather than kept as a private file —
+  `ClipPhotosSaver` the clips' save uses) rather than kept as a private file —
   that turns it into an ordinary `PHAsset`, so it re-enters the flow the
   way a tapped gallery tile does: `RootTabView` calls
   `VideoLibraryViewModel.select(_:detectedClips:)` on the newly-created
@@ -579,8 +579,10 @@ default empty state, so it never reads as "your library is empty."
 - An analysis of a video already scored — by an earlier analysis, even one
   cancelled or failed partway, or by the camera while it was being recorded —
   reuses that pose (`DESIGN.md` § "Pose archive"), and scores only what it
-  misses. A video scored whole shows no frame-by-frame progress: the clips are
-  found from the kept pose and the screen moves on to Clip List.
+  misses, or what a finer analysis granularity (§1a) than the pose was scored
+  at adds between its frames. A video scored whole shows no frame-by-frame
+  progress: the clips are found from the kept pose and the screen moves on to
+  Clip List. A video edited in Photos since is scored afresh.
 - Once started, the video stays on screen (paused) rather than being replaced
   by a separate page: a progress panel — spinner or determinate bar, plus
   "Analyzing frame 400 of 1,200" — overlays the bottom of the still-visible video,

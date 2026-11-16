@@ -682,4 +682,28 @@ final class ClipCardPlaybackTests: XCTestCase {
 
         XCTAssertEqual(recorder.loops[0].geometry.window, overshooting)
     }
+
+    /// A real loop's first pass starts on the frame the card's poster shows, not on the window's
+    /// first: the card swaps its poster for the video once the loop has a frame, and a loop that
+    /// began elsewhere cut to another picture as a page pushed from its tile settled.
+    func testARealLoopStartsOnThePostersFrame() async throws {
+        let url = try await TestVideoWriter.writeTestVideo(frameCount: 60, width: 64, height: 48, fps: 30)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let window = TrickWindow(startTime: 0.2, endTime: 1.4)
+        let loop = AVPlayerLoop(
+            asset: AVURLAsset(url: url), geometry: geometry(window: window), videoComposition: nil)
+        defer { loop.stop() }
+
+        let item = try XCTUnwrap(loop.player.currentItem, "the looper had queued nothing to seek")
+        let deadline = Date().addingTimeInterval(10)
+        while item.status != .readyToPlay, Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(item.status, .readyToPlay)
+        // The seek is asked for before the item is ready, and lands once it is.
+        while abs(item.currentTime().seconds - window.startTime) < 0.01, Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(item.currentTime().seconds, ClipThumbnailLoader.posterTime(of: window), accuracy: 1.0 / 30)
+    }
 }

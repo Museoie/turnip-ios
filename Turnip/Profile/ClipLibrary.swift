@@ -65,7 +65,7 @@ struct DismissedWindow: Codable, Hashable, Sendable {
     let endFrame: Int
 }
 
-/// What one Name Clips save hands the library: the video and each of its clips now in Photos.
+/// What one save, Clip List's or Name Clips', hands the library: the video and each of its clips now in Photos.
 struct LibrarySave: Sendable {
     struct Clip: Sendable {
         let id: UUID
@@ -92,7 +92,7 @@ struct LibrarySave: Sendable {
     var runs: [String: WindowEmbeddings] = [:]
 }
 
-/// The on-device clip library (`docs/PROFILE_DESIGN.md` §2): every clip Name Clips saved, its
+/// The on-device clip library (`docs/PROFILE_DESIGN.md` §2): every clip Clip List or Name Clips saved, its
 /// names and whether it shows the user, and the achievements earned from them. The Profile is
 /// computed from it on the device. All that ever leaves is what a contribution sends: a saved
 /// clip's id and names, read here so a waiting upload sends the clip as it stands.
@@ -138,7 +138,7 @@ final class ClipLibrary: ObservableObject {
     private let calendar: Calendar
     private let now: () -> Date
     /// Speaks an achievement earned by a name given on the Profile's own screens. One earned by a
-    /// Name Clips save is spoken by that save's own announcement instead.
+    /// save on Clip List or Name Clips is spoken by that save's own announcement instead.
     private let announce: AccessibilityAnnouncing
     /// This device's `DeviceMark`, read when it's needed.
     private let deviceMark: () -> String?

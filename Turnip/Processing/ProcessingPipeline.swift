@@ -230,8 +230,16 @@ struct ProcessingPipeline: Sendable {
         // lets the last window run past the file, and the card labels a
         // longer clip than the export produces. It is also what a kept pose is checked against.
         let duration = try await asset.load(.duration).seconds
-        if let scored = video.partialPose ?? poseArchive?.pose(for: video.assetIdentifier, duration: duration) {
-            return try await backfill(scored, of: video, duration: duration, people: mode, onProgress: onProgress)
+        var fingerprint: VideoPoseArchive.Fingerprint?
+        if poseArchive != nil {
+            fingerprint = await VideoPoseArchive.Fingerprint.of(asset)
+        }
+        let analyzed = Analyzed(video: video, duration: duration, fingerprint: fingerprint)
+        // The archive's entry before the camera's frames on the video: once the take is in Photos the
+        // entry holds those frames too, and every analysis of the video since.
+        let kept = fingerprint.flatMap { poseArchive?.pose(for: video.assetIdentifier, fingerprint: $0) }
+        if let scored = kept ?? video.partialPose {
+            return try await backfill(scored, of: analyzed, isKept: kept != nil, people: mode, onProgress: onProgress)
         }
         let totalFrames = await Self.estimatedSampledFrames(of: videoTrack, sampleRate: sampleRate)
         let interval = await Self.sampleInterval(of: videoTrack, sampleRate: sampleRate)
@@ -262,7 +270,7 @@ struct ProcessingPipeline: Sendable {
             // the video scores only the rest.
             try? store.flush()
             let scoredSize = await firstRenderSize.value
-            keep(store, of: video, interval: interval, renderedPixelSize: scoredSize, duration: duration)
+            keep(store, of: analyzed, interval: interval, renderedPixelSize: scoredSize)
             throw error
         }
 
@@ -274,7 +282,7 @@ struct ProcessingPipeline: Sendable {
         // `.zero` marks it unknown, which the calculator treats as unlocatable and buildClips
         // turns into the full-frame fallback.
         let renderedPixelSize = await firstRenderSize.value ?? .zero
-        keep(store, of: video, interval: interval, renderedPixelSize: renderedPixelSize, duration: duration)
+        keep(store, of: analyzed, interval: interval, renderedPixelSize: renderedPixelSize)
         return ProcessingResult(
             detection: detectStreaming(
                 frames: { store.frames() }, people: mode, renderedPixelSize: renderedPixelSize,
@@ -282,61 +290,78 @@ struct ProcessingPipeline: Sendable {
             asset: asset)
     }
 
-    /// A video already scored, in whole or part — live by the camera (`video.partialPose`), or by
-    /// an earlier run the archive kept: scores only the times `PoseBackfill` plans for the stretches
-    /// those frames miss, at their own spacing rather than `sampleRate`, and detects over the two
-    /// merged. Frames past the end of the file are dropped first: the camera keeps scoring between
-    /// Stop and its own hand-off. Progress counts the frames in hand as already processed, so the
-    /// bar starts where they left off. The merged take is kept in the archive, unless it is the
-    /// archive's own entry with nothing added.
+    /// The video a run scores, and what its pose is kept under in `poseArchive`.
+    private struct Analyzed {
+        let video: SelectedVideo
+        /// The asset's length in seconds, which every window is clamped to.
+        let duration: TimeInterval
+        /// The file the pose is scored from (`VideoPoseArchive.Fingerprint`); `nil` keeps nothing:
+        /// no archive, or a file that couldn't be read.
+        let fingerprint: VideoPoseArchive.Fingerprint?
+    }
+
+    /// A video already scored, in whole or part — by an earlier analysis the archive kept
+    /// (`isKept`), or live by the camera (`video.partialPose`): scores only the times
+    /// `PoseBackfill` plans for the stretches those frames miss, and detects over the two merged.
+    /// The spacing is the frames' own, or the current granularity's when that is finer, so a
+    /// video analyzed again at a higher granularity has the stretches between its kept frames
+    /// filled in. Frames past the end of the file are dropped first: the camera keeps scoring
+    /// between Stop and its own hand-off. Progress counts the frames in hand as already processed,
+    /// so the bar starts where they left off. The merged take is kept in the archive — also when
+    /// the run is cancelled or fails partway — unless it is the archive's own entry with nothing
+    /// added.
     private func backfill(
-        _ partial: PartialPoseFrames, of video: SelectedVideo, duration: TimeInterval,
+        _ partial: PartialPoseFrames, of analyzed: Analyzed, isKept: Bool,
         people mode: PersonMode, onProgress: @escaping @Sendable (ProcessingProgress) async -> Void
     ) async throws -> ProcessingResult {
-        let asset = video.asset
-        // `run` reaches here with the camera's frames when the video carries them, and with the
-        // archive's entry otherwise.
-        let isKept = video.partialPose == nil
+        let asset = analyzed.video.asset
+        let duration = analyzed.duration
+        let interval = min(partial.interval, 1 / Double(sampleRate))
         // An unreadable store (the system may purge `tmp/` while the app is suspended) reads as
         // no live frames: the whole file is sampled instead of failing the run. Only the
         // timestamps are collected — the live frames themselves stream from the store at
         // detection, so the live take never sits in memory as an array.
         let liveTimes = partial.store.frames().map(\.timestamp).filter { $0 < duration }
-        let wanted = PoseBackfill.wantedTimes(
-            scored: liveTimes, interval: partial.interval, duration: duration)
+        let wanted = PoseBackfill.wantedTimes(scored: liveTimes, interval: interval, duration: duration)
 
         // The gaps are sampled into a fresh store, and detection streams the live and
         // backfilled stores merged by timestamp — neither take sits in memory as an array.
         let store = PoseFrameStore()
         defer { store.discard() }
+        let frames = MergedPoseFrames(live: partial.store, backfilled: store, interval: interval, duration: duration)
         let firstRenderSize = FirstRenderSize()
         if !wanted.isEmpty {
-            let infer = try await makeInference()
-            let reportClock = ProgressReportClock()
-            let totalFrames = liveTimes.count + wanted.count
-            try await sampler.sampleFrames(from: asset, at: wanted) { frame in
-                let scored = MultiPoseFrame(
-                    frameIndex: frame.frameIndex, timestamp: frame.timestamp, people: try await infer(frame))
-                try store.append(scored)
-                await firstRenderSize.set(frame.renderSize)
-                if await reportClock.shouldReport() {
-                    await onProgress(ProcessingProgress(
-                        frame: liveTimes.count + store.count, totalFrames: totalFrames,
-                        timestamp: frame.timestamp, skeletons: mode.skeletons(in: scored)))
+            do {
+                let infer = try await makeInference()
+                let reportClock = ProgressReportClock()
+                let totalFrames = liveTimes.count + wanted.count
+                try await sampler.sampleFrames(from: asset, at: wanted) { frame in
+                    let scored = MultiPoseFrame(
+                        frameIndex: frame.frameIndex, timestamp: frame.timestamp, people: try await infer(frame))
+                    try store.append(scored)
+                    await firstRenderSize.set(frame.renderSize)
+                    if await reportClock.shouldReport() {
+                        await onProgress(ProcessingProgress(
+                            frame: liveTimes.count + store.count, totalFrames: totalFrames,
+                            timestamp: frame.timestamp, skeletons: mode.skeletons(in: scored)))
+                    }
                 }
+                try store.flush()
+            } catch {
+                // What this run added before it stopped is kept with the frames it started from,
+                // so the next analysis scores only what is still missing.
+                try? store.flush()
+                let scoredSize = await firstRenderSize.value ?? partial.renderedPixelSize
+                keepMerged(frames, of: analyzed, interval: interval, renderedPixelSize: scoredSize)
+                throw error
             }
-            try store.flush()
         }
 
-        let frames = MergedPoseFrames(
-            live: partial.store, backfilled: store, interval: partial.interval, duration: duration)
         // The file's composition size when any frame came from the file, as `run` uses; the
         // live pass's own measure of the same picture otherwise.
         let renderedPixelSize = await firstRenderSize.value ?? partial.renderedPixelSize
         if !(isKept && wanted.isEmpty) {
-            keepMerged(
-                frames, of: video, interval: partial.interval, renderedPixelSize: renderedPixelSize,
-                duration: duration)
+            keepMerged(frames, of: analyzed, interval: interval, renderedPixelSize: renderedPixelSize)
         }
         return ProcessingResult(
             detection: detectStreaming(
@@ -345,24 +370,22 @@ struct ProcessingPipeline: Sendable {
             asset: asset)
     }
 
-    /// Keeps `store` as the video's pose in `poseArchive`, when there is one. A run that scored
-    /// nothing has no size to keep and keeps nothing.
+    /// Keeps `store` as the video's pose in `poseArchive`, when there is one and the file could be
+    /// fingerprinted. A run that scored nothing has no size to keep and keeps nothing.
     private func keep(
-        _ store: PoseFrameStore, of video: SelectedVideo, interval: TimeInterval, renderedPixelSize: CGSize?,
-        duration: TimeInterval
+        _ store: PoseFrameStore, of analyzed: Analyzed, interval: TimeInterval, renderedPixelSize: CGSize?
     ) {
-        guard let poseArchive, let renderedPixelSize else { return }
+        guard let poseArchive, let fingerprint = analyzed.fingerprint, let renderedPixelSize else { return }
         poseArchive.keep(
             PartialPoseFrames(store: store, interval: interval, renderedPixelSize: renderedPixelSize),
-            for: video.assetIdentifier, duration: duration)
+            for: analyzed.video.assetIdentifier, fingerprint: fingerprint)
     }
 
     /// Keeps a merged take: written to a store of its own first, since the archive copies a file.
     private func keepMerged(
-        _ frames: MergedPoseFrames, of video: SelectedVideo, interval: TimeInterval, renderedPixelSize: CGSize,
-        duration: TimeInterval
+        _ frames: MergedPoseFrames, of analyzed: Analyzed, interval: TimeInterval, renderedPixelSize: CGSize
     ) {
-        guard poseArchive != nil else { return }
+        guard poseArchive != nil, analyzed.fingerprint != nil else { return }
         let merged = PoseFrameStore()
         defer { merged.discard() }
         do {
@@ -373,7 +396,7 @@ struct ProcessingPipeline: Sendable {
         } catch {
             return
         }
-        keep(merged, of: video, interval: interval, renderedPixelSize: renderedPixelSize, duration: duration)
+        keep(merged, of: analyzed, interval: interval, renderedPixelSize: renderedPixelSize)
     }
 
     /// The spacing a whole-file run samples at: the sampler's stride over the track's frame rate,

@@ -30,7 +30,7 @@ matters. Where this doc makes a call none of those cover, it says so
 as *(judgment call)*.
 
 **Status (2026-10-27).** Phase 2a's core is built (`Turnip/Profile/`):
-the clip library Name Clips' save writes (§2.1, §2.3, §2.4), the Profile
+the clip library a save writes, Clip List's or Name Clips' (§2.1, §2.3, §2.4), the Profile
 tab with Needs a name, Achievements and the Gallery (§5.1, §6.1, §6.3–§6.5,
 §7), and the Clip view (§5.2). How the build differs from this doc:
 
@@ -612,7 +612,7 @@ rendering is a required-reason API (PRIVACY.md).
 ## 9. Contribution and impact feedback
 
 - **Contributing (Phase 2b).** Settings' Contribute named clips switch
-  for Name Clips' save (UIUX §1a, §3a), a per-clip contribute toggle on
+  for a save, Clip List's or Name Clips' (UIUX §1a, §3, §3a), a per-clip contribute toggle on
   the Clip view, and a "Contribute named clips" action on the Profile
   page, feed `CONTRIBUTION_DESIGN.md`'s flow
   (§3.3), which uploads the library's stored pose and each clip's names

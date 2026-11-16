@@ -148,9 +148,9 @@ final class ClipListViewModel: ObservableObject {
     }
 
     /// Decoded thumbnails by item id, each tagged with the key it was decoded from.
-    /// Plain storage, not `@Published`: no view reads this dictionary — each card
-    /// renders from its own `@State` thumbnail — so publishing it would re-evaluate
-    /// every card's body on every completed decode.
+    /// Plain storage, not `@Published`: a card reads it once, to seed its own `@State`
+    /// thumbnail (`cachedThumbnail(for:)`), and renders from that — so publishing it would
+    /// re-evaluate every card's body on every completed decode.
     private var thumbnails: [UUID: (key: ThumbnailCacheKey, image: CGImage)] = [:]
 
     private let asset: AVAsset

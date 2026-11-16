@@ -1,3 +1,4 @@
+import AVFoundation
 import Photos
 import SwiftUI
 
@@ -234,18 +235,20 @@ struct RootTabView: View {
         Task {
             do {
                 let identifier = try await ClipPhotosSaver().saveVideo(at: recording.fileURL)
+                // What the camera scored live is the take's pose from now on, so analyzing it again,
+                // today or later, reuses it (`VideoPoseArchive`). Fingerprinted off the recording,
+                // the same bytes Photos now holds, before the recording goes; copied off the main
+                // thread.
+                if let livePose = recording.livePose,
+                   let fingerprint = await VideoPoseArchive.Fingerprint.of(AVURLAsset(url: recording.fileURL)) {
+                    Task.detached(priority: .utility) {
+                        VideoPoseArchive.shared.keep(livePose, for: identifier, fingerprint: fingerprint)
+                    }
+                }
                 try? FileManager.default.removeItem(at: recording.fileURL)
                 guard let asset = PHAsset.fetchAssets(
                     withLocalIdentifiers: [identifier], options: nil
                 ).firstObject else { return }
-                // What the camera scored live is the take's pose from now on, so analyzing it again,
-                // today or later, reuses it (`VideoPoseArchive`). Copied off the main thread.
-                if let livePose = recording.livePose {
-                    let duration = asset.duration
-                    Task.detached(priority: .utility) {
-                        VideoPoseArchive.shared.keep(livePose, for: identifier, duration: duration)
-                    }
-                }
                 // Instant, unlike `closeCamera()` and `slide(to:)`: `select` opens the expansion
                 // cover over Home in this same update, and a camera still sliding away, or a page
                 // still sliding in, underneath it would hand the cover's flight a moving backdrop.

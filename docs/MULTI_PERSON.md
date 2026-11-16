@@ -93,7 +93,7 @@ The contribution and Profile notes are for the PRs that build those features. `P
 - **TKP1 is unchanged.** A contribution carries one track, the clip's person, on the take's grid, and no one else's pose.
 - **`is_me` carries per person, not per video** (`PROFILE_DESIGN.md` §4.3). A choice on a person's first clip carries to that person's other clips in the take.
 - **Stored pose** (`PROFILE_DESIGN.md` §2.2) keeps only the tracks with a saved clip, not everyone the camera saw. A clip added by hand has no person, so following everyone it keeps no pose: the take's primary pose is whoever the model was surest of in each frame, which can be anyone.
-- Bystanders' keypoints ride the same session scratch file as the athlete's, and are gone with it. `PoseResultLogger` logs one line per live sample with the followed person's confidence and no coordinates.
+- Bystanders' keypoints ride the same session scratch file as the athlete's, and are kept with them in the video's pose on the device (`PRIVACY.md`, "Kept pose analysis"), which never leaves it. `PoseResultLogger` logs one line per live sample with the followed person's confidence and no coordinates.
 
 ## Measurements
 

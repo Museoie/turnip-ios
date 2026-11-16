@@ -41,7 +41,7 @@ struct TurnipSettings: Equatable, Sendable {
     var autoAddToAlbum: Bool
     var albumName: String
     private(set) var analysisGranularity: Int
-    /// Whether Name Clips' save contributes the saved, named clips of an analyzed video to the farm
+    /// Whether a save, Clip List's or Name Clips', contributes the saved, named clips of an analyzed video to the farm
     /// (`docs/CONTRIBUTION_DESIGN.md` §3.3). Off by default: contribution is opt-in, and the
     /// confirmation sheet still asks once before anything is sent.
     var contributesClips: Bool
