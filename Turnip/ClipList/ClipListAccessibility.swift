@@ -30,6 +30,12 @@ enum ClipListAccessibility {
         return parts.joined(separator: ", ")
     }
 
+    /// The names a Clip List tile's clip has been given, read after the card's label: the
+    /// tile's caption shows them, and VoiceOver skips the caption.
+    static func namesLabel(_ names: [String]) -> String {
+        String(localized: "named \(ListFormatter.localizedString(byJoining: names))")
+    }
+
     /// What Save Clips is going to do, as its `accessibilityValue`. The button says only "Save
     /// Clips", so without this the count it commits to is visible only by counting tiles.
     static func saveClipsValue(clipCount: Int) -> String {

@@ -66,6 +66,23 @@ final class ClipListTests: XCTestCase {
 
     // MARK: - ClipListItem
 
+    /// Two tiles across any iPhone held upright and more across a wider screen, each a whole
+    /// number of points, and the row always fits inside the grid's insets.
+    func testGridLaysTwoTilesAcrossAnIPhoneAndMoreAcrossAWiderScreen() {
+        XCTAssertEqual(ClipListLayout.columnCount(for: 320), 2)
+        XCTAssertEqual(ClipListLayout.columnCount(for: 393), 2)
+        XCTAssertEqual(ClipListLayout.columnCount(for: 440), 2)
+        XCTAssertEqual(ClipListLayout.columnCount(for: 744), 4)
+        XCTAssertEqual(ClipListLayout.tileSide(for: 393, columns: 2), 174)
+        XCTAssertEqual(ClipListLayout.tileSide(for: 744, columns: 4), 169)
+        for width: CGFloat in [320, 375, 393, 440, 744, 1024] {
+            let columns = ClipListLayout.columnCount(for: width)
+            let row = CGFloat(columns) * ClipListLayout.tileSide(for: width, columns: columns)
+                + CGFloat(columns - 1) * ClipListLayout.spacing
+            XCTAssertLessThanOrEqual(row, width - 2 * ClipListLayout.inset, "\(width) pt")
+        }
+    }
+
     func testNewItemsStartUnsaved() {
         XCTAssertFalse(makeItem().isSaved)
     }

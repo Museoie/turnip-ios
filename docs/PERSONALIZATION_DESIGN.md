@@ -132,7 +132,7 @@ Almost everything is already in the clip library (`PROFILE_DESIGN.md`
   "Trashed clips are not stored": a trashed tile leaves its source, its
   pose and two frame indices behind, not a clip, an export or a name.
   It does so only on a pose the library already keeps. A source with
-  nothing saved stores nothing, and backing out of Name Clips stores
+  nothing saved stores nothing, and backing out of Clip List stores
   nothing, as today.)* A dismissed window is deleted with its pose,
   when the pose's last clip leaves the library (`PROFILE_DESIGN.md`
   §2.2).

@@ -13,12 +13,16 @@ final class NameClipsTests: XCTestCase {
     }
 
     private func viewModel(
-        _ items: [ClipListItem], poseFrames: [PoseFrameResult] = [], contributes: Bool = false
+        _ items: [ClipListItem], poseFrames: [PoseFrameResult] = [], contributes: Bool = false,
+        exportFails: Bool = false
     ) -> ClipListViewModel {
         ClipListViewModel(
             items: items, poseFrames: poseFrames, asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
             assetIdentifier: "asset-1", duration: 10,
-            exportClip: { _, _, _, _ in URL(fileURLWithPath: "/tmp/fake.mp4") },
+            exportClip: { _, _, _, _ in
+                if exportFails { throw ClipSaveError.exportFailed(reason: "test") }
+                return URL(fileURLWithPath: "/tmp/fake.mp4")
+            },
             saveToPhotos: { url, _ in url.lastPathComponent }, recordSaved: { _ in [] },
             makeDirectory: {
                 FileManager.default.temporaryDirectory.appendingPathComponent("turnip-test-\(UUID().uuidString)")
@@ -139,6 +143,83 @@ final class NameClipsTests: XCTestCase {
         let plan = model.contributionPlan()
         XCTAssertEqual(plan.quality, .unusable)
         XCTAssertNil(plan.source)
+    }
+
+    // MARK: - Save Clips
+
+    private static let cork = [ClipName(name: "cork", origin: .typed)]
+
+    /// A farm this build can reach, with an account that hasn't agreed to contribute; `nil` for a
+    /// build with no farm.
+    private func makeAccount(farm: ScriptedFarm?) -> FarmAccount {
+        FarmAccount(client: farm?.client, credentials: FarmCredentials(store: MemorySecrets()))
+    }
+
+    /// An outbox over its own directory and settings, with Contribute named clips set to
+    /// `contributes`: off, it clears whatever is queued.
+    private func makeOutbox(_ account: FarmAccount, contributes: Bool = false) -> ContributionOutbox {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("turnip-name-clips-outbox-\(UUID().uuidString)", isDirectory: true)
+        let settings = TurnipSettingsStore(defaults: UserDefaults(suiteName: "NameClipsTests-\(UUID().uuidString)")!)
+        settings.contributesClips = contributes
+        return ContributionOutbox(
+            account: account, settings: settings, store: ContributionOutboxStore(directory: directory),
+            savedClip: { _ in nil }, vocabulary: { .seed })
+    }
+
+    private func saveOutcome(of model: ClipListViewModel, farm: ScriptedFarm?) async -> String {
+        let account = makeAccount(farm: farm)
+        switch await model.saveClips(account: account, outbox: makeOutbox(account)) {
+        case .failed: return "failed"
+        case .finished: return "finished"
+        case .asksToContribute: return "asks"
+        }
+    }
+
+    /// Clip List's and Name Clips' Save Clips: a clip that fails keeps the screen up, whatever the
+    /// farm would have asked.
+    func testSaveClipsStaysUpWhenAClipFails() async {
+        let model = viewModel(
+            [item(1, names: Self.cork)], poseFrames: Self.posed(from: 0, to: 10), contributes: true, exportFails: true)
+        let outcome = await saveOutcome(of: model, farm: ScriptedFarm([]))
+        XCTAssertEqual(outcome, "failed")
+    }
+
+    /// A saved, named clip of the user on an analyzed video asks an account that hasn't agreed,
+    /// before Home.
+    func testSaveClipsAsksBeforeHomeUntilTheAccountHasAgreed() async {
+        let model = viewModel([item(1, names: Self.cork)], poseFrames: Self.posed(from: 0, to: 10), contributes: true)
+        let outcome = await saveOutcome(of: model, farm: ScriptedFarm([]))
+        XCTAssertEqual(outcome, "asks")
+    }
+
+    /// Once the account has agreed, the save asks nothing: its named clips go to the outbox and the
+    /// screen goes straight to Home. No one is signed in, so nothing is sent from here.
+    func testSaveClipsQueuesTheClipsOnceTheAccountHasAgreed() async {
+        let model = viewModel([item(1, names: Self.cork)], poseFrames: Self.posed(from: 0, to: 10), contributes: true)
+        let credentials = FarmCredentials(store: MemorySecrets())
+        credentials.signedIn(sessionToken: "tok", appleUserID: "user-1")
+        credentials.agreeAndRecordOnFarm()
+        credentials.signedOut()
+        let account = FarmAccount(client: ScriptedFarm([]).client, credentials: credentials)
+        let outbox = makeOutbox(account, contributes: true)
+
+        let outcome = await model.saveClips(account: account, outbox: outbox)
+        guard case .finished = outcome else { return XCTFail("an account that agreed was asked again") }
+        XCTAssertEqual(outbox.waitingClipCount, 1, "the agreed save's clip never reached the outbox")
+        await outbox.cancelAll()
+    }
+
+    /// With nothing to send — Contribute named clips off, or no farm in this build — the save goes
+    /// straight to Home.
+    func testSaveClipsGoesHomeWithNothingToSend() async {
+        let off = viewModel([item(1, names: Self.cork)], poseFrames: Self.posed(from: 0, to: 10))
+        let offOutcome = await saveOutcome(of: off, farm: ScriptedFarm([]))
+        XCTAssertEqual(offOutcome, "finished")
+
+        let noFarm = viewModel([item(1, names: Self.cork)], poseFrames: Self.posed(from: 0, to: 10), contributes: true)
+        let noFarmOutcome = await saveOutcome(of: noFarm, farm: nil)
+        XCTAssertEqual(noFarmOutcome, "finished")
     }
 
     // MARK: - Card size

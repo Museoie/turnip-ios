@@ -120,7 +120,7 @@ require a manifest/signature. If a dependency is added, check both.
   `requestAuthorization(for: .addOnly)`, and iOS terminates the app on
   that call when the string is absent. On neither path does the user
   normally see the string: the clip-save path is reached from Home
-  through Processing and Name Clips, and the camera opens from a tile in
+  through Processing, Clip List and Name Clips, and the camera opens from a tile in
   Home's grid (UIUX §1b), which only exists once Home has its Photos
   access. Reaching either save means the read/write grant from Home is
   already in place, which determines add-only as authorized, so the call
@@ -168,7 +168,7 @@ require a manifest/signature. If a dependency is added, check both.
   the sweep recognize only our directories.
 - **Thumbnails** are in-memory only — `PHCachingImageManager` for the
   Home grid (`ThumbnailLoader`) and `AVAssetImageGenerator` frames for
-  Name Clips' cards (`ClipThumbnailLoader`). There is no on-disk thumbnail
+  Clip List's tiles and Name Clips' cards (`ClipThumbnailLoader`). There is no on-disk thumbnail
   cache. If one ever lands, it belongs in `Caches/`, never `Documents/`,
   so iOS can evict it and it isn't backed up.
 - **Partial live pose.** When live inference covers a take only in part,
@@ -191,7 +191,7 @@ require a manifest/signature. If a dependency is added, check both.
   device, is never backed up, and holds only the packed keypoints, never video.
 - **Everyone in frame.** The pose model finds up to six people per frame, so
   bystanders' keypoints are computed and held alongside the athlete's, in either person mode (`docs/MULTI_PERSON.md`). Following
-  everyone, the poses of the people who own a clip travel with the clips to Name Clips.
+  everyone, the poses of the people who own a clip travel with the clips to Clip List and Name Clips.
   None of it leaves the device: it rides the same session scratch file as the
   athlete's frames and is gone with it; only the pose of someone with a saved
   clip is kept on disk ("The clip library and the Profile" below).

@@ -146,7 +146,7 @@ struct RootTabView: View {
             // An overlay, not a safe-area inset: the grid scrolls underneath it rather than
             // stopping short, so it reads as floating over the content instead of a docked bar.
             // Visible on every page's root so its selection marker actually has something to slide
-            // between. Hidden once Home drills into Processing/Name Clips/the editor, the Profile
+            // between. Hidden once Home drills into Processing/Clip List/Name Clips/the editor, the Profile
             // pushes a screen or the camera is up, each of which has its own way back and needs the
             // full screen — and on iPhone Duo, where the vertical bar holds it instead.
             .overlay(alignment: .bottom) {

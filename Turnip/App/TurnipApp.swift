@@ -48,8 +48,8 @@ struct TurnipApp: App {
                     ScreenshotClipListMediaHarness()
                 } else if CommandLine.arguments.contains("-screenshotClipList") {
                     ScreenshotClipListHarness()
-                } else if CommandLine.arguments.contains("-screenshotNameClipsCameraEmpty") {
-                    ScreenshotNameClipsCameraEmptyHarness()
+                } else if CommandLine.arguments.contains("-screenshotClipListCameraEmpty") {
+                    ScreenshotClipListCameraEmptyHarness()
                 } else if CommandLine.arguments.contains("-screenshotClipEditor") {
                     ScreenshotClipEditorHarness()
                 } else if CommandLine.arguments.contains("-screenshotProcessingBrowse") {

@@ -2,7 +2,7 @@ import AVFoundation
 import CoreGraphics
 import Foundation
 
-/// Builds the card thumbnails for `docs/UIUX.md` § "Clip List (triage)": the source frame
+/// Builds the card thumbnails for `docs/UIUX.md` § "Clip List": the source frame
 /// at each trick window's midpoint, cropped to where the clip's follow crop has the crop then,
 /// zoomed and turned about it, exactly as `ClipExporter` renders it.
 ///

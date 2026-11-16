@@ -79,48 +79,80 @@ final class ScreenshotTests: XCTestCase {
         addScreenshot(named: "gallery-filter-menu")
     }
 
-    /// Clip list triage: three detected windows, one trashed, thumbnails as
-    /// placeholder tiles (the /dev/null asset decodes nothing; the loader falls
-    /// back to the placeholder — the test waits for the placeholder clause of a
-    /// card's accessibility label, so it guards the fallback and not just the
-    /// navigation bar appearing).
+    /// Clip List: three detected windows as a grid of tiles over the /dev/null asset, which
+    /// decodes nothing, so the tiles show their placeholder. The wait is on a tile's own
+    /// accessibility element, which proves the grid laid its tiles out, not just that the
+    /// navigation bar appeared; its placeholder clause is there from the first render, so it says
+    /// nothing about the loader. The grid doesn't save: its bar offers "Name clips".
     func testClipListTriage() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipList"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 3"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
         let placeholder = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS 'thumbnail placeholder'"))
+            .matching(NSPredicate(
+                format: "identifier BEGINSWITH 'clip-tile-' AND label CONTAINS 'thumbnail placeholder'"))
             .firstMatch
         XCTAssertTrue(placeholder.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.clipTile(3).exists, "the grid doesn't hold a tile per clip")
+        XCTAssertTrue(app.buttons["clip-list-name-clips"].exists)
+        XCTAssertFalse(app.buttons["Save Clips"].exists, "the grid saves")
         addScreenshot(named: "clip-list-triage")
     }
 
-    /// Name Clips over real media: the `/dev/null` asset in `testClipListTriage` never
-    /// loads a duration, so its card's read-only range timeline stays hidden behind its
-    /// `if let duration` guard — this proves the timeline actually renders once the
-    /// asset loads for real. The card is one accessibility element, and carries the
-    /// timeline's words as its value.
+    /// The grid's "Name clips" opens Name Clips on the first clip.
+    func testNameClipsButtonOpensTheFirstClip() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipListMedia"]
+        app.launch()
+        let nameClips = app.buttons["clip-list-name-clips"]
+        XCTAssertTrue(nameClips.waitForExistence(timeout: 15))
+        nameClips.tap()
+        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+    }
+
+    /// Clip List over real media: the `/dev/null` asset in `testClipListTriage` never loads a
+    /// duration, so its tiles' read-only range timeline stays hidden behind its `if let duration`
+    /// guard — this proves the timeline actually renders once the asset loads for real. The tile
+    /// is one accessibility element, and carries the timeline's words as its value.
     func testClipListMedia() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 15))
         let rangeTimeline = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "value BEGINSWITH 'Clip from'"))
+            .matching(NSPredicate(format: "identifier == 'clip-tile-1' AND value BEGINSWITH 'Clip from'"))
             .firstMatch
         XCTAssertTrue(rangeTimeline.waitForExistence(timeout: 15))
         addScreenshot(named: "clip-list-media")
     }
 
+    /// A tile opens Name Clips on its own clip, not the first one, and Name Clips' back chevron
+    /// comes back to the list rather than leaving for Home.
+    func testATileOpensNameClipsOnItsClipAndBackReturnsToTheList() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-screenshotClipListMedia"]
+        app.launch()
+        XCTAssertTrue(app.openNameClips(atClip: 2, of: 2), "the second tile didn't open Name Clips on it")
+        XCTAssertTrue(app.buttons["name-clips-save"].waitForExistence(timeout: 5), "the last clip has no Save Clips")
+        addScreenshot(named: "name-clips-from-tile")
+
+        let back = app.buttons["Back to all clips"].firstMatch
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        back.tap()
+        XCTAssertTrue(app.navigationBars["Clips"].waitForExistence(timeout: 5), "back didn't return to the list")
+        XCTAssertTrue(app.clipTile(1).waitForExistence(timeout: 5))
+    }
+
     /// The header's "More" menu removes the clip on screen outright, with no restore: the pager
     /// counts one clip fewer and the one after it takes its place. The menu holds nothing about
-    /// the original video, and the card carries no trash button of its own.
+    /// the original video, and the card carries no trash button of its own. Removing the last
+    /// clip goes back to the list, which then has none.
     func testMoreMenuRemovesTheClipOnScreen() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.openNameClips(atClip: 1, of: 2))
         XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "clip-card-1").firstMatch
             .waitForExistence(timeout: 15))
         XCTAssertFalse(app.buttons.matching(identifier: "name-clips-trash").firstMatch.exists)
@@ -135,6 +167,14 @@ final class ScreenshotTests: XCTestCase {
 
         XCTAssertTrue(app.navigationBars["1 of 1"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Restore clip"].exists)
+
+        more.tap()
+        let removeLast = app.buttons["Remove this clip"].firstMatch
+        XCTAssertTrue(removeLast.waitForExistence(timeout: 5))
+        removeLast.tap()
+        let notice = app.staticTexts["no-tricks-notice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 5), "removing the last clip didn't return to the list")
+        XCTAssertEqual(notice.label, "No clips yet")
     }
 
     /// The bottom bar pages: the first clip has Next and no Previous, the last has Previous and
@@ -143,7 +183,7 @@ final class ScreenshotTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.openNameClips(atClip: 1, of: 2))
         let previous = app.buttons["name-clips-previous"].firstMatch
         let next = app.buttons["name-clips-next"].firstMatch
         let save = app.buttons["name-clips-save"].firstMatch
@@ -175,7 +215,7 @@ final class ScreenshotTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.openNameClips(atClip: 1, of: 2))
         let primary = app.buttons["name-clips-next"].firstMatch
         XCTAssertTrue(primary.waitForExistence(timeout: 5))
         let field = try XCTUnwrap(
@@ -267,14 +307,14 @@ final class ScreenshotTests: XCTestCase {
         return condition()
     }
 
-    /// Tapping the clip's card opens the full `ClipEditorView` directly — the card itself is
+    /// Tapping Name Clips' card opens the full `ClipEditorView` directly — the card itself is
     /// the single entry point into editing, not a separate expand icon. Reached by identifier
     /// rather than by label, since a card's label counts off its position and duration.
-    func testClipListTapOpensEditor() throws {
+    func testNameClipsCardOpensEditor() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.openNameClips(atClip: 1, of: 2))
         let tile = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier == 'clip-card-1'"))
             .firstMatch
@@ -285,7 +325,7 @@ final class ScreenshotTests: XCTestCase {
     }
 
     /// A card whose video is already in Photos says so, and tapping the saved badge's corner
-    /// still opens the editor: `testClipListTapOpensEditor` above taps the card's centre, so
+    /// still opens the editor: `testNameClipsCardOpensEditor` above taps the card's centre, so
     /// it cannot see a dead zone in the corner — and a decorative overlay sibling is
     /// hit-testable by default, which is what would create one. The badge sits 8 pt in from
     /// the card's top-leading corner, 32 pt across.
@@ -293,7 +333,7 @@ final class ScreenshotTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotClipListMedia"]
         app.launch()
-        XCTAssertTrue(app.navigationBars["1 of 2"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.openNameClips(atClip: 1, of: 2))
         let card = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier == 'clip-card-1' AND label CONTAINS 'saved to Photos'"))
             .firstMatch
@@ -370,7 +410,7 @@ final class ScreenshotTests: XCTestCase {
         addScreenshot(named: "processing-idle")
     }
 
-    /// "Clip it" pushes Name Clips straight from the idle state with the result marked as
+    /// "Clip it" pushes Clip List straight from the idle state with the result marked as
     /// skipped — the real `navigationDestination` binding flip, not just the view model's
     /// state — where the empty state offers "Analyze clips" and "Clip manually".
     func testProcessingClipItPushesTheEmptyClipList() throws {
@@ -385,12 +425,12 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertEqual(notice.label, "No clips yet", "a skipped video read as one that found nothing")
         XCTAssertTrue(app.buttons["Analyze clips"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Clip manually"].exists)
-        addScreenshot(named: "name-clips-empty")
+        addScreenshot(named: "clip-list-empty")
     }
 
     /// The empty clip list's "Analyze clips" returns to Processing and runs the analysis there,
     /// under its progress, rather than leaving for Home.
-    func testNameClipsAnalyzeReturnsToProcessingAndRuns() throws {
+    func testClipListAnalyzeReturnsToProcessingAndRuns() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-screenshotProcessingIdle"]
         app.launch()
@@ -410,16 +450,16 @@ final class ScreenshotTests: XCTestCase {
             app.staticTexts[HarnessIdentifier.poppedToRoot].exists, "leaving the list for the run also left for Home")
     }
 
-    /// A camera take that lands on Name Clips with nothing found has no Processing screen under
+    /// A camera take that lands on Clip List with nothing found has no Processing screen under
     /// it to analyze on, so its empty state offers "Clip manually" alone.
     func testCameraTakeEmptyStateOffersClipManuallyAlone() throws {
         let app = XCUIApplication()
-        app.launchArguments = ["-screenshotNameClipsCameraEmpty"]
+        app.launchArguments = ["-screenshotClipListCameraEmpty"]
         app.launch()
         let notice = app.staticTexts["no-tricks-notice"]
         XCTAssertTrue(notice.waitForExistence(timeout: 15))
         XCTAssertEqual(notice.label, "No tricks found")
-        let clipManually = app.buttons["name-clips-clip-manually"]
+        let clipManually = app.buttons["clip-list-clip-manually"]
         XCTAssertTrue(clipManually.waitForExistence(timeout: 5))
         XCTAssertEqual(clipManually.label, "Clip manually")
         XCTAssertFalse(app.buttons["Analyze clips"].exists, "a camera take offered an analysis it has no screen for")
