@@ -400,6 +400,38 @@ final class ClipListFilteringTests: XCTestCase {
         XCTAssertEqual(picked.tolerance, ShirtColorMatch.defaultTolerance)
     }
 
+    /// Who is in a clip carries from the person's first clip in the video, hidden or not: a hidden
+    /// clip comes back with "Clear" and is saved with the rest, so it must not be left behind.
+    func testWhoIsInItCarriesFromThePersonsFirstClipEvenWhileItIsHidden() {
+        let hiddenFirst = ClipListItem(
+            window: TrickWindow(startTime: 0, endTime: 2), cropRect: fullFrame, personID: 1, confidence: 0.2)
+        let shown = ClipListItem(
+            window: TrickWindow(startTime: 5, endTime: 7), cropRect: fullFrame, personID: 1, confidence: 0.8)
+        let shownLater = ClipListItem(
+            window: TrickWindow(startTime: 10, endTime: 12), cropRect: fullFrame, personID: 1, confidence: 0.8)
+        let viewModel = makeViewModel(items: [hiddenFirst, shown, shownLater])
+        viewModel.filter.minimumConfidence = 0.5
+
+        viewModel.setIsMe(false, for: shown.id)
+
+        XCTAssertEqual(viewModel.allClips.map(\.isMe), [true, false, true], "the hidden clip is the first")
+
+        viewModel.setIsMe(false, for: hiddenFirst.id)
+
+        XCTAssertEqual(viewModel.allClips.map(\.isMe), [false, false, false])
+    }
+
+    /// A name given on a clip the filter now hides is still one given on the video.
+    func testNamesGivenOnAHiddenClipStillCount() {
+        let named = ClipListItem(
+            window: TrickWindow(startTime: 0, endTime: 2), cropRect: fullFrame,
+            names: [ClipName(name: "cork", origin: .typed)], confidence: 0.2)
+        let viewModel = makeViewModel(items: [named, clip(5, confidence: 0.9)])
+        viewModel.filter.minimumConfidence = 0.5
+
+        XCTAssertEqual(viewModel.namesUsedOnVideo, ["cork"])
+    }
+
     /// Reading stops with the sheet's task: a reading kept after the sheet has gone could hide a
     /// clip under Name Clips.
     func testACancelledReadKeepsNothing() async {

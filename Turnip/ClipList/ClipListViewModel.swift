@@ -737,10 +737,11 @@ extension ClipListViewModel {
     var hasPose: Bool { !poseFrames.isEmpty }
 
     /// The names already given on this video, each once, in the order first given — the first
-    /// suggestions, since a session is mostly repeats of a few tricks.
+    /// suggestions, since a session is mostly repeats of a few tricks. A clip the filter hides is
+    /// still the video's, so its names count.
     var namesUsedOnVideo: [String] {
         var seen = Set<String>()
-        return clipsToName.flatMap(\.names).map(\.name).filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
+        return allClips.flatMap(\.names).map(\.name).filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
     }
 
     /// A clip's embedding, from its own person's run over its window as it stands now. `nil` for a
@@ -779,11 +780,12 @@ extension ClipListViewModel {
 
     /// Who is in a clip. A change on a person's first clip carries to that person's later clips
     /// that still read the way the first one did, so one choice covers a take while any clip set
-    /// apart keeps its own.
+    /// apart keeps its own. Shown or hidden by the filter alike: a hidden clip comes back when the
+    /// filter is cleared and is saved with the rest.
     func setIsMe(_ isMe: Bool, for id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let item = items[index]
-        let samePerson = clipsToName.filter { $0.personID == item.personID }
+        let samePerson = allClips.filter { $0.personID == item.personID }
         if samePerson.first?.id == id {
             for other in samePerson.dropFirst() where other.isMe == item.isMe {
                 if let otherIndex = items.firstIndex(where: { $0.id == other.id }) { items[otherIndex].isMe = isMe }
