@@ -697,10 +697,13 @@ final class ClipEditorTests: XCTestCase {
     /// A view model whose Auto rotate answers at once with `rotation` (nil: nothing to
     /// level by), with media info loaded so the button is live.
     @MainActor
-    private func makeLevelingViewModel(rotation: Double?) -> ClipEditorViewModel {
+    private func makeLevelingViewModel(
+        rotation: Double?, announce: @escaping AccessibilityAnnouncing = { _ in }
+    ) -> ClipEditorViewModel {
         let viewModel = ClipEditorViewModel(
             source: makeSource(window: TrickWindow(startTime: 0, endTime: 3.9), frames: twoPositionFrames()),
-            levelingRotation: { _, _ in rotation })
+            levelingRotation: { _, _ in rotation },
+            announce: announce)
         viewModel.setMediaInfo(
             duration: duration, naturalSize: CGSize(width: 100, height: 200), preferredTransform: .identity)
         return viewModel
@@ -782,8 +785,8 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(framingAtPlayhead(viewModel)?.rotationRadians ?? 1, 0, accuracy: 1e-9)
     }
 
-    /// A pinch, turn or drag takes over from both fits at once, so both buttons go back to
-    /// offering their fit; a gesture that changed nothing is not an edit.
+    /// A pinch, turn or drag takes over from both fits at once, so both toggles turn off; a
+    /// gesture that changed nothing is not an edit.
     @MainActor
     func testAManualGestureReturnsBothButtonsToAuto() async throws {
         let viewModel = makeLevelingViewModel(rotation: 0.25)
@@ -836,6 +839,131 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertTrue(viewModel.isAutoRotateApplied)
     }
 
+    // MARK: - Framing toggles' tips
+
+    /// Waits out an Auto rotate detection a toggle started.
+    @MainActor
+    private func waitForDetection(_ viewModel: ClipEditorViewModel) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while viewModel.isDetectingHorizon, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(viewModel.isDetectingHorizon)
+    }
+
+    /// Each tap on Auto follow says, under the buttons and to VoiceOver, which way it turned it.
+    /// Over an athlete who crosses the frame, so Auto follow has something to follow.
+    @MainActor
+    func testTheFollowToggleSaysWhatItTurnedOnAndOff() {
+        let spoken = SpokenAnnouncements()
+        let viewModel = makeFollowViewModel(announce: { spoken.messages.append($0) })
+        XCTAssertTrue(viewModel.isAutoFollowApplied)
+        XCTAssertNil(viewModel.framingTip)
+
+        viewModel.toggleAutoFollow()
+
+        XCTAssertFalse(viewModel.isAutoFollowApplied)
+        XCTAssertEqual(viewModel.framingTip, .autoFollow(isOn: false))
+
+        viewModel.toggleAutoFollow()
+
+        XCTAssertTrue(viewModel.isAutoFollowApplied)
+        XCTAssertFalse(viewModel.isShowingNothingToFollowNotice)
+        XCTAssertEqual(viewModel.framingTip, .autoFollow(isOn: true))
+        XCTAssertEqual(
+            spoken.messages,
+            [FramingTip.autoFollow(isOn: false).message, FramingTip.autoFollow(isOn: true).message])
+    }
+
+    /// Auto rotate is on only once its detection lands, so that is when it says so; turning it
+    /// off says so at once.
+    @MainActor
+    func testTheRotateToggleSaysSoOnceItsTurnIsOnScreen() async throws {
+        let spoken = SpokenAnnouncements()
+        let viewModel = makeLevelingViewModel(rotation: 0.25, announce: { spoken.messages.append($0) })
+
+        viewModel.toggleAutoRotate()
+
+        XCTAssertTrue(viewModel.isDetectingHorizon)
+        XCTAssertNil(viewModel.framingTip, "Auto rotate isn't on until its detection lands")
+        try await waitForDetection(viewModel)
+        XCTAssertTrue(viewModel.isAutoRotateApplied)
+        XCTAssertEqual(viewModel.framingTip, .autoRotate(isOn: true))
+
+        viewModel.toggleAutoRotate()
+
+        XCTAssertFalse(viewModel.isAutoRotateApplied)
+        XCTAssertEqual(viewModel.framingTip, .autoRotate(isOn: false))
+        XCTAssertEqual(
+            spoken.messages,
+            [FramingTip.autoRotate(isOn: true).message, FramingTip.autoRotate(isOn: false).message])
+    }
+
+    /// Where a notice says what happened, no tip says it too; and the next tap on a framing
+    /// button takes the notice down, answering for itself.
+    @MainActor
+    func testANoticeAnswersInPlaceOfATipUntilTheNextTap() async throws {
+        let spoken = SpokenAnnouncements()
+        let viewModel = makeLevelingViewModel(rotation: nil, announce: { spoken.messages.append($0) })
+
+        viewModel.toggleAutoRotate()
+        try await waitForDetection(viewModel)
+
+        XCTAssertTrue(viewModel.isShowingNoHorizonNotice)
+        XCTAssertNil(viewModel.framingTip)
+        XCTAssertEqual(spoken.messages, [])
+
+        viewModel.toggleAutoFollow()
+
+        XCTAssertFalse(viewModel.isShowingNoHorizonNotice)
+        XCTAssertEqual(viewModel.framingTip, .autoFollow(isOn: false))
+    }
+
+    /// "Nothing to follow" answers a tap on Auto follow over an athlete who stays put, in place
+    /// of its tip.
+    @MainActor
+    func testNothingToFollowAnswersInPlaceOfTheTip() {
+        let spoken = SpokenAnnouncements()
+        let standing = PoseFixture.frames(hipXPositions: Array(repeating: 0.5, count: 40))
+        let viewModel = makeFollowViewModel(frames: standing, announce: { spoken.messages.append($0) })
+        viewModel.toggleAutoFollow()
+        XCTAssertEqual(viewModel.framingTip, .autoFollow(isOn: false))
+
+        viewModel.toggleAutoFollow()
+
+        XCTAssertTrue(viewModel.isShowingNothingToFollowNotice)
+        XCTAssertNil(viewModel.framingTip)
+        XCTAssertEqual(spoken.messages, [FramingTip.autoFollow(isOn: false).message])
+    }
+
+    /// A clip without pose analysis has Reset follow alone, which says the framing was reset.
+    @MainActor
+    func testResetFollowAloneSaysTheFollowWasReset() {
+        let viewModel = makeFollowViewModel(frames: [])
+        viewModel.applyCropScale(1.5)
+        XCTAssertTrue(viewModel.isFollowAdjusted)
+
+        viewModel.toggleAutoFollow()
+
+        XCTAssertFalse(viewModel.isFollowAdjusted)
+        XCTAssertEqual(viewModel.framingTip, .followReset)
+    }
+
+    /// A tip is up for a moment, then goes on its own.
+    @MainActor
+    func testATipGoesOnItsOwn() async throws {
+        let viewModel = makeLevelingViewModel(rotation: 0.25)
+
+        viewModel.toggleAutoFollow()
+        XCTAssertNotNil(viewModel.framingTip)
+
+        let deadline = Date().addingTimeInterval(ClipEditorViewModel.framingTipDuration + 5)
+        while viewModel.framingTip != nil, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertNil(viewModel.framingTip)
+    }
+
     // MARK: - Playback and mute
 
     @MainActor
@@ -863,19 +991,22 @@ final class ClipEditorTests: XCTestCase {
     /// A clip over the athlete's whole move, from x≈0.3 to x≈0.7.
     @MainActor
     private func makeFollowViewModel(
-        followCrop: FollowCrop? = nil, frames: [PoseFrameResult]? = nil
+        followCrop: FollowCrop? = nil, frames: [PoseFrameResult]? = nil,
+        announce: @escaping AccessibilityAnnouncing = { _ in }
     ) -> ClipEditorViewModel {
-        let viewModel = ClipEditorViewModel(source: ClipEditorSource(
-            window: TrickWindow(startTime: 0, endTime: 4),
-            cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
-            followCrop: followCrop,
-            asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
-            poseFrames: frames ?? twoPositionFrames()))
+        let viewModel = ClipEditorViewModel(
+            source: ClipEditorSource(
+                window: TrickWindow(startTime: 0, endTime: 4),
+                cropRect: NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1),
+                followCrop: followCrop,
+                asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")),
+                poseFrames: frames ?? twoPositionFrames()),
+            announce: announce)
         viewModel.setMediaInfo(duration: duration, naturalSize: naturalSize, preferredTransform: .identity)
         return viewModel
     }
 
-    /// A pinch zooms the follow crop at the playhead and hands Auto follow's button back.
+    /// A pinch zooms the follow crop at the playhead and turns Auto follow off.
     @MainActor
     func testAPinchZoomsTheFollowCropAtThePlayhead() throws {
         let viewModel = makeFollowViewModel()
@@ -1063,7 +1194,7 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(crop.keyframes[0].center.x, 50, accuracy: 1e-9)
         XCTAssertEqual(crop.keyframes[0].center.y, 55, accuracy: 1e-9)
         XCTAssertFalse(crop.keyframes[0].isAutoFollows, "a moved keyframe draws filled")
-        XCTAssertFalse(viewModel.isAutoFollowApplied, "a keyframe change hands Auto follow's button back")
+        XCTAssertFalse(viewModel.isAutoFollowApplied, "a keyframe change turns Auto follow off")
     }
 
     /// Turned, a drag across the screen is a drag along the turned frame's axes in the source.
@@ -1392,6 +1523,14 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertEqual(placement.frame.maxY, marker.maxY - overhang * scale, accuracy: 0.01)
     }
 
+    /// The controls reach into the bottom safe area, leaving the home indicator its clearance,
+    /// and keep a margin under them on a screen without a bottom inset.
+    @MainActor
+    func testTheControlsReachIntoTheBottomInset() {
+        XCTAssertEqual(ClipEditorView.controlsBottomPadding(safeAreaBottom: 34), 22)
+        XCTAssertEqual(ClipEditorView.controlsBottomPadding(safeAreaBottom: 0), 8)
+    }
+
     func testVideoPlacementReturnsNilForDegenerateInputs() {
         let marker = CGRect(x: 0, y: 0, width: 320, height: 568)
         XCTAssertNil(ClipEditorStage.videoPlacement(
@@ -1418,4 +1557,10 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertTrue(viewModel.failedToLoad)
         XCTAssertNil(viewModel.duration)
     }
+}
+
+/// Collects what the view model handed to VoiceOver, in order.
+@MainActor
+private final class SpokenAnnouncements {
+    var messages: [String] = []
 }

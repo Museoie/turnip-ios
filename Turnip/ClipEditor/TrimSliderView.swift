@@ -51,12 +51,14 @@ struct TrimSliderView: View {
         let width: CGFloat
     }
 
-    /// The timeline row's height: the playhead's, the tallest element.
+    /// The timeline row's height: the playhead's, the tallest element. Its touches reach
+    /// `touchOutset` past it above and below, so the timeline keeps a 44 pt target.
     private static let rowHeight: CGFloat = TrimPlayheadView.size.height
-    private static let trackHeight: CGFloat = 40
-    private static let trackCornerRadius: CGFloat = 6
+    private static let touchOutset: CGFloat = 4
+    private static let trackHeight: CGFloat = 26
+    private static let trackCornerRadius: CGFloat = 4
     /// The window frame extends past the track by a few points top and bottom.
-    private static let frameHeight: CGFloat = 48
+    private static let frameHeight: CGFloat = 32
     private static let capWidth = TrimWindowFrameShape.capWidth
 
     var body: some View {
@@ -111,7 +113,7 @@ struct TrimSliderView: View {
                     .allowsHitTesting(false)
             }
             .frame(height: Self.rowHeight)
-            .contentShape(Rectangle())
+            .touchTarget(insetBy: Self.touchOutset, axes: .vertical)
             .gesture(timelineGesture(range: range, viewportSize: proxy.size))
         }
         .frame(height: Self.rowHeight)
@@ -213,9 +215,10 @@ struct TrimSliderView: View {
             + (which == .start ? -Self.capWidth : Self.capWidth) / 2
         return TrimHandleGlyphView(direction: which == .start ? .leading : .trailing)
             // 44 pt wide, the touch-target floor and also the frame VoiceOver draws its
-            // focus ring on; the offset re-centers it on the cap.
+            // focus ring on, and as tall with the row's outset; the offset re-centers it on the
+            // cap.
             .frame(width: 44, height: Self.rowHeight)
-            .contentShape(Rectangle())
+            .touchTarget(insetBy: Self.touchOutset, axes: .vertical)
             .offset(x: capCenter - 22)
             .accessibilityLabel(
                 which == .start ? String(localized: "Trim start") : String(localized: "Trim end"))

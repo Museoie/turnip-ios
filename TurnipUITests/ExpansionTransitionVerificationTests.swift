@@ -136,13 +136,16 @@ final class ExpansionTransitionVerificationTests: XCTestCase {
 
     /// Where a swipe-to-dismiss starts: in the top row's band, which the dismiss gesture owns
     /// (the video surface keeps a downward drag for its own crop gesture), midway between the
-    /// back chevron and the screen's middle — the chevron claims a touch that starts on it.
-    /// Read off the controls, so it doesn't depend on the device's status-bar height.
+    /// back chevron and the framing toggles centered beside it — each claims a touch that
+    /// starts on it. Read off the controls, so it doesn't depend on the device's status-bar
+    /// height.
     private func headerSwipeStart(in app: XCUIApplication) -> XCUICoordinate {
         let back = settledFrame(of: app.buttons["Back to clips"].firstMatch)
-        let window = app.windows.firstMatch.frame
+        let toggles = app.buttons.matching(
+            NSPredicate(format: "identifier IN %@", ["auto-follow-button", "reset-follow-button"]))
+        let follow = settledFrame(of: toggles.firstMatch)
         return app.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: (back.maxX + window.midX) / 2, dy: back.midY))
+            .withOffset(CGVector(dx: (back.maxX + follow.minX) / 2, dy: back.midY))
     }
 
     /// The flight lands on the marker the editor reports for a clip whose crop moves too, over

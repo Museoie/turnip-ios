@@ -195,12 +195,21 @@ under "Clip List (UIUX §3)" below.
   at the playhead, so both choices of the long press on a diamond, a gesture VoiceOver can't
   aim, have a reachable twin. Hollow and filled diamonds differ in fill, not only color. "Nothing to follow" uses
   the same notice as "No horizon found".
+- **The framing toggles** (UIUX §4, Rev 35) show on and off by color alone, so the state is
+  spoken as a value: each is labeled for what it is ("Auto follow", "Auto rotate") with the
+  value "On" or "Off", and the identifier is one value across both states, where the UI tests
+  read the value. The tip a tap shows for about 1.5 s is hidden from VoiceOver, which would
+  never reach it in time, and its words are posted as an announcement instead, Auto rotate's
+  once its detection lands. A clip without pose analysis keeps "Reset follow" as a plain
+  button.
 - Player controls labeled. The scrub track carries a label, its position as a value, and an
   adjustable action seeking ±1 s: without one it is a pure drag surface, where a listener can
   hear where playback stands but has no way to move it.
 - Keep/discard is not the editor's decision — the list's own toggle owns it. The editor's
   Delete is its own labeled, reachable element.
-- Touch targets: trim handles, play/pause, mute and the scrub track all reach 44 pt.
+- Touch targets: trim handles, play/pause, mute and the scrub track all reach 44 pt. The follow
+  lane, its keyframe button and the trim timeline are drawn thinner than that, and their touch
+  regions reach past what is drawn above and below to keep it (`touchTarget`).
 - No auto-playing preview loop when reduce motion is on: the preview parks on the window's
   first frame and Play starts it on request.
 - Identifiers: `clip-editor-back`, `clip-editor-crop-surface`,

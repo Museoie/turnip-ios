@@ -85,7 +85,7 @@ struct FollowCrop: Hashable, Sendable {
     /// Where the crop holds while there are no keyframes: after Reset follow, the frame's own
     /// center at the zoom that shows all of it.
     var resting: FollowFraming
-    /// True while this is exactly what Auto follow wrote, so its button offers Reset follow.
+    /// True while this is exactly what Auto follow wrote, so its toggle is on.
     /// Any pinch, turn, drag, keyframe change or reshape clears it; a trim and Auto rotate don't.
     var isAutoFollow: Bool
     /// The crop's shape, width over height: the editor's marker and the exported clip. A box of

@@ -2,7 +2,7 @@ import SwiftUI
 
 /// A circular icon button floating directly over media (video/photo content) — Processing's
 /// cancel and back chevron (with `ScrimTextButton`'s "Clip it" across from them), the editor's
-/// and the clip list's back chevrons, Camera's
+/// and the clip list's back chevrons, the editor's Auto follow and Auto rotate toggles, Camera's
 /// cancel/exposure/flash/flip buttons (forced to `.scrim`; see `Style`). The one shape every
 /// screen's chevron takes, so the control reads the same across the flow's cross-fades.
 /// Real Liquid Glass on iOS 26 (`.glassEffect`) by default, same as the floating
@@ -28,11 +28,18 @@ struct ScrimIconButton: View {
     var diameter: CGFloat = 44
     var font: Font = .body.weight(.semibold)
     var style: Style = .glass
+    /// The circle's color while a toggle is on, in place of the glass or scrim; `nil` while it is
+    /// off, and for a button that isn't a toggle.
+    var tint: Color?
+    /// Shows a spinner in place of the glyph while the button's work runs.
+    var isBusy = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            ScrimIconGlyph(systemImage: systemImage, diameter: diameter, font: font, style: style)
+            ScrimIconGlyph(
+                systemImage: systemImage, diameter: diameter, font: font, style: style, tint: tint,
+                isBusy: isBusy)
                 // Touch-target floor (docs/ACCESSIBILITY.md's 44x44 pt minimum), applied
                 // on the label so it's part of the Button's own hit-testing region. A
                 // no-op at the 44 pt default;
@@ -53,21 +60,37 @@ struct ScrimIconGlyph: View {
     var diameter: CGFloat = 44
     var font: Font = .body.weight(.semibold)
     var style: ScrimIconButton.Style = .glass
+    var tint: Color?
+    var isBusy = false
 
     var body: some View {
-        let image = Image(systemName: systemImage)
-            .font(font)
-            .foregroundStyle(.white)
-            .frame(width: diameter, height: diameter)
+        let image = ZStack {
+            if isBusy {
+                ProgressView()
+                    .tint(.white)
+            } else {
+                Image(systemName: systemImage)
+                    .font(font)
+                    .foregroundStyle(.white)
+            }
+        }
+        .frame(width: diameter, height: diameter)
+        let scrim = tint ?? Color.black.opacity(0.4)
         switch style {
         case .glass:
             if #available(iOS 26.0, *) {
-                image.glassEffect(in: Circle())
+                if let tint {
+                    // Tinted glass rather than a flat fill, so an on toggle stays the same
+                    // material as the buttons beside it.
+                    image.glassEffect(.regular.tint(tint), in: Circle())
+                } else {
+                    image.glassEffect(in: Circle())
+                }
             } else {
-                image.background(.black.opacity(0.4), in: Circle())
+                image.background(scrim, in: Circle())
             }
         case .scrim:
-            image.background(.black.opacity(0.4), in: Circle())
+            image.background(scrim, in: Circle())
         }
     }
 }
