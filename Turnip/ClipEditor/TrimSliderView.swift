@@ -54,7 +54,7 @@ struct TrimSliderView: View {
     /// The timeline row's height: the playhead's, the tallest element. Its touches reach
     /// `touchOutset` past it above and below, so the timeline keeps a 44 pt target.
     private static let rowHeight: CGFloat = TrimPlayheadView.size.height
-    private static let touchOutset: CGFloat = 4
+    static let touchOutset: CGFloat = 4
     private static let trackHeight: CGFloat = 26
     private static let trackCornerRadius: CGFloat = 4
     /// The window frame extends past the track by a few points top and bottom.

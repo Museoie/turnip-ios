@@ -175,7 +175,7 @@ struct ClipEditorView: View {
                 // Over the placeholder, not inside it: the placeholder passes touches through,
                 // and the notice has to keep its own tap-to-dismiss.
                 .overlay(alignment: .top) { notices }
-                VStack(spacing: 4) {
+                VStack(spacing: Self.laneToTimelineSpacing) {
                     FollowLaneView(viewModel: viewModel)
                     TrimSliderView(viewModel: viewModel)
                 }
@@ -188,8 +188,13 @@ struct ClipEditorView: View {
         .onPreferenceChange(ClipEditorStageFramePreferenceKey.self) { stageFrame = $0 }
     }
 
-    /// The gap between the stage band and the follow lane.
-    private static let controlsTopPadding: CGFloat = 8
+    /// The gap between the stage band and the follow lane: the lane's touch outset, so its touch
+    /// region reaches the band's edge and no further, leaving the crop area and the marker's
+    /// corner handles their touches.
+    private static let controlsTopPadding = FollowLaneView.touchOutset
+    /// The gap between the follow lane and the trim timeline: the touch outsets they face each
+    /// other with, so neither's touch region reaches into the other's and both keep 44 pt.
+    private static let laneToTimelineSpacing = FollowLaneView.touchOutset + TrimSliderView.touchOutset
     /// How far the controls reach into the bottom safe area: the trim timeline's time labels sit
     /// just clear of the home indicator rather than a whole inset above it.
     private static let bottomInsetOverlap: CGFloat = 12

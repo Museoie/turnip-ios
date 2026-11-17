@@ -958,8 +958,12 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
       row ("Framing toggles" above). The follow lane sits under the marker,
       above the trim timeline, which spans the whole video and works as above.
       Both are drawn thin (Rev 35): the lane's track 18 pt and its row 28 pt,
-      the timeline's track 26 pt inside a 32 pt window frame, each touch
-      region still 44 pt tall. The controls end just above the home indicator,
+      the timeline's track 26 pt inside a 32 pt window frame. Each touch
+      region reaches past what is drawn, the lane's 8 pt above and below and
+      the timeline's 4 pt, to stay 44 pt tall, and the gaps are set from those
+      reaches: 8 pt from the stage band to the lane and 12 pt from the lane to
+      the timeline, so no region takes another's touches, the crop area's
+      included. The controls end just above the home indicator,
       reaching 12 pt into the bottom safe area (8 pt above the screen's edge
       where there is none), and the marker is centered in what is left: the
       same size at the same place for every clip of one shape, and the

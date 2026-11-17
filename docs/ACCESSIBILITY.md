@@ -209,7 +209,10 @@ under "Clip List (UIUX §3)" below.
   Delete is its own labeled, reachable element.
 - Touch targets: trim handles, play/pause, mute and the scrub track all reach 44 pt. The follow
   lane, its keyframe button and the trim timeline are drawn thinner than that, and their touch
-  regions reach past what is drawn above and below to keep it (`touchTarget`).
+  regions reach past what is drawn above and below to keep it (`touchTarget`). The gap between
+  the lane and the timeline is the sum of the two reaches facing each other
+  (`ClipEditorView.laneToTimelineSpacing`): a smaller one lets the later-drawn timeline take the
+  overlap and leaves the lane short of 44 pt.
 - No auto-playing preview loop when reduce motion is on: the preview parks on the window's
   first frame and Play starts it on request.
 - Identifiers: `clip-editor-back`, `clip-editor-crop-surface`,

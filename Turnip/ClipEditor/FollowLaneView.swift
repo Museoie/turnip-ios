@@ -20,7 +20,7 @@ struct FollowLaneView: View {
     /// `touchOutset` past it above and below, so a drag on it or a tap on its button still has a
     /// 44 pt target.
     static let height: CGFloat = 28
-    private static let touchOutset: CGFloat = 8
+    static let touchOutset: CGFloat = 8
     /// The translucent track the diamonds sit on.
     private static let trackHeight: CGFloat = 18
     /// The keyframe button's width: the touch-target floor, which also sets the lane's trailing
