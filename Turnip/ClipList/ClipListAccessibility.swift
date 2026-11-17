@@ -89,4 +89,38 @@ enum ClipListAccessibility {
     /// The zero-tricks notice's text, shared by the visible notice and its announcement so
     /// the two cannot drift.
     static var noTricksFound: String { String(localized: "No tricks found") }
+
+    // MARK: - Filters
+
+    /// How many clips the filters leave of how many there are: the grid's status line and its
+    /// VoiceOver label, and the filter sheet's count. "23 of 97 clips shown".
+    static func shownClips(shown: Int, total: Int) -> String {
+        total == 1
+            ? String(localized: "\(shown) of 1 clip shown")
+            : String(localized: "\(shown) of \(total) clips shown")
+    }
+
+    /// The confidence filter's setting, beside its slider and as the slider's value: "Any", or the
+    /// least a clip needs, "60% or more".
+    static func minimumConfidence(_ value: Float) -> String {
+        let percent = Int((value * 100).rounded())
+        return percent == 0 ? String(localized: "Any") : String(localized: "\(percent)% or more")
+    }
+
+    /// The filter button's value, so its filled glyph isn't the only sign that a filter is on.
+    static func filterState(isActive: Bool) -> String {
+        isActive ? String(localized: "On") : String(localized: "Off")
+    }
+
+    /// How far reading the clips' shirt colours has got: "Reading shirt colors, 34 of 97".
+    static func readingShirtColors(read: Int, total: Int) -> String {
+        String(localized: "Reading shirt colors, \(read) of \(total)")
+    }
+
+    /// One clip in the filter sheet's picker: its length, and that its top couldn't be read when it
+    /// couldn't, since a disabled tile otherwise says nothing about why.
+    static func shirtColorClipLabel(spokenDuration: String, isUnreadable: Bool) -> String {
+        guard isUnreadable else { return spokenDuration }
+        return String(localized: "\(spokenDuration), no shirt color found")
+    }
 }

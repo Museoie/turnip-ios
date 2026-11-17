@@ -68,7 +68,7 @@ Polyrepo chosen over monorepo because open-source contributors typically only wa
      multiple of 32), letterboxed so the frame's aspect ratio survives
   3. Run pose detection on each kept frame
   4. Motion signal = whole-body speed between consecutive frames, in torso lengths per second, median-smoothed
-  5. Peak detection against the athlete's own activity level, sustained ≥ 300 ms → list of trick windows
+  5. Peak detection against the athlete's own activity level, sustained ≥ 300 ms → list of trick windows, each with a confidence (`1 − speed floor / the burst's peak speed`; with a trick model, its segment score) that only Clip List's filter reads
   6. Crop rect = union of 17 keypoints across window (confidence-filtered), expanded 10%, snapped to aspect ratio
   7. Export N clips per input
 

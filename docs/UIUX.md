@@ -1,5 +1,13 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 36 · 2026-11-17 · Clip List (§3) gets a filter button, which opens a sheet
+with two filters over the grid: a confidence slider that hides the clips
+detection was least sure are tricks, and a shirt color that keeps only the
+clips of whoever wears it. The color is read from clips tapped in the sheet as
+the user's own, or chosen in a color picker. A filter hides clips and keeps
+them: a line over the grid counts what shows, with "Clear", and Name Clips and
+"Save Clips" take only the clips shown. A clip added by hand always shows.*
+
 *Rev 35 · 2026-11-17 · The Clip Detail / Editor's (§4) Auto follow and Auto
 rotate become circle toggles centered in the top row beside the back chevron,
 or down the vertical bar under it on iPhone Duo. Each shows on or off by its
@@ -160,7 +168,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart. Rev 29 swaps the Camera page for a camera tile, leads the pager with the Profile and opens on it once a clip is saved, widens the grid to six columns on wide screens, and moves the root controls into iPhone Duo's vertical bar. Rev 30 moves Processing's choice between analyzing and clipping by hand to Name Clips, behind a "Clip it" corner button, and pages Name Clips with Previous / Next, Save Clips on the last clip. Rev 31 drops the camera's person control, moves every screen's top controls into iPhone Duo's vertical bar, and gives the Profile an achievements carousel and page, a Me / Someone else filter, and clip removal from Needs a name and a trick's grid. Rev 32 puts Clip List back in front of Name Clips, a tile opening Name Clips on its clip. Rev 33 gives Clip List a save, a select mode and name chips, starts a card's loop on its poster's frame, and keeps every video's pose. Rev 34 keeps a tile's name chips on one line, spaces Auto follow's keyframes 1 s apart, and lines the follow lane up with the trim timeline. Rev 35 makes the editor's Auto follow and Auto rotate circle toggles in its top row, thins its lane and timeline, and lowers its controls.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart. Rev 29 swaps the Camera page for a camera tile, leads the pager with the Profile and opens on it once a clip is saved, widens the grid to six columns on wide screens, and moves the root controls into iPhone Duo's vertical bar. Rev 30 moves Processing's choice between analyzing and clipping by hand to Name Clips, behind a "Clip it" corner button, and pages Name Clips with Previous / Next, Save Clips on the last clip. Rev 31 drops the camera's person control, moves every screen's top controls into iPhone Duo's vertical bar, and gives the Profile an achievements carousel and page, a Me / Someone else filter, and clip removal from Needs a name and a trick's grid. Rev 32 puts Clip List back in front of Name Clips, a tile opening Name Clips on its clip. Rev 33 gives Clip List a save, a select mode and name chips, starts a card's loop on its poster's frame, and keeps every video's pose. Rev 34 keeps a tile's name chips on one line, spaces Auto follow's keyframes 1 s apart, and lines the follow lane up with the trim timeline. Rev 35 makes the editor's Auto follow and Auto rotate circle toggles in its top row, thins its lane and timeline, and lowers its controls. Rev 36 gives Clip List a filter by confidence and shirt color.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -667,11 +675,41 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
   pause while Name Clips covers the grid. Name Clips and the grid share the
   video's clips, so a name given, an edit, and a clip added or removed there
   are on the grid on the way back.
-- The header: the back chevron, a "+" that adds a new full-frame clip over
-  the first seconds of the video and scrolls the grid to its tile, and
-  "Select" once there is a clip. On iPhone Duo they go down the vertical bar,
-  as every screen's top controls do, Select as a check-circle glyph. None
-  takes a tap while a save runs.
+- The header: the back chevron, the filter button once detection has proposed
+  a clip, a "+" that adds a new full-frame clip over the first seconds of the
+  video and scrolls the grid to its tile, and "Select" once there is a clip. On
+  iPhone Duo they go down the vertical bar, as every screen's top controls do,
+  Select as a check-circle glyph. None takes a tap while a save runs.
+- The filter button (the gallery filter's glyph, §1, filled while a filter is
+  on, and "On" or "Off" to VoiceOver) opens a sheet, half height and drawn up
+  to full, over the grid, which pauses its tiles and changes behind it as the
+  filters do. A count along the sheet's bottom says what is left ("23 of 97
+  clips shown"); "Reset" clears both filters and "Done" closes the sheet.
+  - **Confidence**: a slider from "Any" to "Surest", its setting beside it
+    ("60% or more"). It hides the clips detection was least sure are tricks:
+    the heuristic's confidence is how far the burst's fastest moment is past
+    the speed floor (`DESIGN.md` step 5), so someone walking off reads low and
+    a flip high; a trick model's is its segment score.
+  - **Shirt color**: a color picker, and under it every clip detection proposed
+    as a small tile. Tapping tiles marks them as the user's, and the color of
+    the top their person wears is read from them; a color chosen in the picker
+    replaces them. Then only the clips whose person wears a top close to that
+    color show. Every marked clip shows whatever its color, so marking one in
+    shade and one in sun covers both. While the sheet is up it reads each
+    clip's top, the clips the slider shows first, with a progress bar until all
+    are read: up to two moments in the clip's window, upright ones first, where
+    its own person's shoulders and hips are located, and a grid of pixels
+    between them. A tile shows its color as a swatch once read, a question
+    mark where no moment shows the whole torso, and is dimmed while the
+    filters hide its clip. A clip not yet read shows until it is; one with no
+    color hides. Reading happens only while the sheet is up, so the clips
+    shown never change under Name Clips.
+  - A clip added by hand always shows. A hidden clip is kept, not removed: the
+    grid, Name Clips and "Save Clips" leave it out, loosening a filter brings it
+    back, and it isn't kept as a dismissed proposal for Learn from my clips.
+    While a filter is on, a line over the grid says how many clips show, with
+    "Clear"; a filter that hides every clip shows "No matches" and "Clear
+    Filters" instead of the empty state below.
 - "Select" turns the grid into a selection, as Photos and the Profile's trick
   grid do: the title counts the marked clips ("2 Selected"), a tile tap marks
   or unmarks it with a check circle in its top-trailing corner instead of
@@ -680,8 +718,8 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
   every marked clip, with no restore, as Name Clips' "Remove this clip" does
   one. A clip already in Photos stays there. The grid then leaves selecting.
   The tiles keep playing throughout.
-- With clips, the bottom bar's "Save Clips" exports and saves every clip not
-  yet in Photos, exactly as Name Clips' does on its last clip (§3a): the same
+- With clips, the bottom bar's "Save Clips" exports and saves every clip shown
+  not yet in Photos, exactly as Name Clips' does on its last clip (§3a): the same
   spinner, failure alert and retry, clip library record and contribution
   sheet, then Home. It saves what the clips hold, names the trick model filled
   in included, whether or not Name Clips has shown them (decision 13).
@@ -693,7 +731,8 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
   manually" under it, which adds a clip the way the header's "+" does. A camera
   take that lands here directly has no Processing screen under it and has
   already been analyzed, so its bar offers "Clip manually" alone.
-- VoiceOver reads the grid's count on entry ("4 clips"), each tile as one
+- VoiceOver reads the grid's count on entry ("4 clips", or "4 of 9 clips
+  shown" while a filter is on), each tile as one
   element ("Clip 2 of 4, 2.4 seconds, named cork and gainer", with the
   timeline as its value and "Opens the clip to name it" as its hint, or
   "Marks the clip for deleting" and the selected trait while selecting), and

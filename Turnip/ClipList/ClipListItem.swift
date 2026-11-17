@@ -28,6 +28,11 @@ import Foundation
 /// which a trashed proposal leaves behind for the personal layer
 /// (`docs/PERSONALIZATION_DESIGN.md` §3). It is never saved or contributed.
 ///
+/// `confidence` is how sure detection was that the clip holds a trick (`ProcessedClip.confidence`),
+/// what Clip List's filters read (`ClipFilter`). It stays with the clip through every edit, like
+/// `proposal`. `nil` for a clip detection didn't propose — the original, and one added by hand —
+/// which no filter hides.
+///
 /// `isOriginal` marks the one item — always `ClipListViewModel.items[0]` — that
 /// stands for the source video already in Photos rather than a derived clip: it
 /// carries the full-video window and full-frame crop, and is never paged through,
@@ -49,6 +54,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
     let isAutoDetected: Bool
     let proposal: ModelProposal?
     let proposedFrames: Range<Int>?
+    let confidence: Float?
 
     init(
         id: UUID = UUID(),
@@ -62,7 +68,8 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         isMe: Bool = true,
         isAutoDetected: Bool = false,
         proposal: ModelProposal? = nil,
-        proposedFrames: Range<Int>? = nil
+        proposedFrames: Range<Int>? = nil,
+        confidence: Float? = nil
     ) {
         self.id = id
         self.window = window
@@ -76,6 +83,7 @@ struct ClipListItem: Hashable, Identifiable, Sendable {
         self.isAutoDetected = isAutoDetected
         self.proposal = proposal
         self.proposedFrames = proposedFrames
+        self.confidence = confidence
     }
 
     /// "2.4s"-style duration label for the card, via the one shared clip-duration

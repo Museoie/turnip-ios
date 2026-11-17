@@ -74,6 +74,10 @@ struct ProcessedClip: Hashable, Sendable {
     /// trashed proposal leaves behind (`docs/PERSONALIZATION_DESIGN.md` §3). `nil` when the
     /// heuristic found it.
     var proposedFrames: Range<Int>?
+    /// How sure detection is that the clip holds a trick, 0...1: the trick model's segment score
+    /// (`ProposedClip.confidence`) or the heuristic's (`DetectedWindow.confidence`). What Clip
+    /// List's confidence filter reads.
+    var confidence: Float?
 }
 
 /// What detection yields for one video: the clips, with every sampled frame they were cut
@@ -508,21 +512,26 @@ struct ProcessingPipeline: Sendable {
             // window-to-frames pairing `buildClips` does, window by window. Windows are
             // clamped before the sweep, so a frame past the asset's end cannot land in
             // one: the batch form filters by the clamped window.
-            let windows = windowDetector.detectWindows(in: samples)
-                .compactMap { $0.clamped(to: duration) }
-                .sorted { $0.startTime < $1.startTime }
-            var inWindows: [[PoseFrameResult]] = Array(repeating: [], count: windows.count)
+            let candidates = windowDetector.detect(in: samples)
+                .compactMap { detected in
+                    detected.window.clamped(to: duration).map {
+                        Candidate(window: $0, confidence: detected.confidence)
+                    }
+                }
+                .sorted { $0.window.startTime < $1.window.startTime }
+            var inWindows: [[PoseFrameResult]] = Array(repeating: [], count: candidates.count)
             for frame in frames() {
                 let primary = frame.primary
-                for (index, window) in windows.enumerated()
-                where primary.timestamp >= window.startTime && primary.timestamp <= window.endTime {
+                for (index, candidate) in candidates.enumerated()
+                where primary.timestamp >= candidate.window.startTime
+                    && primary.timestamp <= candidate.window.endTime {
                     inWindows[index].append(primary)
                 }
             }
             var clips: [ProcessedClip] = []
-            for (index, window) in windows.enumerated() {
+            for (index, candidate) in candidates.enumerated() {
                 clips += buildClips(
-                    proposed: [(window, nil)], personID: nil, frames: inWindows[index],
+                    proposed: [candidate], personID: nil, frames: inWindows[index],
                     renderedPixelSize: renderedPixelSize, duration: duration)
             }
             return DetectedClips(clips: clips, poseFrames: poseFrames, windowEmbeddings: [])
@@ -556,19 +565,19 @@ struct ProcessingPipeline: Sendable {
                 let found = try proposer.proposals(
                     over: frames, duration: duration, personID: personID, rules: proposalRules, using: &generator)
                 let clips = buildClips(
-                    proposed: found.clips.map { ($0.window, $0) }, personID: personID,
-                    frames: frames, renderedPixelSize: renderedPixelSize, duration: duration)
+                    proposed: found.clips.map { Candidate(window: $0.window, confidence: $0.confidence, model: $0) },
+                    personID: personID, frames: frames, renderedPixelSize: renderedPixelSize, duration: duration)
                 return (clips, found.embeddings)
             } catch {
                 let reason = String(describing: error)
                 Self.logger.error("Trick model failed, the heuristic proposes: \(reason, privacy: .public)")
             }
         }
-        let windows = windowDetector.detectWindows(
+        let detected = windowDetector.detect(
             in: MotionSignalBuilder.buildSignal(from: frames, renderedPixelSize: renderedPixelSize))
         let clips = buildClips(
-            proposed: windows.map { ($0, nil) }, personID: personID, frames: frames,
-            renderedPixelSize: renderedPixelSize, duration: duration)
+            proposed: detected.map { Candidate(window: $0.window, confidence: $0.confidence) }, personID: personID,
+            frames: frames, renderedPixelSize: renderedPixelSize, duration: duration)
         return (clips, nil)
     }
 
@@ -592,8 +601,16 @@ struct ProcessingPipeline: Sendable {
         duration: TimeInterval? = nil
     ) -> [ProcessedClip] {
         buildClips(
-            proposed: windows.map { ($0, nil) }, personID: nil, frames: frames,
+            proposed: windows.map { Candidate(window: $0) }, personID: nil, frames: frames,
             renderedPixelSize: renderedPixelSize, duration: duration)
+    }
+
+    /// A window proposed for a clip, before it is clamped and cropped: how sure its proposer is
+    /// (`ProcessedClip.confidence`), and the trick model's proposal when the model made it.
+    private struct Candidate {
+        let window: TrickWindow
+        var confidence: Float?
+        var model: ProposedClip?
     }
 
     /// Pairs each proposed window with the sampled frames inside it and computes its crop
@@ -604,7 +621,7 @@ struct ProcessingPipeline: Sendable {
     /// with nothing inside the asset is dropped: it cannot become a clip,
     /// and a zero-length window would break the looper and the export.
     private func buildClips(
-        proposed: [(window: TrickWindow, model: ProposedClip?)],
+        proposed: [Candidate],
         personID: Int?,
         frames: [PoseFrameResult],
         renderedPixelSize: CGSize,
@@ -624,7 +641,7 @@ struct ProcessingPipeline: Sendable {
                 ?? NormalizedRect(minX: 0, maxX: 1, minY: 0, maxY: 1)
             return ProcessedClip(
                 window: window, cropRect: cropRect, personID: personID, proposal: candidate.model?.proposal,
-                proposedFrames: candidate.model?.frames)
+                proposedFrames: candidate.model?.frames, confidence: candidate.confidence)
         }
     }
 

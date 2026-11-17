@@ -15,6 +15,10 @@ import SwiftUI
 /// until "Cancel", and a bar along the bottom deletes the marked clips together. With no clip, the
 /// screen offers "Analyze clips" (`analyze`) and "Clip manually". The back chevron pops to Home.
 /// This view declares no `NavigationStack` of its own.
+///
+/// The filter button opens `ClipFilterSheet`, which hides clips by detection's confidence and by
+/// the colour of the top their person wears (`ClipFilter`). A hidden clip is left off the grid,
+/// Name Clips and Save Clips; a line over the grid says how many show, with "Clear" beside it.
 struct ClipListView: View {
     @StateObject private var viewModel: ClipListViewModel
     private let vocabulary: VocabularyStore
@@ -38,6 +42,7 @@ struct ClipListView: View {
     @State private var isConfirmingDelete = false
     @State private var contribution: ContributionPlan?
     @State private var isShowingContribution = false
+    @State private var isFiltering = false
     /// iPhone Duo's vertical bar, which the bar's items go down instead.
     @Environment(\.verticalBar) private var verticalBar
 
@@ -81,10 +86,12 @@ struct ClipListView: View {
 
     var body: some View {
         Group {
-            if clips.isEmpty {
+            if !clips.isEmpty {
+                grid
+            } else if viewModel.allClips.isEmpty {
                 emptyState
             } else {
-                grid
+                filteredEmptyState
             }
         }
         .disabled(viewModel.isSaving)
@@ -93,13 +100,19 @@ struct ClipListView: View {
         .navigationBarBackButtonHidden(true)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar { toolbar }
-        // Back, add, then Select, as the bar reads from its leading item.
+        // Back, add, the filter, then Select, as the bar reads from its leading item.
         .verticalBarColumn(verticalBar) {
             if !isSelecting {
                 backButton
                 ScrimIconButton(systemImage: "plus", accessibilityLabel: "Add clip", action: addClip)
                     .disabled(viewModel.isSaving)
                     .accessibilityIdentifier("add-clip")
+                if offersFilter {
+                    ScrimIconButton(systemImage: filterGlyph, accessibilityLabel: "Filter", action: openFilter)
+                        .disabled(viewModel.isSaving)
+                        .accessibilityValue(ClipListAccessibility.filterState(isActive: viewModel.filter.isActive))
+                        .accessibilityIdentifier("clip-list-filter")
+                }
             }
             if !clips.isEmpty {
                 // A glyph here, as the column is too narrow for the bar's words at larger text.
@@ -118,6 +131,7 @@ struct ClipListView: View {
             "Couldn't save clips",
             message: isNaming ? Binding<String?>.constant(nil) : $viewModel.saveFailureMessage)
         .sheet(isPresented: $isShowingContribution, onDismiss: popToRoot) { contributionSheet }
+        .sheet(isPresented: $isFiltering) { ClipFilterSheet(viewModel: viewModel) }
         .confirmationDialog(
             ClipListAccessibility.deleteClips(count: selectedIDs.count),
             isPresented: $isConfirmingDelete, titleVisibility: .hidden
@@ -157,7 +171,7 @@ struct ClipListView: View {
                     // otherwise announces its result only as the screen changing. The grid must be
                     // an accessibility container for that label to be read on entry.
                     .accessibilityElement(children: .contain)
-                    .accessibilityLabel(ClipListAccessibility.gridLabel(clipCount: clips.count))
+                    .accessibilityLabel(gridLabel)
                     .accessibilityIdentifier("clip-grid")
                 }
                 .onChange(of: addedClipID) { id in
@@ -166,6 +180,26 @@ struct ClipListView: View {
                 }
             }
         }
+        .safeAreaInset(edge: .top) {
+            if viewModel.filter.isActive && !isSelecting { filterStatus }
+        }
+    }
+
+    /// What the filters leave, over the grid while one is on, with the way to turn them off.
+    private var filterStatus: some View {
+        HStack(spacing: 12) {
+            Text(ClipListAccessibility.shownClips(shown: clips.count, total: viewModel.allClips.count))
+                .font(.subheadline.weight(.semibold).monospacedDigit())
+            Button("Clear", action: clearFilter)
+                .font(.subheadline)
+                .disabled(viewModel.isSaving)
+                .accessibilityIdentifier("clip-list-clear-filter")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.thinMaterial, in: Capsule())
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .contain)
     }
 
     /// One card whichever the mode, so a tile keeps its loop as the grid goes in and out of
@@ -174,8 +208,9 @@ struct ClipListView: View {
         VStack(alignment: .leading, spacing: 6) {
             ClipCard(
                 item: item, side: side, placement: .tile, viewModel: viewModel,
-                // Paused, not playing, under Name Clips, a save and the contribution sheet.
-                isPlaying: !isNaming && !viewModel.isSaving && !isShowingContribution,
+                // Paused, not playing, under Name Clips, a save and either sheet: the filter sheet
+                // decodes frames to read shirt colours.
+                isPlaying: !isNaming && !viewModel.isSaving && !isShowingContribution && !isFiltering,
                 selection: isSelecting ? selection.contains(item.id) : nil,
                 onOpen: { _, _, _ in tapped(item) })
             ClipTileCaption(item: item, width: side)
@@ -218,6 +253,32 @@ struct ClipListView: View {
         selection = []
     }
 
+    // MARK: - Filters
+
+    /// The filter button shows once detection has proposed a clip, which is what the filters hide.
+    private var offersFilter: Bool { !viewModel.filterableClips.isEmpty }
+
+    /// Filled while a filter is on, as Home's gallery filter is, so a grid of what is left reads as
+    /// filtered and not as all there is.
+    private var filterGlyph: String {
+        viewModel.filter.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
+    }
+
+    private func openFilter() {
+        isFiltering = true
+    }
+
+    private func clearFilter() {
+        withAnimation(.easeInOut(duration: 0.3)) { viewModel.clearFilter() }
+    }
+
+    /// The grid's count on entry, with how many there are when a filter hides some.
+    private var gridLabel: String {
+        viewModel.filter.isActive
+            ? ClipListAccessibility.shownClips(shown: clips.count, total: viewModel.allClips.count)
+            : ClipListAccessibility.gridLabel(clipCount: clips.count)
+    }
+
     /// Removes every marked clip at once, as Name Clips' "Remove this clip" removes one, and leaves
     /// selecting. A clip already in Photos stays there, as it does from Name Clips.
     private func deleteSelected() {
@@ -234,7 +295,8 @@ struct ClipListView: View {
     // MARK: - Chrome
 
     /// None on iPhone Duo, where the items go down the vertical bar (`verticalBarColumn`). While
-    /// selecting, the back chevron and "+" stand down: "Cancel" is the way out of a selection.
+    /// selecting, the back chevron, the filter button and "+" stand down: "Cancel" is the way out of
+    /// a selection.
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         if verticalBar == nil {
@@ -242,6 +304,10 @@ struct ClipListView: View {
                 if !isSelecting {
                     ToolbarItem(placement: .navigationBarLeading) { backButton }
                         .sharedBackgroundVisibility(.hidden)
+                    if offersFilter {
+                        ToolbarItem(placement: .topBarTrailing) { filterButton }
+                        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+                    }
                     ToolbarItem(placement: .topBarTrailing) { addButton }
                 }
                 if !clips.isEmpty {
@@ -257,7 +323,10 @@ struct ClipListView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 16) {
-                        if !isSelecting { addButton }
+                        if !isSelecting {
+                            if offersFilter { filterButton }
+                            addButton
+                        }
                         if !clips.isEmpty { selectButton }
                     }
                 }
@@ -282,6 +351,16 @@ struct ClipListView: View {
         .accessibilityIdentifier("add-clip")
     }
 
+    private var filterButton: some View {
+        Button(action: openFilter) {
+            Image(systemName: filterGlyph)
+        }
+        .disabled(viewModel.isSaving)
+        .accessibilityLabel("Filter")
+        .accessibilityValue(ClipListAccessibility.filterState(isActive: viewModel.filter.isActive))
+        .accessibilityIdentifier("clip-list-filter")
+    }
+
     private var selectButton: some View {
         Button(action: toggleSelecting) {
             Text(isSelecting ? "Cancel" : "Select")
@@ -295,7 +374,10 @@ struct ClipListView: View {
         if isSelecting {
             deleteBar
         } else if clips.isEmpty {
-            if let analyze {
+            if !viewModel.allClips.isEmpty {
+                // Every clip is filtered out: the empty state offers Clear Filters instead.
+                EmptyView()
+            } else if let analyze {
                 PrimaryActionBar("Analyze clips", secondary: .init("Clip manually", action: addClip), action: analyze)
                     .accessibilityIdentifier("start-analysis")
             } else {
@@ -348,6 +430,21 @@ struct ClipListView: View {
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { if showsNoTricksFound { viewModel.announceNoTricksFound() } }
+    }
+
+    /// What a filter hiding every clip shows, so it doesn't read as a video with no clips.
+    private var filteredEmptyState: some View {
+        StatusStateView(
+            systemImage: "line.3.horizontal.decrease.circle",
+            title: "No matches",
+            message: "No clips match the filters."
+        ) {
+            Button("Clear Filters", action: clearFilter)
+                .buttonStyle(.borderedProminent)
+                .padding(.top, 8)
+                .accessibilityIdentifier("clip-list-clear-filters")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Save

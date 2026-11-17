@@ -160,7 +160,7 @@ require a manifest/signature. If a dependency is added, check both.
   at launch. The prefix is what makes both the delete and the sweep recognize
   only our files.
 - **Clip exports.** Tapping "Save Clips" on Clip List or Name Clips (`ClipListViewModel.save()`)
-  stages every derived clip not yet in Photos in a fresh `tmp/turnip-export-<uuid>/`
+  stages every clip shown, past Clip List's filters, not yet in Photos in a fresh `tmp/turnip-export-<uuid>/`
   scratch directory, hands each one to Photos through `ClipPhotosSaver`
   (add-only), and deletes the whole directory once the run ends — success or
   failure, since there is no Share action here to keep a file alive for. A
@@ -172,6 +172,11 @@ require a manifest/signature. If a dependency is added, check both.
   Clip List's tiles and Name Clips' cards (`ClipThumbnailLoader`). There is no on-disk thumbnail
   cache. If one ever lands, it belongs in `Caches/`, never `Documents/`,
   so iOS can evict it and it isn't backed up.
+- **Shirt colours.** While Clip List's filter sheet is up, its shirt colour
+  filter decodes up to two frames of each clip with `AVAssetImageGenerator` and reads
+  a grid of pixels at the clip's person's torso (`TorsoColorReader`). Each clip
+  keeps one colour, in memory, for as long as its Clip List is up; no frame or
+  pixel is kept, and nothing is written to disk.
 - **Partial live pose.** When live inference covers a take only in part,
   the keypoints it did score are packed and streamed to a `tmp/` scratch
   file as they are scored (`turnip-live-pose-<uuid>.bin`), on the pushed
