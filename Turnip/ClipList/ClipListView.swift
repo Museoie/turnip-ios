@@ -391,6 +391,9 @@ private struct ClipTileCaption: View {
     /// The chips' padding above and below their text, given to the length too, so the two sit on
     /// one line at one height.
     private static let verticalPadding: CGFloat = 1
+    /// `ChipLine.minimumCutWidth` at the chips' text size: a cut chip keeps room for a letter and
+    /// the ellipsis however large the text is set.
+    @ScaledMetric(relativeTo: .caption) private var minimumCutWidth: CGFloat = 32
 
     var body: some View {
         HStack(spacing: 4) {
@@ -399,7 +402,7 @@ private struct ClipTileCaption: View {
                 .foregroundStyle(.secondary)
                 .padding(.vertical, Self.verticalPadding)
                 .fixedSize()
-            ChipLine(spacing: 4) {
+            ChipLine(spacing: 4, minimumCutWidth: minimumCutWidth) {
                 ForEach(item.names, id: \.self) { name in
                     Text(name.name)
                         .font(.caption.weight(.semibold))

@@ -11,7 +11,9 @@ struct ChipLine: Layout {
     var spacing: CGFloat = 4
     /// The least width a chip is cut to: its padding, a letter and the ellipsis. With less room
     /// left than that, the chip before it is cut instead, so the line still ends in an ellipsis.
-    var minimumCutWidth: CGFloat = 28
+    /// The default fits a caption-sized chip at the default text size; chips whose text follows
+    /// Dynamic Type pass one scaled with it (`@ScaledMetric`).
+    var minimumCutWidth: CGFloat = 32
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
