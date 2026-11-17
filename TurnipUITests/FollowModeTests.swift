@@ -47,14 +47,14 @@ final class FollowModeTests: XCTestCase {
     }
 
     /// A clip opens in Follow on Auto follow's crop, with no mode to switch to: the lane holds
-    /// Auto follow's keyframes, the button offers Reset follow, and the marker is Follow's 9:16.
+    /// Auto follow's keyframes, its toggle reads on, and the marker is Follow's 9:16.
     func testAClipOpensInFollowOnAutoFollow() throws {
         let app = launchEditor()
         XCTAssertFalse(app.segmentedControls["framing-mode-switch"].exists)
         XCTAssertFalse(app.buttons["clip-editor-delete"].exists)
         let follow = app.buttons["auto-follow-button"]
         XCTAssertTrue(follow.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitUntil { follow.label == "Reset follow" }, "the clip didn't open on Auto follow")
+        XCTAssertTrue(waitUntil { follow.value as? String == "On" }, "the clip didn't open on Auto follow")
         let lane = element("follow-lane", in: app)
         XCTAssertTrue(lane.waitForExistence(timeout: 5))
         let keyframes = Int((lane.value as? String ?? "").prefix { $0.isNumber }) ?? 0
@@ -66,12 +66,11 @@ final class FollowModeTests: XCTestCase {
     }
 
     /// A drag on the marker's bottom-trailing corner reshapes it: the marker settles at the drawn
-    /// shape, the clip pauses, and the reshape is the user's change, so the button offers Auto
-    /// follow again.
+    /// shape, the clip pauses, and the reshape is the user's change, so Auto follow turns off.
     func testACornerDragReshapesTheMarker() throws {
         let app = launchEditor()
         let follow = app.buttons["auto-follow-button"]
-        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        XCTAssertTrue(waitUntil { follow.value as? String == "On" })
         let marker = element("crop-marker", in: app)
         XCTAssertTrue(marker.waitForExistence(timeout: 5))
         let before = settledFrame(of: marker)
@@ -87,27 +86,27 @@ final class FollowModeTests: XCTestCase {
             let frame = marker.frame
             return abs(frame.width / frame.height - drawnRatio) < 0.05
         }, "the marker settled at \(marker.frame), not at the drawn shape")
-        XCTAssertTrue(waitUntil { follow.label == "Auto follow" }, "the reshape wasn't the user's change")
+        XCTAssertTrue(waitUntil { follow.value as? String == "Off" }, "the reshape wasn't the user's change")
         XCTAssertEqual(app.buttons["playback-play-pause"].label, "Play", "touch-down on a handle didn't pause")
     }
 
-    /// Auto follow and Reset follow toggle, and a pinch hands the button back to Auto follow.
+    /// Auto follow toggles on and off, and a pinch turns it off.
     func testFollowsButtonTogglesAndAPinchHandsItBack() throws {
         let app = launchEditor()
         let follow = app.buttons["auto-follow-button"]
         XCTAssertTrue(follow.waitForExistence(timeout: 10))
-        XCTAssertEqual(follow.label, "Reset follow", "a clip opening in Follow shows Auto follow's crop")
+        XCTAssertEqual(follow.value as? String, "On", "a clip opening in Follow shows Auto follow's crop")
 
         follow.tap()
-        XCTAssertTrue(waitUntil { follow.label == "Auto follow" })
+        XCTAssertTrue(waitUntil { follow.value as? String == "Off" })
         let lane = element("follow-lane", in: app)
         XCTAssertTrue(waitUntil { (lane.value as? String ?? "").hasPrefix("0 keyframes") })
 
         follow.tap()
-        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        XCTAssertTrue(waitUntil { follow.value as? String == "On" })
 
         element("clip-editor-crop-surface", in: app).pinch(withScale: 1.4, velocity: 1)
-        XCTAssertTrue(waitUntil { follow.label == "Auto follow" }, "a pinch left Auto follow's button on Reset")
+        XCTAssertTrue(waitUntil { follow.value as? String == "Off" }, "a pinch left Auto follow on")
     }
 
     /// A drag on the lane scrubs and pauses: the play button then offers Play, and a second
@@ -142,12 +141,12 @@ final class FollowModeTests: XCTestCase {
     }
 
     /// A one-finger drag in Follow pauses at touch-down and sets the framing at that moment:
-    /// the clip stays paused, and the keyframe it set or moved hands Auto follow's button back.
+    /// the clip stays paused, and the keyframe it set or moved turns Auto follow off.
     func testADragInFollowSetsTheFramingAtThePlayhead() throws {
         let app = launchEditor()
         let follow = app.buttons["auto-follow-button"]
         XCTAssertTrue(follow.waitForExistence(timeout: 10))
-        XCTAssertEqual(follow.label, "Reset follow")
+        XCTAssertEqual(follow.value as? String, "On")
         let playPause = app.buttons["playback-play-pause"]
         XCTAssertTrue(waitUntil { playPause.label == "Pause" })
 
@@ -158,7 +157,7 @@ final class FollowModeTests: XCTestCase {
             withVelocity: XCUIGestureVelocity(300), thenHoldForDuration: 0.05)
 
         XCTAssertTrue(waitUntil { playPause.label == "Play" }, "touch-down in Follow didn't pause")
-        XCTAssertTrue(waitUntil { follow.label == "Auto follow" }, "the drag set no keyframe")
+        XCTAssertTrue(waitUntil { follow.value as? String == "Off" }, "the drag set no keyframe")
     }
 
     /// The lane's button adds a keyframe at the playhead and then, with one there, removes it.
@@ -168,7 +167,7 @@ final class FollowModeTests: XCTestCase {
         let lane = element("follow-lane", in: app)
         XCTAssertTrue(lane.waitForExistence(timeout: 10))
         let follow = app.buttons["auto-follow-button"]
-        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        XCTAssertTrue(waitUntil { follow.value as? String == "On" })
         follow.tap()
         XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
         lane.coordinate(withNormalizedOffset: CGVector(dx: 0.33, dy: 0.5)).tap()
@@ -190,7 +189,7 @@ final class FollowModeTests: XCTestCase {
         let lane = element("follow-lane", in: app)
         XCTAssertTrue(lane.waitForExistence(timeout: 10))
         let follow = app.buttons["auto-follow-button"]
-        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        XCTAssertTrue(waitUntil { follow.value as? String == "On" })
         follow.tap()
         XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
         lane.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
@@ -209,7 +208,7 @@ final class FollowModeTests: XCTestCase {
         let lane = element("follow-lane", in: app)
         XCTAssertTrue(lane.waitForExistence(timeout: 10))
         let follow = app.buttons["auto-follow-button"]
-        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        XCTAssertTrue(waitUntil { follow.value as? String == "On" })
         follow.tap()
         XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
         let spot = lane.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
@@ -236,9 +235,9 @@ final class FollowModeTests: XCTestCase {
     func testAnAthleteWhoStaysPutHasNothingToFollow() throws {
         let app = launchEditor(["-screenshotClipEditor", "-noticesStay"])
         let follow = app.buttons["auto-follow-button"]
-        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        XCTAssertTrue(waitUntil { follow.value as? String == "On" })
         follow.tap()
-        XCTAssertTrue(waitUntil { follow.label == "Auto follow" })
+        XCTAssertTrue(waitUntil { follow.value as? String == "Off" })
 
         follow.tap()
 
@@ -255,7 +254,7 @@ final class FollowModeTests: XCTestCase {
         let lane = element("follow-lane", in: app)
         XCTAssertTrue(lane.waitForExistence(timeout: 10))
         let follow = app.buttons["auto-follow-button"]
-        XCTAssertTrue(waitUntil { follow.label == "Reset follow" })
+        XCTAssertTrue(waitUntil { follow.value as? String == "On" })
         follow.tap()
         XCTAssertTrue(waitUntil { self.keyframeCount(in: lane) == 0 })
         lane.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5)).tap()

@@ -1,5 +1,13 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 35 · 2026-11-17 · The Clip Detail / Editor's (§4) Auto follow and Auto
+rotate become circle toggles centered in the top row beside the back chevron,
+or down the vertical bar under it on iPhone Duo. Each shows on or off by its
+color alone, its glyph never changing, and a tap says for a moment under them
+what it turned on or off ("Auto-follow on"). The follow lane and the trim
+timeline are about two thirds as thick, and the controls reach down to just
+above the home indicator, so the crop marker gets the room.*
+
 *Rev 34 · 2026-11-16 · A Clip List tile's name chips (§3) stay on one line,
 cut short with an ellipsis where they run out of room, rather than wrapping.
 Auto follow's keyframes sit at least 1 s apart rather than 3 s, so the crop
@@ -152,7 +160,7 @@ and stays sharp only inside the marker, with the controls on top of the
 glass. The expansion flight shows the crop alone; the frosted frame around it
 appears once the flight lands.*
 
-*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart. Rev 29 swaps the Camera page for a camera tile, leads the pager with the Profile and opens on it once a clip is saved, widens the grid to six columns on wide screens, and moves the root controls into iPhone Duo's vertical bar. Rev 30 moves Processing's choice between analyzing and clipping by hand to Name Clips, behind a "Clip it" corner button, and pages Name Clips with Previous / Next, Save Clips on the last clip. Rev 31 drops the camera's person control, moves every screen's top controls into iPhone Duo's vertical bar, and gives the Profile an achievements carousel and page, a Me / Someone else filter, and clip removal from Needs a name and a trick's grid. Rev 32 puts Clip List back in front of Name Clips, a tile opening Name Clips on its clip. Rev 33 gives Clip List a save, a select mode and name chips, starts a card's loop on its poster's frame, and keeps every video's pose. Rev 34 keeps a tile's name chips on one line, spaces Auto follow's keyframes 1 s apart, and lines the follow lane up with the trim timeline.)*
+*(Rev 1 established the five-screen flow and made Home a Photos video gallery. Rev 2 resolves the three open questions into decisions. Rev 3 adds the Settings screen this doc previously scoped out. Rev 4 adds the expansion transition, with the *how* in its own companion doc. Rev 5 adds "A gesture and its button play one animation." Rev 6 replaces the Clip Editor's "Reset crop area" with Auto crop and Auto rotate. Rev 7 adds "An automatic change moves, it never cuts." Rev 8 stops trimming from re-cropping. Rev 9 tightens Auto crop's padding and keeps its crop inside the video. Rev 10 applies that to detection's rects. Rev 11 levels by the take's own roll track, with the picture's horizon as the fallback, and makes Auto crop / Auto rotate toggles with a reset. Rev 12 frosts the editor's surround. Rev 13 gives a hand-added clip Reset crop in place of Auto crop. Rev 14 plans the Profile page and naming in the clip flow. Rev 15 adds Follow the athlete to Settings. Rev 16 adds Still and Follow framing modes to the Clip Editor. Rev 17 reconciles the Decisions log and closed issue links. Rev 18 adds the choice between one person and everyone. Rev 19 plans zoom and turn by keyframe in Follow mode. Rev 20 builds Name Clips and opens the contribution sheet after its save. Rev 21 retires Clip List into Name Clips. Rev 22 builds the Profile page and the clip library. Rev 23 moves contributing to Settings, puts every clip in Follow and leaves Name Clips one button. Rev 24 removes Still's framing, Auto crop and Reset crop from the editor and eases Auto rotate's turn. Rev 25 makes the contribution sheet a one-time agreement and moves uploads to the background. Rev 26 adds Learn from my clips to Settings. Rev 27 lets it decide borderline proposals too. Rev 28 drops Processing's person picker for everyone, hides Name Clips' save button behind the keyboard, makes the editor's crop marker reshapable, and spaces Auto follow's keyframes 3 s apart. Rev 29 swaps the Camera page for a camera tile, leads the pager with the Profile and opens on it once a clip is saved, widens the grid to six columns on wide screens, and moves the root controls into iPhone Duo's vertical bar. Rev 30 moves Processing's choice between analyzing and clipping by hand to Name Clips, behind a "Clip it" corner button, and pages Name Clips with Previous / Next, Save Clips on the last clip. Rev 31 drops the camera's person control, moves every screen's top controls into iPhone Duo's vertical bar, and gives the Profile an achievements carousel and page, a Me / Someone else filter, and clip removal from Needs a name and a trick's grid. Rev 32 puts Clip List back in front of Name Clips, a tile opening Name Clips on its clip. Rev 33 gives Clip List a save, a select mode and name chips, starts a card's loop on its poster's frame, and keeps every video's pose. Rev 34 keeps a tile's name chips on one line, spaces Auto follow's keyframes 1 s apart, and lines the follow lane up with the trim timeline. Rev 35 makes the editor's Auto follow and Auto rotate circle toggles in its top row, thins its lane and timeline, and lowers its controls.)*
 
 Companion to [`DESIGN.md`](DESIGN.md), which specifies the auto-edit *pipeline*
 (pose detection → motion signal → peak detection → crop rect → export), and to
@@ -832,8 +840,8 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
     whole clip keeps what the user framed, and the export, the card and the
     poster all cut to the new shape. A reshape is a hand change like a pinch:
     every diamond fills and keeps none of Auto follow's framing, which was fit
-    to the old shape, so removing one deletes it; the button offers Auto follow
-    again, and Auto follow, Reset follow and a trim's re-track keep the shape.
+    to the old shape, so removing one deletes it; Auto follow turns off, and
+    Auto follow, Reset follow and a trim's re-track keep the shape.
     The shapes stop at 1:2 and 2:1, past the 9:16 and 16:9 a clip is usually
     shared at. Export renders at the crop rect grown to the shape, scaled down
     whole only where that is larger than a 4K frame held the same way (a
@@ -852,8 +860,9 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
     rectangle — the video zooms/rotates/moves, the marker doesn't, and whatever
     the adjustment pushes outside the frame's own rect stays visible instead of
     being cut off. Each gesture sets the crop at the playhead's moment ("The crop
-    follows the athlete" below). Two buttons fit the video under the marker for
-    the user: "Auto follow" (below) and "Auto rotate", which levels the clip by
+    follows the athlete" below). Two toggles fit the video under the marker for
+    the user (see "Framing toggles" below): "Auto follow" (below) and "Auto
+    rotate", which levels the clip by
     the camera's roll: a take
     recorded in the app carries its roll as a track in the file (§1b), read
     off the phone's gravity sensor while it recorded, and the button averages
@@ -867,11 +876,23 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
     only the turn, so a limb the turn carries out of the marker is Auto
     follow's to bring back. It moves the video to its result rather than
     cutting to it ("An automatic change moves, it never cuts", above).
-    It is a toggle. Once its turn is on screen it reads "Reset rotate" and
-    returns to no rotation — not to whatever the fingers had set just before
-    the Auto tap — moving there the same way the fit moved, and then offers
-    the fit again. Leveling reads the video, not the pose, so a clip of a
-    video that skipped analysis ("Clip it", §2) keeps Auto rotate.
+    It is a toggle. Once its turn is on screen it is on, and a tap is Reset
+    rotate: it returns to no rotation — not to whatever the fingers had set
+    just before the Auto tap — moving there the same way the fit moved, and
+    turns off. Leveling reads the video, not the pose, so a clip of a video
+    that skipped analysis ("Clip it", §2) keeps Auto rotate.
+  - **Framing toggles** (Rev 35). Auto follow and Auto rotate are circles of
+    the back chevron's glass, side by side, centered in the top row on the
+    chevron's line; on iPhone Duo they go down the vertical bar under it. The
+    glyph never changes (a running figure, a level); a toggle that is on takes
+    the accent color, and Auto rotate shows a spinner in its circle while it
+    reads the roll or the horizon. A tap says for about 1.5 s, in a small glass
+    capsule under the toggles, what it turned on or off ("Auto-follow on",
+    "Auto-rotate off"), and VoiceOver speaks the same words: Auto rotate's once
+    its turn is on screen. Where "Nothing to follow" or "No horizon found"
+    answers the tap, in the same place, no tip does, and the next tap takes
+    the notice down. A clip with no pose analysis has a Reset follow circle in
+    Auto follow's place (below), which says "Follow reset".
   - Scrub bar spanning the whole source video (not a zoomed range around the
     window) with drag handles on start/end — adjusts the trick window from
     issue #8's output. A handle drag is a trim, not a re-crop: the crop rect
@@ -900,10 +921,11 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
     down in the band above the crop marker — the top row and the status-bar
     band over it — does the same; the crop pinch/rotate/drag gesture keeps
     sole ownership of the band the marker sits in, and below the marker the
-    buttons, the scrub bar and their margins never dismiss, so a drag that
+    follow lane, the scrub bar and their margins never dismiss, so a drag that
     slips off a control goes nowhere. The screen draws that top row (back
-    chevron, title) as its own content rather than a navigation bar,
-    the same way Processing does, so no bar sits over the swipe band — laid
+    chevron, framing toggles, title) as its own content rather than a
+    navigation bar, the same way Processing does, so no bar sits over the
+    swipe band — laid
     out in the band a bar would occupy, with the chevron and title at the same
     positions as Name Clips', so the two headers line up through the
     cross-fade (`ScreenHeaderBand`; every bar-less screen's corner controls
@@ -932,11 +954,19 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
       keyframes the two are the same ease-in-out. The curve never swings past a
       keyframe (`DESIGN.md` step 6). Before the first keyframe and after the
       last, the crop holds still.
-    - **Layout.** The crop button is "Auto follow" / "Reset follow", next to
-      Auto rotate. The follow lane sits between the buttons and the trim
-      timeline, which spans the whole video and works as above. The lane takes
-      about 44 pt from the stage, and the marker is centered in what is left:
-      the same size at the same place for every clip of one shape, and the
+    - **Layout.** The crop toggle is Auto follow, beside Auto rotate in the top
+      row ("Framing toggles" above). The follow lane sits under the marker,
+      above the trim timeline, which spans the whole video and works as above.
+      Both are drawn thin (Rev 35): the lane's track 18 pt and its row 28 pt,
+      the timeline's track 26 pt inside a 32 pt window frame. Each touch
+      region reaches past what is drawn, the lane's 8 pt above and below and
+      the timeline's 4 pt, to stay 44 pt tall, and the gaps are set from those
+      reaches: 8 pt from the stage band to the lane and 12 pt from the lane to
+      the timeline, so no region takes another's touches, the crop area's
+      included. The controls end just above the home indicator,
+      reaching 12 pt into the bottom safe area (8 pt above the screen's edge
+      where there is none), and the marker is centered in what is left: the
+      same size at the same place for every clip of one shape, and the
       expansion flight lands on it.
     - **The follow lane.** It spans the trim window, not the video, so a
       4-second clip from a 3-minute take still gets the lane's whole width. A
@@ -989,13 +1019,12 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
       until it can't. Keyframes added by hand go anywhere, so a tighter follow
       is a few keyframes by hand.
       A clip that opens with no follow crop of its own opens on Auto follow's,
-      so the button reads "Reset follow". Any manual pinch, rotate, drag or
-      keyframe change returns it and Auto rotate to offering their fits; a
-      trim does not.
+      so its toggle is on. Any manual pinch, rotate, drag or keyframe change
+      turns it and Auto rotate off; a trim does not.
     - **Reset follow.** Returns to the whole source frame centered in the
-      marker with no keyframes, so the crop holds still; the button then offers
-      Auto follow again. From there a manual follow is a few drags at a few
-      moments. A clip with no pose analysis has nothing for Auto follow to fit,
+      marker with no keyframes, so the crop holds still: a tap on Auto follow
+      while it is on, which turns it off. From there a manual follow is a few
+      drags at a few moments. A clip with no pose analysis has nothing for Auto follow to fit,
       and an Auto follow whose tap could never change anything would read as
       broken, so it has Reset follow alone, disabled while the framing is the
       whole frame with no keyframes and enabled once a pinch, a drag or a

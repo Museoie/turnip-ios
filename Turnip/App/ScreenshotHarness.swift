@@ -383,7 +383,7 @@ private func appendSampleFrames(
 /// One sample of the sample movie's roll track (`RollTrack`), at
 /// `ScreenshotClipEditorHarness.sampleRollTilt`, the way an in-app take carries its own:
 /// the editor's Auto rotate then levels the harness clip by the real reader, so the UI
-/// test that taps it sees "Reset rotate" without a horizon in the picture.
+/// test that taps it sees it turn on without a horizon in the picture.
 private func appendRollSample(
     adaptor: AVAssetWriterInputMetadataAdaptor,
     input: AVAssetWriterInput,

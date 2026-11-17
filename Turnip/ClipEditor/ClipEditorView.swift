@@ -7,8 +7,8 @@ import SwiftUI
 /// rest of the frame showing frosted around it, edge to edge, and the crop following the
 /// athlete (pinch to zoom, rotate with two fingers, drag to reposition the video at the
 /// playhead's moment), corner handles that reshape the marker, the Auto follow and Auto rotate
-/// buttons that fit the video under the marker for the user, the follow lane, plus a scrub bar
-/// with start/end drag handles.
+/// toggles in the top row that fit the video under the marker for the user, the follow lane, plus
+/// a scrub bar with start/end drag handles.
 ///
 /// Back-navigation closes the editor via the top row's own action — `onCommit` fires
 /// synchronously from that tap, before the enclosing presentation dismisses, rather than
@@ -32,7 +32,7 @@ struct ClipEditorView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.expansionHasLanded) private var expansionHasLanded
-    /// iPhone Duo's vertical bar, which the back chevron goes down instead.
+    /// iPhone Duo's vertical bar, which the back chevron and the framing toggles go down instead.
     @Environment(\.verticalBar) private var verticalBar
     /// The crop gestures' in-flight deltas, drawn on top of the follow crop until the gesture
     /// commits into the view model (`CropGestureSurface`).
@@ -124,7 +124,10 @@ struct ClipEditorView: View {
         ZStack {
             stage
             chrome
-                .verticalBarColumn(verticalBar) { backButton }
+                .verticalBarColumn(verticalBar) {
+                    backButton
+                    framingButtons
+                }
         }
         .preference(key: ClipEditorCropMarkerFramePreferenceKey.self, value: markerFrame)
         // Behind this view's own content rather than wrapping it, so the dismiss
@@ -157,34 +160,58 @@ struct ClipEditorView: View {
     /// The controls, stacked over the stage: the header row, the stage's own slot (a
     /// placeholder that only measures where the stage is — the stage itself is drawn
     /// underneath, edge to edge, so the video can run under the header and the controls),
-    /// and the crop/trim controls at the bottom. The placeholder passes touches through to
-    /// the stage's crop gesture beneath it.
+    /// and the follow lane and trim timeline at the bottom, reaching down into the bottom safe
+    /// area (`controlsBottomPadding`) so the stage keeps the room. The placeholder passes
+    /// touches through to the stage's crop gesture beneath it.
     private var chrome: some View {
-        VStack(spacing: 0) {
-            ScreenHeaderBand { topRow }
-            GeometryReader { proxy in
-                Color.clear.preference(key: ClipEditorStageFramePreferenceKey.self, value: proxy.frame(in: .global))
-            }
-            .allowsHitTesting(false)
-            // Over the placeholder, not inside it: the placeholder passes touches through,
-            // and the notice has to keep its own tap-to-dismiss.
-            .overlay(alignment: .top) { notices }
-            VStack(spacing: 16) {
-                autoFramingButtons
-                VStack(spacing: 4) {
+        GeometryReader { safeArea in
+            VStack(spacing: 0) {
+                ScreenHeaderBand { topRow }
+                GeometryReader { proxy in
+                    Color.clear
+                        .preference(key: ClipEditorStageFramePreferenceKey.self, value: proxy.frame(in: .global))
+                }
+                .allowsHitTesting(false)
+                // Over the placeholder, not inside it: the placeholder passes touches through,
+                // and the notice has to keep its own tap-to-dismiss.
+                .overlay(alignment: .top) { notices }
+                VStack(spacing: Self.laneToTimelineSpacing) {
                     FollowLaneView(viewModel: viewModel)
                     TrimSliderView(viewModel: viewModel)
                 }
+                .padding(.horizontal)
+                .padding(.top, Self.controlsTopPadding)
+                .padding(.bottom, Self.controlsBottomPadding(safeAreaBottom: safeArea.safeAreaInsets.bottom))
             }
-            .padding()
+            .ignoresSafeArea(.container, edges: .bottom)
         }
         .onPreferenceChange(ClipEditorStageFramePreferenceKey.self) { stageFrame = $0 }
     }
 
+    /// The gap between the stage band and the follow lane: the lane's touch outset, so its touch
+    /// region reaches the band's edge and no further, leaving the crop area and the marker's
+    /// corner handles their touches.
+    private static let controlsTopPadding = FollowLaneView.touchOutset
+    /// The gap between the follow lane and the trim timeline: the touch outsets they face each
+    /// other with, so neither's touch region reaches into the other's and both keep 44 pt.
+    private static let laneToTimelineSpacing = FollowLaneView.touchOutset + TrimSliderView.touchOutset
+    /// How far the controls reach into the bottom safe area: the trim timeline's time labels sit
+    /// just clear of the home indicator rather than a whole inset above it.
+    private static let bottomInsetOverlap: CGFloat = 12
+    /// The least room under the controls, for a screen with little or no bottom inset.
+    private static let minimumBottomPadding: CGFloat = 8
+
+    /// The room under the controls, measured from the bottom of the screen, given the screen's
+    /// bottom safe-area inset.
+    static func controlsBottomPadding(safeAreaBottom: CGFloat) -> CGFloat {
+        max(safeAreaBottom - bottomInsetOverlap, minimumBottomPadding)
+    }
+
     /// The screen's own top row in place of a navigation bar (see `body`): the back chevron
-    /// leading, at the same position as Name Clips' bar this screen flies open from, or down the
-    /// vertical bar on iPhone Duo. The title stays as the screen's VoiceOver header, drawn clear,
-    /// and the row keeps its height either way, so the stage below it doesn't move.
+    /// leading, at the same position as Name Clips' bar this screen flies open from, and the
+    /// framing toggles centered, or all of them down the vertical bar on iPhone Duo. The title
+    /// stays as the screen's VoiceOver header, drawn clear, and the row keeps its height either
+    /// way, so the stage below it doesn't move.
     private var topRow: some View {
         ZStack {
             Text("Edit clip")
@@ -196,6 +223,9 @@ struct ClipEditorView: View {
                 HStack {
                     backButton
                     Spacer()
+                }
+                HStack(spacing: 12) {
+                    framingButtons
                 }
             }
         }
@@ -466,82 +496,68 @@ struct ClipEditorView: View {
         .padding(.bottom, 12)
     }
 
-    /// The two automatic fits, side by side above the follow lane: Auto follow frames the
-    /// athlete through the window, Auto rotate levels the clip by its roll track or its horizon.
-    /// Each is a toggle: once its fit is on screen the same button reads "Reset follow" /
-    /// "Reset rotate" and returns to the original video — the whole frame, unturned —
-    /// independently of the other; a change by hand to the follow crop returns both to offering
-    /// their fit (`ClipEditorViewModel.isAutoFollowApplied` / `isAutoRotateApplied`). Both wait
-    /// for media info — before it there is no stage geometry to fit and no window to sample —
-    /// and Auto rotate shows its detection in place of its icon while it runs.
-    private var autoFramingButtons: some View {
-        HStack(spacing: 12) {
-            followButton
-            Button {
-                if viewModel.isAutoRotateApplied {
-                    viewModel.resetRotate()
-                } else {
-                    viewModel.autoRotate()
-                }
-            } label: {
-                Label {
-                    Text(viewModel.isAutoRotateApplied ? "Reset rotate" : "Auto rotate")
-                } icon: {
-                    if viewModel.isDetectingHorizon {
-                        ProgressView()
-                    } else if viewModel.isAutoRotateApplied {
-                        Image(systemName: "arrow.uturn.backward")
-                    } else {
-                        Image(systemName: "level")
-                    }
-                }
-            }
-            .disabled(viewModel.isDetectingHorizon)
-            .accessibilityIdentifier("auto-rotate-button")
-        }
-        .buttonStyle(.bordered)
-        .disabled(viewModel.previewOverlay == nil)
-        // The labels cut between Auto and Reset: the fit's own `fitAnimation` is in flight
-        // in the same update, and a label swap riding it reads as text sliding under a
-        // clip while the button changes width. The video moves; the words don't.
-        .animation(nil, value: viewModel.isAutoRotateApplied)
-        .animation(nil, value: viewModel.isAutoFollowApplied)
+    /// The two automatic fits, each a circle beside the other in the top row, or down iPhone
+    /// Duo's vertical bar: Auto follow frames the athlete through the window, Auto rotate levels
+    /// the clip by its roll track or its horizon. Each is a toggle that shows its state by color
+    /// alone, tinted while its fit is on screen, where a tap returns to the original video —
+    /// the whole frame, unturned — independently of the other; a change by hand to the follow
+    /// crop turns both off (`ClipEditorViewModel.isAutoFollowApplied` / `isAutoRotateApplied`).
+    /// A tap says for a moment what it turned on or off (`ClipEditorViewModel.framingTip`).
+    /// Both wait for media info — before it there is no stage geometry to fit and no window to
+    /// sample — and Auto rotate shows a spinner in place of its glyph while its detection runs.
+    @ViewBuilder
+    private var framingButtons: some View {
+        followButton
+        rotateButton
     }
 
-    /// The crop button: Auto follow ↔ Reset follow. A clip without pose analysis has nothing for
-    /// Auto follow to fit, so it has Reset follow alone: disabled while the framing is the whole
-    /// frame, enabled once a pinch, a drag or a keyframe has moved it.
+    /// The color a framing toggle's circle takes while it is on.
+    private static let framingToggleOnTint = Color.accentColor
+
+    /// The crop toggle: Auto follow, whose tap while it is on is Reset follow. A clip without pose
+    /// analysis has nothing for Auto follow to fit, so it has Reset follow alone: disabled while
+    /// the framing is the whole frame, enabled once a pinch, a drag or a keyframe has moved it.
     @ViewBuilder
     private var followButton: some View {
         if viewModel.supportsAutoFollow {
-            Button {
-                if viewModel.isAutoFollowApplied {
-                    viewModel.resetFollow()
-                } else {
-                    viewModel.autoFollow()
-                }
-            } label: {
-                if viewModel.isAutoFollowApplied {
-                    Label("Reset follow", systemImage: "arrow.uturn.backward")
-                } else {
-                    Label("Auto follow", systemImage: "figure.run")
-                }
-            }
-            .accessibilityIdentifier("auto-follow-button")
+            let isOn = viewModel.isAutoFollowApplied
+            let isEnabled = viewModel.previewOverlay != nil
+            ScrimIconButton(
+                systemImage: "figure.run", accessibilityLabel: "Auto follow",
+                tint: isOn ? Self.framingToggleOnTint : nil, action: viewModel.toggleAutoFollow)
+                .accessibilityValue(isOn ? Text("On") : Text("Off"))
+                .disabled(!isEnabled)
+                .opacity(isEnabled ? 1 : 0.4)
+                .accessibilityIdentifier("auto-follow-button")
         } else {
-            Button {
-                viewModel.resetFollow()
-            } label: {
-                Label("Reset follow", systemImage: "arrow.uturn.backward")
-            }
-            .disabled(!viewModel.isFollowAdjusted)
-            .accessibilityIdentifier("reset-follow-button")
+            let isEnabled = viewModel.previewOverlay != nil && viewModel.isFollowAdjusted
+            ScrimIconButton(
+                systemImage: "arrow.uturn.backward", accessibilityLabel: "Reset follow",
+                action: viewModel.toggleAutoFollow)
+                .disabled(!isEnabled)
+                .opacity(isEnabled ? 1 : 0.4)
+                .accessibilityIdentifier("reset-follow-button")
         }
     }
 
-    /// The automatic fits' answers when there was nothing to fit, at the top of the stage:
-    /// Auto rotate found no horizon in the window (the rotation stays as it was), or Auto
-    /// follow found an athlete who stays put (the crop holds one framing).
+    /// The level toggle: Auto rotate, whose tap while it is on is Reset rotate.
+    private var rotateButton: some View {
+        let isOn = viewModel.isAutoRotateApplied
+        let isEnabled = viewModel.previewOverlay != nil
+        return ScrimIconButton(
+            systemImage: "level", accessibilityLabel: "Auto rotate",
+            tint: isOn ? Self.framingToggleOnTint : nil, isBusy: viewModel.isDetectingHorizon,
+            action: viewModel.toggleAutoRotate)
+            .accessibilityValue(isOn ? Text("On") : Text("Off"))
+            .disabled(!isEnabled || viewModel.isDetectingHorizon)
+            .opacity(isEnabled ? 1 : 0.4)
+            .accessibilityIdentifier("auto-rotate-button")
+    }
+
+    /// The automatic fits' answers, at the top of the stage, under the framing toggles: Auto
+    /// rotate found no horizon in the window (the rotation stays as it was), or Auto follow
+    /// found an athlete who stays put (the crop holds one framing) — else, for a moment after a
+    /// tap, what the tap turned on or off.
     @ViewBuilder
     private var notices: some View {
         if viewModel.isShowingNoHorizonNotice {
@@ -552,6 +568,10 @@ struct ClipEditorView: View {
             GlassNoticeView(message: "Nothing to follow", isPresented: $viewModel.isShowingNothingToFollowNotice)
                 .padding(.top, 8)
                 .accessibilityIdentifier("nothing-to-follow-notice")
+        } else if let tip = viewModel.framingTip {
+            FramingTipView(message: tip.message)
+                .padding(.top, 8)
+                .transition(.scale(scale: 0.9, anchor: .top).combined(with: .opacity))
         }
     }
 }
@@ -609,6 +629,31 @@ private struct FollowGestureProgress {
     var active: Set<Recognizer> = []
     var fingersDown = false
     var isCancelled = false
+}
+
+/// A framing toggle's tip (`ClipEditorViewModel.framingTip`): a compact glass capsule under the
+/// toggles, smaller than a notice, that goes on its own. It takes no touches, so the crop area
+/// under it keeps them, and VoiceOver hears it as an announcement instead: it is gone before
+/// a swipe could reach it.
+private struct FramingTipView: View {
+    let message: String
+
+    var body: some View {
+        let text = Text(message)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+        Group {
+            if #available(iOS 26.0, *) {
+                text.glassEffect(in: Capsule())
+            } else {
+                text.background(.ultraThinMaterial, in: Capsule())
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
 }
 
 /// The stage placeholder's on-screen frame (global space), climbing from the layout placeholder

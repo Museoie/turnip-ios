@@ -16,11 +16,20 @@ import SwiftUI
 struct FollowLaneView: View {
     @ObservedObject var viewModel: ClipEditorViewModel
 
-    static let height: CGFloat = 44
+    /// The lane's row: the playhead's height, the tallest thing drawn on it. Its touches reach
+    /// `touchOutset` past it above and below, so a drag on it or a tap on its button still has a
+    /// 44 pt target.
+    static let height: CGFloat = 28
+    static let touchOutset: CGFloat = 8
+    /// The translucent track the diamonds sit on.
+    private static let trackHeight: CGFloat = 18
+    /// The keyframe button's width: the touch-target floor, which also sets the lane's trailing
+    /// end in from the trim timeline's.
+    private static let buttonWidth: CGFloat = 44
     /// Room inside each end of the lane for a diamond on the window's edge and the markers past
     /// it.
     private static let inset: CGFloat = 22
-    private static let diamondSize: CGFloat = 16
+    private static let diamondSize: CGFloat = 14
 
     /// The window the drag maps onto, frozen for the gesture, and the playhead time and drag
     /// translation the precision scrub is measured from.
@@ -43,7 +52,7 @@ struct FollowLaneView: View {
     private static let diamondReach: CGFloat = 22
 
     var body: some View {
-        // No spacing: the button's own 44 pt frame already sets its glyph off from the lane's end.
+        // No spacing: the button's own 44 pt width already sets its glyph off from the lane's end.
         HStack(spacing: 0) {
             track
             keyframeButton
@@ -79,18 +88,18 @@ struct FollowLaneView: View {
                 // window sit inside its rounded ends.
                 Capsule()
                     .fill(.white.opacity(0.16))
-                    .frame(height: 28)
+                    .frame(height: Self.trackHeight)
                 ForEach(Array(viewModel.followKeyframes.enumerated()), id: \.offset) { _, keyframe in
                     marker(for: keyframe, in: window, width: width)
                 }
                 Capsule()
                     .fill(.white)
-                    .frame(width: 3, height: Self.height - 6)
+                    .frame(width: 3, height: Self.height)
                     .offset(x: x(of: viewModel.playbackTime, in: window, width: width) - 1.5)
                     .allowsHitTesting(false)
             }
             .frame(height: Self.height)
-            .contentShape(Rectangle())
+            .touchTarget(insetBy: Self.touchOutset, axes: .vertical)
             .gesture(scrubGesture(width: width))
         }
         .frame(height: Self.height)
@@ -112,8 +121,8 @@ struct FollowLaneView: View {
         } label: {
             Image(systemName: removes ? "minus.diamond" : "plus.diamond")
                 .font(.title3)
-                .frame(width: Self.height, height: Self.height)
-                .contentShape(Rectangle())
+                .frame(width: Self.buttonWidth, height: Self.height)
+                .touchTarget(insetBy: Self.touchOutset, axes: .vertical)
         }
         .buttonStyle(.plain)
         .foregroundStyle(Color.yellow)

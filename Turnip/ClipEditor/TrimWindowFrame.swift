@@ -11,11 +11,11 @@ import SwiftUI
 struct TrimWindowFrameShape: Shape {
     /// The width of each end cap. The caps sit outside the clip's own span, so the
     /// timeline's usable width is the track minus one cap at either end.
-    static let capWidth: CGFloat = 15
+    static let capWidth: CGFloat = 12
     /// The thickness of the top and bottom bars.
-    static let barThickness: CGFloat = 5
-    static let outerCornerRadius: CGFloat = 8
-    static let innerCornerRadius: CGFloat = 3
+    static let barThickness: CGFloat = 4
+    static let outerCornerRadius: CGFloat = 6
+    static let innerCornerRadius: CGFloat = 2
 
     func path(in rect: CGRect) -> Path {
         var path = Path(roundedRect: rect, cornerRadius: Self.outerCornerRadius)
@@ -53,7 +53,7 @@ struct TrimHandleGlyphShape: Shape {
 struct TrimHandleGlyphView: View {
     let direction: TrimHandleGlyphShape.Direction
 
-    private static let size = CGSize(width: 5, height: 17)
+    private static let size = CGSize(width: 4, height: 12)
     private static let cornerSoftening: CGFloat = 2
 
     var body: some View {
@@ -72,7 +72,7 @@ struct TrimHandleGlyphView: View {
 /// The playhead: a white pill taller than the window frame, drawn over it, so the
 /// current frame stays readable while it crosses the frame's bars.
 struct TrimPlayheadView: View {
-    static let size = CGSize(width: 8, height: 56)
+    static let size = CGSize(width: 6, height: 36)
 
     var body: some View {
         Capsule()

@@ -286,19 +286,19 @@ final class ScreenshotTests: XCTestCase {
         let follow = app.buttons["auto-follow-button"]
         let rotate = app.buttons["auto-rotate-button"]
         XCTAssertTrue(waitUntilHittable(follow))
-        XCTAssertTrue(waitUntil { follow.label == "Reset follow" }, "the clip didn't open on Auto follow")
-        XCTAssertEqual(rotate.label, "Auto rotate")
+        XCTAssertTrue(waitUntil { follow.value as? String == "On" }, "the clip didn't open on Auto follow")
+        XCTAssertEqual(rotate.value as? String, "Off")
 
         rotate.tap()
-        XCTAssertTrue(waitUntil { rotate.label == "Reset rotate" }, "Auto rotate did not become Reset rotate")
-        XCTAssertEqual(follow.label, "Reset follow")
+        XCTAssertTrue(waitUntil { rotate.value as? String == "On" }, "Auto rotate did not turn on")
+        XCTAssertEqual(follow.value as? String, "On")
         // The fit moves the video over 0.4 s; the screenshot is of the settled result.
         Thread.sleep(forTimeInterval: 1)
         addScreenshot(named: "clip-editor-resets")
 
         follow.tap()
-        XCTAssertTrue(waitUntil { follow.label == "Auto follow" }, "Reset follow did not return to Auto follow")
-        XCTAssertEqual(rotate.label, "Reset rotate", "resetting the follow crop must leave the rotate button alone")
+        XCTAssertTrue(waitUntil { follow.value as? String == "Off" }, "a second tap did not turn Auto follow off")
+        XCTAssertEqual(rotate.value as? String, "On", "resetting the follow crop must leave the rotate button alone")
     }
 
     /// What a test that lands on the editor's load-failure state reports.

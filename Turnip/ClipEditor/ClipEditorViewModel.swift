@@ -37,6 +37,25 @@ enum CropAdjustmentDescription {
     }
 }
 
+/// What a tap on one of the editor's framing buttons left on screen, said under the buttons for a
+/// moment (`ClipEditorViewModel.framingTip`): each button shows its state by color alone.
+enum FramingTip: Equatable {
+    case autoFollow(isOn: Bool)
+    /// A clip without pose analysis's Reset follow, which has no Auto follow to turn on.
+    case followReset
+    case autoRotate(isOn: Bool)
+
+    var message: String {
+        switch self {
+        case .autoFollow(isOn: true): String(localized: "Auto-follow on")
+        case .autoFollow(isOn: false): String(localized: "Auto-follow off")
+        case .followReset: String(localized: "Follow reset")
+        case .autoRotate(isOn: true): String(localized: "Auto-rotate on")
+        case .autoRotate(isOn: false): String(localized: "Auto-rotate off")
+        }
+    }
+}
+
 /// The clip editor's state (`docs/UIUX.md` § "Clip Detail / Editor").
 ///
 /// Holds the draft trim window, the crop rect the clip opened with, and the follow crop that
@@ -74,12 +93,13 @@ final class ClipEditorViewModel: ObservableObject {
     /// shows a spinner and a second tap is ignored until the first detection lands.
     @Published private(set) var isDetectingHorizon = false
     /// Set when Auto rotate found no horizon in the window, so the view can say so — a
-    /// button whose tap changes nothing reads as broken. Cleared by the notice itself.
+    /// button whose tap changes nothing reads as broken. Cleared by the notice itself, or by the
+    /// next tap on a framing button (`toggleAutoFollow()`, `toggleAutoRotate()`).
     @Published var isShowingNoHorizonNotice = false
-    /// True while the last Auto rotate's turn is what's on screen — "Reset rotate", which
-    /// returns the video to its original, unrotated orientation. Cleared by the reset itself
-    /// and by any change by hand to the framing, since the fit is then no longer what's on
-    /// screen.
+    /// True while the last Auto rotate's turn is what's on screen — the button reads on, and a tap
+    /// is Reset rotate, which returns the video to its original, unrotated orientation. Cleared
+    /// by the reset itself and by any change by hand to the framing, since the fit is then no
+    /// longer what's on screen.
     @Published private(set) var isAutoRotateApplied = false
 
     /// The clip's framing (`docs/UIUX.md` § "Clip Detail / Editor"): the clip's own, or, for one
@@ -106,8 +126,15 @@ final class ClipEditorViewModel: ObservableObject {
     /// The editor item's composition (`PreviewFrames.composition`), once the track is read.
     private var previewComposition: AVVideoComposition?
     /// Set when Auto follow found nothing that moves, so the view can say why the crop holds
-    /// still. Cleared by the notice itself.
+    /// still. Cleared by the notice itself, or by the next tap on a framing button.
     @Published var isShowingNothingToFollowNotice = false
+    /// What the last tap on a framing button turned on or off, once its result is on screen —
+    /// Auto rotate's once its detection lands — for `framingTipDuration`. Spoken to VoiceOver as
+    /// it appears. `nil` where a notice says what happened instead.
+    @Published private(set) var framingTip: FramingTip?
+    /// Takes `framingTip` down when its time is up; a newer tip restarts it.
+    private var framingTipTask: Task<Void, Never>?
+    nonisolated static let framingTipDuration: TimeInterval = 1.5
 
     /// A keyframe's zoom is clamped here, and the automatic fits' zoom too, so neither can
     /// shrink the video to a sliver or blow it up past usefulness.
@@ -139,6 +166,7 @@ final class ClipEditorViewModel: ObservableObject {
     private var frameTimes: VideoFrameTimes?
     private var frameTimesTask: Task<Void, Never>?
     private let levelingRotation: LevelingRotation
+    private let announce: AccessibilityAnnouncing
     private var timeObserver: Any?
     /// The item's end-of-playback observer: a window ending at the asset's end plays the
     /// item out, which pauses the player on its own (`AVPlayer`'s default
@@ -186,12 +214,14 @@ final class ClipEditorViewModel: ObservableObject {
             mayAutoplayVideoLoops(
                 isVideoAutoplayEnabled: UIAccessibility.isVideoAutoplayEnabled,
                 isReduceMotionEnabled: UIAccessibility.isReduceMotionEnabled)
-        }
+        },
+        announce: @escaping AccessibilityAnnouncing = postAccessibilityAnnouncement
     ) {
         self.source = source
         self.calculator = calculator
         self.levelingRotation = levelingRotation
         self.mayAutoplayLoops = mayAutoplayLoops
+        self.announce = announce
         self.autoFollower = AutoFollow(
             pathCalculator: CropPathCalculator(rectCalculator: calculator),
             aspectRatio: CGFloat(calculator.targetAspectRatio))
@@ -376,6 +406,9 @@ final class ClipEditorViewModel: ObservableObject {
         horizonTask?.cancel()
         horizonTask = nil
         isDetectingHorizon = false
+        framingTipTask?.cancel()
+        framingTipTask = nil
+        framingTip = nil
         frameTimesTask?.cancel()
         frameTimesTask = nil
         if let timeObserver {
@@ -404,16 +437,16 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     /// A change by hand to the framing takes it over from Auto rotate: its turn is no longer
-    /// what's on screen, so the button returns to offering the fit. Called only for a change
-    /// that actually changed something — a pinch that ends where it started is not an edit.
-    /// Auto follow's own button reads the follow crop (`isAutoFollowApplied`).
+    /// what's on screen, so its toggle turns off. Called only for a change that actually changed
+    /// something — a pinch that ends where it started is not an edit.
+    /// Auto follow's own toggle reads the follow crop (`isAutoFollowApplied`).
     private func clearAutoRotate() {
         isAutoRotateApplied = false
     }
 
     /// "Reset rotate": returns the video to its original, unrotated orientation, moving
-    /// there the same way the turn moved. Positions and zoom stay. The button then offers
-    /// Auto rotate again.
+    /// there the same way the turn moved. Positions and zoom stay. The button then reads off,
+    /// offering Auto rotate again.
     func resetRotate() {
         guard isAutoRotateApplied else { return }
         isAutoRotateApplied = false
@@ -540,7 +573,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// detection at a time: a tap while one is running is ignored, and `teardown()` cancels
     /// it. Finding nothing to level by raises the notice and changes nothing; finding a
     /// rotation turns the video to level over `fitAnimation` rather than cutting to it, and
-    /// the button becomes "Reset rotate".
+    /// the button turns on and says so (`framingTip`).
     func autoRotate() {
         guard !isDetectingHorizon, duration != nil else { return }
         isDetectingHorizon = true
@@ -556,6 +589,7 @@ final class ClipEditorViewModel: ObservableObject {
                     easePan { setRotation(rotation) }
                 }
                 isAutoRotateApplied = true
+                showFramingTip(.autoRotate(isOn: true))
             } else {
                 // Inside a transaction so the notice's slide-and-fade transition plays.
                 withAnimation(Self.fitAnimation) {
@@ -564,6 +598,70 @@ final class ClipEditorViewModel: ObservableObject {
             }
         }
     }
+
+    // MARK: - Framing buttons
+
+    /// The Auto follow button's tap. It is a toggle where the clip has pose analysis: Reset follow
+    /// while Auto follow's crop is on screen, Auto follow otherwise. Without pose analysis it is
+    /// Reset follow alone. Says what it left on screen (`framingTip`) unless "Nothing to follow"
+    /// says it instead.
+    func toggleAutoFollow() {
+        clearFramingFeedback()
+        guard supportsAutoFollow else {
+            resetFollow()
+            showFramingTip(.followReset)
+            return
+        }
+        if isAutoFollowApplied {
+            resetFollow()
+        } else {
+            autoFollow()
+        }
+        guard !isShowingNothingToFollowNotice else { return }
+        showFramingTip(.autoFollow(isOn: isAutoFollowApplied))
+    }
+
+    /// The Auto rotate button's tap: Reset rotate while Auto rotate's turn is on screen, Auto
+    /// rotate otherwise, which says so once its detection lands (`autoRotate()`) — or raises "No
+    /// horizon found" instead. A tap while a detection runs is ignored.
+    func toggleAutoRotate() {
+        guard !isDetectingHorizon else { return }
+        clearFramingFeedback()
+        if isAutoRotateApplied {
+            resetRotate()
+            showFramingTip(.autoRotate(isOn: false))
+        } else {
+            autoRotate()
+        }
+    }
+
+    /// A framing button's tap answers for itself: whatever an earlier tap left under the
+    /// buttons, its tip or a notice, goes.
+    private func clearFramingFeedback() {
+        framingTipTask?.cancel()
+        framingTipTask = nil
+        withAnimation(Self.framingTipAnimation) {
+            framingTip = nil
+            isShowingNoHorizonNotice = false
+            isShowingNothingToFollowNotice = false
+        }
+    }
+
+    /// Puts `tip` under the framing buttons for `framingTipDuration`, and speaks it: it is gone
+    /// before VoiceOver could reach it.
+    private func showFramingTip(_ tip: FramingTip) {
+        announce(tip.message)
+        withAnimation(Self.framingTipAnimation) { framingTip = tip }
+        framingTipTask?.cancel()
+        framingTipTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.framingTipDuration))
+            guard let self, !Task.isCancelled else { return }
+            withAnimation(Self.framingTipAnimation) { framingTip = nil }
+        }
+    }
+
+    /// How a framing tip comes and goes.
+    nonisolated static let framingTipAnimation: Animation = .easeOut(duration: 0.2)
 
     // MARK: - Follow mode
 
@@ -574,8 +672,8 @@ final class ClipEditorViewModel: ObservableObject {
         !source.poseFrames.isEmpty
     }
 
-    /// True while the follow crop on screen is exactly what Auto follow wrote, which turns its
-    /// button into Reset follow.
+    /// True while the follow crop on screen is exactly what Auto follow wrote: its button reads
+    /// on, and a tap is Reset follow.
     var isAutoFollowApplied: Bool {
         followCrop?.isAutoFollow == true
     }
@@ -735,7 +833,7 @@ final class ClipEditorViewModel: ObservableObject {
     /// at once. Within `keyframeReach` of a keyframe it changes that keyframe; anywhere else it
     /// adds one that starts from where the curves already are, so the picture at the playhead is
     /// exactly where the fingers left it. The zoom stays within `scaleRange`. Any keyframe change
-    /// hands Auto follow's button back.
+    /// turns Auto follow off.
     func setFollowKeyframe(movedBy delta: CGSize = .zero, zoomedBy factor: CGFloat = 1, turnedBy radians: Double = 0) {
         guard var crop = followCrop,
               delta.width.isFinite, delta.height.isFinite, factor.isFinite, factor > 0, radians.isFinite,
