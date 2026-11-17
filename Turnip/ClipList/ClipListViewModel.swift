@@ -44,6 +44,12 @@ typealias RecordSavedClips = @MainActor (LibrarySave) -> [EarnedAchievement]
 /// Concurrency contract: same as `ExportOneClip`.
 typealias StoreSourcePose = @Sendable (_ frames: [PoseFrameResult], _ duration: TimeInterval) async -> String?
 
+/// Reads the colour of the top a clip's person wears in the frames of `samples`
+/// (`TorsoColorReader`), for Clip List's shirt colour filter; `nil` when no frame reads.
+///
+/// Concurrency contract: same as `ExportOneClip`.
+typealias ReadTorsoColor = @Sendable (_ samples: [TorsoSample], _ asset: AVAsset) async -> LabColor?
+
 /// Orders a clip's suggestions (`docs/PERSONALIZATION_DESIGN.md` §4.2). `PersonalLayer` plugs in here.
 typealias RankClipNames = @MainActor (
     _ embedding: ClipEmbedding?, _ proposal: ModelProposal?, _ used: [String], _ given: [ClipName]
@@ -129,6 +135,13 @@ final class ClipListViewModel: ObservableObject {
     /// Set by `save()` when a clip failed and cleared once the screen's alert
     /// dismisses. `nil` means no alert is showing.
     @Published var saveFailureMessage: String?
+    /// Which clips the grid, Name Clips and Save Clips take (`clipsToName`), set on the filter sheet.
+    @Published var filter = ClipFilter()
+    /// What reading each clip's person's top found, by item id, for `filter`'s shirt colour. Kept
+    /// through an edit, since a retrim doesn't change whose clip it is. Read only while the filter
+    /// sheet is up (`readTorsoColors()`, `toggleShirtColorSource(_:)`), so the clips shown change
+    /// only on that sheet and never under Name Clips.
+    @Published private(set) var torsoColors: [UUID: TorsoColorReading] = [:]
 
     /// The item fields a decoded thumbnail actually depends on. Tagging cache entries with
     /// this, rather than clearing the cache from every call site that can mutate an item,
@@ -181,6 +194,7 @@ final class ClipListViewModel: ObservableObject {
     private let recordSaved: RecordSavedClips
     private let storePose: StoreSourcePose
     private let rankNames: RankClipNames
+    private let readTorsoColor: ReadTorsoColor
     /// The pose stored for each person with a saved clip, `nil` standing for a clip with no person:
     /// a retry after a partial failure keeps what the first run stored.
     private var storedPoseIDs: [Int?: String] = [:]
@@ -257,6 +271,7 @@ final class ClipListViewModel: ObservableObject {
         rankNames: @escaping RankClipNames = {
             PersonalLayer.shared.suggestions(for: $0, proposal: $1, used: $2, given: $3)
         },
+        readTorsoColor: @escaping ReadTorsoColor = { await TorsoColorReader().color(of: $0, in: $1) },
         makeDirectory: @escaping @Sendable () -> URL = defaultExportDirectory,
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettingsStore.shared.current },
         announce: @escaping AccessibilityAnnouncing = postAccessibilityAnnouncement,
@@ -279,26 +294,29 @@ final class ClipListViewModel: ObservableObject {
         self.recordSaved = recordSaved
         self.storePose = storePose
         self.rankNames = rankNames
+        self.readTorsoColor = readTorsoColor
         self.makeDirectory = makeDirectory
         self.settingsProvider = settingsProvider
         self.announce = announce
         self.announceAfterScreenChange = announceAfterScreenChange
     }
 
-    /// Where `item` sits among the detected clips, 1-based, and how many there are — the
-    /// count a card's VoiceOver label reads off. `nil` for the original video, which stands
-    /// for the source already in Photos rather than a detected clip.
+    /// Where `item` sits among the clips shown (`clipsToName`), 1-based, and how many there are —
+    /// the count a card's VoiceOver label reads off. `nil` for the original video, which stands
+    /// for the source already in Photos rather than a detected clip, and for a clip the filter
+    /// hides.
     func clipPosition(of item: ClipListItem) -> (number: Int, count: Int)? {
         guard !item.isOriginal else { return nil }
-        let clips = items.filter { !$0.isOriginal }
+        let clips = clipsToName
         guard let offset = clips.firstIndex(where: { $0.id == item.id }) else { return nil }
         return (offset + 1, clips.count)
     }
 
     /// How many clips a Save Clips tap would write to Photos — what the button announces before it
-    /// is tapped, and what the save announces on its way in and out.
+    /// is tapped, and what the save announces on its way in and out. A clip the filter hides isn't
+    /// saved.
     var unsavedClipCount: Int {
-        items.filter { !$0.isOriginal && !$0.isSaved }.count
+        clipsToName.filter { !$0.isSaved }.count
     }
 
     /// Speaks the zero-tricks notice, which otherwise fades itself out unheard.
@@ -349,7 +367,8 @@ final class ClipListViewModel: ObservableObject {
             isMe: item.isMe,
             isAutoDetected: item.isAutoDetected && isSameWindow(result.window, as: item.window),
             proposal: item.proposal,
-            proposedFrames: item.proposedFrames)
+            proposedFrames: item.proposedFrames,
+            confidence: item.confidence)
     }
 
     /// Whether `result` would export the same video as `item`. The editor commits on every
@@ -555,9 +574,10 @@ final class ClipListViewModel: ObservableObject {
         return cached.image
     }
 
-    /// The "Save Clips" action: exports and saves every derived clip that has not already
-    /// landed in Photos. Returns `true` when the screen should pop to Home; `false` when a clip failed, in which case
-    /// `saveFailureMessage` is set and the screen stays up so Save Clips can be retried.
+    /// The "Save Clips" action: exports and saves every clip shown (`clipsToName`) that has not
+    /// already landed in Photos. Returns `true` when the screen should pop to Home; `false` when a
+    /// clip failed, in which case `saveFailureMessage` is set and the screen stays up so Save Clips
+    /// can be retried.
     ///
     /// Each clip is marked `isSaved` the moment its Photos write returns, and the loop
     /// skips the ones already marked. That is what makes the retry above safe: a clip
@@ -584,7 +604,7 @@ final class ClipListViewModel: ObservableObject {
             announce(ClipListAccessibility.saveStarting(clipCount: clipCount))
         }
         var failures: [String] = []
-        for item in items where !item.isOriginal && !item.isSaved {
+        for item in clipsToName where !item.isSaved {
             do {
                 let spec = ClipSpec(
                     window: item.window, cropRect: item.cropRect, followCrop: await followCrop(for: item))
@@ -702,18 +722,26 @@ final class ClipListViewModel: ObservableObject {
 /// What Name Clips writes (`docs/UIUX.md` § "Name Clips", `docs/PROFILE_DESIGN.md` §4): names on
 /// the items themselves, so an editor commit or a page change keeps every name given so far.
 extension ClipListViewModel {
-    /// The clips Name Clips pages through: every derived clip, in order.
-    var clipsToName: [ClipListItem] { items.filter { !$0.isOriginal } }
+    /// The clips the grid shows, Name Clips pages through and Save Clips saves: every derived clip
+    /// the filter lets through (`ClipFilter.admits`), in order.
+    var clipsToName: [ClipListItem] {
+        let shown = filter
+        return allClips.filter { shown.admits($0, torsoColor: torsoColors[$0.id]) }
+    }
+
+    /// Every derived clip, in order, whether the filter shows it or not.
+    var allClips: [ClipListItem] { items.filter { !$0.isOriginal } }
 
     /// Whether the video has pose analysis to contribute. A video reached by "Clip it" has
     /// none, so its clips can be named but are never contributed.
     var hasPose: Bool { !poseFrames.isEmpty }
 
     /// The names already given on this video, each once, in the order first given — the first
-    /// suggestions, since a session is mostly repeats of a few tricks.
+    /// suggestions, since a session is mostly repeats of a few tricks. A clip the filter hides is
+    /// still the video's, so its names count.
     var namesUsedOnVideo: [String] {
         var seen = Set<String>()
-        return clipsToName.flatMap(\.names).map(\.name).filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
+        return allClips.flatMap(\.names).map(\.name).filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
     }
 
     /// A clip's embedding, from its own person's run over its window as it stands now. `nil` for a
@@ -752,11 +780,12 @@ extension ClipListViewModel {
 
     /// Who is in a clip. A change on a person's first clip carries to that person's later clips
     /// that still read the way the first one did, so one choice covers a take while any clip set
-    /// apart keeps its own.
+    /// apart keeps its own. Shown or hidden by the filter alike: a hidden clip comes back when the
+    /// filter is cleared and is saved with the rest.
     func setIsMe(_ isMe: Bool, for id: UUID) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let item = items[index]
-        let samePerson = clipsToName.filter { $0.personID == item.personID }
+        let samePerson = allClips.filter { $0.personID == item.personID }
         if samePerson.first?.id == id {
             for other in samePerson.dropFirst() where other.isMe == item.isMe {
                 if let otherIndex = items.firstIndex(where: { $0.id == other.id }) { items[otherIndex].isMe = isMe }
@@ -774,6 +803,103 @@ extension ClipListViewModel {
             videoID: VideoIdentity.videoID(forAssetIdentifier: assetIdentifier),
             duration: loadedAssetDuration ?? items.first?.window.endTime ?? 0,
             poseFrames: poseFrames(forPerson:))
+    }
+}
+
+// MARK: - Filters
+
+/// Clip List's filters (`docs/UIUX.md` § "Clip List", `ClipFilter`): the confidence `filter` holds,
+/// and the shirt colour, read from clips the user picks or picked by hand.
+extension ClipListViewModel {
+    /// The clips the filters can hide: the ones detection proposed. A clip added by hand is always
+    /// shown.
+    var filterableClips: [ClipListItem] { allClips.filter { $0.confidence != nil } }
+
+    /// How many of `filterableClips` have had their person's top read.
+    var readTorsoColorCount: Int {
+        filterableClips.filter { torsoColors[$0.id] != nil }.count
+    }
+
+    /// Reads the top of every clip the filters can hide that hasn't been read, one at a time, the
+    /// clips the confidence filter shows first, until none is left or the calling task is
+    /// cancelled. The filter sheet runs it for as long as it is up; a reading that lands after the
+    /// task was cancelled is dropped, so none lands once the sheet has gone.
+    func readTorsoColors() async {
+        while !Task.isCancelled, let item = nextClipToRead() {
+            let reading = await torsoColorReading(of: item)
+            guard !Task.isCancelled else { return }
+            record(reading, for: item.id)
+        }
+    }
+
+    /// The next clip `readTorsoColors()` reads.
+    private func nextClipToRead() -> ClipListItem? {
+        let unread = filterableClips.filter { torsoColors[$0.id] == nil }
+        return unread.first { ($0.confidence ?? 0) >= filter.minimumConfidence } ?? unread.first
+    }
+
+    /// Reads one clip's top: over its window, in its own person's frames — every scored frame for a
+    /// clip with no person — from the moments `TorsoSample.picks` chooses.
+    private func torsoColorReading(of item: ClipListItem) async -> TorsoColorReading {
+        let samples = TorsoSample.picks(from: poseFrames(forPerson: item.personID), in: item.window)
+        guard !samples.isEmpty else { return TorsoColorReading(color: nil) }
+        return TorsoColorReading(color: await readTorsoColor(samples, sourceAsset))
+    }
+
+    /// Keeps a reading, unless its clip was removed while it was read.
+    private func record(_ reading: TorsoColorReading, for id: UUID) {
+        guard items.contains(where: { $0.id == id }) else { return }
+        torsoColors[id] = reading
+    }
+
+    /// Whether the shirt colour was read from the clip with the given id.
+    func isShirtColorSource(_ id: UUID) -> Bool {
+        filter.shirtColor?.sourceClipIDs.contains(id) ?? false
+    }
+
+    /// Picks a clip as one of the user's, or takes it back: the shirt colour becomes the one read
+    /// from every clip picked (`ShirtColorMatch(readFrom:)`), and none once the last is taken back.
+    /// A clip not read yet is read first; one whose top can't be read changes nothing, and nothing
+    /// changes if the calling task is cancelled while it is read. A colour picked by hand gives way
+    /// to the first clip picked.
+    func toggleShirtColorSource(_ item: ClipListItem) async {
+        if isShirtColorSource(item.id) {
+            setShirtColorSources((filter.shirtColor?.sourceClipIDs ?? []).subtracting([item.id]))
+            return
+        }
+        if torsoColors[item.id] == nil {
+            let reading = await torsoColorReading(of: item)
+            guard !Task.isCancelled else { return }
+            record(reading, for: item.id)
+        }
+        guard torsoColors[item.id]?.color != nil else { return }
+        setShirtColorSources((filter.shirtColor?.sourceClipIDs ?? []).union([item.id]))
+    }
+
+    private func setShirtColorSources(_ ids: Set<UUID>) {
+        let colors = ids.reduce(into: [UUID: LabColor]()) { result, id in result[id] = torsoColors[id]?.color }
+        filter.shirtColor = ShirtColorMatch(readFrom: colors)
+    }
+
+    /// The shirt colour picked by hand in the colour picker, which was showing `shown`. A colour
+    /// within a round trip through the picker of `shown` is that colour coming back rather than a
+    /// new pick: it leaves the shirt colour, and the clips it was read from, as they are.
+    func pickShirtColor(_ color: CGColor, shown: CGColor) {
+        guard let picked = LabColor(color) else { return }
+        if let shown = LabColor(shown), shown.distance(to: picked) < Self.pickerRoundTrip { return }
+        filter.shirtColor = ShirtColorMatch(picked: picked)
+    }
+
+    /// How far a colour can move on its way through the colour picker and back, in
+    /// `LabColor.distance(to:)`: the picker holds 8-bit sRGB.
+    private static let pickerRoundTrip: Float = 1
+
+    func clearShirtColor() {
+        filter.shirtColor = nil
+    }
+
+    func clearFilter() {
+        filter = ClipFilter()
     }
 }
 

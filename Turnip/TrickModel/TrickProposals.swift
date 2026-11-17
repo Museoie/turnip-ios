@@ -158,6 +158,8 @@ struct ProposedClip: Sendable {
     let window: TrickWindow
     let frames: Range<Int>
     let proposal: ModelProposal
+    /// The segment's score (`TrickSegment.score`): how sure the model is that a trick is there.
+    let confidence: Float
 }
 
 /// What the trick model proposes over one person's pose: its clips, in video order, and the run's
@@ -201,7 +203,8 @@ struct TrickProposer: Sendable {
         let clips = rules.segments(from: output.segments, keeping: keep).map {
             ProposedClip(
                 window: $0.window, frames: $0.startFrame..<$0.endFrame,
-                proposal: rules.proposal(for: $0, modelVersion: model.version, using: &generator))
+                proposal: rules.proposal(for: $0, modelVersion: model.version, using: &generator),
+                confidence: $0.score)
         }
         return TrickModelProposals(clips: clips, embeddings: embeddings)
     }

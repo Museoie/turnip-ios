@@ -32,6 +32,13 @@ struct TrickWindow: Codable, Hashable, Sendable {
     }
 }
 
+/// One trick the detector found: its window, and how sure the detector is that it is one, 0...1
+/// (`TrickWindowDetector.confidence(peakSpeed:)`).
+struct DetectedWindow: Equatable, Sendable {
+    let window: TrickWindow
+    let confidence: Float
+}
+
 /// Peak-detects the motion signal into trick windows (docs/DESIGN.md's pipeline step 5).
 ///
 /// A trick has to stand out from what the athlete is doing around it, not clear one fixed bar:
@@ -94,17 +101,35 @@ struct TrickWindowDetector: Sendable {
     private static let durationTolerance: TimeInterval = 1e-6
 
     func detectWindows(in samples: [MotionSample]) -> [TrickWindow] {
+        detect(in: samples).map(\.window)
+    }
+
+    /// The trick windows in `samples`, in video order, each with how sure the detector is of it
+    /// (`confidence(peakSpeed:)`).
+    func detect(in samples: [MotionSample]) -> [DetectedWindow] {
         let states = states(of: samples)
         let sustained = runsOfMotion(in: states).filter { run in
             samples[run.upperBound].endTime - samples[run.lowerBound].startTime
                 >= minimumSustainedSeconds - Self.durationTolerance
         }
         return merging(sustained, separatedBy: states, in: samples).map { burst in
-            TrickWindow(
-                startTime: max(0, samples[burst.lowerBound].startTime - leadingBufferSeconds),
-                endTime: samples[burst.upperBound].endTime + trailingBufferSeconds
-            )
+            DetectedWindow(
+                window: TrickWindow(
+                    startTime: max(0, samples[burst.lowerBound].startTime - leadingBufferSeconds),
+                    endTime: samples[burst.upperBound].endTime + trailingBufferSeconds),
+                confidence: confidence(peakSpeed: samples[burst].compactMap(\.speed).max() ?? 0))
         }
+    }
+
+    /// How sure the detector is that a burst peaking at `peakSpeed` is a trick: the share of that
+    /// speed past `minimumSpeed`, `1 - minimumSpeed / peakSpeed`. A burst only just past the floor —
+    /// someone walking off, or gesturing — reads near 0, and the share climbs towards 1 as the peak
+    /// does: a flip moves the body many torso lengths a second. It ranks clips for Clip List's
+    /// filter (`docs/UIUX.md` § "Clip List"); it is not a probability, and nothing in detection
+    /// reads it.
+    func confidence(peakSpeed: Float) -> Float {
+        guard peakSpeed > minimumSpeed else { return 0 }
+        return 1 - minimumSpeed / peakSpeed
     }
 
     /// A sample with no speed — or no baseline to measure it against — is evidence of neither

@@ -125,7 +125,7 @@ struct HomeView: View {
                 ClipListItem(
                     window: $0.window, cropRect: $0.cropRect, personID: $0.personID,
                     names: $0.proposal?.prefilledNames ?? [], isAutoDetected: true, proposal: $0.proposal,
-                    proposedFrames: $0.proposedFrames)
+                    proposedFrames: $0.proposedFrames, confidence: $0.confidence)
             },
             poseFrames: detection.poseFrames,
             people: detection.people,
