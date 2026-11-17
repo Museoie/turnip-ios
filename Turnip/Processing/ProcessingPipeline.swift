@@ -507,33 +507,8 @@ struct ProcessingPipeline: Sendable {
                     clips: found.clips, poseFrames: poseFrames,
                     windowEmbeddings: found.embeddings.map { [$0] } ?? [])
             }
-            // The heuristic's windows, from the streamed signal, then one sweep over the
-            // take collecting each frame into the windows containing it — the same
-            // window-to-frames pairing `buildClips` does, window by window. Windows are
-            // clamped before the sweep, so a frame past the asset's end cannot land in
-            // one: the batch form filters by the clamped window.
-            let candidates = windowDetector.detect(in: samples)
-                .compactMap { detected in
-                    detected.window.clamped(to: duration).map {
-                        Candidate(window: $0, confidence: detected.confidence)
-                    }
-                }
-                .sorted { $0.window.startTime < $1.window.startTime }
-            var inWindows: [[PoseFrameResult]] = Array(repeating: [], count: candidates.count)
-            for frame in frames() {
-                let primary = frame.primary
-                for (index, candidate) in candidates.enumerated()
-                where primary.timestamp >= candidate.window.startTime
-                    && primary.timestamp <= candidate.window.endTime {
-                    inWindows[index].append(primary)
-                }
-            }
-            var clips: [ProcessedClip] = []
-            for (index, candidate) in candidates.enumerated() {
-                clips += buildClips(
-                    proposed: [candidate], personID: nil, frames: inWindows[index],
-                    renderedPixelSize: renderedPixelSize, duration: duration)
-            }
+            let clips = heuristicClips(
+                over: frames, samples: samples, renderedPixelSize: renderedPixelSize, duration: duration)
             return DetectedClips(clips: clips, poseFrames: poseFrames, windowEmbeddings: [])
         }
         var clips: [ProcessedClip] = []
@@ -550,6 +525,37 @@ struct ProcessingPipeline: Sendable {
         }
         clips.sort { ($0.window.startTime, $0.personID ?? -1) < ($1.window.startTime, $1.personID ?? -1) }
         return DetectedClips(clips: clips, poseFrames: poseFrames, people: people, windowEmbeddings: embeddings)
+    }
+
+    /// The heuristic's clips over a streamed take: its windows, from the streamed signal, then one
+    /// sweep over the take collecting each frame into the windows containing it — the same
+    /// window-to-frames pairing `buildClips` does, window by window. Windows are clamped before the
+    /// sweep, so a frame past the asset's end cannot land in one: the batch form filters by the
+    /// clamped window.
+    private func heuristicClips(
+        over frames: () -> AnySequence<MultiPoseFrame>, samples: [MotionSample], renderedPixelSize: CGSize,
+        duration: TimeInterval
+    ) -> [ProcessedClip] {
+        let candidates = windowDetector.detect(in: samples)
+            .compactMap { detected in
+                detected.window.clamped(to: duration).map { Candidate(window: $0, confidence: detected.confidence) }
+            }
+            .sorted { $0.window.startTime < $1.window.startTime }
+        var inWindows: [[PoseFrameResult]] = Array(repeating: [], count: candidates.count)
+        for frame in frames() {
+            let primary = frame.primary
+            for (index, candidate) in candidates.enumerated()
+            where primary.timestamp >= candidate.window.startTime && primary.timestamp <= candidate.window.endTime {
+                inWindows[index].append(primary)
+            }
+        }
+        var clips: [ProcessedClip] = []
+        for (index, candidate) in candidates.enumerated() {
+            clips += buildClips(
+                proposed: [candidate], personID: nil, frames: inWindows[index],
+                renderedPixelSize: renderedPixelSize, duration: duration)
+        }
+        return clips
     }
 
     /// Steps 4-6 over one person's frames, proposed by the trick model when one is loaded. A model
