@@ -22,12 +22,13 @@ struct AutoFollow {
     /// How far the curve may stray from a sample's own center, as a fraction of the crop's
     /// width, before a keyframe goes in at that sample.
     static let driftTolerance: CGFloat = 0.1
-    /// The least time between two of Auto follow's keyframes: a few diamonds far apart on the
-    /// follow lane, each one a moment worth adjusting by hand, rather than a cluster. The two that
-    /// start and stop the crop's movement are spread into the holds either side to sit this far
-    /// apart, or as far apart as the window's samples reach when it is shorter. Keyframes the
-    /// user adds aren't bound by it.
-    var keyframeSpacing: TimeInterval = 3
+    /// The least time between two of Auto follow's keyframes, a second: near enough for the
+    /// curve to follow the athlete through a trick rather than zoom out over it
+    /// (`widenedToHold`), far enough apart that the follow lane shows diamonds each worth
+    /// adjusting by hand rather than a cluster. The two that start and stop the crop's movement
+    /// are spread into the holds either side to sit this far apart, or as far apart as the
+    /// window's samples reach when it is shorter. Keyframes the user adds aren't bound by it.
+    var keyframeSpacing: TimeInterval = 1
     var pathCalculator = CropPathCalculator()
     /// The tightest crop Auto follow chooses, as the longer side of the source region it shows,
     /// in displayed pixels: export renders a follow clip at its crop rect's size, so a tighter

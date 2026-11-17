@@ -381,8 +381,9 @@ struct ClipListView: View {
 }
 
 /// A tile's caption: the clip's length, then each name it has been given as a chip in Name Clips'
-/// style (`ChipButtonStyle`, prominent), cut down to the length's own size, wrapping onto another
-/// line when the names don't fit beside it. VoiceOver skips it: the card's label reads both.
+/// style (`ChipButtonStyle`, prominent), cut down to the length's own size, all on one line
+/// (`ChipLine`): names that don't fit beside the length are cut short with an ellipsis. VoiceOver
+/// skips it: the card's label reads the length and every name.
 private struct ClipTileCaption: View {
     let item: ClipListItem
     let width: CGFloat
@@ -390,24 +391,31 @@ private struct ClipTileCaption: View {
     /// The chips' padding above and below their text, given to the length too, so the two sit on
     /// one line at one height.
     private static let verticalPadding: CGFloat = 1
+    /// `ChipLine.minimumCutWidth` at the chips' text size: a cut chip keeps room for a letter and
+    /// the ellipsis however large the text is set.
+    @ScaledMetric(relativeTo: .caption) private var minimumCutWidth: CGFloat = 32
 
     var body: some View {
-        ChipFlow(spacing: 4) {
+        HStack(spacing: 4) {
             Text(item.durationLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.vertical, Self.verticalPadding)
-            ForEach(item.names, id: \.self) { name in
-                Text(name.name)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, Self.verticalPadding)
-                    .background(Capsule().fill(Color.accentColor))
-                    // A name longer than the tile is wide is cut short rather than run past it.
-                    .frame(maxWidth: width, alignment: .leading)
+                .fixedSize()
+            ChipLine(spacing: 4, minimumCutWidth: minimumCutWidth) {
+                ForEach(item.names, id: \.self) { name in
+                    Text(name.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, Self.verticalPadding)
+                        .background(Capsule().fill(Color.accentColor))
+                }
             }
+            // The names left out sit just past the line's end.
+            .clipped()
         }
         .frame(width: width, alignment: .leading)
         .accessibilityHidden(true)

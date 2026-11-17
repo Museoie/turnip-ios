@@ -17,7 +17,8 @@ struct FollowLaneView: View {
     @ObservedObject var viewModel: ClipEditorViewModel
 
     static let height: CGFloat = 44
-    /// Room at each end for a diamond on the window's edge and the markers past it.
+    /// Room inside each end of the lane for a diamond on the window's edge and the markers past
+    /// it.
     private static let inset: CGFloat = 22
     private static let diamondSize: CGFloat = 16
 
@@ -42,7 +43,8 @@ struct FollowLaneView: View {
     private static let diamondReach: CGFloat = 22
 
     var body: some View {
-        HStack(spacing: 4) {
+        // No spacing: the button's own 44 pt frame already sets its glyph off from the lane's end.
+        HStack(spacing: 0) {
             track
             keyframeButton
         }
@@ -72,11 +74,12 @@ struct FollowLaneView: View {
             let window = drag?.window ?? viewModel.window
             ZStack(alignment: .leading) {
                 // Translucent rather than a system gray: the lane sits on the frosted surround,
-                // which every dark gray all but vanishes into.
+                // which every dark gray all but vanishes into. Edge to edge of the track, so its
+                // leading end lines up with the trim timeline's below, and the markers past the
+                // window sit inside its rounded ends.
                 Capsule()
                     .fill(.white.opacity(0.16))
                     .frame(height: 28)
-                    .padding(.horizontal, Self.inset / 2)
                 ForEach(Array(viewModel.followKeyframes.enumerated()), id: \.offset) { _, keyframe in
                     marker(for: keyframe, in: window, width: width)
                 }
