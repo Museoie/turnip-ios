@@ -247,4 +247,29 @@ final class VocabularyStoreSynonymTests: XCTestCase {
         await store(farm).sendSynonyms(account: account(farm), contributes: true)
         XCTAssertEqual(farm.calls, Array(repeating: "POST /api/labels/synonyms", count: 3))
     }
+
+    /// A farm deployed before the endpoint answers 404: the pair waits for the farm that has it, so
+    /// the order the app and the farm ship in loses nothing.
+    func testAFarmWithoutTheEndpointKeepsTheSuggestion() async {
+        let notFound = #"{"error":{"code":"NOT_FOUND","message":"Not found"}}"#
+        let farm = ScriptedFarm([.init(status: 404, body: notFound), .init(status: 202, body: "")])
+        let vocabulary = store(farm)
+        vocabulary.addSynonym(fullTwist, suggest: true)
+        await vocabulary.sendSynonyms(account: account(farm), contributes: true)
+        await store(farm).sendSynonyms(account: account(farm), contributes: true)
+        await store(farm).sendSynonyms(account: account(farm), contributes: true)
+        XCTAssertEqual(farm.calls, Array(repeating: "POST /api/labels/synonyms", count: 2))
+    }
+
+    func testOnlyARefusalAnotherTryWouldGetAgainDropsASuggestion() {
+        XCTAssertTrue(VocabularyStore.refusesForGood(FarmError.rejected(code: "VALIDATION_ERROR", message: "")))
+        XCTAssertTrue(VocabularyStore.refusesForGood(FarmError.accountBlocked))
+        XCTAssertTrue(VocabularyStore.refusesForGood(FarmError.http(status: 400)))
+        XCTAssertFalse(VocabularyStore.refusesForGood(FarmError.rejected(code: "NOT_FOUND", message: "")))
+        for status in [404, 408, 429, 500, 503] {
+            XCTAssertFalse(VocabularyStore.refusesForGood(FarmError.http(status: status)), "\(status)")
+        }
+        XCTAssertFalse(VocabularyStore.refusesForGood(FarmError.rateLimited(retryAfter: nil)))
+        XCTAssertFalse(VocabularyStore.refusesForGood(URLError(.notConnectedToInternet)))
+    }
 }

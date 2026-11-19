@@ -12,6 +12,8 @@ struct TrickSynonymSheet: View {
     @ObservedObject var vocabulary: VocabularyStore
     /// Called with the trick the screen shows once two are one.
     let merged: (Trick) -> Void
+    /// Called once a synonym grouped under the trick is separated.
+    var separated: () -> Void = {}
     var account: FarmAccount = .shared
     var contributes: @MainActor () -> Bool = { TurnipSettingsStore.shared.contributesClips }
 
@@ -69,7 +71,10 @@ struct TrickSynonymSheet: View {
                     HStack {
                         Text(synonym.name)
                         Spacer()
-                        Button("Separate") { vocabulary.removeSynonym(synonym) }
+                        Button("Separate") {
+                            vocabulary.removeSynonym(synonym)
+                            separated()
+                        }
                             .buttonStyle(.borderless)
                             .accessibilityLabel(String(localized: "Separate \(synonym.name)"))
                     }

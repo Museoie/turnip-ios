@@ -177,7 +177,9 @@ A segment's embedding is the same rule over the segment's frames.
   mean (§3) of the embeddings of the user's clips carrying that key,
   renormalized. A key needs at least three clips to have one. A combo
   clip adds its embedding to each of its names' prototypes.
-  *(Judgment call on three.)*
+  *(Judgment call on three.)* Keys follow the vocabulary the app holds,
+  the user's own synonyms included (`PROFILE_DESIGN.md` §4.5), so a
+  change to it rebuilds the prototypes as a change to the library does.
 - **Ranking.** For the clip being named, the layer computes cosine
   similarity to every prototype. The suggestions of `PROFILE_DESIGN.md`
   §4.2 then come in this order:

@@ -341,11 +341,13 @@ final class VocabularyStore: ObservableObject {
     }
 
     /// A refusal another try would get again: the farm answered, and not with a rate limit or a
-    /// failure of its own.
+    /// failure of its own. A `404` is a farm without `POST /api/labels/synonyms` yet, one deployed
+    /// before it, so the pair waits for the farm that has it; `408` and `429` pass with time.
     nonisolated static func refusesForGood(_ error: Error) -> Bool {
         switch error as? FarmError {
-        case .rejected?, .accountBlocked?: return true
-        case .http(let status)?: return (400..<500).contains(status)
+        case .rejected(let code, _)?: return code != "NOT_FOUND"
+        case .accountBlocked?: return true
+        case .http(let status)?: return (400..<500).contains(status) && ![404, 408, 429].contains(status)
         default: return false
         }
     }

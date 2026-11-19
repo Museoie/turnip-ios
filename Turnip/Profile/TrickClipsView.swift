@@ -24,6 +24,9 @@ struct TrickClipsView: View {
     @State private var removalPrompt: LibraryClipRemovalPrompt?
     @State private var removalFailure: String?
     @State private var isShowingSynonyms = false
+    /// The trick "Same Trick As…" was opened for, held while the sheet is up: a merge or a
+    /// separate made in it changes `group` under it.
+    @State private var synonymSheetTrick: Trick?
     /// The trick this one was merged into on this screen, which it shows from then on.
     @State private var mergedKey: String?
     /// iPhone Duo's vertical bar, which the bar's items go down instead.
@@ -90,7 +93,7 @@ struct TrickClipsView: View {
             if verticalBar == nil, group != nil {
                 if !isSelecting {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button { isShowingSynonyms = true } label: {
+                        Button(action: showSynonyms) {
                             Image(systemName: "arrow.triangle.merge")
                         }
                         .accessibilityLabel("Same Trick As…")
@@ -114,7 +117,7 @@ struct TrickClipsView: View {
             if state.hasClips && !state.isSelecting {
                 ScrimIconButton(
                     systemImage: "arrow.triangle.merge", accessibilityLabel: "Same Trick As…",
-                    action: { isShowingSynonyms = true })
+                    action: showSynonyms)
                 .accessibilityIdentifier("trick-clips-same-as")
             }
             if state.hasClips {
@@ -133,10 +136,10 @@ struct TrickClipsView: View {
         }
         .libraryClipRemovalDialog($removalPrompt, remove: remove)
         .sheet(isPresented: $isShowingSynonyms) {
-            if let trick = group?.trick {
+            if let trick = synonymSheetTrick {
                 TrickSynonymSheet(
                     trick: trick, ownTricks: ownTricks, vocabulary: vocabulary,
-                    merged: { mergedKey = $0.key })
+                    merged: { mergedKey = $0.key }, separated: afterSeparating)
             }
         }
         .errorAlert("Couldn't delete the videos", message: $removalFailure)
@@ -189,6 +192,19 @@ struct TrickClipsView: View {
         .padding()
         .background(.thinMaterial)
         .accessibilityIdentifier("trick-clips-delete")
+    }
+
+    private func showSynonyms() {
+        synonymSheetTrick = group?.trick
+        isShowingSynonyms = synonymSheetTrick != nil
+    }
+
+    /// A separate that leaves the merged trick with none of the user's clips undoes the merge made
+    /// here: the grid goes back to the trick it opened on, and the sheet, about the other, closes.
+    private func afterSeparating() {
+        guard mergedKey != nil, group == nil else { return }
+        mergedKey = nil
+        isShowingSynonyms = false
     }
 
     private func toggleSelecting() {

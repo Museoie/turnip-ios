@@ -446,8 +446,10 @@ theirs are one.
   has — the farm's whole list — each with its other spellings, under a
   search field. Picking one asks which of the two names to keep.
 - **On the device, at once.** The two are then one trick: the gallery,
-  counts, achievements, personal ranking and suggestions read every
-  spelling of the merged trick as the kept one's. This is the farm's
+  counts, achievements and suggestions read every spelling of the
+  merged trick as the kept one's, and personal ranking does once its
+  prototypes rebuild, which a change of vocabulary starts as a library
+  change does (`PERSONALIZATION_DESIGN.md` §4.2). This is the farm's
   vocabulary with the user's synonyms applied in order
   (`VocabularyStore.current`, `TrickVocabulary.merging`), the same
   whole-trick merge the farm's maintainer makes (`BACKEND_DESIGN.md`
@@ -455,7 +457,9 @@ theirs are one.
   Names on clips don't change. The merged counts can earn a level or
   milestone at once; separating them takes nothing earned away (§6.4).
 - **Undo.** The sheet lists the names the user grouped under the trick,
-  each with "Separate", which removes that synonym.
+  each with "Separate", which removes that synonym. A separate that
+  leaves the trick on screen with none of the user's clips undoes the
+  merge made there: the grid goes back to the trick it opened on.
 - **The farm's vocabulary stays the farm's.** A contribution's names are
   checked against it alone (`VocabularyStore.farm`): a name only a
   synonym knows still goes as a candidate (`CONTRIBUTION_DESIGN.md`

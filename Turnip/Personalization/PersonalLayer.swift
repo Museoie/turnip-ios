@@ -35,6 +35,7 @@ struct PersonalRebuildScheduler: Sendable {
 final class PersonalLayer {
     static let shared = PersonalLayer(
         library: .shared, settings: .shared, vocabulary: { VocabularyStore.shared.current },
+        vocabularyChanges: VocabularyStore.shared.$current.eraseToAnyPublisher(),
         cacheStore: PersonalCacheStore(fileURL: PersonalCacheStore.defaultFileURL),
         activeVersion: { ModelUpdateStore.production?.activeModel()?.version.rawValue },
         loadModel: { await TrickModelLoader.shared.model() },
@@ -64,11 +65,14 @@ final class PersonalLayer {
     private nonisolated static let logger = Logger(subsystem: "com.hoiekim.turnip", category: "Personalization")
 
     /// `namingSettles` is how long the library stays quiet before a name given on the Profile, which
-    /// has no save of its own, reaches the prototypes.
+    /// has no save of its own, reaches the prototypes. `vocabularyChanges` rebuilds them when
+    /// names regroup without the library changing: a newer vocabulary, or the user marking two
+    /// tricks as one or separating them (`docs/PROFILE_DESIGN.md` §4.5).
     init(
         library: ClipLibrary,
         settings: TurnipSettingsStore,
         vocabulary: @escaping @MainActor () -> TrickVocabulary,
+        vocabularyChanges: AnyPublisher<TrickVocabulary, Never>? = nil,
         cacheStore: PersonalCacheStore,
         activeVersion: @escaping @Sendable () -> String?,
         loadModel: @escaping @Sendable () async -> PoseEmbedder?,
@@ -94,6 +98,13 @@ final class PersonalLayer {
         library.$clips
             .dropFirst()
             .debounce(for: namingSettles, scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.refresh() }
+            }
+            .store(in: &subscriptions)
+        vocabularyChanges?
+            .dropFirst()
+            .removeDuplicates()
             .sink { [weak self] _ in
                 Task { @MainActor in self?.refresh() }
             }

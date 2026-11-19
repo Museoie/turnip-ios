@@ -413,8 +413,11 @@ here is what contribution adds:
   when signed in and agreed, else at the next launch or foreground. The
   outbox checks names against the farm's vocabulary alone
   (`VocabularyStore.farm`), never the user's synonyms, so a merge
-  changes no label until the farm's maintainer makes it. A refused pair
-  is dropped, and turning contributing off drops pairs not yet sent.
+  changes no label until the farm's maintainer makes it. A pair the
+  farm refuses is dropped; one a farm without the endpoint answers
+  `404` for waits, as it does through a rate limit or an outage, so the
+  app and the farm can ship in either order. Turning contributing off
+  drops pairs not yet sent.
   *(Judgment call: the disclosure version stays 3, as for candidates: a
   pair is two names, which were already part of what is sent.)*
 - **Origin.** Each name is sent with the `origin` the clip library
