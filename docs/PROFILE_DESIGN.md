@@ -6,7 +6,11 @@ library, keeps trashed proposals' windows (§2.3), and adds a tier to
 the naming suggestions (§4.2). Revised 2026-11-15: Needs a name removes
 a clip (§4.1), the achievements are a carousel with every achievement
 on a page of its own (§5.1, §6.7), the gallery's filter is Me / Someone
-else and a trick's clips can be selected and removed together (§7).*
+else and a trick's clips can be selected and removed together (§7).
+Revised 2026-11-19: naming suggests the user's recent names from every
+video (§4.2), and a trick's clips can be marked as the same trick as
+another, which groups them on the device at once and suggests the pair
+to the farm while the user contributes (§4.5, §7).*
 
 **Scope.** A companion to `docs/DESIGN.md`. This doc specifies the
 Profile tab and what it stands on: the on-device clip library, naming
@@ -372,9 +376,25 @@ it, UIUX §3.)*
 - **Vocabulary.** Suggestions come from the newest vocabulary the app
   holds — the seed bundled with the app, `GET /api/taxonomy/current`
   (from Phase 2b), or the active model manifest's, whichever has the
-  greatest `taxonomy_version` (`MODEL_CONTRACT.md` §5).
+  greatest `taxonomy_version` (`MODEL_CONTRACT.md` §5) — with the
+  user's own synonyms over it (§4.5). The farm's is fetched at launch,
+  on every return to the foreground and when Name Clips opens, at most
+  every six hours, so the Profile groups by it too.
 - Names already used on this video come first: a session is mostly
   repeats of a few tricks.
+- **Recent names.** After the names used on this video (and, with
+  personal ranking, the tiers that follow them below), the names the
+  user gave saved clips on any video, the most recently given first:
+  a trick named last week is a tap away rather than typed again. Each
+  trick takes one place (§4.4), under the spelling given last; a combo
+  stays whole. They are read from the library, ordered by when each
+  clip was last given a name (`namedAt`, written by a save that
+  changes its names and by naming on the Profile; a clip saved before
+  it was kept counts from its save), and a name taken off every clip
+  drops out. They follow what is typed, as the video's names do. They
+  are the user's own history, not the model's, so a blind clip keeps
+  them. *(Judgment call: below the clip's own tiers and above the
+  rest of the vocabulary.)*
 - **Did you mean.** A typed name close to a canonical name or alias
   (small edit distance, case-insensitive) offers the canonical name as
   a one-tap replacement. *(Judgment call: it fixes the gallery grouping
@@ -414,6 +434,46 @@ on `-`, `/`, `+`, `,`. A name with no mapping groups under its
 normalized text until a vocabulary update maps it, then moves, and its
 progress merges into the canonical trick's. A clip with several names
 counts once under each distinct canonical trick.
+
+### 4.5 The same trick by two names
+
+Tricks go by several names (`cartfull` and `cartwheel full twist`,
+`cork` and `corkscrew`), and the user is the one who knows which of
+theirs are one.
+
+- **Where.** A trick's grid (§7) has "Same Trick As…". It lists the
+  user's other tricks, then every other canonical name the vocabulary
+  has — the farm's whole list — each with its other spellings, under a
+  search field. Picking one asks which of the two names to keep.
+- **On the device, at once.** The two are then one trick: the gallery,
+  counts, achievements, personal ranking and suggestions read every
+  spelling of the merged trick as the kept one's. This is the farm's
+  vocabulary with the user's synonyms applied in order
+  (`VocabularyStore.current`, `TrickVocabulary.merging`), the same
+  whole-trick merge the farm's maintainer makes (`BACKEND_DESIGN.md`
+  §1.2.29). The grid then shows the merged trick under the kept name.
+  Names on clips don't change. The merged counts can earn a level or
+  milestone at once; separating them takes nothing earned away (§6.4).
+- **Undo.** The sheet lists the names the user grouped under the trick,
+  each with "Separate", which removes that synonym.
+- **The farm's vocabulary stays the farm's.** A contribution's names are
+  checked against it alone (`VocabularyStore.farm`): a name only a
+  synonym knows still goes as a candidate (`CONTRIBUTION_DESIGN.md`
+  §4), a pick of it is `typed`, and "Did you mean" never offers a
+  canonical name only the user's synonyms have.
+- **A suggestion to the farm.** While Contribute named clips is on, the
+  pair goes to `POST /api/labels/synonyms` as a suggestion, with no
+  clip, pose or source: at once when signed in and agreed, otherwise at
+  the next launch or return to the foreground. Turning contributing off
+  drops pairs not yet sent; a pair made with it off stays on the device.
+  The farm changes nothing until its maintainer merges the pair, and
+  then every app gets the merge with the vocabulary; the user's own
+  synonym then changes nothing more. Separating sends nothing: a sent
+  pair expires on the farm after 30 days.
+- Kept in `Application Support/turnip-synonyms.json`, in device backups.
+- *(Judgment calls: a merge is of whole tricks, as the farm's is; it
+  applies on the device without waiting for the farm; and the farm
+  applies it for everyone only through its maintainer.)*
 
 ---
 
@@ -557,6 +617,9 @@ as tiles (`AchievementsView`):
   back button hidden until "Cancel". A bar along the bottom deletes the
   marked clips together, with the Clip view's confirmation (§5.2); with
   none of the trick's clips left the grid goes back.
+- "Same Trick As…", a merge glyph beside "Select" (on iPhone Duo, down
+  the vertical bar), marks the trick as one with another (§4.5); the
+  grid then shows the two together.
 - A filter switches between the user's clips (default) and the clips
   marked someone else ("Me" / "Someone else"): each clip is under
   exactly one of the two.
@@ -640,7 +703,8 @@ rendering is a required-reason API (PRIVACY.md).
   seed, so the app keeps "Data Not Collected" and PRIVACY.md's "no
   calls to any Turnip-controlled server" literally true. Phase 2b adds
   the public vocabulary fetch (no identifiers, no session) and opt-in
-  contribution; Phase 3 adds `trained_in` reads, which carry the source
+  contribution, which also sends the user's synonym pairs as
+  suggestions (§4.5); Phase 3 adds `trained_in` reads, which carry the source
   key of a source the user already contributed.
 - **New data on the device:** the library — names, `is_me`, favorites,
   spots, dates, copied locations, pose sequences — in

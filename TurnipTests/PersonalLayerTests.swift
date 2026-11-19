@@ -1099,6 +1099,17 @@ final class NameClipsPersonalizationTests: XCTestCase {
         XCTAssertEqual(seenGiven.map(\.name), ["cork"])
     }
 
+    /// The user's recent names ride along after whatever ranking gives.
+    func testTheViewModelAddsTheUsersRecentNames() {
+        let viewModel = ClipListViewModel(
+            items: [item(1)], windowEmbeddings: [],
+            asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")), assetIdentifier: "source", duration: 30,
+            rankNames: { _, _, used, _ in PersonalSuggestions(used: used, nearest: ["flash kick"]) },
+            recentNames: { ["raiz", "cork"] })
+        let suggestions = viewModel.suggestions(for: viewModel.clipsToName[0])
+        XCTAssertEqual(suggestions, PersonalSuggestions(used: [], nearest: ["flash kick"], recent: ["raiz", "cork"]))
+    }
+
     /// A pre-fill is the central model's alone: ranking runs after it, and adds no chip.
     func testRankingNeverPreFillsAName() {
         let viewModel = model(

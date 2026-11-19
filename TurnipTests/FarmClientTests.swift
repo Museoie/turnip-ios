@@ -105,6 +105,21 @@ final class FarmClientTests: XCTestCase {
         XCTAssertEqual(body["names"] as? [String], ["raiz", "butterfly twist"])
     }
 
+    func testSuggestedSynonymsGoOnTheirOwn() async throws {
+        let farm = ScriptedFarm([.init(status: 202, body: "")])
+        try await farm.client.suggestSynonyms(
+            [TrickSynonym(name: "cartwheel full twist", sameAs: "cartfull")], session: "tok")
+
+        let request = try XCTUnwrap(farm.requests.first)
+        XCTAssertEqual(request.url?.absoluteString, "https://farm.test/api/labels/synonyms")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+        let body = try json(request)
+        XCTAssertEqual(body.count, 1)
+        XCTAssertEqual(
+            body["synonyms"] as? [[String: String]], [["name": "cartwheel full twist", "same_as": "cartfull"]])
+    }
+
     /// With no storefront to read, `storefront_country` is left out rather than sent empty.
     func testConsentSendsTheDisclosureVersionAndTheAgeConfirmation() async throws {
         let farm = ScriptedFarm([.init(status: 204, body: "")])

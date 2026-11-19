@@ -243,8 +243,9 @@ What a build with `TURNIP_FARM_ENDPOINT` set sends to the farm
 (`CONTRIBUTION_DESIGN.md` §5, §8), all over HTTPS through an ephemeral
 `URLSession` (no cache, no cookies on disk):
 
-- **The vocabulary fetch**, `GET /api/taxonomy/current`, when Name Clips
-  opens, at most every six hours. No identifier and no session go with it.
+- **The vocabulary fetch**, `GET /api/taxonomy/current`, at launch, on
+  every return to the foreground and when Name Clips opens, at most every
+  six hours. No identifier and no session go with it.
 - **Sign in with Apple**, from Settings or the contribution sheet, at the
   user's tap. No name or email scope is requested; the farm sees the
   identity token, whose only claim it keeps is the per-app `sub`.
@@ -257,7 +258,9 @@ What a build with `TURNIP_FARM_ENDPOINT` set sends to the farm
   pose frames, its trick names from the shared vocabulary with how each
   was given, the session token and the source's key. A typed name the
   vocabulary lacks goes on its own, with no clip, pose or source, as a
-  suggestion for the vocabulary (`POST /api/labels/candidates`).
+  suggestion for the vocabulary (`POST /api/labels/candidates`), and so
+  do two names the user marked as one trick
+  (`POST /api/labels/synonyms`, `PROFILE_DESIGN.md` §4.5).
   Never the video, a thumbnail, whether a clip shows the user, or a
   location.
 - **Account deletion**, from Settings: `DELETE /api/sources/:id` for every
@@ -268,7 +271,9 @@ credential-state check), the Apple user ID that agreed to contribute and one
 random key per contributed source live in the Keychain, readable after first
 unlock and never migrated off the device. So does the clip library's device
 mark (below), a random value that names no account and is never sent.
-The fetched vocabulary is cached in `Application Support/turnip-vocabulary.json`.
+The fetched vocabulary is cached in `Application Support/turnip-vocabulary.json`,
+and the user's synonyms, with the pairs not yet sent, are kept in
+`Application Support/turnip-synonyms.json`.
 A contribution waiting to send is kept in `Application Support/ContributionOutbox/`,
 with its pose keypoints, until the farm holds it. The folder is excluded from
 device backups, and turning Contribute named clips off or deleting the account

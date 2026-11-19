@@ -146,7 +146,7 @@ extension Array where Element == NamePrototype {
 
 /// What the personal layer adds to a clip's suggestions: the names used on its video, in the order
 /// they should show, the names to show after them, and the model's below-bar names after those
-/// (`docs/PERSONALIZATION_DESIGN.md` §4.2's tiers 1–3).
+/// (`docs/PERSONALIZATION_DESIGN.md` §4.2's tiers 1–3), then the user's recent names.
 struct PersonalSuggestions: Equatable, Sendable {
     var used: [String]
     var nearest: [String] = []
@@ -154,6 +154,17 @@ struct PersonalSuggestions: Equatable, Sendable {
     /// one the model proposed nothing below the bar for; clips saved before this was recorded
     /// carry none.
     var belowBar: [String] = []
+    /// The names the user gave saved clips, the most recent first (`ClipLibrary.recentNames`). The
+    /// user's own history rather than anything the model says, so a blind clip keeps them, as it
+    /// keeps tier 1.
+    var recent: [String] = []
+
+    /// These suggestions with the user's recent names after them.
+    func withRecent(_ names: [String]) -> PersonalSuggestions {
+        var suggestions = self
+        suggestions.recent = names
+        return suggestions
+    }
 }
 
 /// Name ranking as it stands: the user's prototypes under one model, built only once the gate has

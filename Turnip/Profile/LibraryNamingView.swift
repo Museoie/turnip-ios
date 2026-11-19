@@ -176,7 +176,8 @@ struct LibraryNamingView: View {
                     ClipNamingFields(
                         names: clip.names, isMe: clip.isMe,
                         suggested: PersonalLayer.shared.suggestions(
-                            forSaved: clip, used: library.namesUsed(alongside: clip)),
+                            forSaved: clip, used: library.namesUsed(alongside: clip)
+                        ).withRecent(library.recentNames),
                         vocabulary: vocabulary.current, draft: isCurrent ? $draft : .constant(""),
                         isFieldFocused: $isFieldFocused, isEnabled: isCurrent, commitDraft: commitDraft,
                         actions: actions(for: clip.id))

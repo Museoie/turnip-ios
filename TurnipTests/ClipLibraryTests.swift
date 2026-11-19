@@ -100,6 +100,49 @@ final class ClipLibraryTests: XCTestCase {
         XCTAssertEqual(spoken, [])
     }
 
+    // MARK: - Recent names
+
+    /// The names given most recently lead, by save or on the Profile's screens; a clip's later name
+    /// before its earlier one.
+    func testRecentNamesAreTheMostRecentlyGivenFirst() {
+        let library = makeLibrary()
+        let first = UUID()
+        library.record(save([savedClip(4, names: ["gainer"], id: first)]), sourceRecordedAt: recorded)
+        clock = clock.addingTimeInterval(60)
+        library.record(save([savedClip(4, names: ["hook"])], source: "source-2"), sourceRecordedAt: recorded)
+        XCTAssertEqual(library.recentNames, ["hook", "gainer"])
+
+        clock = clock.addingTimeInterval(60)
+        library.addName("scoot", origin: .typed, to: first)
+        XCTAssertEqual(library.recentNames, ["scoot", "gainer", "hook"])
+        XCTAssertEqual(makeLibrary().recentNames, ["scoot", "gainer", "hook"], "the order survives a relaunch")
+    }
+
+    /// Spellings of one trick take one place, under the one given last; a combo stays whole.
+    func testRecentNamesGiveEachTrickOnePlace() {
+        let library = makeLibrary()
+        library.record(save([savedClip(4, names: ["cork"])]), sourceRecordedAt: recorded)
+        clock = clock.addingTimeInterval(60)
+        library.record(save([savedClip(4, names: ["Corkscrew", "hook - scoot"])], source: "source-2"),
+                       sourceRecordedAt: recorded)
+        XCTAssertEqual(library.recentNames, ["hook - scoot", "Corkscrew"])
+    }
+
+    /// A save again with the same names gives none; a name taken off every clip drops out.
+    func testRecentNamesKeepOnlyNamesGivenAndStillOnAClip() {
+        let library = makeLibrary()
+        let first = UUID()
+        library.record(save([savedClip(4, names: ["gainer"], id: first)]), sourceRecordedAt: recorded)
+        clock = clock.addingTimeInterval(60)
+        library.record(save([savedClip(4, names: ["hook"])], source: "source-2"), sourceRecordedAt: recorded)
+        clock = clock.addingTimeInterval(60)
+        library.record(save([savedClip(4, names: ["gainer"], id: first)]), sourceRecordedAt: recorded)
+        XCTAssertEqual(library.recentNames, ["hook", "gainer"])
+
+        library.removeName(ClipName(name: "gainer", origin: .typed), from: first)
+        XCTAssertEqual(library.recentNames, ["hook"])
+    }
+
     // MARK: - The file
 
     /// A file this build can't read is moved aside, never overwritten: a later build, or a fix,

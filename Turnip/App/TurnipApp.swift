@@ -90,6 +90,13 @@ struct TurnipApp: App {
                 Task { await ContributionRegion.turnOffContributingIfUnavailable(settings: .shared) }
                 ContributionOutbox.shared.resume()
                 Task { await PersonalLayer.shared.start() }
+                // The farm's trick names, so the Profile groups by the newest, and the user's
+                // synonyms still waiting to go to it (`docs/PROFILE_DESIGN.md` §4.2, §4.5).
+                Task {
+                    await VocabularyStore.shared.refreshIfStale()
+                    await VocabularyStore.shared.sendSynonyms(
+                        account: .shared, contributes: TurnipSettingsStore.shared.contributesClips)
+                }
             }
             // Forced here, not just in `ContentView`, so the DEBUG-only screenshot
             // harnesses above — which never mount `ContentView` — render dark too.
