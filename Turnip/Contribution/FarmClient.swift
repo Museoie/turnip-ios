@@ -147,6 +147,14 @@ struct FarmClient: Sendable {
         _ = try await send("POST", "api/labels/candidates", body: body, session: session)
     }
 
+    /// `POST /api/labels/synonyms`: pairs of names the user marked as one trick, as suggestions
+    /// for the vocabulary, with no clip or pose (`BACKEND_DESIGN.md` §1.2.29). The farm skips pairs
+    /// its vocabulary already has as one trick.
+    func suggestSynonyms(_ pairs: [TrickSynonym], session: String) async throws {
+        let body = SynonymCandidatesRequest(synonyms: pairs)
+        _ = try await send("POST", "api/labels/synonyms", body: body, session: session)
+    }
+
     func source(id: String, key: String, session: String) async throws -> RemoteSource {
         try await decode(send("GET", "api/sources/\(id)", session: session, sourceKey: key))
     }
@@ -345,6 +353,10 @@ struct ClipSubmission: Encodable, Equatable, Sendable {
 
 private struct LabelCandidatesRequest: Encodable {
     let names: [String]
+}
+
+private struct SynonymCandidatesRequest: Encodable {
+    let synonyms: [TrickSynonym]
 }
 
 private struct ClipsRequest: Encodable {

@@ -67,9 +67,10 @@ sequences, never from video.
 - **The outbox** (§5.3): each contribution waits on disk and uploads in the
   background, picking up by itself after an interruption. Settings says
   what is still waiting.
-- **The vocabulary fetch** (`GET /api/taxonomy/current`) when Name Clips
-  opens, at most every six hours, kept in `Application Support/` and used
-  over the bundled seed when its `taxonomy_version` is greater.
+- **The vocabulary fetch** (`GET /api/taxonomy/current`) at launch, on
+  every return to the foreground and when Name Clips opens, at most every
+  six hours, kept in `Application Support/` and used over the bundled
+  seed when its `taxonomy_version` is greater.
 - **Where the farm is**: the `TURNIP_FARM_ENDPOINT` Info.plist key. It is
   apart from `TURNIP_MODEL_UPDATE_ENDPOINT`, so pointing contribution at
   the farm doesn't also start the model poll, which waits on a promoted
@@ -405,6 +406,20 @@ here is what contribution adds:
   the vocabulary. *(Judgment call: the disclosure version stays 3. A
   name was already part of what is sent, and a suggestion carries less
   than a label did.)*
+- **Synonyms are suggested too** (`PROFILE_DESIGN.md` §4.5,
+  `BACKEND_DESIGN.md` §1.2.29). Two tricks the user marks as one while
+  Contribute named clips is on go as a pair to
+  `POST /api/labels/synonyms`, with no clip, pose or source, at once
+  when signed in and agreed, else at the next launch or foreground. The
+  outbox checks names against the farm's vocabulary alone
+  (`VocabularyStore.farm`), never the user's synonyms, so a merge
+  changes no label until the farm's maintainer makes it. A pair the
+  farm refuses is dropped; one a farm without the endpoint answers
+  `404` for waits, as it does through a rate limit or an outage, so the
+  app and the farm can ship in either order. Turning contributing off
+  drops pairs not yet sent.
+  *(Judgment call: the disclosure version stays 3, as for candidates: a
+  pair is two names, which were already part of what is sent.)*
 - **Origin.** Each name is sent with the `origin` the clip library
   recorded when it was given: `typed`, `vocabulary` (picked from the
   suggestions), or `model` (pre-filled by the trick model and kept)
@@ -798,6 +813,8 @@ switch, and the confirmation sheet's Confirm once per account, §3.3):
   clips marked as the user only
 - a typed name the vocabulary lacks, on its own as a suggestion for
   the vocabulary, with no clip, pose or source (§4)
+- two names the user marked as one trick, on their own as a suggestion
+  for the vocabulary, with no clip, pose or source (§4)
 - label provenance — each name's `origin`, and the proposing model
   version, its pre-filled names, and the blind-sample flag per clip:
   how a label was made, never who made it

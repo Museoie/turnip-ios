@@ -111,7 +111,8 @@ final class ContributionOutbox: ObservableObject {
         account: .shared, settings: .shared,
         store: ContributionOutboxStore(directory: ContributionOutboxStore.defaultDirectory),
         savedClip: { ClipLibrary.shared.clip($0) },
-        vocabulary: { VocabularyStore.shared.current })
+        // The farm's own: a name only the user's synonyms know isn't one the farm accepts.
+        vocabulary: { VocabularyStore.shared.farm })
 
     /// What a failed attempt means for its job.
     enum Disposition: Equatable {

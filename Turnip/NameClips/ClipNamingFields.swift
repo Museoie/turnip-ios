@@ -16,7 +16,7 @@ struct ClipNamingFields: View {
     let names: [ClipName]
     let isMe: Bool
     /// What the suggestions lead with: the names already given on this clip's video, the user's
-    /// own names closest to it, and the model's below-bar names for it.
+    /// own names closest to it, the model's below-bar names for it, and the user's recent names.
     let suggested: PersonalSuggestions
     let vocabulary: TrickVocabulary
     @Binding var draft: String
@@ -125,13 +125,14 @@ enum NamingSuggestions {
     private static let limit = 8
 
     /// Names used on this video first, then the user's own names closest to the clip, then the
-    /// model's below-bar names, then the vocabulary's matches for what is typed, led by a
-    /// near-miss correction; none the clip already has.
+    /// model's below-bar names, then the names the user gave other clips most recently, then the
+    /// vocabulary's matches for what is typed, led by a near-miss correction; none the clip already
+    /// has.
     static func ordered(
         draft: String, given: [ClipName], suggested: PersonalSuggestions, vocabulary: TrickVocabulary
     ) -> [String] {
         let query = TrickVocabulary.normalized(draft)
-        let personal = (suggested.used + suggested.nearest + suggested.belowBar).filter {
+        let personal = (suggested.used + suggested.nearest + suggested.belowBar + suggested.recent).filter {
             query.isEmpty || TrickVocabulary.normalized($0).contains(query)
         }
         let corrected = vocabulary.suggestedCorrection(for: draft).map { [$0] } ?? []
@@ -143,8 +144,9 @@ enum NamingSuggestions {
     }
 
     /// A pick from the vocabulary is `vocabulary`. A name the vocabulary doesn't know was typed
-    /// once, on this video or an earlier one, so it stays `typed`.
+    /// once, on this video or an earlier one, so it stays `typed`, and so does one only the user's
+    /// own synonyms know: the farm's vocabulary doesn't have it.
     static func origin(of name: String, vocabulary: TrickVocabulary) -> LabelOrigin {
-        vocabulary.canonicalName(for: name) == nil ? .typed : .vocabulary
+        vocabulary.canonicalName(for: name) == nil || vocabulary.isPersonal(name) ? .typed : .vocabulary
     }
 }

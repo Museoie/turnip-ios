@@ -50,6 +50,10 @@ struct LibraryClip: Codable, Hashable, Identifiable, Sendable {
     /// save's date when Photos had no recording date. Sessions and the gallery's order read it.
     var recordedAt: Date
     let savedAt: Date
+    /// When a name was last given to the clip, by its save or on the Profile's screens: what orders
+    /// the user's recent names (`ClipLibrary.recentNames`). `nil` for a clip saved before the
+    /// library kept it, which counts from `savedAt`.
+    var namedAt: Date?
 
     var duration: TimeInterval { endTime - startTime }
 }
@@ -115,7 +119,9 @@ final class ClipLibrary: ObservableObject {
 
     static let schemaVersion = 1
 
-    @Published private(set) var clips: [LibraryClip] = []
+    @Published private(set) var clips: [LibraryClip] = [] {
+        didSet { recentNamesByTime = nil }
+    }
     @Published private(set) var sources: [LibrarySource] = []
     @Published private(set) var earned: [EarnedAchievement] = []
     /// Trashed proposals on the poses the library keeps, for the personal layer. Each goes with
@@ -131,6 +137,9 @@ final class ClipLibrary: ObservableObject {
     /// Which device decided whether the records saved before the library stamped them were saved
     /// there, and what it decided (`LibraryDevice.legacySavedHere`).
     private var legacyOrigin: LegacyOrigin?
+    /// Every name on a clip, each spelling once, the most recently given first: `recentNames`
+    /// before it groups by trick, worked out again only once the clips change.
+    private var recentNamesByTime: [String]?
 
     private let fileURL: URL?
     let poseStore: SourcePoseStore
@@ -216,6 +225,38 @@ final class ClipLibrary: ObservableObject {
             .filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
     }
 
+    /// The names the user has given saved clips, the most recently given first, one per trick: the
+    /// naming suggestions offer them after the names on the clip's own video, so a name used on an
+    /// earlier video is a tap away (`docs/PROFILE_DESIGN.md` §4.2). A name resolves to its trick as
+    /// the gallery groups it, under today's vocabulary, so `cork` and `corkscrew` take one place,
+    /// spelled as it was given last. A combo stays one name. Only names still on a clip count, so a
+    /// name removed from every clip drops out.
+    var recentNames: [String] {
+        let vocabulary = self.vocabulary()
+        var seen = Set<String>()
+        return namesByTime.filter { name in
+            let key = vocabulary.canonicalName(for: name).map(TrickVocabulary.normalized)
+                ?? TrickVocabulary.normalized(name)
+            return seen.insert(key).inserted
+        }
+    }
+
+    private var namesByTime: [String] {
+        if let recentNamesByTime { return recentNamesByTime }
+        var seen = Set<String>()
+        let names = clips
+            .sorted { lhs, rhs in
+                let lhsAt = lhs.namedAt ?? lhs.savedAt, rhsAt = rhs.namedAt ?? rhs.savedAt
+                return lhsAt != rhsAt ? lhsAt > rhsAt : lhs.id.uuidString < rhs.id.uuidString
+            }
+            // A clip's later names were given after its earlier ones.
+            .flatMap { $0.names.reversed() }
+            .map(\.name)
+            .filter { seen.insert(TrickVocabulary.normalized($0)).inserted }
+        recentNamesByTime = names
+        return names
+    }
+
     // MARK: - Writing
 
     /// Records a save: the video, and each clip with the asset Photos gave it and the names it had.
@@ -255,7 +296,9 @@ final class ClipLibrary: ObservableObject {
                 poseID: saved.poseID ?? existing?.poseID,
                 recordedAt: source.recordedAt?.addingTimeInterval(saved.window.startTime) ?? existing?.recordedAt
                     ?? savedAt,
-                savedAt: existing?.savedAt ?? savedAt)
+                savedAt: existing?.savedAt ?? savedAt,
+                // A save again with the same names gives none.
+                namedAt: existing.map { $0.names == saved.names } == true ? existing?.namedAt : savedAt)
             if let index = clips.firstIndex(where: { $0.id == saved.id }) {
                 clips[index] = clip
             } else {
@@ -274,7 +317,12 @@ final class ClipLibrary: ObservableObject {
 
     /// Adds a trick name to a saved clip, by the same rules as naming on Name Clips.
     func addName(_ name: String, origin: LabelOrigin, to id: UUID) {
-        update(id) { $0.names.addName(name, origin: origin) }
+        let namedAt = now()
+        update(id) { clip in
+            guard clip.names.addName(name, origin: origin) else { return false }
+            clip.namedAt = namedAt
+            return true
+        }
     }
 
     func removeName(_ name: ClipName, from id: UUID) {
@@ -287,7 +335,12 @@ final class ClipLibrary: ObservableObject {
 
     /// "Did you mean": the vocabulary's spelling in place of a typed name.
     func replaceName(_ name: ClipName, with canonical: String, in id: UUID) {
-        update(id) { $0.names.replaceName(name, with: canonical) }
+        let namedAt = now()
+        update(id) { clip in
+            guard clip.names.replaceName(name, with: canonical) else { return false }
+            clip.namedAt = namedAt
+            return true
+        }
     }
 
     func setIsMe(_ isMe: Bool, for id: UUID) {

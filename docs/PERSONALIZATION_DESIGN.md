@@ -177,7 +177,9 @@ A segment's embedding is the same rule over the segment's frames.
   mean (§3) of the embeddings of the user's clips carrying that key,
   renormalized. A key needs at least three clips to have one. A combo
   clip adds its embedding to each of its names' prototypes.
-  *(Judgment call on three.)*
+  *(Judgment call on three.)* Keys follow the vocabulary the app holds,
+  the user's own synonyms included (`PROFILE_DESIGN.md` §4.5), so a
+  change to it rebuilds the prototypes as a change to the library does.
 - **Ranking.** For the clip being named, the layer computes cosine
   similarity to every prototype. The suggestions of `PROFILE_DESIGN.md`
   §4.2 then come in this order:
@@ -187,7 +189,9 @@ A segment's embedding is the same rule over the segment's frames.
      the canonical name, or for a name that maps to none, the user's
      most recent spelling of it;
   3. the model's below-bar names (`MODEL_CONTRACT.md` §3.3 step 4);
-  4. the rest of the vocabulary.
+  4. the user's recent names from every video (`PROFILE_DESIGN.md`
+     §4.2);
+  5. the rest of the vocabulary.
 
   *(Judgment call on three, and on placing tier 2 below the video's
   own names: a session is mostly repeats.)*
@@ -196,7 +200,8 @@ A segment's embedding is the same rule over the segment's frames.
   2 as any other pick.
 - **Withheld on blind clips** (`suggestions_withheld`): tiers 2 and 3
   are dropped and tier 1 keeps its plain order (`MODEL_CONTRACT.md`
-  §3.3 step 5).
+  §3.3 step 5). Tier 4 stays: it is the user's own history, not the
+  model's.
 - **Never pre-fills.** A clip's pre-filled chips are the central
   model's confident names and nothing else.
 - **Which clips get it:** any clip with an embedding. That means

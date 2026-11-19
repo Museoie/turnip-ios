@@ -194,6 +194,8 @@ final class ClipListViewModel: ObservableObject {
     private let recordSaved: RecordSavedClips
     private let storePose: StoreSourcePose
     private let rankNames: RankClipNames
+    /// The names the user gave saved clips, the most recent first (`ClipLibrary.recentNames`).
+    private let recentNames: @MainActor () -> [String]
     private let readTorsoColor: ReadTorsoColor
     /// The pose stored for each person with a saved clip, `nil` standing for a clip with no person:
     /// a retry after a partial failure keeps what the first run stored.
@@ -271,6 +273,7 @@ final class ClipListViewModel: ObservableObject {
         rankNames: @escaping RankClipNames = {
             PersonalLayer.shared.suggestions(for: $0, proposal: $1, used: $2, given: $3)
         },
+        recentNames: @escaping @MainActor () -> [String] = { ClipLibrary.shared.recentNames },
         readTorsoColor: @escaping ReadTorsoColor = { await TorsoColorReader().color(of: $0, in: $1) },
         makeDirectory: @escaping @Sendable () -> URL = defaultExportDirectory,
         settingsProvider: @escaping @MainActor () -> TurnipSettings = { TurnipSettingsStore.shared.current },
@@ -294,6 +297,7 @@ final class ClipListViewModel: ObservableObject {
         self.recordSaved = recordSaved
         self.storePose = storePose
         self.rankNames = rankNames
+        self.recentNames = recentNames
         self.readTorsoColor = readTorsoColor
         self.makeDirectory = makeDirectory
         self.settingsProvider = settingsProvider
@@ -750,9 +754,9 @@ extension ClipListViewModel {
         windowEmbeddings.first { $0.personID == item.personID }?.clipEmbedding(of: item.window)
     }
 
-    /// What a clip's suggestions lead with.
+    /// What a clip's suggestions lead with, and the user's recent names after.
     func suggestions(for item: ClipListItem) -> PersonalSuggestions {
-        rankNames(embedding(of: item), item.proposal, namesUsedOnVideo, item.names)
+        rankNames(embedding(of: item), item.proposal, namesUsedOnVideo, item.names).withRecent(recentNames())
     }
 
     /// Adds a trick name to a clip, trimmed; a blank name, or one the clip already has in any

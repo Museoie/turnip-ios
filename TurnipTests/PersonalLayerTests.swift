@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import XCTest
 @testable import Turnip
 
@@ -83,12 +84,15 @@ final class PersonalLayerTests: XCTestCase {
     private func makeLayer(
         model: PoseEmbedder? = FakeModel(), activeVersion: (@Sendable (_ loads: Int) -> String?)? = nil,
         isTooHot: @escaping @Sendable () -> Bool = { false },
-        namingSettles: DispatchQueue.SchedulerTimeType.Stride = .seconds(600)
+        namingSettles: DispatchQueue.SchedulerTimeType.Stride = .seconds(600),
+        vocabulary: @escaping @MainActor () -> TrickVocabulary = { PersonalFixture.vocabulary },
+        vocabularyChanges: AnyPublisher<TrickVocabulary, Never>? = nil
     ) -> PersonalLayer {
         let counts = Counts()
         self.counts = counts
         return PersonalLayer(
-            library: library, settings: settings, vocabulary: { PersonalFixture.vocabulary }, cacheStore: cacheStore,
+            library: library, settings: settings, vocabulary: vocabulary, vocabularyChanges: vocabularyChanges,
+            cacheStore: cacheStore,
             activeVersion: { activeVersion.map { $0(counts.loadCount) } ?? model?.version },
             loadModel: {
                 counts.addLoad()
@@ -361,6 +365,35 @@ final class PersonalLayerTests: XCTestCase {
             modelVersion: "v1", suggestedNames: [], belowBarNames: ["gainer"],
             suggestionsWithheld: true)
         XCTAssertEqual(layer.suggestions(forSaved: clip, used: ["hook"]), PersonalSuggestions(used: ["hook"]))
+    }
+
+    /// Two tricks marked as one regroup the prototypes with no change to the library
+    /// (`docs/PROFILE_DESIGN.md` §4.5), and separating them splits them again.
+    func testAVocabularyChangeRegroupsThePrototypes() async throws {
+        var current = PersonalFixture.vocabulary
+        let changes = CurrentValueSubject<TrickVocabulary, Never>(current)
+        let layer = makeLayer(vocabulary: { current }, vocabularyChanges: changes.eraseToAnyPublisher())
+        await layer.start()
+        saveFlashKicks(10, layer: layer)
+        for clip in library.clips.prefix(4) {
+            library.addName("twist", origin: .typed, to: clip.id)
+        }
+        await layer.refresh().value
+        XCTAssertEqual(Set(layer.ranking?.prototypes.map(\.key) ?? []), ["flash kick", "twist"])
+
+        current = PersonalFixture.vocabulary.merging([TrickSynonym(name: "twist", sameAs: "flash kick")])
+        changes.send(current)
+        for _ in 0..<200 where layer.ranking?.prototypes.count != 1 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertEqual(Set(layer.ranking?.prototypes.map(\.key) ?? []), ["flash kick"])
+
+        current = PersonalFixture.vocabulary
+        changes.send(current)
+        for _ in 0..<200 where layer.ranking?.prototypes.count != 2 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertEqual(Set(layer.ranking?.prototypes.map(\.key) ?? []), ["flash kick", "twist"])
     }
 
     /// Names change after a save, and nothing but the library knows.
@@ -1097,6 +1130,17 @@ final class NameClipsPersonalizationTests: XCTestCase {
         XCTAssertEqual(seenProposal, proposal)
         XCTAssertEqual(seenUsed, ["cork"])
         XCTAssertEqual(seenGiven.map(\.name), ["cork"])
+    }
+
+    /// The user's recent names ride along after whatever ranking gives.
+    func testTheViewModelAddsTheUsersRecentNames() {
+        let viewModel = ClipListViewModel(
+            items: [item(1)], windowEmbeddings: [],
+            asset: AVURLAsset(url: URL(fileURLWithPath: "/dev/null")), assetIdentifier: "source", duration: 30,
+            rankNames: { _, _, used, _ in PersonalSuggestions(used: used, nearest: ["flash kick"]) },
+            recentNames: { ["raiz", "cork"] })
+        let suggestions = viewModel.suggestions(for: viewModel.clipsToName[0])
+        XCTAssertEqual(suggestions, PersonalSuggestions(used: [], nearest: ["flash kick"], recent: ["raiz", "cork"]))
     }
 
     /// A pre-fill is the central model's alone: ranking runs after it, and adds no chip.

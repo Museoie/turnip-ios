@@ -51,3 +51,28 @@ enum LabelCandidates {
         return Array(usable.prefix(maximumCount))
     }
 }
+
+/// What `POST /api/labels/synonyms` accepts (`BACKEND_DESIGN.md` §7.3): 1 to 20 pairs, each name 1 to
+/// 64 characters after trimming, counted as the farm counts them, and the two names different as
+/// the farm compares them.
+enum SynonymCandidates {
+    static let maximumCount = 20
+
+    /// `pairs` with each name trimmed, without a pair the farm would refuse or one already here
+    /// (ignoring case and spacing), and at most `maximumCount` of them.
+    static func batch(_ pairs: [TrickSynonym]) -> [TrickSynonym] {
+        var seen = Set<[String]>()
+        let usable = pairs.compactMap { pair -> TrickSynonym? in
+            let name = TrickVocabulary.farmTrimmed(pair.name)
+            let sameAs = TrickVocabulary.farmTrimmed(pair.sameAs)
+            let key = [TrickVocabulary.farmNormalized(name), TrickVocabulary.farmNormalized(sameAs)]
+            guard !name.isEmpty, !sameAs.isEmpty, key[0] != key[1],
+                  name.utf16.count <= LabelCandidates.maximumLength,
+                  sameAs.utf16.count <= LabelCandidates.maximumLength,
+                  seen.insert(key).inserted
+            else { return nil }
+            return TrickSynonym(name: name, sameAs: sameAs)
+        }
+        return Array(usable.prefix(maximumCount))
+    }
+}

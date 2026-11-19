@@ -6,6 +6,9 @@ import SwiftUI
 /// "Select" turns the grid into a selection, as Photos does: a tile tap marks or unmarks it, the
 /// back button stands down until "Cancel", and a bar along the bottom removes the marked clips
 /// from the Profile together, asking first whether their videos leave Photos too.
+///
+/// "Same Trick As…" (`TrickSynonymSheet`) marks this trick as one with another; the screen then
+/// shows the two together, under the name the user kept.
 struct TrickClipsView: View {
     let trickKey: String
     let filter: TrickGallery.Filter
@@ -20,17 +23,34 @@ struct TrickClipsView: View {
     @State private var selection: Set<UUID> = []
     @State private var removalPrompt: LibraryClipRemovalPrompt?
     @State private var removalFailure: String?
+    @State private var isShowingSynonyms = false
+    /// The trick "Same Trick As…" was opened for, held while the sheet is up: a merge or a
+    /// separate made in it changes `group` under it.
+    @State private var synonymSheetTrick: Trick?
+    /// The trick this one was merged into on this screen, which it shows from then on.
+    @State private var mergedKey: String?
     /// iPhone Duo's vertical bar, which the bar's items go down instead.
     @Environment(\.verticalBar) private var verticalBar
 
     private static let spacing: CGFloat = 2
     private let columns = Array(repeating: GridItem(.flexible(), spacing: spacing), count: 3)
 
+    private var key: String { mergedKey ?? trickKey }
+
     /// Read from the library each time, so a clip renamed or deleted on the Clip view leaves this
     /// grid when it comes back.
     private var group: TrickGallery.Group? {
         TrickGallery.groups(of: library.clips, filter: filter, vocabulary: vocabulary.current)
-            .first { $0.trick.key == trickKey }
+            .first { $0.trick.key == key }
+    }
+
+    /// Every trick the user's clips resolve to, under either filter, the gallery's order.
+    private var ownTricks: [Trick] {
+        var seen = Set<String>()
+        return TrickGallery.Filter.allCases
+            .flatMap { TrickGallery.groups(of: library.clips, filter: $0, vocabulary: vocabulary.current) }
+            .map(\.trick)
+            .filter { seen.insert($0.key).inserted }
     }
 
     /// The marked clips still in the grid: one renamed away or deleted meanwhile drops out.
@@ -43,7 +63,7 @@ struct TrickClipsView: View {
             return selectedClips.isEmpty
                 ? String(localized: "Select Clips") : String(localized: "\(selectedClips.count) Selected")
         }
-        return group?.trick.title ?? Trick(key: trickKey, name: trickKey).title
+        return group?.trick.title ?? Trick(key: key, name: key).title
     }
 
     var body: some View {
@@ -71,6 +91,15 @@ struct TrickClipsView: View {
         .navigationBarBackButtonHidden(isSelecting || verticalBar != nil)
         .toolbar {
             if verticalBar == nil, group != nil {
+                if !isSelecting {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: showSynonyms) {
+                            Image(systemName: "arrow.triangle.merge")
+                        }
+                        .accessibilityLabel("Same Trick As…")
+                        .accessibilityIdentifier("trick-clips-same-as")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(action: toggleSelecting) {
                         Text(isSelecting ? "Cancel" : "Select")
@@ -84,6 +113,12 @@ struct TrickClipsView: View {
             if !state.isSelecting {
                 ScrimIconButton(systemImage: "chevron.backward", accessibilityLabel: "Back to Profile", action: close)
                     .accessibilityIdentifier("trick-clips-back")
+            }
+            if state.hasClips && !state.isSelecting {
+                ScrimIconButton(
+                    systemImage: "arrow.triangle.merge", accessibilityLabel: "Same Trick As…",
+                    action: showSynonyms)
+                .accessibilityIdentifier("trick-clips-same-as")
             }
             if state.hasClips {
                 // Glyphs here, as the column is too narrow for the bar's words at larger text.
@@ -100,6 +135,13 @@ struct TrickClipsView: View {
             }
         }
         .libraryClipRemovalDialog($removalPrompt, remove: remove)
+        .sheet(isPresented: $isShowingSynonyms) {
+            if let trick = synonymSheetTrick {
+                TrickSynonymSheet(
+                    trick: trick, ownTricks: ownTricks, vocabulary: vocabulary,
+                    merged: { mergedKey = $0.key }, separated: afterSeparating)
+            }
+        }
         .errorAlert("Couldn't delete the videos", message: $removalFailure)
         .accessibilityIdentifier("trick-clips")
     }
@@ -150,6 +192,19 @@ struct TrickClipsView: View {
         .padding()
         .background(.thinMaterial)
         .accessibilityIdentifier("trick-clips-delete")
+    }
+
+    private func showSynonyms() {
+        synonymSheetTrick = group?.trick
+        isShowingSynonyms = synonymSheetTrick != nil
+    }
+
+    /// A separate that leaves the merged trick with none of the user's clips undoes the merge made
+    /// here: the grid goes back to the trick it opened on, and the sheet, about the other, closes.
+    private func afterSeparating() {
+        guard mergedKey != nil, group == nil else { return }
+        mergedKey = nil
+        isShowingSynonyms = false
     }
 
     private func toggleSelecting() {
