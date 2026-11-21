@@ -31,14 +31,14 @@ final class CameraLevelTests: XCTestCase {
     /// Held on its side or upside down, the phone is leveled against that way of holding it:
     /// the tilt is what is left over, never more than 45°.
     func testTheTiltIsMeasuredFromTheNearestWayOfHoldingThePhone() throws {
-        let cases: [(roll: Double, quarterTurns: Int, tilt: Double)] = [
-            (90, 1, 0), (95, 1, 5), (84, 1, -6), (-90, -1, 0), (-97, -1, -7),
-            (176, 2, -4), (-176, -2, 4), (40, 0, 40), (50, 1, -40)
+        let quarterTurnsAndTilts: [Double: (quarterTurns: Int, tilt: Double)] = [
+            90: (1, 0), 95: (1, 5), 84: (1, -6), -90: (-1, 0), -97: (-1, -7),
+            176: (2, -4), -176: (-2, 4), 40: (0, 40), 50: (1, -40)
         ]
-        for expected in cases {
-            let level = try XCTUnwrap(level(rolledClockwise: expected.roll))
-            XCTAssertEqual(level.quarterTurns, expected.quarterTurns, "\(expected.roll)°")
-            XCTAssertEqual(level.tiltDegrees, expected.tilt, accuracy: 1e-9, "\(expected.roll)°")
+        for (roll, expected) in quarterTurnsAndTilts {
+            let level = try XCTUnwrap(level(rolledClockwise: roll))
+            XCTAssertEqual(level.quarterTurns, expected.quarterTurns, "\(roll)°")
+            XCTAssertEqual(level.tiltDegrees, expected.tilt, accuracy: 1e-9, "\(roll)°")
         }
     }
 
