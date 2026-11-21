@@ -1,5 +1,10 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 37 · 2026-11-21 · Auto follow (§4) frames looser: about one athlete of
+air on each side of the athlete and below, and about two above, where it kept
+a tenth of the athlete's box. The camera (§1b) draws a grid of thirds over the
+picture and a level at its center, as the system camera does.*
+
 *Rev 36 · 2026-11-17 · Clip List (§3) gets a filter button, which opens a sheet
 with two filters over the grid: a confidence slider that hides the clips
 detection was least sure are tricks, and a shirt color that keeps only the
@@ -556,6 +561,17 @@ default empty state, so it never reads as "your library is empty."
   with clips of their own (`docs/MULTI_PERSON.md`), as on Processing (§2). The
   camera offers no choice between one person and everyone (Rev 31; until then
   a person control led the top-right group).
+- Over the picture, as the system camera draws them (Rev 37): a grid of
+  thirds, two thin white lines each way, and at its center a level. The level
+  is a line between two short marks. The marks lie along the screen, in
+  whichever of its four directions the phone is held nearest; the line lies
+  along the real horizon, so it leans from the marks by as much as the phone
+  is tilted and to the side the picture will lean. Within a degree of level
+  the line joins the marks and all three turn yellow, and stay so until the
+  tilt passes a degree and a half. With the phone nearer flat than upright
+  there is no level to show and it hides. Both are there before and during
+  a take, and neither is in the recording. The grid sits on the picture
+  itself, not the letterbox under it (`CameraPreviewView`, `CameraLevel`).
 - While recording, the phone's roll is written into the take as a timed
   metadata track (`RollTrack`, `RollTrackRecorder`): gravity from the motion
   sensors, sampled 30 times a second and expressed as the horizon's tilt in
@@ -1074,7 +1090,8 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
       crop no room, it frames the athlete with one keyframe and says "Nothing
       to follow" in a notice where "No horizon found" appears. The keyframe
       frames every body part the pose model located in the window, at the
-      clip's turn: the body parts' box plus a tenth of it on each side, slid
+      clip's turn: the body parts' box with Auto follow's margin around it
+      (below), slid
       inside the frame, and zoomed in to the frame's edge when that box can't
       fit the frame at the crop's ratio, so the crop shows video in every part
       of it, the rule detection's own crop rects follow (`DESIGN.md` step 6);
@@ -1128,8 +1145,17 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
       - **Manual zoom.** A pinch keeps the editor's own zoom range.
       - **Auto follow** writes positions and zoom from the pose, and one turn
         for the whole clip: the turn the crop has at the playhead. The zoom
-        keeps the static crop's padding, a tenth of the body's box on each side,
-        and follows the room the athlete needs over a moment rather than each
+        leaves about one athlete of air on each side of the athlete and below,
+        and about two above (Rev 37; until then the static crop's padding, a
+        tenth of the body's box on each side, which cut close around someone
+        moving). An athlete is the longer side of the body parts' box, so a
+        tuck or a layout counts about as tall as standing. It is what the crop
+        aims for, not a rule: the frame often has less to give, and then the
+        crop is as wide as the frame allows with the air it has split the same
+        way; and the crop may sit a little off it between keyframes. Export
+        renders a crop wider than the clip's own rect larger by as much, so
+        the looser framing costs no detail (`DESIGN.md` step 6). The zoom
+        follows the room the athlete needs over a moment rather than each
         limb: it widens before a reach would leave the crop, ignores small
         changes, and closes in more slowly than it opens. So it changes as the
         athlete comes toward the camera or moves away, not with every tuck and

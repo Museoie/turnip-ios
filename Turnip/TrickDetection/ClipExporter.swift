@@ -160,8 +160,10 @@ struct ClipExportTransform {
     /// At every moment the crop is a box of the marker's size (`cropRect`'s marker box at the
     /// follow crop's own shape, `FollowCrop.aspectRatio`)
     /// centered on the follow crop's center then, zoomed and turned about that center by the
-    /// zoom and turn then — the order the editor's preview draws. The output is that box, scaled
-    /// down whole only where it is larger than a 4K frame of its orientation (`outputScale`). The
+    /// zoom and turn then — the order the editor's preview draws. The output is that box, enlarged
+    /// whole where the crop zooms out past it, so its widest framing draws the source at its own
+    /// size (`detailScale`), and scaled down whole only where that is larger than a 4K frame of
+    /// its orientation (`outputScale`). The
     /// box is not capped at the source frame: a framing zoomed out past the box's own size, as
     /// Reset follow's whole frame on a reshaped or hand-added clip is, draws the source at
     /// its native size only in a box that large. Wherever the crop moves, it is
@@ -186,7 +188,8 @@ struct ClipExportTransform {
         guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
         let box = ClipEditorViewModel.markerBox(around: crop, aspectRatio: followCrop.aspectRatio).size
         guard box.width > 0, box.height > 0 else { return nil }
-        let fit = outputScale(for: box)
+        let detail = detailScale(for: followCrop)
+        let fit = detail * outputScale(for: CGSize(width: box.width * detail, height: box.height * detail))
         let toOutput = CGAffineTransform(scaleX: fit, y: fit)
         let renderSize = CGSize(
             width: evenDimension(box.width * fit), height: evenDimension(box.height * fit))
@@ -211,6 +214,18 @@ struct ClipExportTransform {
                 end: later.layerTransform)
         }
         return ClipExportTransform(renderSize: renderSize, layerTransform: first.layerTransform, ramps: ramps)
+    }
+
+    /// How much larger than its box a follow crop renders: 1 unless a framing zooms out past the
+    /// box, and then enough for the widest one to draw the source at its own size. Auto follow
+    /// leaves an athlete of air around the athlete (`CropMargin.follow`), wider than the clip's
+    /// crop rect on a trick done in place, and a box-sized output would throw those pixels away.
+    /// The zoom between two keyframes stays between theirs (`MonotoneCubic` never overshoots),
+    /// so the keyframes' own zooms bound it.
+    static func detailScale(for followCrop: FollowCrop) -> CGFloat {
+        let scales = followCrop.keyframes.isEmpty ? [followCrop.resting.scale] : followCrop.keyframes.map(\.scale)
+        guard let widest = scales.min(), widest > 0, widest < 1 else { return 1 }
+        return 1 / widest
     }
 
     /// The largest frame a follow crop renders at: 4K, which the camera itself records, held

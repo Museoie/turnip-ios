@@ -13,6 +13,10 @@ import Foundation
 /// samples off the main actor, and the capture view model starts and stops it from the main
 /// actor. On the simulator, which has no motion hardware, `start` is a no-op and the input
 /// simply records nothing.
+///
+/// The same motion updates feed the camera's level indicator (`observeGravity`,
+/// `CameraLevelMonitor`), which shows whenever the preview does, so they run while either a
+/// take or an observer wants them: one `CMMotionManager` for the app, as Core Motion asks.
 final class RollTrackRecorder: @unchecked Sendable {
     /// Where the picture-geometry a take was started with lives for the motion callback.
     private struct Geometry {
@@ -34,6 +38,13 @@ final class RollTrackRecorder: @unchecked Sendable {
     /// The end of the last group appended this take, so the next group starts after it: the
     /// input rejects a group that starts before the previous one ends.
     private var lastEnd: CMTime = .invalid
+    /// Whether the movie output is recording, for the take being sampled; `nil` between takes.
+    private var isRecording: (@Sendable () -> Bool)?
+    /// Who else is handed every gravity sample, take or no take.
+    private var gravityObserver: (@Sendable (CMAcceleration) -> Void)?
+    /// Whether the motion updates are running. Only `updateSampling` changes it, under the lock
+    /// it holds while it starts or stops them.
+    private var isSampling = false
 
     /// The capture input this recorder appends to, created once. The caller adds it to the
     /// session and connects it to the movie output inside the session's configuration.
@@ -55,20 +66,62 @@ final class RollTrackRecorder: @unchecked Sendable {
         guard motionManager.isDeviceMotionAvailable else { return }
         lock.lock()
         geometry = Geometry(videoRotationDegrees: videoRotationDegrees, isFrontCamera: isFrontCamera)
+        self.isRecording = isRecording
         lastEnd = .invalid
         lock.unlock()
-        motionManager.deviceMotionUpdateInterval = RollTrack.sampleInterval
-        motionManager.startDeviceMotionUpdates(to: motionQueue) { [weak self] motion, _ in
-            guard let self, let motion, isRecording() else { return }
-            self.append(gravity: motion.gravity)
-        }
+        updateSampling()
     }
 
     func stop() {
-        motionManager.stopDeviceMotionUpdates()
         lock.lock()
         geometry = nil
+        isRecording = nil
         lock.unlock()
+        updateSampling()
+    }
+
+    /// Hands every gravity sample to `observer`, on the motion queue, until it is replaced or
+    /// cleared with `nil`: with a take or without one.
+    func observeGravity(_ observer: (@Sendable (CMAcceleration) -> Void)?) {
+        guard motionManager.isDeviceMotionAvailable else { return }
+        lock.lock()
+        gravityObserver = observer
+        lock.unlock()
+        updateSampling()
+    }
+
+    /// Runs the motion updates while a take or an observer wants them, and stops them when
+    /// neither does. The lock is held across the start or stop itself: a take ends on the movie
+    /// output's delegate queue while the level's observer comes and goes on the main actor, and
+    /// a stop decided before a start but run after it would leave the updates off with
+    /// `isSampling` saying on, which nothing afterwards would correct. The motion handler takes
+    /// the lock too, but on the motion queue, never inside the start call.
+    private func updateSampling() {
+        lock.lock()
+        defer { lock.unlock() }
+        let isWanted = geometry != nil || gravityObserver != nil
+        guard isWanted != isSampling else { return }
+        isSampling = isWanted
+        guard isWanted else {
+            motionManager.stopDeviceMotionUpdates()
+            return
+        }
+        motionManager.deviceMotionUpdateInterval = RollTrack.sampleInterval
+        motionManager.startDeviceMotionUpdates(to: motionQueue) { [weak self] motion, _ in
+            guard let self, let motion else { return }
+            self.deliver(motion.gravity)
+        }
+    }
+
+    private func deliver(_ gravity: CMAcceleration) {
+        lock.lock()
+        let observer = gravityObserver
+        let isRecording = self.isRecording
+        lock.unlock()
+        observer?(gravity)
+        if isRecording?() == true {
+            append(gravity: gravity)
+        }
     }
 
     /// One gravity sample, stamped with the host clock at delivery — the few milliseconds

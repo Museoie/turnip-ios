@@ -60,7 +60,10 @@ store.
   without guessing from the picture; this is the device-motion API, which
   needs no `NSMotionUsageDescription` and raises no prompt (unlike the
   pedometer and activity APIs), and the angles live only inside the user's
-  own video file in their Photos library. If the user
+  own video file in their Photos library. While the camera's preview is on
+  screen, recording or not, the same gravity readings turn the level
+  indicator drawn over it (`Turnip/Camera/CameraLevel.swift`); those are
+  drawn and dropped, never written anywhere. If the user
   removes a saved clip from the Profile and asks for its video to go too, the
   video is deleted from Photos — a user-initiated, on-device change to their
   own library, not data leaving the device. Saved clips' trick names, whether each shows
@@ -144,8 +147,8 @@ require a manifest/signature. If a dependency is added, check both.
   the save fails, the file stays in `tmp/` rather than destroying the
   user's only copy of the footage.
 - Live pose inference reads frames from the same capture session, and
-  the roll track reads Core Motion's device motion (both described
-  above); neither adds a permission prompt of its own.
+  the roll track and the level indicator read Core Motion's device motion
+  (all described above); none adds a permission prompt of its own.
 
 ## Temp-file and cache hygiene
 

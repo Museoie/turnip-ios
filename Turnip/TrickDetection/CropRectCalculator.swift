@@ -29,6 +29,27 @@ struct NormalizedRect: Hashable, Sendable {
     }
 }
 
+/// Air around the athlete measured in athletes rather than in fractions of their box: what a
+/// crop that follows the athlete leaves around them (`AutoFollow`). The athlete's size is the
+/// longer side of their joint box in pixels, so someone laid out mid-flip counts as tall as
+/// they do standing.
+struct CropMargin: Hashable, Sendable {
+    /// The margin on the left, the right and below, in athlete sizes.
+    var athleteSizes: Float
+    /// How many times the margin below the one above is: an athlete goes up more than down,
+    /// and a crop with equal air above and below reads as aimed at the floor.
+    var topWeight: Float
+
+    /// No margin beyond `CropRectCalculator.paddingFraction`, the same above as below.
+    static let tight = CropMargin(athleteSizes: 0, topWeight: 1)
+    /// Auto follow's: one athlete of air on each side and below, two above.
+    static let follow = CropMargin(athleteSizes: 1, topWeight: 2)
+
+    /// How far above the middle of the athlete's box the crop's center sits, as a fraction of
+    /// the height the crop has over the box: the air split `topWeight` to one.
+    var liftFraction: Float { (topWeight - 1) / (2 * (topWeight + 1)) }
+}
+
 /// Computes the one static rect an exported clip is cropped to, from the pose output of the
 /// frames inside a single trick window (docs/DESIGN.md's pipeline step 6).
 ///
@@ -56,15 +77,35 @@ struct CropRectCalculator: Sendable {
     /// a degenerate rect. Measured against the shorter axis so it means the same pixel size
     /// on both orientations.
     let minimumExtentFraction: Float
+    /// Air added on top of `paddingFraction`, in athlete sizes, and how the air above compares
+    /// with the air below. `.tight` for the static rect; Auto follow frames with `.follow`.
+    let margin: CropMargin
 
     init(targetAspectRatio: Float = 9.0 / 16.0, paddingFraction: Float = 0.1,
-         minimumExtentFraction: Float = 0.05) {
+         minimumExtentFraction: Float = 0.05, margin: CropMargin = .tight) {
         precondition(targetAspectRatio > 0, "targetAspectRatio is width over height and must be positive")
         precondition(paddingFraction >= 0, "paddingFraction adds to each side and cannot be negative")
         precondition(minimumExtentFraction >= 0, "minimumExtentFraction floors the box extent and cannot be negative")
+        precondition(margin.athleteSizes >= 0, "a margin adds to each side and cannot be negative")
+        precondition(margin.topWeight > 0, "topWeight is a ratio of two margins and must be positive")
         self.targetAspectRatio = targetAspectRatio
         self.paddingFraction = paddingFraction
         self.minimumExtentFraction = minimumExtentFraction
+        self.margin = margin
+    }
+
+    /// This calculator at another width over height.
+    func with(targetAspectRatio: Float) -> CropRectCalculator {
+        CropRectCalculator(
+            targetAspectRatio: targetAspectRatio, paddingFraction: paddingFraction,
+            minimumExtentFraction: minimumExtentFraction, margin: margin)
+    }
+
+    /// This calculator with another margin.
+    func with(margin: CropMargin) -> CropRectCalculator {
+        CropRectCalculator(
+            targetAspectRatio: targetAspectRatio, paddingFraction: paddingFraction,
+            minimumExtentFraction: minimumExtentFraction, margin: margin)
     }
 
     /// `nil` when the window holds no keypoint above the confidence threshold, or when the
@@ -92,7 +133,7 @@ struct CropRectCalculator: Sendable {
               let athlete = boundingBox(around: points) else { return nil }
 
         let flooredBox = flooredToMinimumExtent(athlete, renderedPixelSize: renderedPixelSize)
-        let paddedBox = padded(flooredBox)
+        let paddedBox = padded(flooredBox, renderedPixelSize: renderedPixelSize)
         let snapped = snappedToTargetRatio(paddedBox, renderedPixelSize: renderedPixelSize)
         return slidIntoFrame ? fittedInFrame(snapped) : snapped
     }
@@ -146,17 +187,26 @@ struct CropRectCalculator: Sendable {
         return grown
     }
 
-    private func padded(_ box: NormalizedRect) -> NormalizedRect {
-        NormalizedRect(
-            minX: box.minX - box.width * paddingFraction,
-            maxX: box.maxX + box.width * paddingFraction,
-            minY: box.minY - box.height * paddingFraction,
-            maxY: box.maxY + box.height * paddingFraction
+    /// The box with `paddingFraction` of itself and `margin.athleteSizes` athletes of air on
+    /// the left, the right and below, and `margin.topWeight` times as much above as below.
+    private func padded(_ box: NormalizedRect, renderedPixelSize: CGSize) -> NormalizedRect {
+        let renderedWidth = Float(renderedPixelSize.width)
+        let renderedHeight = Float(renderedPixelSize.height)
+        let athletePixels = max(box.width * renderedWidth, box.height * renderedHeight)
+        let side = box.width * paddingFraction + athletePixels * margin.athleteSizes / renderedWidth
+        let below = box.height * paddingFraction + athletePixels * margin.athleteSizes / renderedHeight
+        return NormalizedRect(
+            minX: box.minX - side,
+            maxX: box.maxX + side,
+            minY: box.minY - below * margin.topWeight,
+            maxY: box.maxY + below
         )
     }
 
-    /// Grows the shorter axis around the box center until the rect's *pixel* aspect ratio hits
-    /// the target. The ratio only means anything in pixels: a normalized unit is a fraction of
+    /// Grows the shorter axis until the rect's *pixel* aspect ratio hits the target: the width
+    /// around the box center, the height `margin.topWeight` to one above and below it, which
+    /// is around the center too when the margin is the same on both. The ratio only means
+    /// anything in pixels: a normalized unit is a fraction of
     /// its own axis, so on a 1080x1920 source a normalized square is already 9:16, and a
     /// normalized 9:16 rect comes out square on 1920x1080 and 9:16 twice over on 1080x1920.
     private func snappedToTargetRatio(_ box: NormalizedRect, renderedPixelSize: CGSize) -> NormalizedRect {
@@ -169,7 +219,11 @@ struct CropRectCalculator: Sendable {
         if pixelWidth < widthAtTargetRatio {
             return box.resizedHorizontally(to: widthAtTargetRatio / renderedWidth)
         }
-        return box.resizedVertically(to: pixelWidth / targetAspectRatio / renderedHeight)
+        let height = pixelWidth / targetAspectRatio / renderedHeight
+        guard margin.topWeight != 1 else { return box.resizedVertically(to: height) }
+        let above = (height - box.height) * margin.topWeight / (margin.topWeight + 1)
+        return NormalizedRect(
+            minX: box.minX, maxX: box.maxX, minY: box.minY - above, maxY: box.minY - above + height)
     }
 
     /// Brings the rect inside the frame, keeping the ratio just snapped: a rect that fits
