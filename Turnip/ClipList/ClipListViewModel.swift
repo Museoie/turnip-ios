@@ -341,7 +341,16 @@ final class ClipListViewModel: ObservableObject {
             cropRect: item.cropRect,
             followCrop: item.followCrop,
             asset: asset,
-            poseFrames: poseFrames(forPerson: item.personID))
+            poseFrames: poseFrames(forPerson: item.personID),
+            otherPoses: otherPoses(thanPerson: item.personID))
+    }
+
+    /// What Auto follow fills a person's clip from where their own track has nothing
+    /// (`FollowPose`): every frame's surest pose, and the other people's tracks. None for a
+    /// clip with no person.
+    private func otherPoses(thanPerson personID: Int?) -> [[PoseFrameResult]] {
+        guard let personID else { return [] }
+        return [poseFrames] + people.filter { $0.id != personID }.map(\.frames)
     }
 
     /// The frames a clip's crop and follow path are fitted to: its own person's when it has one,
@@ -523,9 +532,11 @@ final class ClipListViewModel: ObservableObject {
         guard let track = await trackGeometry() else { return nil }
         let geometry = VideoTrackGeometry(naturalSize: track.naturalSize, preferredTransform: track.preferredTransform)
         guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
+        let followFrames = FollowPose.frames(
+            of: poseFrames(forPerson: personID), borrowingFrom: otherPoses(thanPerson: personID),
+            renderedPixelSize: geometry.displayedSize)
         let fitted = autoFollow.defaultCrop(
-            poseFrames: poseFrames(forPerson: personID), window: window, cropRect: crop,
-            videoSize: geometry.displayedSize)
+            poseFrames: followFrames, window: window, cropRect: crop, videoSize: geometry.displayedSize)
         autoFollowCrops[key] = fitted
         return fitted
     }

@@ -58,6 +58,12 @@ The starting point, which the spike measured:
 
 A track is a person's pose on the take's own sample grid, from their first sample to their last, with an empty pose wherever they weren't detected. A missed sample stays an unknown sample to the motion signal, and two in a row are a gap. It must never become one longer step, which is what dropping the sample would make it.
 
+### Auto follow
+
+A clip of one person is framed from their own track, and a track runs only from their first sighting to their last. Any part of the clip's window outside that has no pose at all: a trim pulled out past the track, or a track that started partway through because the tracker lost the athlete for a moment (open problem 2). Inside it, a frame where the tracker didn't see them is empty. Auto follow holds the crop still over all of these, at the framing of the nearest frame it knows, so such a clip doesn't follow the athlete there.
+
+So Auto follow fills those frames first (`FollowPose`). Walking out from the track in both directions, each frame it has nothing for takes the pose of whoever is nearest where the person was last seen, within the tracker's reach of it (0.5 + 3 × Δt body sizes), among the other poses the run keeps: the pose the model was surest of in every frame, and the tracks of the other people who own a clip. The walk goes on for up to 2 s without a sighting, twice the tracker's gap: following the wrong person for a moment costs a framing less than not following. The track's own frames are never replaced, and a clip with no person, whose pose already covers every frame, is left as it is. Someone the run kept no pose for, a bystander the model was less sure of than someone else and who owns no clip, can't be borrowed from.
+
 ### Detection per person
 
 `detectClips` runs once per track, unchanged, and the clips are merged in start order. Each person's speed is measured in their own torso lengths against their own activity level, so someone else's movement can't make a burst in theirs. That is where most of the gym take's false positives go ("The gym take").
