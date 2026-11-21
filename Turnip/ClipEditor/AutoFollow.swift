@@ -6,8 +6,10 @@ import Foundation
 ///
 /// The pipeline's follow path (`CropPathCalculator`) is analysis output, one center per pose
 /// sample. Each sample also gets a zoom of its own (`ZoomEnvelope`): the room the athlete needs
-/// over a moment, with the static crop's padding, smoothed so the crop changes as the athlete
-/// comes closer or moves away rather than with every tuck. Nobody edits forty keyframes with a
+/// over a moment, with an athlete of air on each side and below and two above
+/// (`CropMargin.follow`), smoothed so the crop changes as the athlete comes closer or moves away
+/// rather than with every tuck. The frame often can't give that much, and then the crop is as
+/// wide as the frame allows and the air it does have is split the same way. Nobody edits forty keyframes with a
 /// thumb, so the samples are reduced: keyframes start where the crop starts and stops moving,
 /// and one more goes in at the worst sample until the curves through them (`FollowPath`) never
 /// show beyond the frame, keep every joint each sample's own crop kept, stray from no sample's
@@ -29,7 +31,9 @@ struct AutoFollow {
     /// are spread into the holds either side to sit this far apart, or as far apart as the
     /// window's samples reach when it is shorter. Keyframes the user adds aren't bound by it.
     var keyframeSpacing: TimeInterval = 1
-    var pathCalculator = CropPathCalculator()
+    /// Frames each sample with Auto follow's margin, `CropMargin.follow`, rather than the static
+    /// crop's tenth of the athlete's box: a crop that tight around someone moving cuts close.
+    var pathCalculator = CropPathCalculator(rectCalculator: CropRectCalculator(margin: .follow))
     /// The tightest crop Auto follow chooses, as the longer side of the source region it shows,
     /// in displayed pixels: export renders a follow clip at its crop rect's size, so a tighter
     /// region is enlarged into it and goes soft. A pinch isn't bound by it.
@@ -44,11 +48,8 @@ struct AutoFollow {
     func shaped(_ aspectRatio: CGFloat) -> AutoFollow {
         guard aspectRatio != self.aspectRatio, aspectRatio > 0 else { return self }
         var shaped = self
-        let rects = pathCalculator.rectCalculator
         shaped.pathCalculator = CropPathCalculator(
-            rectCalculator: CropRectCalculator(
-                targetAspectRatio: Float(aspectRatio), paddingFraction: rects.paddingFraction,
-                minimumExtentFraction: rects.minimumExtentFraction),
+            rectCalculator: pathCalculator.rectCalculator.with(targetAspectRatio: Float(aspectRatio)),
             smoothingSeconds: pathCalculator.smoothingSeconds, stillnessFraction: pathCalculator.stillnessFraction,
             despikeSamples: pathCalculator.despikeSamples)
         shaped.aspectRatio = aspectRatio
@@ -113,8 +114,9 @@ struct AutoFollow {
 
     // swiftlint:disable function_parameter_count
     /// One sample per pose frame: its zoom from the envelope, clamped to `widths`, and the path's
-    /// center shifted to hold that frame's de-spiked joints in its own crop and slid inside the
-    /// frame.
+    /// center lowered where a crop narrower than the athlete's room would leave too much of its
+    /// air above them (`lowered`), shifted to hold that frame's de-spiked joints in its own crop
+    /// and slid inside the frame.
     private func samples(
         of path: CropPath, frames: [PoseFrameResult], marker: CGRect, widths: ClosedRange<CGFloat>,
         rotationRadians: Double, videoSize: CGSize
@@ -134,8 +136,8 @@ struct AutoFollow {
             var center = CGPoint(
                 x: CGFloat(rect.minX + rect.maxX) / 2 * videoSize.width,
                 y: CGFloat(rect.minY + rect.maxY) / 2 * videoSize.height)
-            if let joints = athletes[index]?.joints {
-                center = Self.shifted(center, toContain: joints.denormalized(in: videoSize), box: box)
+            if let joints = athletes[index]?.joints.denormalized(in: videoSize) {
+                center = Self.shifted(lowered(center, over: joints, box: box), toContain: joints, box: box)
             }
             return Sample(
                 time: keyframe.time,
@@ -185,7 +187,8 @@ struct AutoFollow {
 
     // swiftlint:disable function_parameter_count
     /// One keyframe, mid-window, framing the whole window's joints at once
-    /// (`ClipEditorViewModel.autoCropAdjustment`), within the zoom Auto follow allows.
+    /// (`ClipEditorViewModel.autoCropAdjustment`) with Auto follow's margin, within the zoom Auto
+    /// follow allows.
     private func stillCrop(
         frames: [PoseFrameResult], samples: [Sample], cropRect: CGRect, videoSize: CGSize,
         rotationRadians: Double, widths: ClosedRange<CGFloat>, resting: CGPoint
@@ -201,9 +204,11 @@ struct AutoFollow {
             let width = min(max(marker.width / fit.scale, widths.lowerBound), widths.upperBound)
             scale = ClipEditorViewModel.clampedScale(marker.width / width)
             let box = CGSize(width: marker.width / scale, height: marker.height / scale)
-            center = Self.slidIntoFrame(
-                FramingConversion.followCenter(of: fit, cropCenter: CGPoint(x: cropRect.midX, y: cropRect.midY)),
-                box: box, rotationRadians: rotationRadians, in: videoSize)
+            center = FramingConversion.followCenter(of: fit, cropCenter: CGPoint(x: cropRect.midX, y: cropRect.midY))
+            if let joints = Self.bounds(of: samples.flatMap(\.joints)) {
+                center = lowered(center, over: joints, box: box)
+            }
+            center = Self.slidIntoFrame(center, box: box, rotationRadians: rotationRadians, in: videoSize)
         }
         return FollowCrop(
             keyframes: [FollowKeyframe(
@@ -213,6 +218,25 @@ struct AutoFollow {
             resting: FollowFraming(center: resting, scale: scale, rotationRadians: rotationRadians),
             isAutoFollow: true,
             aspectRatio: aspectRatio)
+    }
+
+    /// How much more of a crop's spare height than the margin's own split may lie above the
+    /// athlete, as a fraction of that spare height, before `lowered` moves the crop.
+    static let liftTolerance: CGFloat = 0.1
+
+    /// `center` moved down until the air above the athlete is no more than the margin's share of
+    /// the crop's spare height, the height of `box` over `joints`, plus `liftTolerance` of it.
+    /// The path's centers sit above the athlete's middle by the margin's share of their own
+    /// room's spare height (`CropMargin.liftFraction`). A crop as large as that room is left
+    /// alone; one the frame holds narrower would keep the whole lift and put nearly all of the
+    /// little air it has above the athlete. Unchanged when the margin is the same above and
+    /// below.
+    private func lowered(_ center: CGPoint, over joints: CGRect, box: CGSize) -> CGPoint {
+        let margin = pathCalculator.rectCalculator.margin
+        guard margin.topWeight != 1 else { return center }
+        let spare = max(box.height - joints.height, 0)
+        let lift = spare * (CGFloat(margin.liftFraction) + Self.liftTolerance)
+        return CGPoint(x: center.x, y: max(center.y, joints.midY - lift))
     }
 
     private func reduced(
@@ -446,6 +470,14 @@ struct AutoFollow {
         return CGPoint(
             x: clamp(center.x, half: halfAcross, length: frame.width),
             y: clamp(center.y, half: halfDown, length: frame.height))
+    }
+
+    /// The smallest rect holding `points`; `nil` for none.
+    private static func bounds(of points: [CGPoint]) -> CGRect? {
+        guard let minX = points.map(\.x).min(), let maxX = points.map(\.x).max(),
+              let minY = points.map(\.y).min(), let maxY = points.map(\.y).max()
+        else { return nil }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
     private static func jointCorners(in frame: PoseFrameResult, videoSize: CGSize) -> [CGPoint] {

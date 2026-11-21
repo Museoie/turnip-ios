@@ -140,7 +140,8 @@ struct CropPathCalculator: Sendable {
             smoothedCenter(at: min(max(sample.time, locatedSpan.lowerBound), locatedSpan.upperBound), over: located)
         }
         let centers = isStill(smoothed, size: size)
-            ? Array(repeating: Self.unionCenter(of: located), count: samples.count)
+            ? Array(
+                repeating: unionCenter(of: located, renderedPixelSize: renderedPixelSize), count: samples.count)
             : smoothed
 
         var keyframes = zip(samples, centers).map { sample, center in
@@ -277,13 +278,18 @@ struct CropPathCalculator: Sendable {
         return maxX - minX <= stillnessFraction * size.width && maxY - minY <= stillnessFraction * size.height
     }
 
-    /// Where a still crop centers: on every located joint across the window at once, as the
-    /// static crop does.
-    private static func unionCenter(of located: [LocatedSample]) -> Point {
+    /// Where a still crop centers: on the rect `rectCalculator` draws around every located
+    /// joint across the window at once, as the static crop does. That is the joints' own
+    /// middle unless the calculator's margin leaves more air above them than below.
+    private func unionCenter(of located: [LocatedSample], renderedPixelSize: CGSize) -> Point {
         let boxes = located.map(\.joints)
         let minX = boxes.map(\.minX).min() ?? 0, maxX = boxes.map(\.maxX).max() ?? 1
         let minY = boxes.map(\.minY).min() ?? 0, maxY = boxes.map(\.maxY).max() ?? 1
-        return Point(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
+        let corners = [CGPoint(x: CGFloat(minX), y: CGFloat(minY)), CGPoint(x: CGFloat(maxX), y: CGFloat(maxY))]
+        guard let rect = rectCalculator.cropRect(
+            around: corners, renderedPixelSize: renderedPixelSize, slidIntoFrame: false)
+        else { return Point(x: (minX + maxX) / 2, y: (minY + maxY) / 2) }
+        return Point(x: (rect.minX + rect.maxX) / 2, y: (rect.minY + rect.maxY) / 2)
     }
 
     /// Each located sample's joint box replaced by the median, edge by edge, of the boxes of the

@@ -63,6 +63,28 @@ final class CropRectCalculatorTests: XCTestCase {
 
     private let square = CGSize(width: 1000, height: 1000)
 
+    /// Auto follow's margin is measured in athletes, the longer side of the joint box: here
+    /// 100 × 200 px, so 200 px of air on the left, the right and below, and 400 px above.
+    func testAMarginAddsAnAthleteOfAirAndTwiceThatAbove() {
+        let calculator = CropRectCalculator(targetAspectRatio: 5.0 / 8.0, paddingFraction: 0, margin: .follow)
+        let rect = calculator.cropRect(
+            around: [CGPoint(x: 0.45, y: 0.5), CGPoint(x: 0.55, y: 0.7)], renderedPixelSize: square,
+            slidIntoFrame: false)
+
+        assertRect(rect, minX: 0.25, maxX: 0.75, minY: 0.1, maxY: 0.9)
+    }
+
+    /// Height added to reach the ratio is split as the margin is, two to one above: 200 px here,
+    /// 133 above and 67 below, where growing about the center would put 100 on each.
+    func testAMarginSplitsTheHeightTheRatioAddsTheSameWay() {
+        let calculator = CropRectCalculator(targetAspectRatio: 0.5, paddingFraction: 0, margin: .follow)
+        let rect = calculator.cropRect(
+            around: [CGPoint(x: 0.45, y: 0.5), CGPoint(x: 0.55, y: 0.7)], renderedPixelSize: square,
+            slidIntoFrame: false)
+
+        assertRect(rect, minX: 0.25, maxX: 0.75, minY: 0.1 - 0.4 / 3, maxY: 0.9 + 0.2 / 3)
+    }
+
     func testBoxIsTheUnionAcrossEveryFrameInTheWindow() {
         let frames = [
             frame(index: 0, confident([(x: 0.40, y: 0.40), (x: 0.50, y: 0.60)])),

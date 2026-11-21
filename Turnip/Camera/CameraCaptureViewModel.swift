@@ -113,6 +113,8 @@ final class CameraCaptureViewModel: NSObject, ObservableObject {
     /// on the session connected to the movie output, sampling gravity between record start
     /// and the output's finish. What the editor's Auto rotate levels an in-app take by.
     nonisolated let rollRecorder = RollTrackRecorder()
+    /// Feeds the preview's level indicator from the roll recorder's motion updates.
+    private(set) lazy var levelMonitor = CameraLevelMonitor(recorder: rollRecorder)
     /// Loaded once, when the camera first starts, and reused across recordings. Nil until it
     /// loads, or if the bundled model is missing; recordings made meanwhile skip live pose.
     private var poseModel: MoveNetMultiPoseModel?

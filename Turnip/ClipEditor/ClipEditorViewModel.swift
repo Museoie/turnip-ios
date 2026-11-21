@@ -223,7 +223,7 @@ final class ClipEditorViewModel: ObservableObject {
         self.mayAutoplayLoops = mayAutoplayLoops
         self.announce = announce
         self.autoFollower = AutoFollow(
-            pathCalculator: CropPathCalculator(rectCalculator: calculator),
+            pathCalculator: CropPathCalculator(rectCalculator: calculator.with(margin: .follow)),
             aspectRatio: CGFloat(calculator.targetAspectRatio))
         self.window = source.window
         self.cropRect = source.cropRect

@@ -2,8 +2,9 @@ import AVFoundation
 import SwiftUI
 
 /// The camera-recording screen, which `RootTabView` slides up over everything from the gallery's
-/// camera tile: full-screen preview, a cancel chevron, manual controls (lens/zoom, front/rear flip,
-/// resolution/fps, torch, exposure bias), and one record button. While recording, the pose
+/// camera tile: full-screen preview under a grid of thirds and a level indicator, a cancel
+/// chevron, manual controls (lens/zoom, front/rear flip, resolution/fps, torch, exposure bias),
+/// and one record button. While recording, the pose
 /// scored live on the camera frames is drawn over the preview. On a successful recording,
 /// `onFinished` hands the caller the temp file and any clips detected live, so it can save
 /// the file to Photos and feed the resulting `PHAsset` into the picked-video flow — this
@@ -39,7 +40,7 @@ struct CameraCaptureView: View {
             case .authorized:
                 CameraPreviewView(
                     session: viewModel.session, isLive: isPreviewLive,
-                    poseSkeletons: viewModel.livePoseSkeletons)
+                    poseSkeletons: viewModel.livePoseSkeletons, levelMonitor: viewModel.levelMonitor)
                     // The top inset is kept so the top-pinned picture starts just under the
                     // status bar, with the cancel and settings buttons floating inside it.
                     .ignoresSafeArea(edges: [.horizontal, .bottom])

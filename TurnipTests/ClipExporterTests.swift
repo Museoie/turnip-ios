@@ -270,6 +270,26 @@ final class ClipExporterTests: XCTestCase {
         try assertTransform(transform.ramps[29].end, equals: boxTransform(crop, at: 3.5), "at the end")
     }
 
+    /// A follow crop zoomed out past its box, as Auto follow's is around a trick done in place,
+    /// renders larger than the box by as much, so its widest framing keeps the source's pixels:
+    /// twice the 607.5 × 1080 box at half zoom. Past a 4K frame it stops there.
+    func testAFollowCropZoomedOutRendersAtTheSourcesDetail() throws {
+        let half = followCrop(scale: 0.5)
+        let transform = try XCTUnwrap(ClipExportTransform.make(
+            followCrop: half, cropRect: followCropRect, over: 1...5, frameDuration: thirtieth,
+            naturalSize: landscape, preferredTransform: .identity))
+
+        XCTAssertEqual(transform.renderSize, CGSize(width: 1216, height: 2160))
+        try assertTransform(
+            transform.layerTransform,
+            equals: boxTransform(half, at: 1).concatenating(CGAffineTransform(scaleX: 2, y: 2)), "at the start")
+
+        let quarter = try XCTUnwrap(ClipExportTransform.make(
+            followCrop: followCrop(scale: 0.25), cropRect: followCropRect, over: 1...5, frameDuration: thirtieth,
+            naturalSize: landscape, preferredTransform: .identity))
+        XCTAssertEqual(quarter.renderSize, CGSize(width: 2160, height: 3840))
+    }
+
     /// A follow crop reshaped in the editor renders at the clip's crop rect grown to its own
     /// shape, even on both sides, with the moving center in the middle of the output.
     func testAFollowCropRendersAtItsOwnShape() throws {
