@@ -36,9 +36,9 @@ final class CameraLevelTests: XCTestCase {
             176: (2, -4), -176: (-2, 4), 40: (0, 40), 50: (1, -40)
         ]
         for (roll, expected) in quarterTurnsAndTilts {
-            let level = try XCTUnwrap(level(rolledClockwise: roll))
-            XCTAssertEqual(level.quarterTurns, expected.quarterTurns, "\(roll)°")
-            XCTAssertEqual(level.tiltDegrees, expected.tilt, accuracy: 1e-9, "\(roll)°")
+            let reading = try XCTUnwrap(level(rolledClockwise: roll))
+            XCTAssertEqual(reading.quarterTurns, expected.quarterTurns, "\(roll)°")
+            XCTAssertEqual(reading.tiltDegrees, expected.tilt, accuracy: 1e-9, "\(roll)°")
         }
     }
 
