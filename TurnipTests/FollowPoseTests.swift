@@ -42,11 +42,13 @@ final class FollowPoseTests: XCTestCase {
         XCTAssertEqual(filled[39].keypoints, surest[39].keypoints)
     }
 
-    /// Of two people in the other poses, the one nearest where the athlete was last seen is
-    /// followed, whichever is listed first.
+    /// Of two people in the other poses, both within reach, the one nearest where the athlete
+    /// was last seen is followed, whichever is listed first. The bystander walks a tenth of the
+    /// frame's width beside the athlete: about half a body size from where the athlete was a
+    /// sample before, inside the 0.8 the reach allows, where the athlete is a twelfth of one.
     func testTheNearestPersonIsFollowed() {
         let own = athlete(20..<40, x: walking)
-        let bystander = athlete(0..<20, x: { _ in 0.85 })
+        let bystander = athlete(0..<20) { walking($0) + 0.1 }
         let surest = athlete(0..<20, x: walking)
 
         let filled = FollowPose.frames(of: own, borrowingFrom: [bystander, surest], renderedPixelSize: portrait)

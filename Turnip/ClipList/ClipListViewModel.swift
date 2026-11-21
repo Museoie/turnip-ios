@@ -217,6 +217,9 @@ final class ClipListViewModel: ObservableObject {
     /// Auto follow's crop for each window a clip without a follow crop of its own has been drawn
     /// over, so its tile, poster and save fit it once.
     private var autoFollowCrops: [AutoFollowKey: FollowCrop] = [:]
+    /// Each person's pose filled in from the take's other poses (`FollowPose`), and the frame
+    /// size it was measured in: a walk over the whole take, the same for every clip of theirs.
+    private var followPoses: [Int: (size: CGSize, frames: [PoseFrameResult])] = [:]
 
     private struct AutoFollowKey: Hashable {
         let window: TrickWindow
@@ -532,13 +535,23 @@ final class ClipListViewModel: ObservableObject {
         guard let track = await trackGeometry() else { return nil }
         let geometry = VideoTrackGeometry(naturalSize: track.naturalSize, preferredTransform: track.preferredTransform)
         guard let crop = geometry.displayedCropRect(cropRect) else { return nil }
-        let followFrames = FollowPose.frames(
-            of: poseFrames(forPerson: personID), borrowingFrom: otherPoses(thanPerson: personID),
-            renderedPixelSize: geometry.displayedSize)
         let fitted = autoFollow.defaultCrop(
-            poseFrames: followFrames, window: window, cropRect: crop, videoSize: geometry.displayedSize)
+            poseFrames: followPose(forPerson: personID, in: geometry.displayedSize), window: window, cropRect: crop,
+            videoSize: geometry.displayedSize)
         autoFollowCrops[key] = fitted
         return fitted
+    }
+
+    /// The pose Auto follow fits a clip of `personID` to (`FollowPose`), filled once per person
+    /// and frame size; every scored frame for a clip with no person.
+    private func followPose(forPerson personID: Int?, in size: CGSize) -> [PoseFrameResult] {
+        guard let personID else { return poseFrames }
+        if let cached = followPoses[personID], cached.size == size { return cached.frames }
+        let frames = FollowPose.frames(
+            of: poseFrames(forPerson: personID), borrowingFrom: otherPoses(thanPerson: personID),
+            renderedPixelSize: size)
+        followPoses[personID] = (size, frames)
+        return frames
     }
 
     /// The card thumbnail, loading lazily. Idempotent and safe to call from every card's
