@@ -11,11 +11,11 @@ struct CameraLevel: Equatable, Sendable {
     let rollRadians: Double
 
     /// The least of gravity (in g) that has to lie in the screen's plane for the indicator to
-    /// show: below it the phone is nearer flat than upright, where a roll swings wildly with
-    /// the smallest movement and says nothing about the horizon in the picture. Higher than
-    /// `RollTrack.minimumInPlaneGravity`: a sample skipped in a file costs nothing, a line
-    /// spinning on screen does.
-    static let minimumInPlaneGravity = 0.5
+    /// show, the sine of 45°: below it the phone is nearer flat than upright, where a roll
+    /// swings with the smallest movement and says little about the horizon in the picture.
+    /// Higher than `RollTrack.minimumInPlaneGravity`: a sample skipped in a file costs nothing,
+    /// a line spinning on screen does.
+    static let minimumInPlaneGravity = 0.5.squareRoot()
 
     /// From `CMDeviceMotion.gravity`'s x (to the right of the portrait screen) and y (toward the
     /// top of the phone). Upright, gravity is (0, −1); rolled clockwise by θ it reads

@@ -42,8 +42,8 @@ final class RollTrackRecorder: @unchecked Sendable {
     private var isRecording: (@Sendable () -> Bool)?
     /// Who else is handed every gravity sample, take or no take.
     private var gravityObserver: (@Sendable (CMAcceleration) -> Void)?
-    /// Whether the motion updates are running. Only `updateSampling` changes it, and only the
-    /// main actor calls that.
+    /// Whether the motion updates are running. Only `updateSampling` changes it, under the lock
+    /// it holds while it starts or stops them.
     private var isSampling = false
 
     /// The capture input this recorder appends to, created once. The caller adds it to the
@@ -91,14 +91,17 @@ final class RollTrackRecorder: @unchecked Sendable {
     }
 
     /// Runs the motion updates while a take or an observer wants them, and stops them when
-    /// neither does.
+    /// neither does. The lock is held across the start or stop itself: a take ends on the movie
+    /// output's delegate queue while the level's observer comes and goes on the main actor, and
+    /// a stop decided before a start but run after it would leave the updates off with
+    /// `isSampling` saying on, which nothing afterwards would correct. The motion handler takes
+    /// the lock too, but on the motion queue, never inside the start call.
     private func updateSampling() {
         lock.lock()
+        defer { lock.unlock() }
         let isWanted = geometry != nil || gravityObserver != nil
-        let changes = isWanted != isSampling
+        guard isWanted != isSampling else { return }
         isSampling = isWanted
-        lock.unlock()
-        guard changes else { return }
         guard isWanted else {
             motionManager.stopDeviceMotionUpdates()
             return

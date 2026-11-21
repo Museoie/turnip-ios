@@ -45,16 +45,17 @@ final class CameraLevelTests: XCTestCase {
     /// Pitched forward or back the roll reads the same: only the gravity left in the screen's
     /// plane shrinks.
     func testPitchLeavesTheRollAlone() throws {
-        let pitched = try XCTUnwrap(level(rolledClockwise: 12, inPlane: 0.6))
+        let pitched = try XCTUnwrap(level(rolledClockwise: 12, inPlane: 0.8))
 
         XCTAssertEqual(pitched.tiltDegrees, 12, accuracy: 1e-9)
     }
 
-    /// Near flat the roll means nothing, and there is no reading.
-    func testAPhoneNearFlatHasNoLevel() {
-        XCTAssertNil(level(rolledClockwise: 12, inPlane: 0.4))
+    /// Nearer flat than upright, pitched past 45°, the roll means little, and there is no
+    /// reading: the gravity left in the screen's plane is under sin 45°, about 0.707.
+    func testAPhoneNearerFlatThanUprightHasNoLevel() {
+        XCTAssertNil(level(rolledClockwise: 12, inPlane: 0.7))
+        XCTAssertNotNil(level(rolledClockwise: 12, inPlane: 0.72))
         XCTAssertNil(CameraLevel(gravityX: 0, gravityY: 0))
         XCTAssertNil(CameraLevel(gravityX: .nan, gravityY: -1))
-        XCTAssertNotNil(level(rolledClockwise: 12, inPlane: 0.5 + 1e-9))
     }
 }

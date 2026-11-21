@@ -241,6 +241,27 @@ final class FollowCropTests: XCTestCase {
         XCTAssertEqual(fit.crop.keyframes[0].center.y, 540, accuracy: 0.01)
     }
 
+    /// Where the frame holds a crop narrower than the margin's rect but taller than the athlete,
+    /// the crop is lowered so the air it has isn't all above them. A square crop of a portrait
+    /// frame is 1080 px a side; the athlete, 480 px tall from 960 to 1440, would have a rect
+    /// 2064 px a side centered at 936. Kept there, the crop would leave 564 px above the athlete
+    /// and 36 below. Lowered, its center is no more than a sixth plus a tenth of its 600 px of
+    /// spare height above the athlete's middle, 1200: at 1040, with 460 px above and 140 below.
+    func testACropNarrowerThanTheMarginKeepsAirBelowTheAthlete() throws {
+        let frames = (0..<30).map {
+            PoseFixture.frame(index: $0, hip: (x: 0.5, y: 0.75), upperBody: (x: 0.5, y: 0.5))
+        }
+        let frame = CGRect(origin: .zero, size: portrait)
+        let fit = try XCTUnwrap(AutoFollow().shaped(1).fit(
+            frames: frames, cropRect: frame, videoSize: portrait, rotationRadians: 0))
+
+        XCTAssertEqual(fit.crop.keyframes.count, 1)
+        let keyframe = fit.crop.keyframes[0]
+        let marker = ClipEditorViewModel.markerBox(around: frame, aspectRatio: 1)
+        XCTAssertEqual(marker.height / keyframe.scale, 1080, accuracy: 0.01)
+        XCTAssertEqual(keyframe.center.y, 1040, accuracy: 0.5)
+    }
+
     /// Where the frame has the room, the crop the curves draw leaves about an athlete of air on
     /// each side and below at every sample, and about twice that above. The athlete is 192 px
     /// tall, crossing a portrait frame; the curves may stray from a sample's own center by a
