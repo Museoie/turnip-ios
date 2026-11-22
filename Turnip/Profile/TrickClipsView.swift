@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// One trick's clips (`docs/PROFILE_DESIGN.md` §7): a grid of the gallery's tiles, newest first,
-/// under the filter the gallery had when it opened. A tile opens the Clip view.
+/// under the filter the gallery had when it opened, with as many columns as Home's grid fits across
+/// the same width (`GalleryGrid`). A tile opens the Clip view, which swipes through the grid's clips.
 ///
 /// "Select" turns the grid into a selection, as Photos does: a tile tap marks or unmarks it, the
 /// back button stands down until "Cancel", and a bar along the bottom removes the marked clips
@@ -14,8 +15,9 @@ struct TrickClipsView: View {
     let filter: TrickGallery.Filter
     @ObservedObject var library: ClipLibrary
     @ObservedObject var vocabulary: VocabularyStore
-    /// Pushes the Clip view for a tile.
-    let open: (UUID) -> Void
+    /// Pushes the Clip view for a tile, with the grid's clips in its order for the view to swipe
+    /// through.
+    let open: (_ clip: UUID, _ among: [UUID]) -> Void
     /// Pops back once removing has left no clip of the trick.
     let close: () -> Void
 
@@ -31,9 +33,6 @@ struct TrickClipsView: View {
     @State private var mergedKey: String?
     /// iPhone Duo's vertical bar, which the bar's items go down instead.
     @Environment(\.verticalBar) private var verticalBar
-
-    private static let spacing: CGFloat = 2
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: spacing), count: 3)
 
     private var key: String { mergedKey ?? trickKey }
 
@@ -69,15 +68,19 @@ struct TrickClipsView: View {
     var body: some View {
         Group {
             if let group {
-                ScrollView {
-                    LazyVGrid(columns: columns, spacing: Self.spacing) {
-                        ForEach(group.clips) { clip in
-                            tile(for: clip)
+                GeometryReader { geometry in
+                    ScrollView {
+                        let columns = GalleryGrid.columns(forWidth: geometry.size.width)
+                        LazyVGrid(columns: columns, spacing: GalleryGrid.spacing) {
+                            ForEach(group.clips) { clip in
+                                tile(for: clip, in: group)
+                            }
                         }
                     }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel(
+                        ProfileAccessibility.galleryRowLabel(trick: group.trick, count: group.clips.count))
                 }
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel(ProfileAccessibility.galleryRowLabel(trick: group.trick, count: group.clips.count))
             } else {
                 Text("No clips of this trick.")
                     .font(.subheadline)
@@ -158,7 +161,7 @@ struct TrickClipsView: View {
 
     /// One button whichever the mode, so a tile keeps its identity, and its loaded still, as the
     /// grid goes in and out of selecting.
-    private func tile(for clip: LibraryClip) -> some View {
+    private func tile(for clip: LibraryClip, in group: TrickGallery.Group) -> some View {
         let isSelected = selection.contains(clip.id)
         return Button {
             if isSelecting {
@@ -168,7 +171,7 @@ struct TrickClipsView: View {
                     selection.insert(clip.id)
                 }
             } else {
-                open(clip.id)
+                open(clip.id, group.clips.map(\.id))
             }
         } label: {
             LibraryClipTile(clip: clip, selection: isSelecting ? isSelected : nil)

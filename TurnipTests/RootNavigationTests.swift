@@ -109,27 +109,27 @@ final class RootNavigationTests: XCTestCase {
 
     func testEveryIPhoneHeldUprightKeepsThreeColumns() {
         for width: CGFloat in [320, 375, 393, 402, 430, 440] {
-            XCTAssertEqual(VideoGalleryView.columnCount(forWidth: width), 3, "at \(width) pt")
+            XCTAssertEqual(GalleryGrid.columnCount(forWidth: width), 3, "at \(width) pt")
         }
     }
 
     /// Beside iPhone Duo's vertical bar the outer display's grid is narrower than any other
     /// iPhone's, and still three columns.
     func testANarrowGridKeepsThreeColumns() {
-        XCTAssertEqual(VideoGalleryView.columnCount(forWidth: 374), 3)
-        XCTAssertEqual(VideoGalleryView.columnCount(forWidth: 0), 3)
+        XCTAssertEqual(GalleryGrid.columnCount(forWidth: 374), 3)
+        XCTAssertEqual(GalleryGrid.columnCount(forWidth: 0), 3)
     }
 
     func testWiderGridsGainColumnsUpToSix() {
-        XCTAssertEqual(VideoGalleryView.columnCount(forWidth: 517), 3)
-        XCTAssertEqual(VideoGalleryView.columnCount(forWidth: 518), 4)
-        XCTAssertEqual(VideoGalleryView.columnCount(forWidth: 647), 4)
-        XCTAssertEqual(VideoGalleryView.columnCount(forWidth: 648), 5)
-        XCTAssertEqual(VideoGalleryView.columnCount(forWidth: 777), 5)
-        XCTAssertEqual(VideoGalleryView.columnCount(forWidth: 778), 6)
+        XCTAssertEqual(GalleryGrid.columnCount(forWidth: 517), 3)
+        XCTAssertEqual(GalleryGrid.columnCount(forWidth: 518), 4)
+        XCTAssertEqual(GalleryGrid.columnCount(forWidth: 647), 4)
+        XCTAssertEqual(GalleryGrid.columnCount(forWidth: 648), 5)
+        XCTAssertEqual(GalleryGrid.columnCount(forWidth: 777), 5)
+        XCTAssertEqual(GalleryGrid.columnCount(forWidth: 778), 6)
     }
 
     func testAVeryWideGridStopsAtSixColumns() {
-        XCTAssertEqual(VideoGalleryView.columnCount(forWidth: 1_366), 6)
+        XCTAssertEqual(GalleryGrid.columnCount(forWidth: 1_366), 6)
     }
 }

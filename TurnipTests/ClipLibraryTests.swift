@@ -833,6 +833,26 @@ final class LibraryClipPlaybackTests: XCTestCase {
         XCTAssertEqual(model.phase, .loading)
     }
 
+    /// A card's clip is a silent loop.
+    func testACardPlaysAMutedLoop() async throws {
+        let model = playback { [video] _, _ in video }
+        await model.load(clip, autoplay: false)
+        let player = try XCTUnwrap(model.player)
+        XCTAssertTrue(player is AVQueuePlayer)
+        XCTAssertTrue(player.isMuted)
+    }
+
+    /// The Clip view's clip plays once through with its sound, as Home's player plays a video: its
+    /// scrub bar starts it over, and its mute button is the user's.
+    func testTheClipViewPlaysOnceWithSound() async throws {
+        let model = LibraryClipPlayback(loops: false, mayAutoplayLoops: { false }, loadVideo: { [video] _, _ in video })
+        await model.load(clip, autoplay: false)
+        let player = try XCTUnwrap(model.player)
+        XCTAssertFalse(player is AVQueuePlayer)
+        XCTAssertFalse(player.isMuted)
+        XCTAssertEqual(model.phase, .ready)
+    }
+
     func testTheDownloadIsSpokenAsAPercentage() {
         XCTAssertEqual(ProfileAccessibility.downloadValue(0.424), "42 percent")
         XCTAssertEqual(ProfileAccessibility.downloadValue(1.2), "100 percent")

@@ -567,26 +567,6 @@ struct VideoGalleryView: View {
     /// from a real browse to a different one (recenter).
     @State private var lastScrolledIdentifier: String?
 
-    private static let spacing: CGFloat = 2
-    /// The narrowest a tile gets before the grid drops a column. A fourth column fits from
-    /// 518 pt across, wider than any iPhone held upright (the widest is 440 pt), so every one of
-    /// them keeps the three columns it has always shown.
-    static let minimumTileWidth: CGFloat = 128
-    static let columnRange = 3...6
-
-    /// How many columns fit across `width`: as many tiles of at least `minimumTileWidth` as fit,
-    /// never fewer than three — the grid every iPhone has always shown, even where the tiles come
-    /// out a little narrower — and never more than six, so a wide screen shows bigger tiles rather
-    /// than ever-smaller ones.
-    static func columnCount(forWidth width: CGFloat) -> Int {
-        let fitting = Int(((width + spacing) / (minimumTileWidth + spacing)).rounded(.down))
-        return min(max(fitting, columnRange.lowerBound), columnRange.upperBound)
-    }
-
-    private static func columns(forWidth width: CGFloat) -> [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: spacing), count: columnCount(forWidth: width))
-    }
-
     var body: some View {
         content
             .safeAreaInset(edge: .top, spacing: 0) {
@@ -614,7 +594,7 @@ struct VideoGalleryView: View {
             // Even with no videos: the camera tile leads the grid, and the empty state explains
             // under it.
             GeometryReader { geometry in
-                grid(columns: Self.columns(forWidth: geometry.size.width))
+                grid(columns: GalleryGrid.columns(forWidth: geometry.size.width))
             }
         }
     }
@@ -625,7 +605,7 @@ struct VideoGalleryView: View {
                 // The header is scroll content, not chrome: it leads the grid and leaves the
                 // screen with the first row.
                 HomeHeader()
-                LazyVGrid(columns: columns, spacing: Self.spacing) {
+                LazyVGrid(columns: columns, spacing: GalleryGrid.spacing) {
                     // Disabled while a tapped video resolves, like the video tiles: the cover
                     // that resolve opens would land over the camera.
                     GalleryCameraTile(action: onCameraTapped)
