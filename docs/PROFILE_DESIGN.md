@@ -514,13 +514,28 @@ theirs are one.
 
 Achievement detail (§6.2), every achievement (§6.7), a trick's gallery
 (§7), a highlight's player (§8), and the **Clip view**: plays the saved
-clip; shows its names and `is_me` (editable), date and spot; holds the
-clip's Contribute toggle once contribution ships; and deletes the clip
-from the library, asking whether to delete its video from Photos too
-("Remove from Profile" / "Remove and Delete Video from Photos", the
-second only while the video is still there). Every removal of saved
-clips asks the same way (`LibraryClipRemoval`); Photos asks once more,
-for all of their videos together, and a decline there keeps every clip.
+clip full screen, as Processing plays a video (UIUX §2) — fit to the
+screen over black, with sound, starting over at its end, under the same
+scrub bar (play/pause, the scrub track, mute) — though never on its own
+under Reduce Motion or with video autoplay off. A swipe sideways turns to
+the clip before or after it in the trick's grid it was opened from, in
+the grid's order as it was then, so a clip renamed there stays in reach;
+the page follows the finger and springs back short of a turn, as Needs a
+name's does. A swipe up, or a tap on the clip's names over the scrub bar,
+brings up a sheet with its date and its names and `is_me` (editable),
+the naming controls Name Clips uses; its spot joins them once spots are
+stored, and the clip's Contribute toggle once contribution ships. The
+sheet goes with a swipe down or a tap above it, keeping a name typed and
+left without pressing return. The trash across from
+the back chevron deletes the clip from the library, asking whether to
+delete its video from Photos too ("Remove from Profile" / "Remove and
+Delete Video from Photos", the second only while the video is still
+there), and the next clip takes its place. Every removal of saved clips
+asks the same way (`LibraryClipRemoval`); Photos asks once more, for all
+of their videos together, and a decline there keeps every clip. The Clip
+view shows no navigation bar and hides the system's back button, so its
+pager takes every horizontal drag, a swipe from the left edge included,
+and its back chevron is the way back.
 While one of these is pushed, `PageSwipeLock` keeps the root pager from
 taking horizontal drags, as it does for Processing, Name Clips and the
 editor. On iPhone Duo their top controls, the back chevron among them,
@@ -611,7 +626,9 @@ as tiles (`AchievementsView`):
 
 - Saved clips grouped by canonical trick (§4.4): one row per trick on
   the Profile page with its clip count, opening a grid of that trick's
-  clips, newest first. A combo clip appears under each of its tricks.
+  clips, newest first, as many columns across as Home's grid fits in the
+  same width (`GalleryGrid`: three on every iPhone held upright, up to
+  six on a wider screen). A combo clip appears under each of its tricks.
 - Tiles loop their clip inline like Name Clips' card, accessibility
   permitting (ACCESSIBILITY.md). A tile opens the Clip view (§5.2) with
   the tile-to-screen expansion transition the app already uses

@@ -328,10 +328,14 @@ Built:
   selecting ("Select"), a marked tile carries the selected trait and every tile's hint says a tap
   marks it; the title says how many are marked ("3 Selected"), and "Delete 3 clips" asks first
   ("Delete 3 clips?", then "Remove from Profile" / "Remove and Delete Videos from Photos").
-- The Clip view's player never auto-plays under Reduce Motion or with video autoplay off; its
-  play/pause button ("Play" / "Pause") is a 44 pt target. Needs a name's cards follow the same
-  rule. "Delete Clip" asks first, naming both choices ("Remove from Profile", "Remove and
-  Delete Video from Photos").
+- The Clip view's player never auto-plays under Reduce Motion or with video autoplay off;
+  Needs a name's cards follow the same rule. Its controls are Processing's scrub bar: "Play" /
+  "Pause", the scrub track ("Playback position", where playback stands as its value) and
+  "Mute" / "Unmute", each a 44 pt target. The picture is one element, "Clip video", whose
+  actions "Previous clip" and "Next clip" reach the clips a swipe sideways does. The swipe up
+  that brings the names up has a button too: the clip's names over the scrub bar ("Cork +
+  Hook", hint "Edits the clip's names"), a 44 pt target. The trash ("Delete Clip") asks first,
+  naming both choices ("Remove from Profile", "Remove and Delete Video from Photos").
 - While an iCloud-only clip downloads, its player says "Downloading from iCloud…" with the
   progress as its value ("42 percent"); a failed download says so in words, with "Try Again".
 - Identifiers: `tab-profile`, `profile`, `profile-privacy-note`, `profile-empty`,
@@ -341,9 +345,11 @@ Built:
   `achievement-tile-<trick>`, `achievements-recent`, `achievements-ladders`, `achievements-back`,
   `gallery-filter`, `gallery-trick-<trick>`, `trick-clips`, `trick-clips-select`,
   `trick-clips-delete`, `trick-clips-back`, `library-clip-tile`, `clip-view`, `clip-view-back`,
-  `clip-view-date`, `clip-view-delete`, `clip-play-pause`, `clip-downloading`, `clip-load-failed`,
-  `clip-load-retry`. `trick-clips-back`, `clip-view-back` and `achievements-back` exist on
-  iPhone Duo only, where the back chevron goes down the vertical bar in place of the system's.
+  `clip-view-names`, `clip-view-names-sheet`, `clip-view-date`, `clip-view-delete`,
+  `playback-play-pause`, `playback-position`, `playback-mute`, `clip-play-pause`,
+  `clip-downloading`, `clip-load-failed`, `clip-load-retry`. `trick-clips-back` and
+  `achievements-back` exist on iPhone Duo only, where the back chevron goes down the vertical
+  bar in place of the system's; the Clip view draws its own on every iPhone.
 
 Not yet, from the plan:
 

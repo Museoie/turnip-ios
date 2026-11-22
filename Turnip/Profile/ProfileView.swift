@@ -6,7 +6,9 @@ enum ProfileRoute: Hashable {
     case needsAName([UUID])
     /// One trick's clips, under the gallery's filter.
     case trick(key: String, filter: TrickGallery.Filter)
-    case clip(UUID)
+    /// A saved clip, played full screen, among the clips a swipe sideways reaches: its trick's grid
+    /// in the grid's order, as it was when the clip was opened.
+    case clip(UUID, among: [UUID])
     /// Every achievement as tiles: the achievements carousel's "Show More".
     case achievements
 }
@@ -264,9 +266,9 @@ struct ProfileView: View {
         case .trick(let key, let filter):
             TrickClipsView(
                 trickKey: key, filter: filter, library: library, vocabulary: vocabulary,
-                open: { path.append(.clip($0)) }, close: pop)
-        case .clip(let id):
-            LibraryClipView(clipID: id, library: library, vocabulary: vocabulary, close: pop)
+                open: { path.append(.clip($0, among: $1)) }, close: pop)
+        case .clip(let id, let among):
+            LibraryClipView(clipID: id, among: among, library: library, vocabulary: vocabulary, close: pop)
         case .achievements:
             AchievementsView(library: library, vocabulary: vocabulary, close: pop)
         }

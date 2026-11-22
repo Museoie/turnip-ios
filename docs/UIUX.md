@@ -1,5 +1,13 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 39 · 2026-11-22 · The Profile's Clip view plays its clip full screen the
+way Processing (§2) plays a video, under the same scrub bar, and swipes
+sideways to the clip before or after it in its trick's grid; a swipe up, or a
+tap on the clip's names over the bar, brings its names up in a sheet. Its
+pager takes every horizontal drag, so the swipe from the left edge no longer
+leaves it: the back chevron does. A trick's grid gains columns on a wider
+screen as Home's grid (§1) does (`PROFILE_DESIGN.md` §5.2, §7).*
+
 *Rev 38 · 2026-11-21 · Auto follow (§4) follows the athlete through parts of a
 person's clip their own track has no pose for, a trim pulled past the track or
 a track that starts partway, from the other poses the analysis kept
@@ -240,8 +248,10 @@ Where it applies today:
 | Name Clips card ↔ Clip Editor (§3a, §4) | Swipe down above the crop marker | Back chevron | Same, with the card showing the editor's own player |
 | Profile ↔ Home (Root navigation) | Horizontal page swipe | The tab bar's profile / gallery icons | The pager's horizontal slide (`RootTabView.slide(to:)`) |
 | Name Clips, one clip ↔ the next (§3a) | Horizontal swipe | The card's VoiceOver actions, Previous clip / Next clip (no button on screen) | The page slide between clips (`NameClipsView.go(to:)`) |
-| Profile ↔ its pushed screens — a trick's clips, the Clip view, every achievement ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe from the left edge, except on iPhone Duo (below) and while a trick's clips are selecting | Back button | The navigation push and pop |
+| Profile ↔ its pushed screens — a trick's clips, every achievement ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe from the left edge, except on iPhone Duo (below) and while a trick's clips are selecting | Back button | The navigation push and pop |
 | Needs a name, one clip ↔ the next ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §4.1) | Horizontal swipe | "Next" / "Skip" | The page slide between clips (`LibraryNamingView.go(to:)`) |
+| Clip view, one clip ↔ the next in its trick's grid ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Horizontal swipe | The picture's VoiceOver actions, Previous clip / Next clip | The page slide between clips (`LibraryClipView.go(to:in:)`) |
+| Clip view ↔ its names ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §5.2) | Swipe up to bring them up; the sheet's own swipe down to put them away | The names over the scrub bar | The sheet sliding up and down |
 | *Planned:* Profile clip tile ↔ Clip view ([`PROFILE_DESIGN.md`](PROFILE_DESIGN.md) §7) | Swipe down | Back chevron | The tile's expansion card, showing the clip's own player, in place of the push |
 
 Not every state change has a gesture counterpart that it owes an animation.

@@ -55,9 +55,11 @@ enum LibraryClipMedia {
 
 /// A saved clip's still: its first frame from Photos, a "not in Photos" glyph once the video is
 /// gone, or a failure glyph when the video is there but its frame didn't come. Fills whatever
-/// frame its caller gives it.
+/// frame its caller gives it, or with `.fit` letterboxes the frame in it the way a player with
+/// `.resizeAspect` gravity draws the video, leaving the bars to whatever is behind.
 struct LibraryClipThumbnail: View {
     let clip: LibraryClip
+    var contentMode: ContentMode = .fill
 
     enum Still: Equatable {
         case loading
@@ -77,14 +79,16 @@ struct LibraryClipThumbnail: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                Color(.quaternarySystemFill)
+                if showsBackdrop {
+                    Color(.quaternarySystemFill)
+                }
                 switch still {
                 case .loading:
                     EmptyView()
                 case .frame(let image):
                     Image(uiImage: image)
                         .resizable()
-                        .scaledToFill()
+                        .aspectRatio(contentMode: contentMode)
                 case .notInPhotos:
                     glyph("video.slash")
                 case .unavailable:
@@ -103,12 +107,24 @@ struct LibraryClipThumbnail: View {
                     still = .notInPhotos
                     return
                 }
-                let side = max(proxy.size.width, proxy.size.height) * displayScale
+                // The frame comes back covering a square: the view's longer side for a frame that
+                // fills the view, its shorter side for one that fits — a clip that spans the view's
+                // width needs no more.
+                let length = contentMode == .fill
+                    ? max(proxy.size.width, proxy.size.height) : min(proxy.size.width, proxy.size.height)
+                let side = length * displayScale
                 let loaded = await LibraryClipMedia.thumbnail(for: asset, pixelSize: CGSize(width: side, height: side))
                 guard shownAssetID == clip.exportAssetID else { return }
                 still = Self.still(loaded: loaded, isInPhotos: LibraryClipMedia.asset(for: clip) != nil)
             }
         }
+    }
+
+    /// The placeholder fill, behind everything but a letterboxed frame, whose bars belong to what is
+    /// behind the still.
+    private var showsBackdrop: Bool {
+        if case .frame = still { return contentMode == .fill }
+        return true
     }
 
     /// What a finished frame request leaves on the tile. A request that returned nothing because
@@ -180,7 +196,7 @@ struct LibraryClipPlayer: View {
 /// What a clip's video is doing before it plays, over its still: nothing while it loads from the
 /// device, the download's progress while it comes from iCloud, and a failure with "Try Again".
 /// A clip whose video left Photos shows its still's own glyph instead.
-private struct LibraryClipLoadStatus: View {
+struct LibraryClipLoadStatus: View {
     let phase: LibraryClipPlayback.Phase
     let retry: () -> Void
 
@@ -223,7 +239,8 @@ private struct LibraryClipLoadStatus: View {
     }
 }
 
-/// The loop behind `LibraryClipPlayer`, and where its video is on the way to playing.
+/// The loop behind `LibraryClipPlayer`, or the Clip view's player, and where its video is on the way
+/// to playing.
 @MainActor
 final class LibraryClipPlayback: ObservableObject {
     enum Phase: Equatable {
@@ -236,7 +253,7 @@ final class LibraryClipPlayback: ObservableObject {
         case failed(String)
     }
 
-    @Published private(set) var player: AVQueuePlayer?
+    @Published private(set) var player: AVPlayer?
     @Published private(set) var isPlaying = false
     @Published private(set) var phase: Phase = .loading
 
@@ -245,10 +262,14 @@ final class LibraryClipPlayback: ObservableObject {
     /// can't overwrite a newer load's phase.
     private var loadToken: UUID?
     private var loadedVideo: AVAsset?
+    /// A muted loop, for a card; otherwise the clip once through with its sound, as Home's player
+    /// plays a video, which the `VideoScrubBar` under it starts over at its end.
+    private let loops: Bool
     private let mayAutoplayLoops: @MainActor () -> Bool
     private let loadVideo: LoadLibraryClipVideo
 
     init(
+        loops: Bool = true,
         mayAutoplayLoops: @escaping @MainActor () -> Bool = {
             mayAutoplayVideoLoops(
                 isVideoAutoplayEnabled: UIAccessibility.isVideoAutoplayEnabled,
@@ -256,6 +277,7 @@ final class LibraryClipPlayback: ObservableObject {
         },
         loadVideo: @escaping LoadLibraryClipVideo = { try await LibraryClipMedia.loadVideo($0, onDownloadProgress: $1) }
     ) {
+        self.loops = loops
         self.mayAutoplayLoops = mayAutoplayLoops
         self.loadVideo = loadVideo
     }
@@ -273,11 +295,15 @@ final class LibraryClipPlayback: ObservableObject {
                 Self.discard(video)
                 return
             }
-            let queuePlayer = AVQueuePlayer()
-            queuePlayer.isMuted = true
-            looper = AVPlayerLooper(player: queuePlayer, templateItem: AVPlayerItem(sdrAsset: video))
+            if loops {
+                let queuePlayer = AVQueuePlayer()
+                queuePlayer.isMuted = true
+                looper = AVPlayerLooper(player: queuePlayer, templateItem: AVPlayerItem(sdrAsset: video))
+                player = queuePlayer
+            } else {
+                player = AVPlayer(playerItem: AVPlayerItem(sdrAsset: video))
+            }
             loadedVideo = video
-            player = queuePlayer
             phase = .ready
             if autoplay { playIfAllowed() }
         } catch {
