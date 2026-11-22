@@ -1,5 +1,9 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 39 · 2026-11-22 · On iPhone Duo the camera's (§1b) controls down the
+vertical bar start lower, clear of the camera-in-use indicator the system adds
+at the head of the column.*
+
 *Rev 38 · 2026-11-21 · Auto follow (§4) follows the athlete through parts of a
 person's clip their own track has no pose for, a trim pulled past the track or
 a track that starts partway, from the other poses the analysis kept
@@ -581,6 +585,11 @@ default empty state, so it never reads as "your library is empty."
   On iPhone Duo the picture centers in the room beside the vertical bar
   rather than on the whole screen, as the record button and lens pills do, so
   the button sits under the middle of the picture and its grid (Rev 38).
+  The controls down the vertical bar start 32 pt lower there than on other
+  screens: while the camera runs, the system's camera-in-use indicator sits
+  at the head of the column and pushes the time and connection glyphs about
+  25 pt down, into where the first control was (Rev 39,
+  `VerticalBar.cameraIndicatorClearance`).
 - While recording, the phone's roll is written into the take as a timed
   metadata track (`RollTrack`, `RollTrackRecorder`): gravity from the motion
   sensors, sampled 30 times a second and expressed as the horizon's tilt in
