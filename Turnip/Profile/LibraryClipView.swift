@@ -49,19 +49,23 @@ struct LibraryClipView: View {
     private static let slideDuration: TimeInterval = 0.3
     private static let slide: Animation = .easeInOut(duration: slideDuration)
 
-    /// A clip deleted meanwhile drops out.
+    /// The clips a swipe sideways reaches, any deleted meanwhile dropped. Read on every frame of a
+    /// drag, so the library is indexed once here rather than scanned for each clip.
     private var clips: [LibraryClip] {
-        (among.contains(clipID) ? among : [clipID]).compactMap(library.clip)
+        let byID = Dictionary(library.clips.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return (among.contains(clipID) ? among : [clipID]).compactMap { byID[$0] }
     }
 
     private var shownID: UUID { currentID ?? clipID }
 
+    /// For a control's action; a render reads the clip from `clips`.
     private var currentClip: LibraryClip? { library.clip(shownID) }
 
     var body: some View {
         let clips = self.clips
+        let index = clips.firstIndex { $0.id == shownID }
         Group {
-            if let index = clips.firstIndex(where: { $0.id == shownID }) {
+            if let index {
                 pager(clips, index: index)
             } else {
                 Text("This clip is no longer in your Profile.")
@@ -74,7 +78,7 @@ struct LibraryClipView: View {
         // Over the pager rather than in it, so they stay put while the pages slide under them.
         .overlay(alignment: .top) {
             if verticalBar == nil {
-                topControls
+                topControls(hasClip: index != nil)
             }
         }
         // No bar at all, as on Processing: the video runs to the top of the screen, and a drag that
@@ -82,7 +86,7 @@ struct LibraryClipView: View {
         // the system's swipe back, so a swipe from the leading edge pages like any other.
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
-        .verticalBarSlotControls(refreshingOn: currentClip != nil) { hasClip in
+        .verticalBarSlotControls(refreshingOn: index != nil) { hasClip in
             backButton
             if hasClip { deleteButton }
         }
@@ -114,11 +118,11 @@ struct LibraryClipView: View {
     // MARK: - Controls
 
     /// Where a bar's items would sit, the back chevron leading and the trash across from it.
-    private var topControls: some View {
+    private func topControls(hasClip: Bool) -> some View {
         HStack {
             backButton
             Spacer(minLength: 0)
-            if currentClip != nil {
+            if hasClip {
                 deleteButton
             }
         }
