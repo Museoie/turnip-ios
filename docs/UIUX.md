@@ -1,12 +1,16 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
-*Rev 39 · 2026-11-22 · The Profile's Clip view plays its clip full screen the
+*Rev 40 · 2026-11-22 · The Profile's Clip view plays its clip full screen the
 way Processing (§2) plays a video, under the same scrub bar, and swipes
 sideways to the clip before or after it in its trick's grid; a swipe up, or a
 tap on the clip's names over the bar, brings its names up in a sheet. Its
 pager takes every horizontal drag, so the swipe from the left edge no longer
 leaves it: the back chevron does. A trick's grid gains columns on a wider
 screen as Home's grid (§1) does (`PROFILE_DESIGN.md` §5.2, §7).*
+
+*Rev 39 · 2026-11-22 · On iPhone Duo the camera's (§1b) controls down the
+vertical bar start lower, clear of the camera-in-use indicator the system adds
+at the head of the column.*
 
 *Rev 38 · 2026-11-21 · Auto follow (§4) follows the athlete through parts of a
 person's clip their own track has no pose for, a trim pulled past the track or
@@ -591,6 +595,11 @@ default empty state, so it never reads as "your library is empty."
   On iPhone Duo the picture centers in the room beside the vertical bar
   rather than on the whole screen, as the record button and lens pills do, so
   the button sits under the middle of the picture and its grid (Rev 38).
+  The controls down the vertical bar start 32 pt lower there than on other
+  screens: while the camera runs, the system's camera-in-use indicator sits
+  at the head of the column and pushes the time and connection glyphs about
+  25 pt down, into where the first control was (Rev 39,
+  `VerticalBar.cameraIndicatorClearance`).
 - While recording, the phone's roll is written into the take as a timed
   metadata track (`RollTrack`, `RollTrackRecorder`): gravity from the motion
   sensors, sampled 30 times a second and expressed as the horizon's tilt in

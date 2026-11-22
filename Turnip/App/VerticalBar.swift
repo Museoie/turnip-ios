@@ -27,6 +27,14 @@ struct VerticalBar: Equatable {
     /// status bar's location, time and connection glyphs end about 166 pt down the column on the
     /// outer display.
     static let statusBarFloor: CGFloat = 172
+    /// How much further down the column a screen that runs the camera starts its controls. While
+    /// the camera is on, the system puts its camera-in-use indicator, a capsule with a green dot,
+    /// at the head of the column, above the time, and the status bar's glyphs move down under it:
+    /// on a device the time and connection glyphs sat 25 pt lower on the camera than on the clip
+    /// editor, and the camera's first control, placed at `controlsTop` like every screen's,
+    /// overlapped them. The scene's status bar frame left that out (the controls sat at the
+    /// floor), so the room is kept here, with a few points to spare.
+    static let cameraIndicatorClearance: CGFloat = 32
 
     init(edge: HorizontalEdge, width: CGFloat) {
         self.edge = edge
@@ -123,6 +131,9 @@ extension EnvironmentValues {
 /// touches.
 struct VerticalBarColumn<Content: View>: View {
     let bar: VerticalBar
+    /// Room kept under `VerticalBar.controlsTop` before the first control: the camera's
+    /// `VerticalBar.cameraIndicatorClearance`, none elsewhere.
+    var extraTop: CGFloat = 0
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -131,7 +142,7 @@ struct VerticalBarColumn<Content: View>: View {
             content()
         }
         .frame(width: bar.width)
-        .padding(.top, VerticalBar.controlsTop)
+        .padding(.top, VerticalBar.controlsTop + extraTop)
         .frame(
             maxWidth: .infinity, maxHeight: .infinity,
             alignment: bar.edge == .leading ? .topLeading : .topTrailing)
@@ -189,12 +200,12 @@ extension View {
     /// screens the expansion containers present. Nothing anywhere else, where the screen keeps them
     /// along its top edge itself.
     func verticalBarColumn<Controls: View>(
-        _ bar: VerticalBar?, @ViewBuilder controls: () -> Controls
+        _ bar: VerticalBar?, extraTop: CGFloat = 0, @ViewBuilder controls: () -> Controls
     ) -> some View {
         let built = controls()
         return overlay {
             if let bar {
-                VerticalBarColumn(bar: bar) { built }
+                VerticalBarColumn(bar: bar, extraTop: extraTop) { built }
             }
         }
     }
