@@ -26,25 +26,32 @@ struct CropAdjustment: Hashable, Sendable {
 ///
 /// `followCrop` is the clip's as `ClipListItem` carries it: a clip with no follow crop yet opens
 /// on Auto follow's.
+///
+/// `otherPoses` is the rest of the take's pose, for a clip of one person: what Auto follow
+/// fills the frames their own track has nothing for from (`FollowPose`). Empty for a clip with
+/// no person, whose `poseFrames` already cover every frame.
 struct ClipEditorSource {
     let window: TrickWindow
     let cropRect: NormalizedRect
     let followCrop: FollowCrop?
     let asset: AVAsset
     let poseFrames: [PoseFrameResult]
+    let otherPoses: [[PoseFrameResult]]
 
     init(
         window: TrickWindow,
         cropRect: NormalizedRect,
         followCrop: FollowCrop? = nil,
         asset: AVAsset,
-        poseFrames: [PoseFrameResult]
+        poseFrames: [PoseFrameResult],
+        otherPoses: [[PoseFrameResult]] = []
     ) {
         self.window = window
         self.cropRect = cropRect
         self.followCrop = followCrop
         self.asset = asset
         self.poseFrames = poseFrames
+        self.otherPoses = otherPoses
     }
 }
 

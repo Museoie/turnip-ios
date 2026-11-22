@@ -158,6 +158,8 @@ final class ClipEditorViewModel: ObservableObject {
     private let source: ClipEditorSource
     private let calculator: CropRectCalculator
     private let autoFollower: AutoFollow
+    /// `followFrames(in:)`'s last answer, and the frame size it was worked out for.
+    private var followFramesCache: (size: CGSize, frames: [PoseFrameResult])?
     /// Auto follow's crop for the window the editor opened with, when the clip opened without one
     /// of its own. Still that crop at the close, the clip goes back without one.
     private var openingFollowCrop: FollowCrop?
@@ -1130,7 +1132,8 @@ final class ClipEditorViewModel: ObservableObject {
         window = Self.clamped(window: window, to: duration)
         if followCrop == nil, let overlay = previewOverlay {
             let opening = autoFollower.defaultCrop(
-                poseFrames: source.poseFrames, window: window, cropRect: overlay.cropRect, videoSize: overlay.videoSize)
+                poseFrames: followFrames(in: overlay.videoSize), window: window, cropRect: overlay.cropRect,
+                videoSize: overlay.videoSize)
             openingFollowCrop = opening
             followCrop = opening
         }
@@ -1169,9 +1172,19 @@ final class ClipEditorViewModel: ObservableObject {
 
     /// The sampled pose frames inside the draft window: what Auto follow fits.
     private var framesInWindow: [PoseFrameResult] {
-        source.poseFrames.filter {
+        followFrames(in: previewOverlay?.videoSize ?? .zero).filter {
             $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
         }
+    }
+
+    /// The clip's pose with the frames its person's track has nothing for filled in from the
+    /// take's other poses (`FollowPose`), worked out once per frame size.
+    private func followFrames(in videoSize: CGSize) -> [PoseFrameResult] {
+        if let cached = followFramesCache, cached.size == videoSize { return cached.frames }
+        let frames = FollowPose.frames(
+            of: source.poseFrames, borrowingFrom: source.otherPoses, renderedPixelSize: videoSize)
+        followFramesCache = (videoSize, frames)
+        return frames
     }
 
     /// (Re)starts the preview loop over the draft window. Clears the trim latch first:

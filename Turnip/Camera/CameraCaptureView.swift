@@ -42,8 +42,12 @@ struct CameraCaptureView: View {
                     session: viewModel.session, isLive: isPreviewLive,
                     poseSkeletons: viewModel.livePoseSkeletons, levelMonitor: viewModel.levelMonitor)
                     // The top inset is kept so the top-pinned picture starts just under the
-                    // status bar, with the cancel and settings buttons floating inside it.
-                    .ignoresSafeArea(edges: [.horizontal, .bottom])
+                    // status bar, with the cancel and settings buttons floating inside it. On
+                    // iPhone Duo the side inset is kept too: the picture centers in the room
+                    // beside the vertical bar, as the bottom controls do, so the record button
+                    // sits under the middle of the picture and its grid rather than off to one
+                    // side of them.
+                    .ignoresSafeArea(edges: verticalBar == nil ? [.horizontal, .bottom] : [.bottom])
                     .overlay {
                         // A transparent gesture catcher, not `.gesture` directly on the
                         // representable: the hosted `UIView` would otherwise hit-test the

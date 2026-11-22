@@ -1,5 +1,11 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 38 · 2026-11-21 · Auto follow (§4) follows the athlete through parts of a
+person's clip their own track has no pose for, a trim pulled past the track or
+a track that starts partway, from the other poses the analysis kept
+(`MULTI_PERSON.md` "Auto follow"). On iPhone Duo the camera's (§1b) picture
+centers beside the vertical bar, under the record button.*
+
 *Rev 37 · 2026-11-21 · Auto follow (§4) frames looser: about one athlete of
 air on each side of the athlete and below, and about two above, where it kept
 a tenth of the athlete's box. The camera (§1b) draws a grid of thirds over the
@@ -572,6 +578,9 @@ default empty state, so it never reads as "your library is empty."
   there is no level to show and it hides. Both are there before and during
   a take, and neither is in the recording. The grid sits on the picture
   itself, not the letterbox under it (`CameraPreviewView`, `CameraLevel`).
+  On iPhone Duo the picture centers in the room beside the vertical bar
+  rather than on the whole screen, as the record button and lens pills do, so
+  the button sits under the middle of the picture and its grid (Rev 38).
 - While recording, the phone's roll is written into the take as a timed
   metadata track (`RollTrack`, `RollTrackRecorder`): gravity from the motion
   sensors, sampled 30 times a second and expressed as the horizon's tilt in
