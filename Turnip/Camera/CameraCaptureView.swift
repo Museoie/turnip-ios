@@ -83,8 +83,9 @@ struct CameraCaptureView: View {
                     .screenHeaderItemPlacement()
             }
         }
-        // Down the vertical bar, cancel first, as the top row reads from the leading corner.
-        .verticalBarColumn(verticalBar) {
+        // Down the vertical bar, cancel first, as the top row reads from the leading corner, and
+        // below the camera-in-use indicator the system adds at the head of the column.
+        .verticalBarColumn(verticalBar, extraTop: VerticalBar.cameraIndicatorClearance) {
             cancelButton
             if viewModel.authorization == .authorized {
                 settingControls
