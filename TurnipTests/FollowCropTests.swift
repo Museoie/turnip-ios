@@ -291,8 +291,8 @@ final class FollowCropTests: XCTestCase {
         for sample in frames {
             let framing = fit.crop.path.framing(at: sample.timestamp)
             let box = CGSize(width: marker.width / framing.scale, height: marker.height / framing.scale)
-            let xs = CropRectCalculator.locatedPoints(in: [sample]).map { $0.x * portrait.width }
-            let minX = try XCTUnwrap(xs.min()), maxX = try XCTUnwrap(xs.max())
+            let jointXs = CropRectCalculator.locatedPoints(in: [sample]).map { $0.x * portrait.width }
+            let minX = try XCTUnwrap(jointXs.min()), maxX = try XCTUnwrap(jointXs.max())
             let left = minX - (framing.center.x - box.width / 2)
             let right = framing.center.x + box.width / 2 - maxX
             let above = 0.5 * portrait.height - (framing.center.y - box.height / 2)
