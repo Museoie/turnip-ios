@@ -63,26 +63,30 @@ final class CropRectCalculatorTests: XCTestCase {
 
     private let square = CGSize(width: 1000, height: 1000)
 
-    /// Auto follow's margin is measured in athletes, the longer side of the joint box: here
-    /// 100 × 200 px, so 200 px of air on the left, the right and below, and 400 px above.
-    func testAMarginAddsAnAthleteOfAirAndTwiceThatAbove() {
-        let calculator = CropRectCalculator(targetAspectRatio: 5.0 / 8.0, paddingFraction: 0, margin: .follow)
+    /// Auto follow's margin puts half the joint box's width of air on its left and its right,
+    /// padding included, so the air beside the athlete is narrower than the athlete's box: here
+    /// a 200 × 100 px box gets 100 px each side. The height the ratio then adds is split two to
+    /// one above, as the padding is: 200 px above the box and 100 below.
+    func testAMarginLeavesHalfTheBoxsWidthBesideItAndTwiceAsMuchAboveAsBelow() {
+        let calculator = CropRectCalculator(targetAspectRatio: 1, margin: .follow)
         let rect = calculator.cropRect(
-            around: [CGPoint(x: 0.45, y: 0.5), CGPoint(x: 0.55, y: 0.7)], renderedPixelSize: square,
+            around: [CGPoint(x: 0.4, y: 0.5), CGPoint(x: 0.6, y: 0.6)], renderedPixelSize: square,
             slidIntoFrame: false)
 
-        assertRect(rect, minX: 0.25, maxX: 0.75, minY: 0.1, maxY: 0.9)
+        assertRect(rect, minX: 0.3, maxX: 0.7, minY: 0.3, maxY: 0.7)
     }
 
-    /// Height added to reach the ratio is split as the margin is, two to one above: 200 px here,
-    /// 133 above and 67 below, where growing about the center would put 100 on each.
-    func testAMarginSplitsTheHeightTheRatioAddsTheSameWay() {
-        let calculator = CropRectCalculator(targetAspectRatio: 0.5, paddingFraction: 0, margin: .follow)
+    /// A box too tall for the margin's width to reach the ratio grows sideways about its center,
+    /// as the static crop's does: a 100 × 400 px box padded to 200 × 520 px is widened to 260,
+    /// 80 px beside it on each side, still narrower than the box. Above and below it keeps the
+    /// padding, twice as much above.
+    func testAMarginOnATallBoxGrowsItsWidthAboutTheCenter() {
+        let calculator = CropRectCalculator(targetAspectRatio: 0.5, margin: .follow)
         let rect = calculator.cropRect(
-            around: [CGPoint(x: 0.45, y: 0.5), CGPoint(x: 0.55, y: 0.7)], renderedPixelSize: square,
+            around: [CGPoint(x: 0.45, y: 0.3), CGPoint(x: 0.55, y: 0.7)], renderedPixelSize: square,
             slidIntoFrame: false)
 
-        assertRect(rect, minX: 0.25, maxX: 0.75, minY: 0.1 - 0.4 / 3, maxY: 0.9 + 0.2 / 3)
+        assertRect(rect, minX: 0.37, maxX: 0.63, minY: 0.22, maxY: 0.74)
     }
 
     func testBoxIsTheUnionAcrossEveryFrameInTheWindow() {

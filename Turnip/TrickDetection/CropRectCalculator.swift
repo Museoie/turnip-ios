@@ -29,21 +29,23 @@ struct NormalizedRect: Hashable, Sendable {
     }
 }
 
-/// Air around the athlete measured in athletes rather than in fractions of their box: what a
-/// crop that follows the athlete leaves around them (`AutoFollow`). The athlete's size is the
-/// longer side of their joint box in pixels, so someone laid out mid-flip counts as tall as
-/// they do standing.
+/// Air around the athlete beyond `CropRectCalculator.paddingFraction`: what a crop that follows
+/// the athlete leaves around them (`AutoFollow`). The sides are measured against the joint
+/// box's own width, so the air beside the athlete stays narrower than the athlete is wide;
+/// the height is what the crop's ratio gives that width, split more above than below.
 struct CropMargin: Hashable, Sendable {
-    /// The margin on the left, the right and below, in athlete sizes.
-    var athleteSizes: Float
-    /// How many times the margin below the one above is: an athlete goes up more than down,
-    /// and a crop with equal air above and below reads as aimed at the floor.
+    /// The air added on the left and on the right, each, as a fraction of the joint box's
+    /// width.
+    var sides: Float
+    /// How many times the air below the air above is: an athlete goes up more than down, and a
+    /// crop with equal air above and below reads as aimed at the floor.
     var topWeight: Float
 
     /// No margin beyond `CropRectCalculator.paddingFraction`, the same above as below.
-    static let tight = CropMargin(athleteSizes: 0, topWeight: 1)
-    /// Auto follow's: one athlete of air on each side and below, two above.
-    static let follow = CropMargin(athleteSizes: 1, topWeight: 2)
+    static let tight = CropMargin(sides: 0, topWeight: 1)
+    /// Auto follow's: four tenths of the joint box's width on each side, which with the static
+    /// crop's tenth makes half the box's width, and twice as much air above as below.
+    static let follow = CropMargin(sides: 0.4, topWeight: 2)
 
     /// How far above the middle of the athlete's box the crop's center sits, as a fraction of
     /// the height the crop has over the box: the air split `topWeight` to one.
@@ -77,7 +79,7 @@ struct CropRectCalculator: Sendable {
     /// a degenerate rect. Measured against the shorter axis so it means the same pixel size
     /// on both orientations.
     let minimumExtentFraction: Float
-    /// Air added on top of `paddingFraction`, in athlete sizes, and how the air above compares
+    /// Air added beside the box on top of `paddingFraction`, and how the air above compares
     /// with the air below. `.tight` for the static rect; Auto follow frames with `.follow`.
     let margin: CropMargin
 
@@ -86,7 +88,7 @@ struct CropRectCalculator: Sendable {
         precondition(targetAspectRatio > 0, "targetAspectRatio is width over height and must be positive")
         precondition(paddingFraction >= 0, "paddingFraction adds to each side and cannot be negative")
         precondition(minimumExtentFraction >= 0, "minimumExtentFraction floors the box extent and cannot be negative")
-        precondition(margin.athleteSizes >= 0, "a margin adds to each side and cannot be negative")
+        precondition(margin.sides >= 0, "a margin adds to each side and cannot be negative")
         precondition(margin.topWeight > 0, "topWeight is a ratio of two margins and must be positive")
         self.targetAspectRatio = targetAspectRatio
         self.paddingFraction = paddingFraction
@@ -133,7 +135,7 @@ struct CropRectCalculator: Sendable {
               let athlete = boundingBox(around: points) else { return nil }
 
         let flooredBox = flooredToMinimumExtent(athlete, renderedPixelSize: renderedPixelSize)
-        let paddedBox = padded(flooredBox, renderedPixelSize: renderedPixelSize)
+        let paddedBox = padded(flooredBox)
         let snapped = snappedToTargetRatio(paddedBox, renderedPixelSize: renderedPixelSize)
         return slidIntoFrame ? fittedInFrame(snapped) : snapped
     }
@@ -187,14 +189,13 @@ struct CropRectCalculator: Sendable {
         return grown
     }
 
-    /// The box with `paddingFraction` of itself and `margin.athleteSizes` athletes of air on
-    /// the left, the right and below, and `margin.topWeight` times as much above as below.
-    private func padded(_ box: NormalizedRect, renderedPixelSize: CGSize) -> NormalizedRect {
-        let renderedWidth = Float(renderedPixelSize.width)
-        let renderedHeight = Float(renderedPixelSize.height)
-        let athletePixels = max(box.width * renderedWidth, box.height * renderedHeight)
-        let side = box.width * paddingFraction + athletePixels * margin.athleteSizes / renderedWidth
-        let below = box.height * paddingFraction + athletePixels * margin.athleteSizes / renderedHeight
+    /// The box with `paddingFraction` of its width and `margin.sides` more on the left and the
+    /// right, `paddingFraction` of its height below, and `margin.topWeight` times that above.
+    /// Each side is a fraction of the box's own extent on that axis, so the same in normalized
+    /// units as in pixels.
+    private func padded(_ box: NormalizedRect) -> NormalizedRect {
+        let side = box.width * (paddingFraction + margin.sides)
+        let below = box.height * paddingFraction
         return NormalizedRect(
             minX: box.minX - side,
             maxX: box.maxX + side,

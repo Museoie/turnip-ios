@@ -1091,15 +1091,19 @@ final class ClipEditorTests: XCTestCase {
         XCTAssertTrue(viewModel.isFollowAdjusted, "a drag's keyframe enables Reset follow too")
     }
 
-    /// A still athlete leaves nothing to follow: one keyframe and the notice.
+    /// A still athlete leaves nothing to follow: one framing and the notice. Its keyframe sits
+    /// mid-window, 2 s into the 4 s window, so one more at each of the window's ends, with the
+    /// same framing, keeps a keyframe within a second of each.
     @MainActor
-    func testFollowingAStandingAthleteSaysThereIsNothingToFollow() {
+    func testFollowingAStandingAthleteSaysThereIsNothingToFollow() throws {
         let standing = PoseFixture.frames(hipXPositions: Array(repeating: 0.5, count: 40))
         let viewModel = makeFollowViewModel(frames: standing)
 
         viewModel.autoFollow()
 
-        XCTAssertEqual(viewModel.followCrop?.keyframes.count, 1)
+        let keyframes = try XCTUnwrap(viewModel.followCrop?.keyframes)
+        XCTAssertEqual(keyframes.map(\.time), [0, 2, 4])
+        XCTAssertTrue(keyframes.allSatisfy { $0.framing == keyframes[1].framing })
         XCTAssertTrue(viewModel.isShowingNothingToFollowNotice)
     }
 
@@ -1147,7 +1151,7 @@ final class ClipEditorTests: XCTestCase {
         let retracked = try XCTUnwrap(viewModel.followCrop)
         let fresh = try XCTUnwrap(AutoFollow().fit(
             frames: frames.filter { $0.timestamp <= 2.2 }, cropRect: full, videoSize: naturalSize,
-            rotationRadians: 0.1)).crop
+            rotationRadians: 0.1, window: viewModel.window)).crop
         XCTAssertEqual(retracked.keyframes, fresh.keyframes)
         XCTAssertNotEqual(retracked.keyframes, turned.keyframes)
         XCTAssertTrue(retracked.isUntouchedAutoFollow)

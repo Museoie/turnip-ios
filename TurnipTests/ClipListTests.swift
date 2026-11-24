@@ -1059,16 +1059,21 @@ final class ClipListTests: XCTestCase {
         XCTAssertLessThan(first.center.x, last.center.x, "the crop should move the way the athlete does")
     }
 
-    /// An athlete who stays put has nothing to follow: the crop holds one framing.
+    /// An athlete who stays put has nothing to follow: the crop holds one framing, at a keyframe
+    /// mid-window and at one on each of the window's ends, a second and a half from it.
     @MainActor
-    func testAnAthleteWhoStaysPutGetsOneKeyframe() async throws {
+    func testAnAthleteWhoStaysPutGetsOneFraming() async throws {
         let url = try await writeFollowVideo()
         defer { try? FileManager.default.removeItem(at: url) }
         let viewModel = followViewModel(items: [detectedItem()], poseFrames: standingAthlete(), url: url)
 
         let drawn = await viewModel.followCrop(for: viewModel.items[1])
 
-        XCTAssertEqual(drawn?.keyframes.count, 1)
+        let keyframes = try XCTUnwrap(drawn?.keyframes)
+        XCTAssertEqual(keyframes.count, 3)
+        XCTAssertEqual(keyframes.first?.time, followedWindow.startTime)
+        XCTAssertEqual(keyframes.last?.time, followedWindow.endTime)
+        XCTAssertTrue(keyframes.allSatisfy { $0.framing == keyframes[1].framing })
     }
 
     /// The editor hands back the clip's follow crop, and moving it changes the saved clip's

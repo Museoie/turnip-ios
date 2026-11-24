@@ -465,7 +465,7 @@ final class ClipEditorViewModel: ObservableObject {
     }
 
     /// The adjustment that frames `normalizedKeypoints` in the marker at `rotationRadians`,
-    /// or `nil` when there is nothing to frame: Auto follow's one keyframe for an athlete who
+    /// or `nil` when there is nothing to frame: Auto follow's one framing for an athlete who
     /// stays put (`AutoFollow`). Pure, so the fit is unit-testable without a player; the rotated
     /// case is the discriminating one.
     ///
@@ -700,14 +700,14 @@ final class ClipEditorViewModel: ObservableObject {
     /// zoomed to the room the athlete needs around then. Keeps the turn and replaces the zoom
     /// and every keyframe, the user's too. The picture moves to the new path at the playhead over
     /// `fitAnimation` and then follows it. A path that never moves frames the athlete with
-    /// one keyframe and raises "Nothing to follow"; a window with nothing located changes
-    /// nothing but the notice.
+    /// one framing, a keyframe mid-window and one at each end more than a second from it, and
+    /// raises "Nothing to follow"; a window with nothing located changes nothing but the notice.
     func autoFollow() {
         guard supportsAutoFollow, let overlay = previewOverlay else { return }
         let rotation = followRotationAtPlayhead
         guard let fit = autoFollower.shaped(targetAspectRatio).fit(
             frames: framesInWindow, cropRect: overlay.cropRect, videoSize: overlay.videoSize,
-            rotationRadians: rotation)
+            rotationRadians: rotation, window: window)
         else {
             withAnimation(Self.fitAnimation) { isShowingNothingToFollowNotice = true }
             return
@@ -1105,7 +1105,7 @@ final class ClipEditorViewModel: ObservableObject {
         else { return }
         guard let fit = autoFollower.shaped(followCrop.aspectRatio).fit(
             frames: framesInWindow, cropRect: overlay.cropRect, videoSize: overlay.videoSize,
-            rotationRadians: followRotationAtPlayhead)
+            rotationRadians: followRotationAtPlayhead, window: window)
         else { return }
         var retracked = fit.crop
         retracked.isAutoFollow = followCrop.isAutoFollow
