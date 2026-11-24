@@ -471,6 +471,31 @@ final class FollowCropTests: XCTestCase {
         }
     }
 
+    /// A second is the limit, and a second exactly is within it: a keyframe that far from an
+    /// end, or nearer, takes no companion there, and one any further does. Over 2 s of an
+    /// athlete standing still, Auto follow's one keyframe sits at 1 s. In a window from 0 to
+    /// 1.9 s it is exactly a second from the start and 0.9 s from the end, so it stays alone;
+    /// with the window's end at 2.1 s it is 1.1 s from that end, which gets a keyframe.
+    func testAKeyframeASecondOrLessFromAnEndTakesNoKeyframeThere() throws {
+        let frames = (0..<20).map {
+            PoseFixture.frame(index: $0, hip: (x: 0.5, y: 0.6), upperBody: (x: 0.5, y: 0.5))
+        }
+        let follower = AutoFollow()
+        XCTAssertEqual(AutoFollow.endReach, 1)
+
+        let within = try XCTUnwrap(follower.fit(
+            frames: frames, cropRect: fullFrame, videoSize: landscape, rotationRadians: 0,
+            window: TrickWindow(startTime: 0, endTime: 1.9)))
+        let beyond = try XCTUnwrap(follower.fit(
+            frames: frames, cropRect: fullFrame, videoSize: landscape, rotationRadians: 0,
+            window: TrickWindow(startTime: 0, endTime: 2.1)))
+
+        XCTAssertFalse(within.moves)
+        XCTAssertEqual(within.crop.keyframes.map(\.time), [1])
+        XCTAssertEqual(beyond.crop.keyframes.map(\.time), [1, 2.1])
+        XCTAssertEqual(Set(beyond.crop.keyframes.map(\.framing)).count, 1, "the end's keyframe holds the framing")
+    }
+
     /// At another shape, Auto follow fits the crop's own box, stamps the shape on the crop, and
     /// still holds the athlete at every sample.
     func testAutoFollowFitsTheCropsOwnShape() throws {
