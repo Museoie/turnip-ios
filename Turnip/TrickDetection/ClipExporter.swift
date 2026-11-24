@@ -218,8 +218,9 @@ struct ClipExportTransform {
 
     /// How much larger than its box a follow crop renders: 1 unless a framing zooms out past the
     /// box, and then enough for the widest one to draw the source at its own size. Auto follow
-    /// leaves an athlete of air around the athlete (`CropMargin.follow`), wider than the clip's
-    /// crop rect on a trick done in place, and a box-sized output would throw those pixels away.
+    /// leaves air around the athlete (`CropMargin.follow`) and frames no tighter than its floor,
+    /// often wider than the clip's crop rect on a trick done in place, and a box-sized output
+    /// would throw those pixels away.
     /// The zoom between two keyframes stays between theirs (`MonotoneCubic` never overshoots),
     /// so the keyframes' own zooms bound it.
     static func detailScale(for followCrop: FollowCrop) -> CGFloat {

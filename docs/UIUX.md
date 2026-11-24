@@ -1,5 +1,14 @@
 # Turnip — UI/UX Flow (v1 MVP)
 
+*Rev 41 · 2026-11-24 · Auto follow (§4) frames tighter at the sides: the air
+on either side of the athlete is about half as wide as the body parts' box,
+narrower than the box itself unless the crop's shape needs the width to show
+the head and feet, where Rev 37 left about one athlete of air on each side.
+Auto follow's keyframes also always reach within a second of the clip's start
+and of its end: where the crop holds still for longer, a keyframe at that end
+holds the same framing, so the opening and closing framings each have a
+diamond near them to adjust.*
+
 *Rev 40 · 2026-11-22 · The Profile's Clip view plays its clip full screen the
 way Processing (§2) plays a video, under the same scrub bar, and swipes
 sideways to the clip before or after it in its trick's grid; a swipe up, or a
@@ -1088,7 +1097,12 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
       cluster: a moment that would want a keyframe nearer than that to another
       goes without. The two that start and stop the crop's move are spread
       into the still stretches either side until they are 1 s apart, or sit at
-      the window's two ends when it is shorter than that. Between two
+      the window's two ends when it is shorter than that. However the move
+      falls, the first keyframe sits no more than a second after the clip's
+      start and the last no more than a second before its end (Rev 41): where
+      the crop holds still for longer, a keyframe at that end holds the
+      framing of the one beside it, which changes nothing the crop shows but
+      gives the opening and closing framings a diamond of their own. Between two
       keyframes the crop can only travel from one framing to the other, so
       where the athlete moves away and back within a second — out to the side
       and back, or up into a jump and down — the curve would cut them; instead
@@ -1115,9 +1129,11 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
       rotate's); the follow crop is entirely manual there.
     - **Nothing to follow.** When the crop Auto follow finds neither moves
       nor zooms, because the athlete stays put or a portrait take leaves a tall
-      crop no room, it frames the athlete with one keyframe and says "Nothing
-      to follow" in a notice where "No horizon found" appears. The keyframe
-      frames every body part the pose model located in the window, at the
+      crop no room, it frames the athlete with one framing and says "Nothing
+      to follow" in a notice where "No horizon found" appears: a keyframe
+      mid-window and, where that is more than a second from an end of the
+      clip, one at that end too (Rev 41). The framing
+      holds every body part the pose model located in the window, at the
       clip's turn: the body parts' box with Auto follow's margin around it
       (below), slid
       inside the frame, and zoomed in to the frame's edge when that box can't
@@ -1173,14 +1189,20 @@ Retired into Name Clips on 2026-10-27 (Rev 21) and back in front of it since
       - **Manual zoom.** A pinch keeps the editor's own zoom range.
       - **Auto follow** writes positions and zoom from the pose, and one turn
         for the whole clip: the turn the crop has at the playhead. The zoom
-        leaves about one athlete of air on each side of the athlete and below,
-        and about two above (Rev 37; until then the static crop's padding, a
-        tenth of the body's box on each side, which cut close around someone
-        moving). An athlete is the longer side of the body parts' box, so a
-        tuck or a layout counts about as tall as standing. It is what the crop
-        aims for, not a rule: the frame often has less to give, and then the
-        crop is as wide as the frame allows with the air it has split the same
-        way; and the crop may sit a little off it between keyframes. Export
+        leaves air on either side of the athlete about half as wide as the
+        body parts' box, and twice as much air above them as below (Rev 41).
+        On a tall crop the height the athlete needs often sets the width
+        instead, and the air beside them is what that leaves: narrower than
+        the box unless the athlete is less than about a quarter as wide as
+        tall, where a crop narrow enough would cut their head or feet. Rev 37
+        left about one athlete, the box's longer side, of air on each side and
+        below and two above, which framed too loosely; before it the static
+        crop's padding, a tenth of the body's box on each side, cut close
+        around someone moving. It is what the crop aims for, not a rule: the
+        frame often has less to give, and then the crop is as wide as the
+        frame allows with the air it has split the same way; the zoom floor
+        below gives an athlete far from the camera more; and the crop may sit
+        a little off it between keyframes. Export
         renders a crop wider than the clip's own rect larger by as much, so
         the looser framing costs no detail (`DESIGN.md` step 6). The zoom
         follows the room the athlete needs over a moment rather than each

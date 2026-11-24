@@ -6,20 +6,21 @@ import Foundation
 ///
 /// The pipeline's follow path (`CropPathCalculator`) is analysis output, one center per pose
 /// sample. Each sample also gets a zoom of its own (`ZoomEnvelope`): the room the athlete needs
-/// over a moment, with an athlete of air on each side and below and two above
-/// (`CropMargin.follow`), smoothed so the crop changes as the athlete comes closer or moves away
-/// rather than with every tuck. The frame often can't give that much, and then the crop is as
-/// wide as the frame allows and the air it does have is split the same way. Nobody edits forty keyframes with a
-/// thumb, so the samples are reduced: keyframes start where the crop starts and stops moving,
-/// and one more goes in at the worst sample until the curves through them (`FollowPath`) never
-/// show beyond the frame, keep every joint each sample's own crop kept, stray from no sample's
-/// center by more than `driftTolerance` of the crop's width, and from no sample's zoom by more
-/// than the envelope's `zoomTolerance`. Showing beyond the frame comes first, then a cut limb,
-/// since both are worse than a lagging crop. No two keyframes sit closer than
-/// `keyframeSpacing`, so a sample that would need one nearer than that goes without: where the
-/// curve then cuts a joint that sample's own crop kept, the keyframes either side zoom out until
-/// it doesn't (`widenedToHold`), and where it shows beyond the frame, they move in
-/// (`heldInsideFrame`).
+/// over a moment, with half the width of the athlete's box of air on each side and twice as much
+/// air above as below (`CropMargin.follow`), smoothed so the crop changes as the athlete comes
+/// closer or moves away rather than with every tuck. The frame often can't give that much, and
+/// then the crop is as wide as the frame allows and the air it does have is split the same way.
+/// Nobody edits forty keyframes with a thumb, so the samples are reduced: keyframes start where
+/// the crop starts and stops moving, and one more goes in at the worst sample until the curves
+/// through them (`FollowPath`) never show beyond the frame, keep every joint each sample's own
+/// crop kept, stray from no sample's center by more than `driftTolerance` of the crop's width,
+/// and from no sample's zoom by more than the envelope's `zoomTolerance`. Showing beyond the
+/// frame comes first, then a cut limb, since both are worse than a lagging crop. No two
+/// keyframes sit closer than `keyframeSpacing`, so a sample that would need one nearer than that
+/// goes without: where the curve then cuts a joint that sample's own crop kept, the keyframes
+/// either side zoom out until it doesn't (`widenedToHold`), and where it shows beyond the frame,
+/// they move in (`heldInsideFrame`). Last, the keyframes reach within `endReach` of the clip's
+/// start and end (`reachingEnds`), so the follow lane always has a diamond near each end.
 struct AutoFollow {
     /// How far the curve may stray from a sample's own center, as a fraction of the crop's
     /// width, before a keyframe goes in at that sample.
@@ -29,8 +30,14 @@ struct AutoFollow {
     /// (`widenedToHold`), far enough apart that the follow lane shows diamonds each worth
     /// adjusting by hand rather than a cluster. The two that start and stop the crop's movement
     /// are spread into the holds either side to sit this far apart, or as far apart as the
-    /// window's samples reach when it is shorter. Keyframes the user adds aren't bound by it.
+    /// window's samples reach when it is shorter. Keyframes the user adds aren't bound by it,
+    /// and neither are the ones `reachingEnds` puts at the clip's ends.
     var keyframeSpacing: TimeInterval = 1
+    /// The farthest Auto follow's first keyframe may sit after the clip's start, and its last
+    /// before the clip's end, a second: past it, a keyframe goes in at that end. With the crop
+    /// holding still there, the framing is set by a keyframe deep in the clip, and changing the
+    /// opening or closing framing would take finding that keyframe or adding one.
+    static let endReach: TimeInterval = 1
     /// Frames each sample with Auto follow's margin, `CropMargin.follow`, rather than the static
     /// crop's tenth of the athlete's box: a crop that tight around someone moving cuts close.
     var pathCalculator = CropPathCalculator(rectCalculator: CropRectCalculator(margin: .follow))
@@ -67,15 +74,20 @@ struct AutoFollow {
     /// The fit for `frames` (the window's pose samples) on a clip whose crop rect is
     /// `cropRect`, both in the displayed frame's pixels (`videoSize`), turned by
     /// `rotationRadians` throughout. Each sample's zoom comes from the envelope, no wider than
-    /// the turned crop can be inside the frame and no tighter than `tightestLongerSide`. `nil`
-    /// when no frame located a joint.
+    /// the turned crop can be inside the frame and no tighter than `tightestLongerSide`. The
+    /// keyframes reach within `endReach` of `window`'s start and end, the clip's own, or of the
+    /// first and last frames' moments without one (`reachingEnds`). `nil` when no frame located
+    /// a joint.
     func fit(
-        frames: [PoseFrameResult], cropRect: CGRect, videoSize: CGSize, rotationRadians: Double
+        frames: [PoseFrameResult], cropRect: CGRect, videoSize: CGSize, rotationRadians: Double,
+        window: TrickWindow? = nil
     ) -> Fit? {
         let sorted = frames.sorted { $0.timestamp < $1.timestamp }
         guard videoSize.width > 0, videoSize.height > 0,
+              let first = sorted.first, let last = sorted.last,
               let path = pathCalculator.cropPath(for: sorted, renderedPixelSize: videoSize)
         else { return nil }
+        let clip = window.map { $0.startTime...max($0.startTime, $0.endTime) } ?? first.timestamp...last.timestamp
         let marker = ClipEditorViewModel.markerBox(around: cropRect, aspectRatio: aspectRatio)
         guard marker.width > 0, marker.height > 0 else { return nil }
         let ratio = marker.width / marker.height
@@ -86,11 +98,11 @@ struct AutoFollow {
             videoSize: videoSize)
         let resting = CGPoint(x: videoSize.width / 2, y: videoSize.height / 2)
         guard let moving = movingRange(of: samples) else {
-            return Fit(
-                crop: stillCrop(
-                    frames: sorted, samples: samples, cropRect: cropRect, videoSize: videoSize,
-                    rotationRadians: rotationRadians, widths: tightest...widest, resting: resting),
-                moves: false)
+            var still = stillCrop(
+                frames: sorted, samples: samples, cropRect: cropRect, videoSize: videoSize,
+                rotationRadians: rotationRadians, widths: tightest...widest, resting: resting)
+            still.keyframes = Self.reachingEnds(still.keyframes, of: clip)
+            return Fit(crop: still, moves: false)
         }
         let kept = reduced(samples, moving: moving, marker: marker, rotationRadians: rotationRadians, in: videoSize)
         let widened = Self.widenedToHold(
@@ -102,7 +114,8 @@ struct AutoFollow {
             samples: samples, marker: marker,
             widestScale: ClipEditorViewModel.clampedScale(marker.width / widest),
             rotationRadians: rotationRadians, in: videoSize)
-        let keyframes = Self.heldInsideFrame(widened, marker: marker, rotationRadians: rotationRadians, in: videoSize)
+        let held = Self.heldInsideFrame(widened, marker: marker, rotationRadians: rotationRadians, in: videoSize)
+        let keyframes = Self.reachingEnds(held, of: clip)
             .map { FollowKeyframe(time: $0.time, framing: $0.framing, isAuto: true) }
         let restingFraming = FollowFraming(
             center: resting, scale: samples[kept[0]].scale, rotationRadians: rotationRadians)
@@ -157,7 +170,9 @@ struct AutoFollow {
         let framesInWindow = poseFrames.filter {
             $0.timestamp >= window.startTime && $0.timestamp <= window.endTime
         }
-        return fit(frames: framesInWindow, cropRect: cropRect, videoSize: videoSize, rotationRadians: rotationRadians)?
+        return fit(
+            frames: framesInWindow, cropRect: cropRect, videoSize: videoSize, rotationRadians: rotationRadians,
+            window: window)?
             .crop
             ?? FollowCrop.wholeFrame(
                 cropRect: cropRect, videoSize: videoSize, rotationRadians: rotationRadians, aspectRatio: aspectRatio)
@@ -218,6 +233,29 @@ struct AutoFollow {
             resting: FollowFraming(center: resting, scale: scale, rotationRadians: rotationRadians),
             isAutoFollow: true,
             aspectRatio: aspectRatio)
+    }
+
+    /// `keyframes` reaching within `endReach` of `clip`'s start and end: where the first sits
+    /// further than that after the start, one more at the start with the first's framing, and
+    /// where the last sits further than that before the end, one more at the end with the
+    /// last's. The crop holds still before the first keyframe and after the last, and between
+    /// two keyframes of one framing it holds still too, leaving the next with no speed just as
+    /// the first keyframe left it (`MonotoneCubic`), so the crop draws exactly what it drew
+    /// without them. Unchanged for no keyframes.
+    private static func reachingEnds(
+        _ keyframes: [FollowKeyframe], of clip: ClosedRange<TimeInterval>
+    ) -> [FollowKeyframe] {
+        guard var opening = keyframes.first, var closing = keyframes.last else { return keyframes }
+        var reaching = keyframes
+        if opening.time - clip.lowerBound > endReach + 1e-9 {
+            opening.time = clip.lowerBound
+            reaching.insert(opening, at: 0)
+        }
+        if clip.upperBound - closing.time > endReach + 1e-9 {
+            closing.time = clip.upperBound
+            reaching.append(closing)
+        }
+        return reaching
     }
 
     /// How much more of a crop's spare height than the margin's own split may lie above the

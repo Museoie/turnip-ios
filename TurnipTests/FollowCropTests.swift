@@ -201,10 +201,11 @@ final class FollowCropTests: XCTestCase {
         }
     }
 
-    /// An athlete who stays put leaves nothing to follow: one keyframe, framed around every joint
-    /// in the window at once with Auto follow's margin. Small in the frame, 108 px tall, they get
-    /// Auto follow's floor, a region 768 px tall, around the center the margin's own rect has.
-    func testAutoFollowOnAStandingAthleteIsOneKeyframe() throws {
+    /// An athlete who stays put leaves nothing to follow: one framing, around every joint in the
+    /// window at once with Auto follow's margin, at a keyframe mid-window and at one on each end
+    /// of the 2.9 s of samples, more than a second from it. Small in the frame, 108 px tall, they
+    /// get Auto follow's floor, a region 768 px tall, around the center the margin's own rect has.
+    func testAutoFollowOnAStandingAthleteHoldsOneFraming() throws {
         let frames = (0..<30).map {
             PoseFixture.frame(index: $0, hip: (x: 0.5, y: 0.6), upperBody: (x: 0.5, y: 0.5))
         }
@@ -215,61 +216,70 @@ final class FollowCropTests: XCTestCase {
             videoSize: landscape, rotationRadians: 0, calculator: CropRectCalculator(margin: .follow)))
 
         XCTAssertFalse(fit.moves)
-        XCTAssertEqual(fit.crop.keyframes.count, 1)
+        let keyframes = fit.crop.keyframes
+        XCTAssertEqual(keyframes.count, 3)
+        XCTAssertEqual(keyframes.first?.time, frames.first?.timestamp)
+        XCTAssertEqual(keyframes.last?.time, frames.last?.timestamp)
+        XCTAssertTrue(keyframes.allSatisfy { $0.framing == keyframes[1].framing })
         // The full frame's marker box is 1920 wide; the floor's region is 432 × 768.
         XCTAssertGreaterThan(wholeWindow.scale, 1920 / 432, "the margin alone would frame tighter than the floor")
-        XCTAssertEqual(fit.crop.keyframes[0].scale, 1920 / 432, accuracy: 1e-9)
-        XCTAssertEqual(fit.crop.keyframes[0].center.x, 960, accuracy: 0.01)
-        // The joints span 540 to 648. The margin's own rect is 280.8 × 499.2, its center 65.2 px
-        // above their middle: a sixth of its spare height.
-        XCTAssertEqual(fit.crop.keyframes[0].center.y, 594 - 65.2, accuracy: 0.05)
+        XCTAssertEqual(keyframes[1].scale, 1920 / 432, accuracy: 1e-9)
+        XCTAssertEqual(keyframes[1].center.x, 960, accuracy: 0.01)
+        // The joints span 540 to 648, and their box is floored to 54 px wide. The margin's own
+        // rect is 108 × 192, its center 14 px above their middle: a sixth of its spare height.
+        XCTAssertEqual(keyframes[1].center.y, 594 - 14, accuracy: 0.05)
     }
 
     /// An athlete too large for the frame to give the margin gets the widest crop the frame
-    /// holds, here its whole height.
+    /// holds, here its whole height: 864 px tall, they need a rect 1,123 px tall.
     func testAutoFollowOnALargeStandingAthleteIsTheWidestCrop() throws {
         let frames = (0..<30).map {
-            PoseFixture.frame(index: $0, hip: (x: 0.5, y: 0.6), upperBody: (x: 0.5, y: 0.3))
+            PoseFixture.frame(index: $0, hip: (x: 0.5, y: 0.9), upperBody: (x: 0.5, y: 0.1))
         }
         let fit = try XCTUnwrap(AutoFollow().fit(
             frames: frames, cropRect: fullFrame, videoSize: landscape, rotationRadians: 0))
 
         XCTAssertFalse(fit.moves)
-        XCTAssertEqual(fit.crop.keyframes.count, 1)
-        XCTAssertEqual(fit.crop.keyframes[0].scale, 1920 / 607.5, accuracy: 1e-6)
-        XCTAssertEqual(fit.crop.keyframes[0].center.x, 960, accuracy: 0.01)
-        XCTAssertEqual(fit.crop.keyframes[0].center.y, 540, accuracy: 0.01)
+        let keyframes = fit.crop.keyframes
+        let first = try XCTUnwrap(keyframes.first)
+        XCTAssertTrue(keyframes.allSatisfy { $0.framing == first.framing })
+        XCTAssertEqual(first.scale, 1920 / 607.5, accuracy: 1e-6)
+        XCTAssertEqual(first.center.x, 960, accuracy: 0.01)
+        XCTAssertEqual(first.center.y, 540, accuracy: 0.01)
     }
 
     /// Where the frame holds a crop narrower than the margin's rect but taller than the athlete,
     /// the crop is lowered so the air it has isn't all above them. A square crop of a portrait
-    /// frame is 1080 px a side; the athlete, 480 px tall from 960 to 1440, would have a rect
-    /// 2064 px a side centered at 936. Kept there, the crop would leave 564 px above the athlete
-    /// and 36 below. Lowered, its center is no more than a sixth plus a tenth of its 600 px of
-    /// spare height above the athlete's middle, 1200: at 1040, with 460 px above and 140 below.
+    /// frame is 1080 px a side; the athlete, laid out 972 px wide and 96 tall from 1056 to 1152,
+    /// would have a rect 1944 px a side centered at 796. Kept there, the crop would leave 800 px
+    /// above the athlete and 184 below. Lowered, its center is no more than a sixth plus a tenth
+    /// of its 984 px of spare height above the athlete's middle, 1104: at 841.6, with 754.4 px
+    /// above and 229.6 below.
     func testACropNarrowerThanTheMarginKeepsAirBelowTheAthlete() throws {
         let frames = (0..<30).map {
-            PoseFixture.frame(index: $0, hip: (x: 0.5, y: 0.75), upperBody: (x: 0.5, y: 0.5))
+            PoseFixture.frame(index: $0, hip: (x: 0.05, y: 0.6), upperBody: (x: 0.95, y: 0.55))
         }
         let frame = CGRect(origin: .zero, size: portrait)
         let fit = try XCTUnwrap(AutoFollow().shaped(1).fit(
             frames: frames, cropRect: frame, videoSize: portrait, rotationRadians: 0))
 
-        XCTAssertEqual(fit.crop.keyframes.count, 1)
-        let keyframe = fit.crop.keyframes[0]
+        XCTAssertFalse(fit.moves)
+        let keyframe = try XCTUnwrap(fit.crop.keyframes.first)
+        XCTAssertTrue(fit.crop.keyframes.allSatisfy { $0.framing == keyframe.framing })
         let marker = ClipEditorViewModel.markerBox(around: frame, aspectRatio: 1)
         XCTAssertEqual(marker.height / keyframe.scale, 1080, accuracy: 0.01)
-        XCTAssertEqual(keyframe.center.y, 1040, accuracy: 0.5)
+        XCTAssertEqual(keyframe.center.y, 841.6, accuracy: 0.5)
     }
 
-    /// Where the frame has the room, the crop the curves draw leaves about an athlete of air on
-    /// each side and below at every sample, and about twice that above. The athlete is 192 px
-    /// tall, crossing a portrait frame; the curves may stray from a sample's own center by a
-    /// tenth of the crop's width, so the bounds are loose.
-    func testAutoFollowLeavesAnAthleteOfAirAndTwiceThatAbove() throws {
+    /// Where the frame has the room, the crop the curves draw leaves less air on either side of
+    /// the athlete than their box is wide, about half of it, at every sample, and twice as much
+    /// above them as below. The athlete's box is 324 × 192 px, crossing a portrait frame; the
+    /// curves may stray from a sample's own center by a tenth of the crop's width, so the lower
+    /// bound on the air beside them is loose.
+    func testAutoFollowLeavesLessAirBesideTheAthleteThanTheirWidth() throws {
         let frames = (0..<30).map { index -> PoseFrameResult in
             let x = 0.3 + 0.4 * Float(index) / 29
-            return PoseFixture.frame(index: index, hip: (x: x, y: 0.6), upperBody: (x: x, y: 0.5))
+            return PoseFixture.frame(index: index, hip: (x: x - 0.15, y: 0.6), upperBody: (x: x + 0.15, y: 0.5))
         }
         let frame = CGRect(origin: .zero, size: portrait)
         let fit = try XCTUnwrap(AutoFollow().fit(
@@ -277,20 +287,21 @@ final class FollowCropTests: XCTestCase {
 
         XCTAssertTrue(fit.moves)
         let marker = ClipEditorViewModel.markerBox(around: frame, aspectRatio: 9.0 / 16.0)
-        let athlete: CGFloat = 192
+        let width = 0.3 * portrait.width
         for sample in frames {
             let framing = fit.crop.path.framing(at: sample.timestamp)
             let box = CGSize(width: marker.width / framing.scale, height: marker.height / framing.scale)
-            let x = try XCTUnwrap(CropRectCalculator.locatedPoints(in: [sample]).first).x * portrait.width
-            let left = x - (framing.center.x - box.width / 2)
-            let right = framing.center.x + box.width / 2 - x
+            let xs = CropRectCalculator.locatedPoints(in: [sample]).map { $0.x * portrait.width }
+            let minX = try XCTUnwrap(xs.min()), maxX = try XCTUnwrap(xs.max())
+            let left = minX - (framing.center.x - box.width / 2)
+            let right = framing.center.x + box.width / 2 - maxX
             let above = 0.5 * portrait.height - (framing.center.y - box.height / 2)
             let below = framing.center.y + box.height / 2 - 0.6 * portrait.height
-            for (side, air) in [("left", left), ("right", right), ("below", below)] {
-                XCTAssertGreaterThanOrEqual(air, 0.7 * athlete, "\(side) at \(sample.timestamp) s")
+            for (side, air) in [("left", left), ("right", right)] {
+                XCTAssertLessThan(air, width, "\(side) at \(sample.timestamp) s")
+                XCTAssertGreaterThanOrEqual(air, 0.3 * width, "\(side) at \(sample.timestamp) s")
             }
-            XCTAssertGreaterThanOrEqual(above, 1.4 * athlete, "above at \(sample.timestamp) s")
-            XCTAssertEqual(above / below, 2, accuracy: 0.5, "at \(sample.timestamp) s")
+            XCTAssertEqual(above / below, 2, accuracy: 0.25, "at \(sample.timestamp) s")
         }
     }
 
@@ -320,7 +331,7 @@ final class FollowCropTests: XCTestCase {
     /// An athlete coming toward the camera in place: the crop zooms out with them, which is a
     /// move even though the center holds.
     func testAutoFollowZoomsOutAsTheAthleteComesCloser() throws {
-        let frames = athlete(seconds: 5) { time in Float(0.1 + 0.1 * min(max((time - 1) / 3, 0), 1)) }
+        let frames = athlete(seconds: 5) { time in Float(0.35 + 0.25 * min(max((time - 1) / 3, 0), 1)) }
         let follower = AutoFollow()
 
         let fit = try XCTUnwrap(follower.fit(
@@ -330,14 +341,14 @@ final class FollowCropTests: XCTestCase {
         let widths = widths(fit.crop, cropRect: fourKFrame)
         XCTAssertGreaterThanOrEqual(widths.count, 2)
         XCTAssertEqual(widths, widths.sorted(), "the crop only widens")
-        // The room around the athlete with Auto follow's margin, at 0.1 of the frame tall and at
-        // 0.2: 562 px and 1,045 px wide. The dead zone lets the crop sit up to 12% short of a room
+        // The room around the athlete with Auto follow's margin, at 0.35 of the frame tall and at
+        // 0.6: 553 px and 948 px wide. The dead zone lets the crop sit up to 12% short of a room
         // it has stopped growing toward.
         let needs = follower.pathCalculator.athletes(for: frames, renderedPixelSize: fourK)
             .compactMap { $0.map { CGFloat($0.room.maxX - $0.room.minX) * fourK.width } }
         let rooms = try [XCTUnwrap(needs.first), XCTUnwrap(needs.last)]
-        XCTAssertEqual(rooms[0], 561.6, accuracy: 0.5)
-        XCTAssertEqual(rooms[1], 1044.9, accuracy: 0.5)
+        XCTAssertEqual(rooms[0], 552.8, accuracy: 0.5)
+        XCTAssertEqual(rooms[1], 947.7, accuracy: 0.5)
         for (width, room) in zip([widths[0], widths[widths.count - 1]], rooms) {
             XCTAssertGreaterThanOrEqual(width, room / 1.12 - 1)
             XCTAssertLessThanOrEqual(width, room * 1.05)
@@ -348,7 +359,7 @@ final class FollowCropTests: XCTestCase {
     /// enough for one a spacing from the others, here 3 s: there the curve draws the envelope's
     /// own zoom, wider than at either end.
     func testALongNeedForRoomTakesAKeyframeOfItsOwn() throws {
-        let frames = athlete(seconds: 12) { time in time >= 4.5 && time < 7.5 ? 0.2 : 0.1 }
+        let frames = athlete(seconds: 12) { time in time >= 4.5 && time < 7.5 ? 0.6 : 0.35 }
         let follower = AutoFollow(keyframeSpacing: 3)
 
         let fit = try XCTUnwrap(follower.fit(
@@ -425,6 +436,41 @@ final class FollowCropTests: XCTestCase {
         XCTAssertEqual(fit.crop.keyframes.map(\.time), [frames[0].timestamp, frames[frames.count - 1].timestamp])
     }
 
+    /// Where the crop holds still for more than a second at either end of the clip, a keyframe
+    /// goes in at that end with the framing of the one beside it, so the follow lane has a
+    /// diamond within a second of each end. Here the crop holds against the frame's left edge
+    /// until a move at 3.4 s and against its right edge after it, in a 7.5 s window whose
+    /// samples stop at 6.9 s: the closing keyframe sits at the window's end, not the last
+    /// sample's. Neither changes what the crop draws.
+    func testAutoFollowsKeyframesReachWithinASecondOfTheClipsEnds() throws {
+        let frames = athlete(
+            seconds: 7,
+            x: { time in time < 3.4 ? 0.02 : time < 3.6 ? Float(0.02 + 0.96 * (time - 3.4) / 0.2) : 0.98 },
+            height: { _ in 0.1 })
+        let window = TrickWindow(startTime: 0, endTime: 7.5)
+
+        let fit = try XCTUnwrap(AutoFollow().fit(
+            frames: frames, cropRect: fourKFrame, videoSize: fourK, rotationRadians: 0, window: window))
+
+        let keyframes = fit.crop.keyframes
+        XCTAssertGreaterThanOrEqual(keyframes.count, 4)
+        let opening = keyframes[0], closing = keyframes[keyframes.count - 1]
+        XCTAssertEqual(opening.time, window.startTime)
+        XCTAssertEqual(closing.time, window.endTime)
+        XCTAssertGreaterThan(keyframes[1].time - window.startTime, AutoFollow.endReach, "the move's own are further in")
+        XCTAssertGreaterThan(window.endTime - keyframes[keyframes.count - 2].time, AutoFollow.endReach)
+        XCTAssertEqual(opening.framing, keyframes[1].framing)
+        XCTAssertEqual(closing.framing, keyframes[keyframes.count - 2].framing)
+        XCTAssertTrue(fit.crop.isUntouchedAutoFollow)
+        let without = FollowPath(keyframes: Array(keyframes.dropFirst().dropLast()), resting: fit.crop.resting)
+        for time in stride(from: 0.0, through: window.endTime, by: 1.0 / 60) {
+            let framing = fit.crop.path.framing(at: time), was = without.framing(at: time)
+            XCTAssertEqual(framing.center.x, was.center.x, accuracy: 1e-6, "at \(time) s")
+            XCTAssertEqual(framing.center.y, was.center.y, accuracy: 1e-6, "at \(time) s")
+            XCTAssertEqual(framing.scale, was.scale, accuracy: 1e-9, "at \(time) s")
+        }
+    }
+
     /// At another shape, Auto follow fits the crop's own box, stamps the shape on the crop, and
     /// still holds the athlete at every sample.
     func testAutoFollowFitsTheCropsOwnShape() throws {
@@ -460,7 +506,7 @@ final class FollowCropTests: XCTestCase {
     /// asks for them. The center moves only up and down, keeping the air above the athlete twice
     /// the air below as the crop's size changes.
     func testTheZoomCheckAloneAddsKeyframesForAZoomIn() throws {
-        let frames = athlete(seconds: 10) { time in time >= 2 && time < 7 ? 0.1 : 0.2 }
+        let frames = athlete(seconds: 10) { time in time >= 2 && time < 7 ? 0.35 : 0.6 }
 
         let fit = try XCTUnwrap(AutoFollow().fit(
             frames: frames, cropRect: fourKFrame, videoSize: fourK, rotationRadians: 0))
@@ -510,7 +556,7 @@ final class FollowCropTests: XCTestCase {
         let rotation = 0.15
         let frames = athlete(
             seconds: 5, x: { time in Float(0.25 + 0.13 * time) },
-            height: { time in Float(0.08 + 0.04 * time) })
+            height: { time in Float(0.3 + 0.1 * time) })
 
         let fit = try XCTUnwrap(AutoFollow().fit(
             frames: frames, cropRect: fourKFrame, videoSize: fourK, rotationRadians: rotation))
@@ -572,8 +618,8 @@ final class FollowCropTests: XCTestCase {
     }
 
     /// With keyframes spaced further apart than a move away and back, here 3 s, the curve can't
-    /// follow the athlete between two of them: the crop zooms out instead, past the 697 px its
-    /// margin asks for, and holds every joint at every sample.
+    /// follow the athlete between two of them: the crop zooms out instead, past the 432 px
+    /// Auto follow's floor gives an athlete this small, and holds every joint at every sample.
     func testAMoveAwayAndBackBetweenKeyframesZoomsOutToHoldTheAthlete() throws {
         let frame = CGRect(origin: .zero, size: portrait)
         let marker = ClipEditorViewModel.markerBox(around: frame, aspectRatio: 9.0 / 16.0)
@@ -582,7 +628,7 @@ final class FollowCropTests: XCTestCase {
                 frames: frames, cropRect: frame, videoSize: portrait, rotationRadians: 0))
 
             XCTAssertEqual(fit.crop.keyframes.count, 2, "take \(index)")
-            XCTAssertGreaterThan(marker.width / fit.crop.keyframes[0].scale, 697 + 1, "take \(index) zooms out")
+            XCTAssertGreaterThan(marker.width / fit.crop.keyframes[0].scale, 432 + 1, "take \(index) zooms out")
             assertHoldsEveryJoint(fit.crop, frames: frames, "take \(index)")
         }
     }
